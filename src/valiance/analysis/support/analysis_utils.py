@@ -721,6 +721,7 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                         requirement.overload,
                         lambda item: _refine_type(item, old, new),
                     ),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in typ.requirements
             ),
@@ -748,6 +749,7 @@ def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                         requirement.overload,
                         lambda item: _refine_input_requirement(item, old, new),
                     ),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in typ.requirements
             ),

@@ -587,7 +587,7 @@ class CompiledModuleTests(unittest.TestCase):
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x02"))
+        self.assertTrue(first.startswith(b"VLNI\x03"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -604,10 +604,10 @@ class CompiledModuleTests(unittest.TestCase):
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x02{"schema":2,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x03{"schema":3,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x02{"schema":2,"value":null}trailing'
+                b'VLNI\x03{"schema":3,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -615,7 +615,7 @@ class CompiledModuleTests(unittest.TestCase):
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x02{"schema":2,"value":')
+            loads_interface(b'VLNI\x03{"schema":3,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

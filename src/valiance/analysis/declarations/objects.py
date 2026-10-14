@@ -66,6 +66,7 @@ from valiance.asts import (
     TypedImportedObjectNode,
     TypedMatchNode,
     TypedNode,
+    TypedObjectNode,
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
@@ -73,6 +74,7 @@ from valiance.asts import (
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
+from valiance.vtypes.identities import constructor_implementation_id, method_variant_id
 from valiance.asts.object_constructors import (
     constructor_definitions,
     constructor_handler_violations,
@@ -85,6 +87,7 @@ from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
 from valiance.vtypes.structural import nested_types
 
+from ..overload_identity import declaration_id, declaration_prefix
 from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
 from ..control_flow import patterns as _patterns
@@ -257,7 +260,7 @@ class _ObjectDeclarations:
                         f"{T.show(T.Fn(requirement.overload.params, requirement.overload.returns))}",
                         node,
                     )
-            return BranchSet((current,))
+            return BranchSet((self._attach_method_results(current, node),))
 
         object_attributes = self._object_attributes(
             node.fields, node.generics, node.generic_scope_id
@@ -317,7 +320,45 @@ class _ObjectDeclarations:
             if not tag.absent
         )
         self.env.set_object_destructor_effects(node.name, destructor_effects)
-        return BranchSet((current,))
+        return BranchSet((self._attach_method_results(current, node),))
+
+    def _attach_method_results(
+        self, branch: AnalysisBranch, node: ObjectNode
+    ) -> AnalysisBranch:
+        """Transport analyser-inferred method result types to bytecode lowering.
+
+        No runtime inference is permitted here.  The method overloads have
+        already been checked, and the order corresponds to runtime registration.
+        """
+        signatures = []
+        method_ids = {}
+        definitions = (
+            tuple((Symbol(f"{node.name}.{member.name}"), definition)
+                  for member in node.variants for definition in member.definitions)
+            if node.kind == Symbol("variant") else tuple((node.name, definition) for definition in node.definitions)
+        )
+        for owner, definition in definitions:
+            prefix = (declaration_prefix(self.source_file, definition.location)
+                      if definition.location is not None else "synthetic:")
+            overloads = tuple(
+                overload for overload in self.env.overloads_for(Symbol(f"{owner}::{definition.name}"))
+                if overload.implementation_id and overload.implementation_id.startswith(prefix)
+            )
+            signatures.extend((overload.implementation_id, tuple(T.show(ret) for ret in overload.returns))
+                              for overload in overloads)
+            method_ids.setdefault(definition.name.text, []).append((
+                definition.location.offset if definition.location is not None else None,
+                tuple((method_variant_id(overload), overload.implementation_id) for overload in overloads),
+            ))
+        signatures = tuple(signatures)
+        method_ids = tuple((name, tuple(records)) for name, records in method_ids.items())
+        for index in range(len(branch.typed_body) - 1, -1, -1):
+            item = branch.typed_body[index]
+            if item.node is node:
+                items = list(branch.typed_body)
+                items[index] = TypedObjectNode(node, item.typ, signatures, method_ids)
+                return replace(branch, typed_body=tuple(items))
+        return branch
 
     def _specialized_trait_requirements(
         self,
@@ -672,6 +713,12 @@ class _ObjectDeclarations:
                 ),
                 definition.annotations,
             )
+            overload = replace(
+                overload,
+                implementation_id=constructor_implementation_id(
+                    owner.dotted(), definition.location
+                ),
+            )
             if overload not in self.env.overloads_for(owner):
                 existing = self.env.overloads_for(owner)
                 if existing and len(overload.params) != len(existing[0].params):
@@ -692,6 +739,7 @@ class _ObjectDeclarations:
         definition: DefineNode,
         trait_requirement: T.TraitRequirement | None = None,
         owner_node: ObjectNode | None = None,
+        implementation_ids: dict[str, str] | None = None,
     ) -> AnalysisBranch:
         """Register friendly definition during static analysis."""
         if not self._validate_annotations(definition.annotations, "define", definition):
@@ -767,6 +815,20 @@ class _ObjectDeclarations:
             function_node,
             (*owner_generics, *definition.generics),
         )
+        if owner_generics and owner_scope is None:
+            # The owner has no parser-assigned binder identity. Share the
+            # function's newly allocated binder across its receiver and body
+            # parameters rather than treating object T and method T as unrelated.
+            owner_scope = T.TypeVarScope(
+                function_node.generic_scope_id,
+                tuple(generic.text for generic in (*owner_generics, *definition.generics)),
+            )
+            self_type = _utils._declared_nominal(owner, owner_generics, owner_scope)
+            function_node = replace(
+                function_node,
+                params=(replace(function_node.params[0], typ=self_type),)
+                + function_node.params[1:],
+            )
         self_substitution = {"$self": self_type}
         function_node = replace(
             function_node,
@@ -885,21 +947,23 @@ class _ObjectDeclarations:
         )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
             object_friendly = name == definition.name
-            friendly_runtime_index = len(
-                self.env.object_friendly_overloads.get(name, ())
-            )
-            for typing in function.overloads:
+            for variant_index, typing in enumerate(function.overloads):
                 if not isinstance(typing.overload, T.Overload):
                     continue
+                identity = (
+                    implementation_ids[method_variant_id(typing.overload)]
+                    if implementation_ids is not None
+                    else declaration_id(self.source_file, definition.location, typing.overload)
+                )
+                checked = _functions._with_generic_constraints(
+                    typing.overload, generic_constraints
+                )
+                transformed = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
+                    checked, definition.annotations
+                )
                 self.env.define_overload(
                     name,
-                    annotation_hooks.DEFAULT_REGISTRY.transform_overload(
-                        _functions._with_generic_constraints(
-                    typing.overload,
-                    generic_constraints,
-                ),
-                        definition.annotations,
-                    ),
+                    replace(transformed, implementation_id=identity),
                     object_friendly=object_friendly,
                 )
                 if object_friendly and name.text in {
@@ -909,9 +973,7 @@ class _ObjectDeclarations:
                         name,
                         Symbol(f"{owner}::{definition.name}"),
                         self.env.overloads[name][-1],
-                        runtime_index=friendly_runtime_index,
                     )
-                    friendly_runtime_index += 1
         return typed_branch
 
     def _trait_requirement_implementation_compatible(
@@ -945,10 +1007,12 @@ class _ObjectDeclarations:
         *,
         trait_requirements: dict[Symbol, T.TraitRequirement] | None = None,
         owner_node: ObjectNode | None = None,
+        implementation_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
     ) -> AnalysisBranch:
         """Register friendly definitions during static analysis."""
         current = branch
         for definition in definitions:
+            full_name = Symbol(f"{owner}::{definition.name}")
             current = self._register_friendly_definition(
                 current,
                 owner,
@@ -957,5 +1021,9 @@ class _ObjectDeclarations:
                 if trait_requirements is None
                 else trait_requirements.get(definition.name),
                 owner_node,
+                implementation_ids=(
+                    dict(dict(implementation_ids.get(definition.name.text, ())).get(definition.location.offset if definition.location is not None else None, ()))
+                    if implementation_ids is not None else None
+                ),
             )
         return current

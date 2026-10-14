@@ -358,7 +358,7 @@ def _protocol_application(
         element,
         applied.actual_returns[0],
         overload=applied,
-        overload_index=provider.overload_index,
+        implementation_id=provider.overload.implementation_id,
         runtime_name=self.env.runtime_name_for(provider.name, provider.overload),
     )
     return typed, applied

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from valiance.vtypes.identities import overload_implementation_id
+
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import (
     dataclass,
@@ -192,7 +194,7 @@ class _TraitDeclarations:
             source_type = _utils._declared_nominal(
                 node.name, node.generics, implementation_scope
             )
-            snapshots: dict[Symbol, tuple[list[T.Overload] | None, set[int] | None]] = {}
+            snapshots: dict[Symbol, tuple[list[T.Overload] | None, set[str] | None]] = {}
             for requirement in source_trait.requirements if source_trait is not None else ():
                 name = requirement.name
                 if name not in snapshots:
@@ -219,9 +221,9 @@ class _TraitDeclarations:
                     param_names=(*overload.param_names, None),
                 )
                 candidates = self.env.overloads.setdefault(name, [])
-                index = len(candidates)
+                overload = replace(overload, implementation_id=overload_implementation_id(overload))
                 candidates.append(overload)
-                self.env.object_friendly_overloads.setdefault(name, set()).add(index)
+                self.env.object_friendly_overloads.setdefault(name, set()).add(overload.implementation_id)
             try:
                 current = self._register_friendly_definitions(
                     branch.emit(TypedNode(node, None)),
@@ -242,17 +244,15 @@ class _TraitDeclarations:
                         self.env.object_friendly_overloads.pop(name, None)
                     else:
                         self.env.object_friendly_overloads[name] = friendly
-            return BranchSet((current,))
+            return BranchSet((self._attach_method_results(current, node),))
 
         self._define_trait_shape(node.name, node)
         trait = self.env.lookup_trait(node.name)
         self_type = _utils._declared_nominal(node.name, node.generics)
 
-        # Trait requirements are abstract, so expose receiver-specialized versions
-        # only while checking default bodies. Keeping them out of the persistent
-        # overload table ensures concrete implementations retain stable runtime
-        # overload indexes.
-        snapshots: dict[Symbol, tuple[list[T.Overload] | None, set[int] | None]] = {}
+        # Trait requirements are abstract. Expose receiver-specialized versions
+        # while checking defaults, then restore the concrete declaration bindings.
+        snapshots: dict[Symbol, tuple[list[T.Overload] | None, set[str] | None]] = {}
         for requirement in trait.requirements if trait is not None else ():
             name = requirement.name
             if name not in snapshots:
@@ -285,9 +285,9 @@ class _TraitDeclarations:
                 param_names=(*overload.param_names, None),
             )
             candidates = self.env.overloads.setdefault(name, [])
-            index = len(candidates)
+            overload = replace(overload, implementation_id=overload_implementation_id(overload))
             candidates.append(overload)
-            self.env.object_friendly_overloads.setdefault(name, set()).add(index)
+            self.env.object_friendly_overloads.setdefault(name, set()).add(overload.implementation_id)
 
         try:
             current = self._register_friendly_definitions(
@@ -305,7 +305,7 @@ class _TraitDeclarations:
                     self.env.object_friendly_overloads.pop(name, None)
                 else:
                     self.env.object_friendly_overloads[name] = friendly
-        return BranchSet((current,))
+        return BranchSet((self._attach_method_results(current, node),))
 
     def _define_trait_shape(self, name: Symbol, node: ObjectNode) -> None:
         """Record trait shape, including requirements inherited from a parent."""

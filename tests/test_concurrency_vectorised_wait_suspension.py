@@ -25,10 +25,10 @@ class VectorisedWaitSuspensionTests(unittest.TestCase):
             )
 
         first = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(producer(1), (), 0)
+            lambda: vm._task_call_runner(producer(1), (), None)
         )
         second = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(producer(2), (), 0)
+            lambda: vm._task_call_runner(producer(2), (), None)
         )
         waiter_code = FunctionCode(
             (
@@ -46,7 +46,7 @@ class VectorisedWaitSuspensionTests(unittest.TestCase):
                     {**vm.globals, "tasks": [second, first, first]},
                 ),
                 (),
-                0,
+                None,
             )
         )
         vm.scheduler.runnable.remove(waiter.control)
@@ -78,7 +78,7 @@ class VectorisedWaitSuspensionTests(unittest.TestCase):
         )
         waiter = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(waiter_code, {**vm.globals, "tasks": tasks}), (), 0
+                FunctionValue(waiter_code, {**vm.globals, "tasks": tasks}), (), None
             )
         )
         vm.scheduler.runnable.remove(waiter.control)
@@ -115,7 +115,7 @@ class VectorisedWaitSuspensionTests(unittest.TestCase):
                     {**vm.globals, "tasks": [failing, unfinished]},
                 ),
                 (),
-                0,
+                None,
             )
         )
         vm.scheduler.runnable.remove(waiter.control)

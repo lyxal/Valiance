@@ -14,8 +14,10 @@ from valiance.asts.nodes import (
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
     TypedNode,
+    TypedObjectNode,
 )
 from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.nodes import Type
 
 
 def prelude_seed(source_file: Path | None) -> str:
@@ -27,6 +29,11 @@ def prelude_seed(source_file: Path | None) -> str:
 def with_import_runtime_name(
     node: TypedNode,
     runtime_name: Symbol,
+    *,
+    imported_supertypes: tuple[Type, ...] = (),
+    imported_guarded_supertypes: tuple[
+        tuple[Type, tuple[Type | None, ...]], ...
+    ] = (),
 ) -> TypedNode:
     """Attach one hidden runtime binding and retarget recursive self-calls."""
     if isinstance(node, TypedFunctionNode):
@@ -46,7 +53,15 @@ def with_import_runtime_name(
             runtime_name,
         )
     if isinstance(node.node, ObjectNode):
-        return TypedImportedObjectNode(node.node, node.typ, runtime_name)
+        return TypedImportedObjectNode(
+            node.node,
+            node.typ,
+            node.method_results if isinstance(node, TypedObjectNode) else (),
+            node.method_ids if isinstance(node, TypedObjectNode) else (),
+            runtime_name,
+            imported_supertypes,
+            imported_guarded_supertypes,
+        )
     return node
 
 
@@ -65,7 +80,6 @@ def _rewrite_imported_self_calls(
         }
         if isinstance(value.node, ElementNode) and value.node.name == source_name:
             rewritten["runtime_name"] = runtime_name
-            rewritten["overload_index"] = 0
         return replace(value, **rewritten)
     if isinstance(value, tuple):
         return tuple(

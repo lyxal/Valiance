@@ -1085,6 +1085,7 @@ class Parser:
             returns,
             element_tags,
             location=_loc(start),
+            is_operator=token.kind is TokenKind.OP,
         )
 
     def _field(self, owner: Symbol, visibility: Symbol | None) -> ObjectFieldNode:
@@ -3511,6 +3512,10 @@ class Parser:
                 returns,
                 param_names=tuple(param.name for param in node.params or ()),
                 element_tags=node.element_tags,
+            ),
+            implicit_receiver=(
+                not node.is_operator
+                and (not node.params or node.params[0].name is not None)
             ),
         )
 

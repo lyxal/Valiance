@@ -273,22 +273,7 @@ class _CallSelection:
                 selected.append(candidate)
                 continue
             existing = selected[equivalent_index]
-            candidate_index = (
-                candidate.overload_index
-                if candidate.overload_index is not None
-                else candidate.callable_overload_index
-            )
-            existing_index = (
-                existing.overload_index
-                if existing.overload_index is not None
-                else existing.callable_overload_index
-            )
-            if (
-                candidate_index is not None
-                and existing_index is not None
-                and candidate_index > existing_index
-            ):
-                selected[equivalent_index] = candidate
+            selected[equivalent_index] = candidate
         return tuple(selected)
 
     def element_call_candidates(
@@ -334,12 +319,12 @@ class _CallSelection:
             )
             selected_is_friendly = self.env.overload_is_object_friendly(
                 node.name,
-                source.overload_index,
+                source.implementation_id,
             )
             dispatch_overloads = tuple(
                 overload
                 for index, overload in enumerate(overloads)
-                if self.env.overload_is_object_friendly(node.name, index)
+                if self.env.overload_is_object_friendly(node.name, overload.implementation_id)
                 == selected_is_friendly
             )
             applied = _functions._mark_multidispatch(
@@ -353,7 +338,8 @@ class _CallSelection:
                     branch=candidate.branch,
                     modifiers=source.modifiers,
                     call_arg_order=source.call_arg_order,
-                    overload_index=source.overload_index,
+                    implementation_id=source.implementation_id,
+                    source_arguments=source.arguments,
                     dispatch_priority=(
                         0
                         if selected_is_friendly
@@ -431,7 +417,8 @@ class _CallSelection:
         )
         if plan is None:
             return None
-        representative = overloads[plan.branches[0].overload_index]
+        representative = next(overload for overload in overloads
+                              if overload.implementation_id == plan.branches[0].implementation_id)
         actual_returns = plan.returns
         vectorised = bool(vector_sources)
         vectorised_depths: tuple[int, ...] = ()
@@ -463,7 +450,7 @@ class _CallSelection:
             applied=applied,
             branch=source.branch,
             call_arg_order=source.call_arg_order,
-            overload_index=plan.branches[0].overload_index,
+            implementation_id=plan.branches[0].implementation_id,
         )
 
     @staticmethod
@@ -513,22 +500,6 @@ class _CallSelection:
         overload_runtime_name = self.env.overload_runtime_name_for(
             node.name, overload
         )
-        selected_index = (
-            candidate.overload_index
-            if candidate.overload_index is not None
-            else _calls._overload_index(overloads, overload)
-        )
-        # Imported overloads may share one hidden runtime overload set. Preserve
-        # the slot assigned while registering that resolved import group.
-        imported_runtime_index = self.env.overload_runtime_index_for(
-            node.name,
-            overload,
-        )
-        runtime_index = (
-            imported_runtime_index
-            if overload_runtime_name is not None and imported_runtime_index is not None
-            else (0 if overload_runtime_name is not None else selected_index)
-        )
         behaviour_matches = tuple(
             (behaviour.provider, definition)
             for behaviour in self.env.context.trait_impl_behaviours
@@ -537,23 +508,66 @@ class _CallSelection:
         behaviour_provider, behaviour_definition = (
             behaviour_matches[0] if len(behaviour_matches) == 1 else (None, None)
         )
+        structural_witnesses = []
+        callable_witnesses = []
+        for index, (actual, param) in enumerate(zip(
+            candidate.source_arguments, candidate.applied.params,
+        )):
+            source_type, expected_type = T.normalize(actual), T.normalize(param)
+            if (isinstance(source_type, T.FunctionType)
+                    and isinstance(expected_type, T.FunctionType)):
+                for callback_index, (actual_input, expected_input) in enumerate(zip(
+                    source_type.params, expected_type.params,
+                )):
+                    if not (isinstance(T.normalize(actual_input), T.AnonymousTraitType)
+                            and isinstance(T.normalize(expected_input), T.NominalType)):
+                        continue
+                    try:
+                        callback_proof = T.checked_structural_witnesses(
+                            expected_input, T.normalize(actual_input), self.env.context,
+                        )
+                    except T.AmbiguousStructuralWitness as exc:
+                        self._diagnose(str(exc), node)
+                        return None
+                    if callback_proof is not None:
+                        callable_witnesses.extend(
+                            (index, len(candidate.source_arguments), callback_index,
+                             name, contract, identity)
+                            for name, contract, identity in callback_proof
+                        )
+            if not isinstance(expected_type, T.AnonymousTraitType):
+                continue
+            try:
+                proof = T.checked_structural_witnesses(
+                    actual, T.normalize(param), self.env.context,
+                )
+            except T.AmbiguousStructuralWitness as exc:
+                self._diagnose(str(exc), node)
+                return None
+            if proof is not None:
+                structural_witnesses.extend(
+                    (index, len(candidate.source_arguments), name, contract, identity)
+                    for name, contract, identity in proof
+                )
         return candidate.branch.push(*actual_returns).emit(
             TypedElementNode(
                 node,
                 _calls._returns_result_type(actual_returns),
                 candidate.applied,
-                runtime_index,
+                candidate.implementation_id or overload.implementation_id,
                 _calls._specialize_modifier_arguments(
                     candidate.applied,
                     candidate.modifiers,
                     self.env.context,
                 ),
                 candidate.call_arg_order,
-                candidate.callable_overload_index,
+                candidate.callable_implementation_id,
                 extension,
                 overload_runtime_name or self.env.runtime_name_for(node.name),
                 behaviour_definition,
                 behaviour_provider,
+                structural_witnesses=tuple(structural_witnesses),
+                callable_witnesses=tuple(callable_witnesses),
             )
         )
 
@@ -613,6 +627,9 @@ class _CallSelection:
                 return terminal
             results: list[AnalysisBranch] = list(terminal.branches)
             for candidate in winners:
+                evidence = self._higher_order_trait_evidence(node, candidate)
+                if evidence is None:
+                    continue
                 results.append(
                     candidate.branch.push(*candidate.applied.actual_returns).emit(
                         TypedElementNode(
@@ -621,10 +638,11 @@ class _CallSelection:
                                 candidate.applied.actual_returns
                             ),
                             candidate.applied,
-                            0,
+                            candidate.applied.overload.implementation_id,
                             (),
                             candidate.call_arg_order,
-                            candidate.callable_overload_index,
+                            candidate.callable_implementation_id,
+                            structural_witnesses=evidence,
                         )
                     )
                 )
@@ -635,9 +653,7 @@ class _CallSelection:
         candidates: list[CallCandidate] = []
         terminal: list[AnalysisBranch] = []
 
-        for callable_index, callable_overload in enumerate(
-            _functions._callable_overloads(function_type)
-        ):
+        for callable_overload in _functions._callable_overloads(function_type):
             prepared = _calls._prepare_element_call_branches(
                 base,
                 callable_overload,
@@ -684,7 +700,7 @@ class _CallSelection:
                     candidates.extend(
                         candidate
                         for candidate in planned
-                        if candidate.callable_overload_index == callable_index
+                        if candidate.callable_implementation_id == callable_overload.implementation_id
                     )
 
         winners = self.select_call_winners(
@@ -703,6 +719,9 @@ class _CallSelection:
 
         results: list[AnalysisBranch] = list(terminal)
         for candidate in winners:
+            evidence = self._higher_order_trait_evidence(node, candidate)
+            if evidence is None:
+                continue
             extension = self._analyse_element_extension(
                 node.extension,
                 candidate.applied,
@@ -716,15 +735,54 @@ class _CallSelection:
                         node,
                         _calls._returns_result_type(candidate.applied.actual_returns),
                         candidate.applied,
-                        0,
+                        candidate.applied.overload.implementation_id,
                         (),
                         candidate.call_arg_order,
-                        candidate.callable_overload_index,
+                        candidate.callable_implementation_id,
                         extension,
+                        structural_witnesses=evidence,
                     )
                 )
             )
         return BranchSet.collect(results)
+
+    def _higher_order_trait_evidence(
+        self, node: ElementNode, candidate: CallCandidate,
+    ) -> tuple[tuple[int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...] | None:
+        """Prove structural arguments to a statically typed callable value.
+
+        `call`'s intrinsic signature is `(Function)`, but the selected
+        callable has already been specialised by overload analysis.  Preserve
+        its concrete argument requirements rather than dropping those proofs
+        at the intrinsic boundary.
+        """
+        params = candidate.applied.params
+        if not params:
+            return ()
+        callable_type = T.normalize(params[-1])
+        if not isinstance(callable_type, T.FunctionType) or callable_type.params is None:
+            return ()
+        arity = len(params)
+        evidence = []
+        for index, (actual, required) in enumerate(zip(
+            params[:-1], callable_type.params, strict=True,
+        )):
+            required = T.normalize(required)
+            if not isinstance(required, T.AnonymousTraitType):
+                continue
+            try:
+                proof = T.checked_structural_witnesses(
+                    actual, required, self.env.context,
+                )
+            except T.AmbiguousStructuralWitness as exc:
+                self._diagnose(str(exc), node)
+                return None
+            if proof:
+                evidence.extend(
+                    (index, arity, name, contract, identity)
+                    for name, contract, identity in proof
+                )
+        return tuple(evidence)
 
     def call_element_candidates_for_branch(
         self,

@@ -18,6 +18,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
     ResolvedElementReference,
+    DispatchKind,
     VectorExtensionReference,
 )
 from valiance.runtime.runtime_values import (
@@ -34,7 +35,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x2A
+BYTECODE_VERSION = 0x35
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -86,6 +87,7 @@ _OP_TO_BYTE = {
     OpCode.WRAP_ASSERT_ERROR: 0x29,
     OpCode.LOAD_VAR_BORROW: 0x2A,
     OpCode.CANONICALIZE_TAGS: 0x2B,
+    OpCode.BIND_TRAIT_WITNESSES: 0x47,
     OpCode.POP_N: 0x2C,
     OpCode.APPLY_DISPATCH_PLAN: 0x2D,
     OpCode.ISOLATE_STACK_BEGIN: 0x2E,
@@ -206,6 +208,14 @@ def loads(data: bytes) -> Program:
         raise BytecodeFormatError("invalid Valiance bytecode payload") from exc
 
 
+def _validate_implementation_identity(identity: object, *, allow_none: bool = False) -> None:
+    """Reject missing or positional selectors in the current portable format."""
+    if identity is None and allow_none:
+        return
+    if not isinstance(identity, str) or not identity:
+        raise BytecodeFormatError("invalid or missing implementation identity")
+
+
 def _validate_concurrency_bytecode(code: FunctionCode) -> None:
     """Reject malformed concurrency payloads and unbalanced scope bytecode."""
     scope_depth = 0
@@ -224,14 +234,21 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                 )
         elif op is OpCode.MAKE_CLOSED_FUNCTION and not isinstance(argument, FunctionCode):
             raise BytecodeFormatError("closed concurrent function must contain function bytecode")
+        elif op is OpCode.VALIDATE_TAG:
+            if not isinstance(argument, tuple) or len(argument) != 4:
+                raise BytecodeFormatError("invalid tag validator payload")
+            _validate_implementation_identity(argument[1], allow_none=True)
         elif op is OpCode.SPAWN_CALL:
             if (
                 not isinstance(argument, tuple)
-                or len(argument) not in {2, 3, 4, 8, 9}
+                or len(argument) != 9
                 or not all(
                     isinstance(item, int) and not isinstance(item, bool) and item >= 0
-                    for item in argument[:3]
+                    for item in argument[:2]
                 )
+                or (argument[2] is not None and (
+                    not isinstance(argument[2], str) or not argument[2]
+                ))
                 or (
                     len(argument) >= 4
                     and (
@@ -498,8 +515,8 @@ class _Writer:
 
     def resolved_element_reference(self, reference: ResolvedElementReference) -> None:
         """Encode resolved element reference in the portable bytecode stream."""
+        _validate_implementation_identity(reference.implementation_id, allow_none=bool(reference.dispatch_kind & DispatchKind.TRAIT_WITNESS))
         self.string(reference.name)
-        self.i64(reference.overload_index)
         self.bool(reference.vectorised)
         self.value(reference.vectorised_depths)
         self.value(reference.vectorised_target_ranks)
@@ -516,11 +533,15 @@ class _Writer:
         self.value(reference.static_values)
         self.optional_int(reference.arity_override)
         self.optional_int(reference.consumed_override)
-        self.bool(reference.multidispatch)
+        self.u8(int(reference.dispatch_kind))
         self.u32(len(reference.union_dispatch_plan))
         for branch in reference.union_dispatch_plan:
             self.union_dispatch_branch(branch)
         self.value(reference.extension)
+        self.value(reference.structural_signature)
+        self.optional_string(reference.implementation_id)
+        self.value(reference.structural_witnesses)
+        self.value(reference.callable_witnesses)
 
     def extension_rule_reference(self, reference: ExtensionRuleReference) -> None:
         """Encode extension rule reference in the portable bytecode stream."""
@@ -566,7 +587,9 @@ class _Writer:
         self.u32(len(branch.params))
         for pattern in branch.params:
             self.runtime_type_pattern(pattern)
-        self.i64(branch.overload_index)
+        if branch.implementation_id is None:
+            raise BytecodeFormatError("union dispatch branch is missing its implementation identity")
+        self.string(branch.implementation_id)
 
     def runtime_type_pattern(self, pattern: RuntimeTypePattern) -> None:
         """Encode runtime type pattern in the portable bytecode stream."""
@@ -617,6 +640,17 @@ class _Writer:
         self.u32(len(function.dispatch_types))
         for typ in function.dispatch_types:
             self.optional_string(typ)
+        self.u32(len(function.signature_types))
+        for typ in function.signature_types:
+            self.string(typ)
+        self.u32(len(function.result_signature_types))
+        for typ in function.result_signature_types:
+            self.string(typ)
+        self.u32(len(function.generic_type_parameters))
+        for name in function.generic_type_parameters:
+            self.string(name)
+        self.value(function.structural_parameters)
+        self.optional_string(function.implementation_id)
         self.optional_int(function.return_count)
         self.value(function.occurrence_effects)
         self.u32(len(function.return_tags))
@@ -842,7 +876,6 @@ class _Reader:
     def resolved_element_reference(self) -> ResolvedElementReference:
         """Decode resolved element reference in the portable bytecode stream."""
         name = self.string()
-        overload_index = self.i64()
         vectorised = self.bool()
         vectorised_depths = self.value()
         vectorised_target_ranks = self.value()
@@ -859,11 +892,56 @@ class _Reader:
         static_values = self.value()
         arity_override = self.optional_int()
         consumed_override = self.optional_int()
-        multidispatch = self.bool()
+        kind_bits = self.u8()
+        if kind_bits & ~int(
+            DispatchKind.TRAIT_WITNESS | DispatchKind.MULTIMETHOD | DispatchKind.UNION
+        ):
+            raise BytecodeFormatError("unknown resolved dispatch mode")
+        dispatch_kind = DispatchKind(kind_bits)
         union_dispatch_plan = tuple(
             self.union_dispatch_branch() for _ in range(self.u32())
         )
         extension = self.value()
+        structural_signature = self.value()
+        implementation_id = self.optional_string()
+        _validate_implementation_identity(implementation_id, allow_none=bool(dispatch_kind & DispatchKind.TRAIT_WITNESS))
+        structural_witnesses = self.value()
+        callable_witnesses = self.value()
+        if (not isinstance(callable_witnesses, tuple) or any(
+            not isinstance(item, tuple) or len(item) != 6
+            or any(type(number) is not int or number < 0 for number in item[:3])
+            or not isinstance(item[3], str) or not isinstance(item[5], str)
+            or not isinstance(item[4], tuple) or len(item[4]) != 2
+            or any(not isinstance(part, tuple)
+                   or any(not isinstance(t, str) for t in part)
+                   for part in item[4])
+            for item in callable_witnesses
+        )):
+            raise BytecodeFormatError("invalid checked callback witness")
+        if (not isinstance(structural_witnesses, tuple) or any(
+            not isinstance(item, tuple) or len(item) != 5
+            or not isinstance(item[0], int) or not isinstance(item[1], int)
+            or not isinstance(item[2], str) or not isinstance(item[4], str)
+            or not isinstance(item[3], tuple) or len(item[3]) != 2
+            or any(not isinstance(part, tuple) or not all(isinstance(t, str) for t in part)
+                   for part in item[3])
+            for item in structural_witnesses
+        )):
+            raise BytecodeFormatError("invalid checked trait witness")
+        if bool(dispatch_kind & DispatchKind.TRAIT_WITNESS) != (structural_signature is not None):
+            raise BytecodeFormatError("inconsistent structural dispatch mode")
+        if bool(dispatch_kind & DispatchKind.UNION) != bool(union_dispatch_plan):
+            raise BytecodeFormatError("inconsistent union dispatch mode")
+        if structural_signature is not None and (
+            not isinstance(structural_signature, tuple)
+            or len(structural_signature) != 2
+            or any(
+                not isinstance(part, tuple)
+                or not all(isinstance(item, str) for item in part)
+                for part in structural_signature
+            )
+        ):
+            raise BytecodeFormatError("invalid structural dispatch contract")
         if not isinstance(vectorised_depths, tuple) or not all(
             isinstance(depth, int) for depth in vectorised_depths
         ):
@@ -895,7 +973,6 @@ class _Reader:
             raise BytecodeFormatError("invalid resolved element extension")
         return ResolvedElementReference(
             name=name,
-            overload_index=overload_index,
             vectorised=vectorised,
             vectorised_depths=vectorised_depths,
             vectorised_target_ranks=vectorised_target_ranks,
@@ -906,9 +983,13 @@ class _Reader:
             static_values=static_values,
             arity_override=arity_override,
             consumed_override=consumed_override,
-            multidispatch=multidispatch,
+            dispatch_kind=dispatch_kind,
             union_dispatch_plan=union_dispatch_plan,
             extension=extension,
+            structural_signature=structural_signature,
+            implementation_id=implementation_id,
+            structural_witnesses=structural_witnesses,
+            callable_witnesses=callable_witnesses,
         )
 
     def extension_rule_reference(self) -> ExtensionRuleReference:
@@ -979,10 +1060,10 @@ class _Reader:
     def union_dispatch_branch(self) -> UnionDispatchBranch:
         """Decode union dispatch branch in the portable bytecode stream."""
         params = tuple(self.runtime_type_pattern() for _ in range(self.u32()))
-        overload_index = self.i64()
-        if not 0 <= overload_index:
-            raise BytecodeFormatError("invalid union dispatch overload index")
-        return UnionDispatchBranch(params, overload_index)
+        implementation_id = self.string()
+        if not implementation_id:
+            raise BytecodeFormatError("empty union implementation identity")
+        return UnionDispatchBranch(params, implementation_id=implementation_id)
 
     def runtime_type_pattern(self) -> RuntimeTypePattern:
         """Decode runtime type pattern in the portable bytecode stream."""
@@ -1042,6 +1123,23 @@ class _Reader:
         if multi not in {0, 1}:
             raise BytecodeFormatError(f"invalid function multi flag {multi}")
         dispatch_types = tuple(self.optional_string() for _ in range(self.u32()))
+        signature_types = tuple(self.string() for _ in range(self.u32()))
+        result_signature_types = tuple(self.string() for _ in range(self.u32()))
+        generic_type_parameters = tuple(self.string() for _ in range(self.u32()))
+        structural_parameters = self.value()
+        if not isinstance(structural_parameters, tuple) or any(
+            not isinstance(item, tuple) or len(item) != 3
+            or not isinstance(item[0], int) or not 0 <= item[0] < len(params)
+            or not isinstance(item[1], str)
+            or not isinstance(item[2], tuple) or len(item[2]) != 2
+            or any(not isinstance(part, tuple) or not all(isinstance(t, str) for t in part)
+                   for part in item[2])
+            for item in structural_parameters
+        ):
+            raise BytecodeFormatError("invalid structural parameter contracts")
+        implementation_id = self.optional_string()
+        if len(set(generic_type_parameters)) != len(generic_type_parameters):
+            raise BytecodeFormatError("duplicate method generic parameter")
         return_count = self.optional_int()
         if return_count is not None and return_count < 0:
             raise BytecodeFormatError("invalid function return count")
@@ -1090,6 +1188,11 @@ class _Reader:
             recursive=bool(recursive),
             multi=bool(multi),
             dispatch_types=dispatch_types,
+            signature_types=signature_types,
+            result_signature_types=result_signature_types,
+            generic_type_parameters=generic_type_parameters,
+            structural_parameters=structural_parameters,
+            implementation_id=implementation_id,
             return_count=return_count,
             occurrence_effects=occurrence_effects,
             return_tags=return_tags,

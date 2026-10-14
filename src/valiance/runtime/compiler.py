@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Iterator, NoReturn
 
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
+from valiance.vtypes.identities import constructor_implementation_id, overload_implementation_id
 from valiance.asts import (
     AnnotationNode,
     AssertNode,
@@ -72,6 +73,8 @@ from valiance.asts import (
     TypedWaitNode,
     TypedAtNode,
     TypedElementExtension,
+    TypedCastNode,
+    TypedSetVariableNode,
     TypedElementNode,
     TypedForNode,
     TypedFunctionNode,
@@ -81,6 +84,7 @@ from valiance.asts import (
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
+    TypedObjectNode,
     TypedProtocolIndexNode,
     TypedTagApplicationNode,
     TypedTryNode,
@@ -109,6 +113,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
     ResolvedElementReference,
+    DispatchKind,
     VectorExtensionReference,
 )
 from valiance.runtime.runtime_values import RuntimeNumber
@@ -172,7 +177,7 @@ class _Compiler:
         self.object_runtime_metadata: dict[str, tuple[object, ...]] = {}
         self.runtime_type_facts: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
         self.runtime_supertype_templates: dict[
-            str, tuple[tuple[str, tuple[str, ...]], ...]
+            str, tuple[tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]], ...]
         ] = {}
         self.tag_disjoints: dict[str, set[str]] = {}
         self.tag_parents: dict[str, str] = {}
@@ -194,7 +199,9 @@ class _Compiler:
         """
         declarations: dict[str, tuple[str, ...]] = {}
         implementations: dict[str, set[str]] = {}
-        projections: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+        projections: dict[
+            str, list[tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]]
+        ] = {}
         for typed in body:
             node = _unwrap(typed)
             if not isinstance(node, ObjectNode):
@@ -209,8 +216,10 @@ class _Compiler:
                     )
                     if projection is not None:
                         target, _ = projection
-                        implementations.setdefault(name, set()).add(target)
-                        projections.setdefault(name, []).append(projection)
+                        guards = _runtime_projection_guards(node)
+                        if not guards:
+                            implementations.setdefault(name, set()).add(target)
+                        projections.setdefault(name, []).append((*projection, guards))
                 continue
             if node.kind.text == "object":
                 if node.target is None:
@@ -222,8 +231,28 @@ class _Compiler:
                     )
                     if projection is not None:
                         target, _ = projection
-                        implementations.setdefault(name, set()).add(target)
-                        projections.setdefault(name, []).append(projection)
+                        guards = _runtime_projection_guards(node)
+                        if not guards:
+                            implementations.setdefault(name, set()).add(target)
+                        projections.setdefault(name, []).append((*projection, guards))
+                if isinstance(typed, TypedImportedObjectNode):
+                    for supertype in typed.imported_supertypes:
+                        projection = _runtime_supertype_template(
+                            supertype, node.generics
+                        )
+                        if projection is not None:
+                            target, _ = projection
+                            implementations.setdefault(name, set()).add(target)
+                            projections.setdefault(name, []).append((*projection, ()))
+                    for supertype, constraints in typed.imported_guarded_supertypes:
+                        projection = _runtime_supertype_template(
+                            supertype, node.generics,
+                        )
+                        if projection is not None:
+                            guards = _runtime_generic_constraint_guards(
+                                node.generics, constraints,
+                            )
+                            projections.setdefault(name, []).append((*projection, guards))
                 continue
             if node.kind.text == "variant":
                 declarations.setdefault(name, _runtime_generic_variances(node))
@@ -251,35 +280,40 @@ class _Compiler:
             )
         self.runtime_type_facts = facts
 
-        expanded: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {}
+        expanded: dict[
+            str, tuple[tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]], ...]
+        ] = {}
 
         def expand(
             name: str,
             visiting: frozenset[str] = frozenset(),
-        ) -> tuple[tuple[str, tuple[str, ...]], ...]:
-            """Compose direct generic supertype projections transitively."""
+        ) -> tuple[tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]], ...]:
+            """Compose projected ancestors and their implementation guards."""
             if name in expanded:
                 return expanded[name]
             if name in visiting:
                 return ()
-            items: list[tuple[str, tuple[str, ...]]] = []
-            for target, arguments in projections.get(name, ()):
-                candidate = (target, arguments)
+            items: list[tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = []
+            for target, arguments, guards in projections.get(name, ()):
+                candidate = (target, arguments, guards)
                 if candidate not in items:
                     items.append(candidate)
-                for ancestor, ancestor_arguments in expand(
+                for ancestor, ancestor_arguments, ancestor_guards in expand(
                     target,
                     visiting | {name},
                 ):
                     composed = (
                         ancestor,
                         tuple(
-                            _substitute_runtime_type_template(
-                                template,
-                                arguments,
-                            )
+                            _substitute_runtime_type_template(template, arguments)
                             for template in ancestor_arguments
                         ),
+                        (*guards, *(
+                            (
+                                _substitute_runtime_type_template(subject, arguments),
+                                _substitute_runtime_type_template(bound, arguments),
+                            ) for subject, bound in ancestor_guards
+                        )),
                     )
                     if composed not in items:
                         items.append(composed)
@@ -297,7 +331,8 @@ class _Compiler:
         """Attach closed-world nominal facts to one constructor."""
         accepted, variances = self.runtime_type_facts.get(name, ((name,), ()))
         registry = tuple(
-            (fact_name, fact[0], fact[1])
+            (fact_name, fact[0], fact[1],
+             self.runtime_supertype_templates.get(fact_name, ()))
             for fact_name, fact in sorted(self.runtime_type_facts.items())
         )
         return (
@@ -321,6 +356,13 @@ class _Compiler:
         recursive: bool = False,
         multi: bool = False,
         dispatch_types: tuple[str | None, ...] = (),
+        signature_types: tuple[str, ...] = (),
+        result_signature_types: tuple[str, ...] = (),
+        generic_type_parameters: tuple[str, ...] = (),
+        structural_parameters: tuple[
+            tuple[int, str, tuple[tuple[str, ...], tuple[str, ...]]], ...
+        ] = (),
+        implementation_id: str | None = None,
         return_count: int | None = None,
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
         return_tag_specs: tuple[object, ...] = (),
@@ -370,6 +412,11 @@ class _Compiler:
             recursive=recursive,
             multi=multi,
             dispatch_types=dispatch_types,
+            signature_types=signature_types,
+            result_signature_types=result_signature_types,
+            generic_type_parameters=generic_type_parameters,
+            structural_parameters=structural_parameters,
+            implementation_id=implementation_id,
             return_count=return_count,
             occurrence_effects=occurrence_effects,
             return_tags=return_tags,
@@ -444,7 +491,7 @@ class _Compiler:
                 (
                     len(typed_node.input_types),
                     len(typed_node.output_types),
-                    typed_node.overload_index,
+                    typed_node.implementation_id,
                     typed_node.unique_inputs,
                     typed_node.vectorised,
                     typed_node.vectorised_depths,
@@ -504,11 +551,17 @@ class _Compiler:
                     isinstance(typed_node, TypedFunctionNode)
                     and typed_node.dispatch_plan is not None
                 ):
+                    # The plan was checked against these overloads during
+                    # analysis. Resolve identities before emitting bytecode.
+                    linked_branches = typed_node.dispatch_plan.branches
                     self.emit(
                         OpCode.APPLY_DISPATCH_PLAN,
-                        FunctionSetCode((), typed_node.dispatch_plan.branches),
+                        FunctionSetCode((), tuple(linked_branches)),
                     )
             case SetVariableNode(name):
+                if (isinstance(typed_node, TypedSetVariableNode)
+                        and typed_node.structural_witnesses):
+                    self.emit(OpCode.BIND_TRAIT_WITNESSES, typed_node.structural_witnesses)
                 self.emit(OpCode.STORE_VAR, _symbol_runtime_name(name))
             case SetVariablesNode(targets):
                 for target in reversed(targets):
@@ -563,7 +616,7 @@ class _Compiler:
                     self.node(arg)
                 if (
                     isinstance(typed_node, TypedElementNode)
-                    and typed_node.overload_index is not None
+                    and typed_node.implementation_id is not None
                     and name.text == "?"
                 ):
                     self.emit(OpCode.TRY_UNWRAP)
@@ -604,12 +657,12 @@ class _Compiler:
                         native_link.callbacks,
                     ))
                     if native_link.return_conversion is not None:
-                        conversion_name, conversion_index = native_link.return_conversion
+                        conversion_name, conversion_identity = native_link.return_conversion
                         self.emit(
                             OpCode.CALL_RESOLVED_ELEMENT,
                             ResolvedElementReference(
                                 conversion_name,
-                                conversion_index,
+                                conversion_identity,
                                 arity_override=1,
                                 consumed_override=1,
                             ),
@@ -650,13 +703,13 @@ class _Compiler:
                 # applications behave like ordinary one-argument elements.
                 self.emit(OpCode.SOURCE_ARGS, 1)
                 if isinstance(typed_node, TypedTagApplicationNode):
-                    validator_index = typed_node.validator_index
+                    validator_implementation_id = typed_node.validator_implementation_id
                     added_tags = typed_node.added_tags
                     removed_tags = typed_node.removed_tags
                     validator_runtime_name = typed_node.validator_runtime_name
                     validator_plans = typed_node.validator_plans
                 elif node.tag.absent:
-                    validator_index = None
+                    validator_implementation_id = None
                     added_tags = ()
                     removed_names = {node.tag.name}
                     pending = [node.tag.name]
@@ -675,7 +728,7 @@ class _Compiler:
                     validator_runtime_name = None
                     validator_plans = ()
                 else:
-                    validator_index = None
+                    validator_implementation_id = None
                     validator_runtime_name = None
                     validator_plans = ()
                     added = [DataTag(node.tag.name, node.tag.depth)]
@@ -702,7 +755,7 @@ class _Compiler:
                         DataTag(name, node.tag.depth) for name in sorted(disjoint_names)
                     )
                 if validator_plans:
-                    for index, (runtime_name, overload_index) in enumerate(
+                    for index, (runtime_name, implementation_id) in enumerate(
                         validator_plans
                     ):
                         final = index + 1 == len(validator_plans)
@@ -710,7 +763,7 @@ class _Compiler:
                             OpCode.VALIDATE_TAG,
                             (
                                 _symbol_runtime_name(runtime_name),
-                                overload_index,
+                                implementation_id,
                                 (
                                     tuple((tag.name, tag.depth) for tag in added_tags)
                                     if final
@@ -732,7 +785,7 @@ class _Compiler:
                                 if validator_runtime_name is None
                                 else _symbol_runtime_name(validator_runtime_name)
                             ),
-                            validator_index,
+                            validator_implementation_id,
                             tuple((tag.name, tag.depth) for tag in added_tags),
                             tuple((tag.name, tag.depth) for tag in removed_tags),
                         ),
@@ -743,12 +796,23 @@ class _Compiler:
                 pass
             case CastNode(typ, checked, optional):
                 if optional:
-                    self.emit(OpCode.TRY_CAST, (_cast_type_spec(typ), _runtime_tag_contract_spec(typ)))
+                    proof = (
+                        typed_node.structural_witnesses
+                        if isinstance(typed_node, TypedCastNode) else ()
+                    )
+                    self.emit(OpCode.TRY_CAST, (
+                        _cast_type_spec(typ), _runtime_tag_contract_spec(typ), proof,
+                    ))
                     return
                 if checked:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
                 contract_type = typed_node.typ if isinstance(typed_node, TypedNode) and typed_node.typ is not None else typ
                 self.emit(OpCode.CANONICALIZE_TAGS, _runtime_tag_contract_spec(contract_type))
+                if isinstance(typed_node, TypedCastNode) and typed_node.structural_witnesses:
+                    self.emit(
+                        OpCode.BIND_TRAIT_WITNESSES,
+                        typed_node.structural_witnesses,
+                    )
             case MinimumRankNode(rank):
                 self.emit(OpCode.SOURCE_ARGS, 1)
                 self.emit(OpCode.ENSURE_MIN_RANK, rank)
@@ -863,7 +927,20 @@ class _Compiler:
                     and typed_node.runtime_name is not None
                     else None
                 )
-                self.object_declaration(node, runtime_name=runtime_name)
+                self.object_declaration(
+                    node,
+                    runtime_name=runtime_name,
+                    method_results=(
+                        dict(typed_node.method_results)
+                        if isinstance(typed_node, TypedObjectNode)
+                        else None
+                    ),
+                    method_ids=(
+                        dict(typed_node.method_ids)
+                        if isinstance(typed_node, TypedObjectNode)
+                        else None
+                    ),
+                )
             case FieldAccessNode(name):
                 argument = (name.text, "optional") if node.optional_safe else name.text
                 self.emit(OpCode.GET_FIELD, argument)
@@ -998,6 +1075,8 @@ class _Compiler:
         node: ObjectNode,
         *,
         runtime_name: Symbol | None = None,
+        method_results: dict[str, tuple[str, ...]] | None = None,
+        method_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
     ) -> None:
         """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
@@ -1031,18 +1110,31 @@ class _Compiler:
                         initializers=constructors,
                     )
                 for definition in node.definitions:
-                    if definition not in constructors:
+                    if definition in constructors:
+                        continue
+                    records = dict((method_ids or {}).get(definition.name.text, ()))
+                    alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
+                    identities = tuple(identity for _shape, identity in alternatives)
+                    # Raw, dynamically compiled declarations have no analysed method metadata.
+                    for identity in identities or (None,):
                         self.friendly_definition(
-                            type_name,
-                            definition,
-                            variant_dispatch=(
-                                node.target is not None or definition.is_multi
-                            ),
+                            type_name, definition,
+                            result_signature_types=(method_results or {}).get(identity, ()),
+                            implementation_id=identity,
+                            owner_generics=tuple(generic.text for generic in node.generics),
+                            variant_dispatch=(node.target is not None or definition.is_multi),
                         )
             case "trait":
                 runtime_name = _symbol_runtime_name(node.name)
                 for definition in node.definitions:
-                    self.friendly_definition(runtime_name, definition)
+                    records = dict((method_ids or {}).get(definition.name.text, ()))
+                    alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
+                    for identity in tuple(identity for _shape, identity in alternatives) or (None,):
+                        self.friendly_definition(
+                            runtime_name, definition, implementation_id=identity,
+                            result_signature_types=(method_results or {}).get(identity, ()),
+                            owner_generics=tuple(generic.text for generic in node.generics),
+                        )
             case "variant":
                 required_names = {requirement.name for requirement in node.requirements}
                 for member in node.variants:
@@ -1065,11 +1157,15 @@ class _Compiler:
                         alias=member.name.text,
                     )
                     for definition in member.definitions:
-                        self.friendly_definition(
-                            runtime_name,
-                            definition,
-                            variant_dispatch=definition.name in required_names,
-                        )
+                        records = dict((method_ids or {}).get(definition.name.text, ()))
+                        alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
+                        for identity in tuple(identity for _shape, identity in alternatives) or (None,):
+                            self.friendly_definition(
+                                runtime_name, definition,
+                                variant_dispatch=definition.name in required_names,
+                                implementation_id=identity,
+                                result_signature_types=(method_results or {}).get(identity, ()),
+                            )
             case "enum":
                 enum_name = _symbol_runtime_name(node.name)
                 for member in node.enum_members:
@@ -1129,7 +1225,7 @@ class _Compiler:
             initializer_code = (
                 compiled_initializers[0]
                 if len(compiled_initializers) == 1
-                else FunctionSetCode(compiled_initializers)
+                else _link_function_set(compiled_initializers)
             )
         self.emit(
             OpCode.MAKE_OBJECT_CONSTRUCTOR,
@@ -1160,6 +1256,9 @@ class _Compiler:
         definition: DefineNode,
         *,
         variant_dispatch: bool = False,
+        owner_generics: tuple[str, ...] = (),
+        result_signature_types: tuple[str, ...] = (),
+        implementation_id: str | None = None,
     ) -> None:
         """Compile and store an object-friendly element implementation."""
         body = definition.function.body
@@ -1189,6 +1288,16 @@ class _Compiler:
             location=definition.location,
         )
         runtime_definition_name = _symbol_runtime_name(definition.name)
+        receiver = (
+            f"{owner}[{', '.join(owner_generics)}]" if owner_generics else owner
+        )
+        signature_types = (
+            receiver,
+            *(
+                show(param.typ) if param.typ is not None else "Any"
+                for param in definition.function.params or ()
+            ),
+        )
         if runtime_definition_name not in {
             item.name.text for item in BUILTIN_ELEMENTS
         }:
@@ -1198,6 +1307,10 @@ class _Compiler:
                     node,
                     runtime_definition_name,
                     multi=True,
+                    signature_types=signature_types,
+                    result_signature_types=result_signature_types,
+                    implementation_id=implementation_id,
+                    generic_type_parameters=tuple(generic.text for generic in definition.generics),
                     dispatch_types=(
                         (owner, *(None for _ in definition.function.params or ()))
                         if variant_dispatch
@@ -1208,7 +1321,14 @@ class _Compiler:
             self.emit(OpCode.STORE_VAR, runtime_definition_name)
         self.emit(
             OpCode.MAKE_FUNCTION,
-            _compile_function_value(node, f"{owner}::{runtime_definition_name}"),
+            _compile_function_value(
+                node,
+                f"{owner}::{runtime_definition_name}",
+                signature_types=signature_types,
+                result_signature_types=result_signature_types,
+                implementation_id=implementation_id,
+                generic_type_parameters=tuple(generic.text for generic in definition.generics),
+            ),
         )
         self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")
 
@@ -1304,7 +1424,7 @@ class _Compiler:
             OpCode.CALL_RESOLVED_ELEMENT,
             ResolvedElementReference(
                 "call",
-                0,
+                runtime_elements()["call"].definitions[0].signature.implementation_id,
                 vectorised=vectorised,
                 vectorised_depths=(*applied.vectorised_depths, 0),
                 vectorised_target_ranks=(
@@ -1314,7 +1434,9 @@ class _Compiler:
                 return_collection_ranks=tuple(
                     _runtime_collection_rank(ret) for ret in applied.actual_returns
                 ),
-                static_values=(typed_node.function_overload_index,),
+                static_values=(
+                    typed_node.function_implementation_id,
+                ),
                 arity_override=arity,
                 consumed_override=arity,
             ),
@@ -1691,12 +1813,33 @@ def _compile_object_initializer(name: str, definition: DefineNode) -> FunctionCo
     compiled = _compile_function_value(function, f"{name}.constructor")
     if not isinstance(compiled, FunctionCode):
         raise CompileError(f"constructor '{name}' compiled to an overload set")
-    return compiled
+    return replace(
+        compiled,
+        implementation_id=constructor_implementation_id(name, definition.location),
+    )
+
+
+def _link_function_set(
+    overloads: tuple[FunctionCode, ...],
+    branches: tuple[UnionDispatchBranch, ...] = (),
+) -> FunctionSetCode:
+    """Validate unique implementation identities and analysed branch links."""
+    identities = tuple(code.implementation_id for code in overloads)
+    if any(not identity for identity in identities) or len(set(identities)) != len(identities):
+        raise CompileError("function alternatives need unique implementation identities")
+    if any(branch.implementation_id not in identities for branch in branches):
+        raise CompileError("union branch references a missing implementation")
+    return FunctionSetCode(overloads, branches)
 
 
 def _compile_function_value(
     node: FunctionNode | TypedNode,
     name: str | None = None,
+    *,
+    signature_types: tuple[str, ...] = (),
+    result_signature_types: tuple[str, ...] = (),
+    generic_type_parameters: tuple[str, ...] = (),
+    implementation_id: str | None = None,
 ) -> FunctionCode | FunctionSetCode:
     """Compile function value during typed-AST bytecode lowering."""
     typed = node if isinstance(node, TypedFunctionNode) else None
@@ -1711,6 +1854,9 @@ def _compile_function_value(
                     node,
                     name,
                     accepts_stack_inputs=True,
+                    signature_types=signature_types,
+                    implementation_id=declared.implementation_id,
+                    structural_parameters=_structural_parameter_contracts(declared.params),
                 )
         overloads = tuple(
             _compile_function_overload(ast, overload, name)
@@ -1721,8 +1867,13 @@ def _compile_function_value(
         dispatch_plan = (
             () if typed.dispatch_plan is None else typed.dispatch_plan.branches
         )
-        return FunctionSetCode(overloads, dispatch_plan)
-    return _compile_function_node(node, name)
+        return _link_function_set(overloads, dispatch_plan)
+    return _compile_function_node(
+        node, name, signature_types=signature_types,
+        result_signature_types=result_signature_types,
+        generic_type_parameters=generic_type_parameters,
+        implementation_id=implementation_id,
+    )
 
 
 def _contains_self_read(value: object) -> bool:
@@ -1738,6 +1889,40 @@ def _contains_self_read(value: object) -> bool:
     return False
 
 
+def _structural_parameter_contracts(
+    params: tuple[Type, ...],
+) -> tuple[tuple[int, str, tuple[tuple[str, ...], tuple[str, ...]]], ...]:
+    """Lower analyser-checked implicit-receiver requirements for entry linking."""
+    result = []
+    for index, param in enumerate(params):
+        param = normalize(param)
+        if not isinstance(param, AnonymousTraitType):
+            continue
+        for requirement in param.requirements:
+            if not requirement.implicit_receiver:
+                continue
+            contract = (
+                tuple(show(item) for item in requirement.overload.params),
+                tuple(show(item) for item in requirement.overload.returns),
+            )
+            # Generic structural contracts may depend on a later call-site
+            # substitution. Leave them to the existing receiver linker.
+            if any(
+                isinstance(nested, VarType)
+                for item in (*requirement.overload.params, *requirement.overload.returns)
+                for nested in _nested_structural_types(item)
+            ):
+                continue
+            result.append((index, requirement.name.dotted(), contract))
+    return tuple(result)
+
+
+def _nested_structural_types(typ: Type) -> tuple[Type, ...]:
+    """Inspect a structural signature for unresolved type variables."""
+    from valiance.vtypes.structural import nested_types
+    return tuple(nested_types(typ))
+
+
 def _compile_function_node(
     node: FunctionNode | TypedNode,
     name: str | None = None,
@@ -1746,6 +1931,13 @@ def _compile_function_node(
     return_as_signal: bool = False,
     multi: bool = False,
     dispatch_types: tuple[str | None, ...] = (),
+    signature_types: tuple[str, ...] = (),
+    result_signature_types: tuple[str, ...] = (),
+    generic_type_parameters: tuple[str, ...] = (),
+    structural_parameters: tuple[
+        tuple[int, str, tuple[tuple[str, ...], tuple[str, ...]]], ...
+    ] = (),
+    implementation_id: str | None = None,
     accepts_stack_inputs: bool = False,
 ) -> FunctionCode:
     """Compile function node during typed-AST bytecode lowering."""
@@ -1783,6 +1975,16 @@ def _compile_function_node(
         recursive=_function_is_recursive(ast),
         multi=multi,
         dispatch_types=dispatch_types,
+        signature_types=signature_types,
+        result_signature_types=result_signature_types,
+        generic_type_parameters=generic_type_parameters,
+        structural_parameters=(
+            structural_parameters or _structural_parameter_contracts(
+                tuple(param.typ if param.typ is not None else NoneTypeNode()
+                      for param in ast.params)
+            ) if ast.params is not None else structural_parameters
+        ),
+        implementation_id=implementation_id,
         return_count=return_count,
     )
 
@@ -1916,7 +2118,7 @@ def _compile_function_overload(
         )
     returns = source.returns if source is not None else typ.returns
     return_ranks = tuple(_runtime_collection_rank(item) for item in returns or ())
-    return _Compiler().compile_function(
+    compiled = _Compiler().compile_function(
         overload.body,
         params=(*params, *static_params),
         name=name,
@@ -1930,6 +2132,14 @@ def _compile_function_overload(
         dispatch_types=tuple(
             _runtime_dispatch_type(item) for item in source.params
         ) if source is not None else (),
+        signature_types=(
+            tuple(show(item) for item in source.params)
+            if source is not None else ()
+        ),
+        implementation_id=source.implementation_id if source is not None else None,
+        structural_parameters=_structural_parameter_contracts(
+            source.params if source is not None else (typ.params or ())
+        ),
         return_count=len(returns or ()),
         return_tags=tuple(_runtime_tags_for_type(item) for item in returns or ()),
         return_tag_specs=tuple(
@@ -1943,6 +2153,10 @@ def _compile_function_overload(
             *(None for _ in static_params),
         ),
     )
+    if source is None or source.implementation_id is None:
+        return compiled
+    local_identity = overload_implementation_id(replace(source, implementation_id=None))
+    return _link_recursive_identity(compiled, local_identity, source.implementation_id)
 
 
 def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
@@ -1955,6 +2169,22 @@ def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
         param_names=param_names,
         clause=ast.where_clause,
     )
+
+
+def _link_recursive_identity(code: FunctionCode, local: str, declaration: str) -> FunctionCode:
+    """Retarget a named function's checked self calls, including control-flow blocks."""
+    def link(value):
+        """Preserve independent nested closures while linking outer self references."""
+        if isinstance(value, ResolvedElementReference) and value.name == "this" and value.implementation_id == local:
+            return replace(value, implementation_id=declaration)
+        if isinstance(value, FunctionCode) and not value.recursive:
+            return replace(value, instructions=tuple(link(item) for item in value.instructions))
+        if isinstance(value, Instruction):
+            return replace(value, arg=link(value.arg))
+        if isinstance(value, tuple):
+            return tuple(link(item) for item in value)
+        return value
+    return replace(code, instructions=tuple(link(item) for item in code.instructions))
 
 
 def _runtime_parameter_rank(typ: Type) -> int | None:
@@ -2073,6 +2303,26 @@ def _substitute_runtime_type_template(
         rendered = rendered.replace(f"${index}", arguments[index])
     return rendered
 
+
+
+def _runtime_projection_guards(node: ObjectNode) -> tuple[tuple[str, str], ...]:
+    """Retain the prerequisites of an object-to-trait implementation."""
+    return _runtime_generic_constraint_guards(
+        node.generics, node.generic_constraints,
+    )
+
+
+def _runtime_generic_constraint_guards(
+    generics: tuple[Symbol, ...],
+    constraints: tuple[Type | None, ...],
+) -> tuple[tuple[str, str], ...]:
+    """Encode generic bounds using the implementing constructor's parameters."""
+    indexes = {generic.text: index for index, generic in enumerate(generics)}
+    return tuple(
+        (f"${index}", _runtime_type_template(bound, indexes))
+        for index, bound in enumerate(constraints)
+        if bound is not None
+    )
 
 def _runtime_supertype_template(
     typ: Type,
@@ -2306,12 +2556,17 @@ def _resolved_element_reference(
     """Compute resolved element reference during typed-AST bytecode lowering."""
     if not isinstance(node, TypedElementNode):
         return None
-    if node.overload_index is None:
+    if node.overload is None:
         return None
     ast = node.node
     if not isinstance(ast, ElementNode):
         return None
     source_runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
+    if node.implementation_id is None and (
+        not node.overload.overload.is_structural_requirement
+        or source_runtime_name in runtime_elements()
+    ):
+        return None
     runtime_name = _symbol_runtime_name(
         node.runtime_name if node.runtime_name is not None else ast.name
     ).removeprefix("*::")
@@ -2327,43 +2582,30 @@ def _resolved_element_reference(
     )
     elements = runtime_elements()
     element = elements.get(source_runtime_name)
-    runtime_builtin_present = element is not None
+    definition = None
     if element is not None:
-        if not 0 <= node.overload_index < len(element.definitions):
-            return None
-        definition = element.definitions[node.overload_index]
-        if definition.implementation is None:
-            raise CompileError(
-                f"cannot compile static-only overload {node.overload_index} "
-                f"of built-in element '{source_runtime_name}'"
-            )
-        if (
-            node.overload is not None
-            and node.overload.overload != definition.signature
-            and node.overload.overload.call_site_body is None
-            and not type_args
-        ):
-            # User conversion definitions intentionally shadow the
-            # compiler-owned conversion catalogue under the reserved `to`
-            # name. Preserve that selected user slot; unrelated built-in
-            # shadows retain the established dynamic-call fallback.
-            if source_runtime_name != "to":
-                return None
+        matches = tuple(item for item in element.definitions
+                        if item.signature.implementation_id == node.implementation_id)
+        if matches:
+            if len(matches) != 1:
+                raise CompileError("intrinsic implementation identity is ambiguous")
+            definition = matches[0]
+            if definition.implementation is None:
+                raise CompileError(f"cannot compile static-only intrinsic {node.implementation_id!r}")
+        else:
+            # The analyser selected a user declaration with the same source name.
             element = None
-    if (
-        not runtime_builtin_present
-        and Symbol(source_runtime_name) in {item.name for item in BUILTIN_ELEMENTS}
-        and not type_args
-    ):
-        return None
     vectorised = bool(node.overload is not None and node.overload.vectorised)
     if (
         ast.name.text == "call"
         and not ast.name.namespace
-        and node.call_overload_index is not None
+        and (
+            not node.overload.runtime_static_values
+            or node.overload.runtime_static_values[0] == "__call_static__"
+        )
     ):
         static_values = (
-            node.call_overload_index,
+            node.call_implementation_id,
             *(node.overload.runtime_static_values if node.overload is not None else ()),
         )
     elif node.overload is not None and node.overload.runtime_static_values:
@@ -2410,7 +2652,7 @@ def _resolved_element_reference(
     consumed_override = None
     if node.overload is not None:
         declared_arity = (
-            len(element.definitions[node.overload_index].signature.params)
+            len(definition.signature.params)
             if element is not None
             else len(node.overload.overload.params)
         )
@@ -2425,7 +2667,7 @@ def _resolved_element_reference(
             consumed_override = runtime_consumed + hidden_count
     return ResolvedElementReference(
         runtime_name,
-        node.overload_index,
+        node.implementation_id,
         vectorised=vectorised,
         vectorised_depths=vectorised_depths,
         vectorised_target_ranks=vectorised_target_ranks,
@@ -2436,9 +2678,27 @@ def _resolved_element_reference(
         static_values=static_values,
         arity_override=arity_override,
         consumed_override=consumed_override,
-        multidispatch=multidispatch,
+        dispatch_kind=(
+            (DispatchKind.TRAIT_WITNESS if (
+                node.overload is not None
+                and node.overload.overload.is_structural_requirement
+            ) else DispatchKind.STATIC)
+            | (DispatchKind.UNION if union_dispatch_plan else DispatchKind.STATIC)
+            | (DispatchKind.MULTIMETHOD if multidispatch else DispatchKind.STATIC)
+        ),
         union_dispatch_plan=union_dispatch_plan,
         extension=_compiled_element_extension(node.extension),
+        structural_witnesses=node.structural_witnesses,
+        callable_witnesses=node.callable_witnesses,
+        structural_signature=(
+            (
+                tuple(show(param) for param in node.overload.params[1:]),
+                tuple(show(ret) for ret in node.overload.actual_returns),
+            )
+            if node.overload is not None
+            and node.overload.overload.is_structural_requirement
+            else None
+        ),
     )
 
 
@@ -2715,6 +2975,8 @@ def _runtime_tag_contract_spec(typ: Type) -> object:
         return ("any",)
     if isinstance(typ, FFINamedType):
         return ("ffi", show(typ))
+    if isinstance(typ, AnonymousTraitType):
+        return ("any",)
     if isinstance(typ, NominalType):
         return ("nominal", typ.name.text)
     if isinstance(typ, UnionType):
@@ -2762,6 +3024,16 @@ def _cast_type_spec(typ: Type) -> object:
         )
     if isinstance(typ, FFINamedType):
         return ("ffi", show(typ))
+    if isinstance(typ, AnonymousTraitType):
+        # Runtime may check an already evidenced trait view, but must never
+        # rediscover a method by examining the live receiver's overloads.
+        requirements = tuple(
+            (item.name.dotted(),
+             (tuple(show(t) for t in item.overload.params),
+              tuple(show(t) for t in item.overload.returns)))
+            for item in typ.requirements if item.implicit_receiver
+        )
+        return ("structural", requirements)
     if isinstance(typ, NominalType):
         return (
             "nominal",

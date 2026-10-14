@@ -755,7 +755,7 @@ define \\f<Read, Write> => 1
 
         self.assertEqual([node.typ for node in typed], [Int, Int, Number])
         self.assertIsInstance(typed[-1], TypedElementNode)
-        self.assertEqual(typed[-1].overload_index, 0)
+        self.assertIsInstance(typed[-1].implementation_id, str)
         self.assertEqual(
             typed[-1].overload.overload,
             Overload((Number, Number), (Number,)),
@@ -1088,7 +1088,7 @@ choose[Number, _](1, "value")
         typed = branch.typed_body
         self.assertIsInstance(typed[-1], TypedElementNode)
         self.assertEqual(typed[-1].typ, Number)
-        self.assertEqual(typed[-1].overload_index, 0)
+        self.assertIsInstance(typed[-1].implementation_id, str)
 
     def test_non_inference_element_rejects_ambiguous_overload(self):
         env = Environment()
@@ -2657,6 +2657,20 @@ keep
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertNotIn("help: `fold` requires", analyser.diagnostics[0])
 
+    def test_implicit_receiver_trait_rejects_wrong_specialization(self):
+        analyser = Analyser(Environment())
+        analyser.analyse(parse(r"""
+object[T] \MyGraph =>
+  define addVertex(v: T) => "true"
+end
+define fail(graph: trait => extend addVertex(Int) -> String end) =>
+  $graph addVertex 1
+end
+fail \MyGraph[String]
+"""))
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'fail'", analyser.diagnostics[0])
+
     def test_anonymous_trait_collection_parameter_solves_item_type(self):
         analyser = Analyser()
 
@@ -3235,7 +3249,7 @@ define id_rank(xs: Number+$n) -> Number+$n => $xs
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, C(ListExactType, Number, 2))
-        self.assertEqual(typed[-1].overload.runtime_static_values[0], 0)
+        self.assertIsNone(typed[-1].overload.runtime_static_values[0])
         self.assertEqual(
             typed[-1].overload.runtime_static_values[-1],
             NumberRuntime("2"),
@@ -5028,7 +5042,7 @@ end
 
         self.assertEqual(branch.stack, TypeStack((Tagged(Number, "sorted"),)))
         self.assertIsInstance(branch.typed_body[-1], TypedElementNode)
-        self.assertIsNotNone(branch.typed_body[-1].overload_index)
+        self.assertIsNotNone(branch.typed_body[-1].implementation_id)
 
     def test_static_true_tag_validator_is_eliminated_at_application(self):
         analyser = Analyser()
@@ -5043,7 +5057,7 @@ define #checked(:Number) -> #boolean Number => true end
 
         self.assertEqual(branch.stack, TypeStack((Tagged(Int, "checked"),)))
         self.assertIsInstance(branch.typed_body[-1], TypedTagApplicationNode)
-        self.assertIsNone(branch.typed_body[-1].validator_index)
+        self.assertIsNone(branch.typed_body[-1].validator_implementation_id)
 
     def test_static_false_tag_validator_is_rejected_at_application(self):
         analyser = Analyser()

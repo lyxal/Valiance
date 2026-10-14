@@ -434,6 +434,7 @@ def normalize(t: Type) -> Type:
                         requirement.overload.is_multi,
                         requirement.overload.runtime_static_values,
                     ),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in t.requirements
             ),
@@ -727,6 +728,7 @@ def _alpha_canonicalize(
                     depth + 1,
                     index,
                 ),
+                implicit_receiver=requirement.implicit_receiver,
             )
             for index, requirement in enumerate(t.requirements)
         )
@@ -755,12 +757,12 @@ def _alpha_canonicalize_overload(
     overload: Overload,
     scope: dict[str, str],
     depth: int,
-    overload_index: int,
+    binder_namespace: int,
 ) -> Overload:
     """Canonicalize one overload while respecting its local generic bounds."""
     local = dict(scope)
     for index, constraint in enumerate(overload.generic_constraints):
-        local[constraint.name] = f"\x00overload:{depth}:{overload_index}:{index}"
+        local[constraint.name] = f"\x00overload:{depth}:{binder_namespace}:{index}"
     constraints = tuple(
         type(constraint)(
             local[constraint.name],
@@ -952,8 +954,13 @@ def _show_anonymous_trait_requirement(
     overload_bound = bound | frozenset(
         constraint.name for constraint in requirement.overload.generic_constraints
     )
+    # Type-only requirements explicitly spell stack operands with a leading
+    # colon. Without it, the parser interprets the first argument as the
+    # implicit receiver of an object-friendly method.
+    is_explicit = not requirement.implicit_receiver
     params = ", ".join(
-        _show(param, type_variable_name, overload_bound)
+        (":" if is_explicit else "")
+        + _show(param, type_variable_name, overload_bound)
         for param in requirement.overload.params
     )
     returns = ", ".join(

@@ -63,7 +63,7 @@ class ConcurrencyBytecodeTests(unittest.TestCase):
                 OpCode.MAKE_CLOSED_FUNCTION,
                 FunctionCode((Instruction(OpCode.RETURN),), name="<concurrent>"),
             ),
-            Instruction(OpCode.SPAWN_CALL, (0, 1, 0)),
+            Instruction(OpCode.SPAWN_CALL, (0, 1, None, (), False, (), (), (), None)),
             Instruction(OpCode.WAIT_TASK, 1),
             Instruction(OpCode.WAIT_TASKS_VECTORISED, 1),
             Instruction(OpCode.CHANNEL_NEW, False),

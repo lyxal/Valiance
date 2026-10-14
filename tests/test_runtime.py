@@ -1,6 +1,8 @@
+from valiance.elements.builtins import runtime_elements
 import contextlib
 import io
 import unittest
+from dataclasses import replace, fields, is_dataclass
 from unittest.mock import patch
 from builtins import RuntimeError as PythonRuntimeError
 from itertools import count, islice
@@ -22,6 +24,7 @@ from valiance.runtime import (
 )
 from valiance.runtime.bytecode import (
     FunctionCode,
+    DispatchKind,
     FunctionSetCode,
     Instruction,
     OpCode,
@@ -29,7 +32,9 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
 )
 from valiance.runtime.vm import (
+    BuiltinValue,
     FunctionValue,
+    OverloadedFunctionValue,
     PanicSignal,
     _bind_global_function_declaration,
     _borrow_destructor_receiver,
@@ -54,6 +59,19 @@ from valiance.runtime.runtime_values import (
     RecordValue,
     format_runtime_value,
 )
+
+
+def _reorder_implementations(value):
+    """Perturb bytecode storage order while preserving all checked call plans."""
+    if isinstance(value, tuple):
+        return tuple(_reorder_implementations(item) for item in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        updates = {item.name: _reorder_implementations(getattr(value, item.name))
+                   for item in fields(value) if item.init}
+        if isinstance(value, FunctionSetCode):
+            updates["overloads"] = tuple(reversed(updates["overloads"]))
+        return replace(value, **updates)
+    return value
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -1508,6 +1526,1109 @@ end
 """),
             ["Buzz"],
         )
+
+    def test_anonymous_trait_method_uses_implicit_receiver(self):
+        source = r"""
+object[T] \MyGraph =>
+  define addVertex(v: T) => "true"
+end
+
+define fail(
+  graph: trait =>
+    extend addVertex(Int) -> String
+  end
+) => $graph addVertex 1
+
+fail \MyGraph[Int]
+"""
+        self.assertEqual(execute(source), ["true"])
+
+    def test_anonymous_trait_niladic_method_uses_implicit_receiver(self):
+        self.assertEqual(execute("""
+object Foo =>
+  define area => 7
+end
+define use(value: trait => extend area -> Int end) => $value area
+Foo
+use
+"""), [RuntimeNumber("7")])
+
+    def test_anonymous_trait_method_overload_order_is_not_runtime_index(self):
+        for first, second in (
+            ("define addVertex(v: String) => $v + \"!\"", "define addVertex(v: T) => \"true\""),
+            ("define addVertex(v: T) => \"true\"", "define addVertex(v: String) => $v + \"!\""),
+        ):
+            source = rf"""
+object[T] \MyGraph =>
+  {first}
+  {second}
+end
+define fail(graph: trait => extend addVertex(Int) -> String end) =>
+  $graph addVertex 1
+end
+fail \MyGraph[Int]
+"""
+            with self.subTest(first=first):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    program = compile_program(typed, optimize=optimize)
+                    with self.subTest(optimize=optimize):
+                        self.assertEqual(run(program), ["true"])
+                        self.assertEqual(run(loads(dumps(program))), ["true"])
+
+    def test_postfix_to_string_operates_on_the_integer_not_the_trait_argument(self):
+        # `$g 1 toString` applies the built-in to 1. The preceding trait-typed
+        # `$g` is not the receiver of this unary operation.
+        source = """object Box =>
+  define toString(v: Int) => "custom"
+end
+define through(g: trait => extend toString(Int) -> String end) =>
+  $g 1 toString
+end
+through Box"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), ["1"])
+            self.assertEqual(run(loads(dumps(program))), ["1"])
+
+    def test_structural_witness_preserves_nominal_contravariance_and_covariance(self):
+        sources = (
+            (
+                """trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+object Manager =>
+  define service(v: Vehicle) => "ok"
+  define service(v: Int) => "other"
+end
+define through(m: trait => extend service(Car) -> String end) =>
+  $c = Car
+  $m $c service
+end
+through Manager""",
+                "ok",
+            ),
+            (
+                """trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+object Maker =>
+  define make(v: Vehicle) => Car
+  define make(v: Int) => 10
+end
+define through(m: trait => extend make(Car) -> Vehicle end) =>
+  $c = Car
+  $m $c make
+end
+through Maker""",
+                "Car",
+            ),
+        )
+        for source, expected in sources:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for artifact in (program, loads(dumps(program))):
+                    with self.subTest(expected=expected, optimize=optimize):
+                        [result] = run(artifact)
+                        if expected == "Car":
+                            self.assertIsInstance(result, ObjectValue)
+                            self.assertEqual(result.type_name, expected)
+                        else:
+                            self.assertEqual(result, expected)
+
+    def test_structural_witness_uses_imported_nominal_implementation_evidence(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "models.vlnc").write_text(
+                "public trait Vehicle => end\n"
+                "public object Car => end\n"
+                "public object Car as Vehicle => end\n",
+                encoding="utf-8",
+            )
+            (root / "services.vlnc").write_text(
+                "import { models.Vehicle }\n"
+                "public object Manager =>\n"
+                '  public define service(v: Vehicle) => "ok"\n'
+                '  public define service(v: Int) => "other"\n'
+                "end\n",
+                encoding="utf-8",
+            )
+            source = """import {models.Vehicle, models.Car, services.Manager}
+define through(m: trait => extend service(Car) -> String end) =>
+  $c = Car
+  $m $c service
+end
+through Manager"""
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                with self.subTest(optimize=optimize):
+                    self.assertEqual(run(program), ["ok"])
+                    self.assertEqual(run(loads(dumps(program))), ["ok"])
+
+    def test_structural_witness_projects_generic_supertypes(self):
+        # The structural contract was already proved by analysis. The runtime
+        # witness must use the compiled generic projection, not only names.
+        sources = (
+            ("""trait[T] Holder => end
+object[T] Box => $value: T end
+object[T] Box as Holder[T] => end
+object Manager =>
+  define service(v: Holder[Int]) => "projected"
+  define service(v: String) => "other"
+end
+define through(m: trait => extend service(v: Box[Int]) -> String end) =>
+  $m Box[Int](1) service
+end
+through Manager""", "projected"),
+            ("""trait[T] Root => end
+trait[T] Middle => end
+trait[T] Middle as Root[T] => end
+object[T] Box => $value: T end
+object[T] Box as Middle[T] => end
+object Manager =>
+  define service(v: Root[Int]) => "transitive"
+  define service(v: String) => "other"
+end
+define through(m: trait => extend service(v: Box[Int]) -> String end) =>
+  $m Box[Int](1) service
+end
+through Manager""", "transitive"),
+            ("""trait[T, U] Pair => end
+object[T, U] Box =>
+  $a: T
+  $b: U
+end
+object[T, U] Box as Pair[U, T] => end
+object Manager =>
+  define service(v: Pair[String, Int]) => "swapped"
+  define service(v: String) => "other"
+end
+define through(m: trait => extend service(v: Box[Int, String]) -> String end) =>
+  $m Box[Int, String](1, "x") service
+end
+through Manager""", "swapped"),
+        )
+        for source, expected in sources:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                with self.subTest(expected=expected, optimize=optimize):
+                    self.assertEqual(run(program), [expected])
+                    self.assertEqual(run(loads(dumps(program))), [expected])
+
+    def test_structural_witness_rejects_wrong_generic_projection(self):
+        source = """trait[T] Holder => end
+object[T] Box => $value: T end
+object[T] Box as Holder[T] => end
+object Manager =>
+  define service(v: Holder[String]) => "wrong"
+end
+define through(m: trait => extend service(v: Box[Int]) -> String end) =>
+  $m Box[Int](1) service
+end
+through Manager"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(analyser.diagnostics)
+        self.assertIn("no overloads for element 'through'", analyser.diagnostics[-1])
+
+    def test_structural_witness_projects_imported_generic_supertypes(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "models.vlnc").write_text(
+                "public trait[T] Holder => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T] Box as Holder[T] => end\n",
+                encoding="utf-8",
+            )
+            (root / "service.vlnc").write_text(
+                "import {models.Holder}\n"
+                "public object Manager =>\n"
+                '  public define service(v: Holder[Int]) => "imported"\n'
+                '  public define service(v: String) => "other"\n'
+                "end\n",
+                encoding="utf-8",
+            )
+            source = """import {models.Box, models.Holder, service.Manager}
+define through(m: trait => extend service(v: Box[Int]) -> String end) =>
+  $m Box[Int](1) service
+end
+through Manager"""
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                with self.subTest(optimize=optimize):
+                    self.assertEqual(run(program), ["imported"])
+                    self.assertEqual(run(loads(dumps(program))), ["imported"])
+
+    def test_structural_signature_subtyping_is_directional(self):
+        from valiance.runtime.vm import (
+            _parse_runtime_type_pattern, _structural_declared_subtype,
+        )
+
+        facts = (
+            ("Car", ("Car", "Vehicle"), ()),
+            ("Vehicle", ("Vehicle",), ()),
+        )
+        def accepts(source, target):
+            return _structural_declared_subtype(
+                _parse_runtime_type_pattern(source, facts),
+                _parse_runtime_type_pattern(target, facts),
+                type_facts=facts,
+            )
+        self.assertTrue(accepts("Car", "Vehicle"))
+        self.assertFalse(accepts("Vehicle", "Car"))
+        self.assertTrue(accepts("Int", "Number"))
+        self.assertTrue(accepts("Int", "Real"))
+        self.assertFalse(accepts("Number", "Int"))
+        self.assertFalse(accepts("Real", "Int"))
+
+    def test_structural_dispatch_uses_required_contract_not_runtime_argument_type(self):
+        # A runtime overload search would return 99 (Int), violating the
+        # analyser's statically inferred String result.
+        for first, second in (
+            ('define foo(v: Number) => "number"', 'define foo(v: Int) => 99'),
+            ('define foo(v: Int) => 99', 'define foo(v: Number) => "number"'),
+        ):
+            source = f"""
+object Foo =>
+  {first}
+  {second}
+end
+
+define through(g: trait => extend foo(Number) -> String end) =>
+  $g 1 foo
+end
+through Foo
+"""
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertEqual(str(typed[-1].typ), 'String')
+            for optimize in (False, True):
+                with self.subTest(first=first, optimize=optimize):
+                    bytecode = compile_program(typed, optimize=optimize)
+                    self.assertEqual(run(bytecode), ['number'])
+                    self.assertEqual(run(loads(dumps(bytecode))), ['number'])
+
+    def test_static_and_witness_dispatch_are_separate_analysed_decisions(self):
+        source = """
+object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Int) => 99
+end
+define through(g: trait => extend foo(Number) -> String end) => $g 1 foo
+$f = Foo
+$f 1 foo
+through Foo
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        refs = []
+        def gather(code):
+            for instr in code.instructions:
+                if isinstance(instr.arg, ResolvedElementReference) and instr.arg.name == 'foo':
+                    refs.append(instr.arg)
+                if isinstance(instr.arg, FunctionCode):
+                    gather(instr.arg)
+        gather(program.main)
+        self.assertEqual(
+            {ref.dispatch_kind for ref in refs},
+            {DispatchKind.STATIC, DispatchKind.TRAIT_WITNESS},
+        )
+        self.assertTrue(all(ref.structural_signature is None for ref in refs if ref.dispatch_kind is DispatchKind.STATIC))
+        self.assertEqual(run(program), [RuntimeNumber('99'), 'number'])
+
+    def test_builtin_call_uses_intrinsic_identity_not_registry_position(self):
+        source = "1 2 +"
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        refs = [
+            instruction.arg for instruction in program.main.instructions
+            if isinstance(instruction.arg, ResolvedElementReference)
+            and instruction.arg.name == "+"
+        ]
+        self.assertEqual(len(refs), 1)
+        reference = refs[0]
+        self.assertTrue(reference.implementation_id.startswith("intrinsic:"))
+        self.assertFalse(hasattr(reference, "overload_index"))
+        corrupted = reference
+        program = replace(
+            program, main=replace(
+                program.main,
+                instructions=tuple(
+                    replace(instruction, arg=corrupted)
+                    if instruction.arg is reference else instruction
+                    for instruction in program.main.instructions
+                ),
+            ),
+        )
+        for bytecode in (program, loads(dumps(program))):
+            with VirtualMachine() as vm:
+                builtin = vm.globals["+"]
+                vm.globals["+"] = BuiltinValue(
+                    replace(builtin.element, definitions=tuple(reversed(builtin.element.definitions))),
+                    builtin.context,
+                )
+                self.assertEqual(vm.run(bytecode), [RuntimeNumber("3")])
+
+    def test_validator_and_spawn_plans_survive_reordered_tables(self):
+        sources = (
+            'tag #checked as computed\n'
+            'define #checked(value: Number) -> #boolean Number => $value > 0\n'
+            'define #checked(value: String) -> #boolean Number => $value == "ok"\n'
+            '1 #checked',
+            '1 spawn: fn => 2 * end | wait',
+            'define choose(value: Number) -> String => "number"\n'
+            'define choose(value: String) -> String => "string"\n'
+            '1 call: choose',
+        )
+        for source in sources:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                with self.subTest(source=source, optimize=optimize):
+                    program = compile_program(typed, optimize=optimize)
+                    expected = run(program)
+                    reordered = _reorder_implementations(program)
+                    self.assertEqual(run(reordered), expected)
+                    self.assertEqual(run(loads(dumps(reordered))), expected)
+
+    def test_abstract_callable_uses_approved_union_identities(self):
+        from valiance.vtypes import RuntimeTypePattern, UnionDispatchBranch
+        integer = FunctionValue(FunctionCode(
+            (Instruction(OpCode.PUSH_CONST, "integer"), Instruction(OpCode.RETURN)),
+            params=("value",), implementation_id="test:integer", return_count=1,
+            param_collection_ranks=(0,),
+        ), {})
+        string = FunctionValue(replace(integer.code,
+            instructions=(Instruction(OpCode.PUSH_CONST, "string"), Instruction(OpCode.RETURN)),
+            implementation_id="test:string",
+        ), {})
+        plan = (
+            UnionDispatchBranch((RuntimeTypePattern("nominal", name="Int"),), "test:integer"),
+            UnionDispatchBranch((RuntimeTypePattern("nominal", name="String"),), "test:string"),
+        )
+        with VirtualMachine() as vm:
+            for order in ((integer, string), (string, integer)):
+                value = OverloadedFunctionValue(order, plan)
+                self.assertEqual(vm.call_value_overload(value, [RuntimeNumber(1)], None), ["integer"])
+                self.assertEqual(vm.call_value_overload(value, ["a"], None), ["string"])
+                result = vm.call_value_overload(value, [ListValue((RuntimeNumber(1), "a"))], None, vectorised=True)
+                self.assertEqual(list(result[0]), ["integer", "string"])
+                task = vm.scheduler.root_scope.spawn(lambda: vm._task_call_runner(value, (RuntimeNumber(1),), None))
+                self.assertEqual(vm.scheduler.wait(task), ("integer",))
+
+    def test_positional_callable_selectors_are_rejected(self):
+        function = FunctionValue(FunctionCode(
+            (Instruction(OpCode.PUSH_CONST, "effect"), Instruction(OpCode.RETURN)),
+            implementation_id="test:function", return_count=1,
+        ), {})
+        with VirtualMachine() as vm:
+            for selector in (0, -1, "", "missing"):
+                with self.subTest(selector=selector):
+                    with self.assertRaises(RuntimeError):
+                        vm.call_value_overload(function, [], selector)
+            duplicate = OverloadedFunctionValue((function, function))
+            with self.assertRaises(RuntimeError):
+                vm.call_value_overload(duplicate, [], "test:function")
+
+    def test_dynamic_callable_dispatch_rejects_table_order_ambiguity(self):
+        function = FunctionValue(FunctionCode(
+            (Instruction(OpCode.PUSH_CONST, "effect"), Instruction(OpCode.RETURN)),
+            params=("value",), dispatch_types=("Int",),
+            implementation_id="test:function", return_count=1,
+        ), {})
+        other = FunctionValue(replace(function.code, implementation_id="test:other"), {})
+        with VirtualMachine() as vm:
+            for order in ((function, other), (other, function)):
+                with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                    vm.call_value(OverloadedFunctionValue(order), [RuntimeNumber(1)])
+
+    def test_higher_order_call_uses_identity_not_callable_position(self):
+        """The selected first-class overload is stable under body reordering."""
+        wrong = FunctionValue(
+            FunctionCode(
+                (Instruction(OpCode.PUSH_CONST, "wrong"), Instruction(OpCode.RETURN)),
+                name="wrong", implementation_id="synthetic:wrong", return_count=1,
+            ),
+            {},
+        )
+        right = FunctionValue(
+            FunctionCode(
+                (Instruction(OpCode.PUSH_CONST, "right"), Instruction(OpCode.RETURN)),
+                name="right", implementation_id="synthetic:right", return_count=1,
+            ),
+            {},
+        )
+        with VirtualMachine() as vm:
+            for order in ((wrong, right), (right, wrong)):
+                with self.subTest(order=order):
+                    value = OverloadedFunctionValue(order)
+                    self.assertEqual(
+                        vm.call_value_overload(value, [], "synthetic:right"),
+                        ["right"],
+                    )
+                    with self.assertRaisesRegex(RuntimeError, "cannot be linked"):
+                        vm.call_value_overload(value, [], "synthetic:missing")
+
+    def test_commutative_generated_overload_has_stable_identity(self):
+        source = """
+@commutative define choose(left: Number, right: String) -> String => $right
+"ok" 1 choose
+"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        reference = next(
+            instruction.arg for instruction in program.main.instructions
+            if isinstance(instruction.arg, ResolvedElementReference)
+            and instruction.arg.name == "choose"
+        )
+        self.assertIsNotNone(reference.implementation_id)
+        self.assertEqual(run(program), ["ok"])
+        self.assertEqual(run(loads(dumps(program))), ["ok"])
+
+    def test_constructor_call_uses_initializer_identity_not_slot(self):
+        source = """
+object Value =>
+  $number: Number = 0
+  $text: String = ""
+  define Value(value: Number) => $self.number = $value
+  define Value(value: String) => $self.text = $value
+end
+Value(1) $.number
+"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        reference = next(
+            instruction.arg for instruction in program.main.instructions
+            if isinstance(instruction.arg, ResolvedElementReference)
+            and instruction.arg.name == "Value"
+        )
+        self.assertTrue(reference.implementation_id.startswith("constructor:"))
+        self.assertFalse(hasattr(reference, "overload_index"))
+        corrupted = reference
+        program = replace(
+            program, main=replace(
+                program.main,
+                instructions=tuple(
+                    replace(instruction, arg=corrupted)
+                    if instruction.arg is reference else instruction
+                    for instruction in program.main.instructions
+                ),
+            ),
+        )
+        program = _reorder_implementations(program)
+        self.assertEqual(run(program), [RuntimeNumber("1")])
+        self.assertEqual(run(loads(dumps(program))), [RuntimeNumber("1")])
+
+    def test_union_dispatch_uses_linked_ids_after_reordering_bodies(self):
+        source = """
+define widen(n: Number) -> Number => $n
+define choose(n: Number) -> String => "number"
+define choose(n: Int) -> String => "integer"
+define choose(s: String) -> String => "string"
+[1 | widen, "A"] map: choose
+"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        function_set = next(
+            instruction.arg for instruction in program.main.instructions
+            if isinstance(instruction.arg, FunctionSetCode)
+            and instruction.arg.dispatch_plan
+        )
+        self.assertTrue(all(branch.implementation_id for branch in function_set.dispatch_plan))
+        swapped = replace(
+            function_set,
+            overloads=tuple(reversed(function_set.overloads)),
+            dispatch_plan=function_set.dispatch_plan,
+        )
+        program = replace(
+            program, main=replace(
+                program.main,
+                instructions=tuple(
+                    replace(instruction, arg=swapped)
+                    if instruction.arg is function_set else instruction
+                    for instruction in program.main.instructions
+                ),
+            ),
+        )
+        self.assertEqual(list(run(program)[0]), ["number", "string"])
+        self.assertEqual(list(run(loads(dumps(program)))[0]), ["number", "string"])
+
+    def test_analysed_structural_witness_preserves_static_overload_selection(self):
+        # Int matches both Number and Real; ordinary analysis selects Number.
+        # Reordering implementations must not make the VM pick Real instead.
+        for declarations in (
+            ('define foo(v: Number) => "number"', 'define foo(v: Real) => "real"'),
+            ('define foo(v: Real) => "real"', 'define foo(v: Number) => "number"'),
+        ):
+            source = ("object Foo =>\n" + "\n".join(declarations) + "\nend\n"
+                      "define through(g: trait => extend foo(Int) -> String end) "
+                      "=> $g 1 foo\nthrough Foo")
+            with self.subTest(declarations=declarations):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    program = compile_program(typed, optimize=optimize)
+                    call = next(
+                        instr.arg for instr in program.main.instructions
+                        if isinstance(instr.arg, ResolvedElementReference)
+                        and instr.arg.name == "through"
+                    )
+                    self.assertEqual(len(call.structural_witnesses), 1)
+                    index, arity, name, contract, implementation = call.structural_witnesses[0]
+                    self.assertEqual((index, arity, name, contract),
+                                     (0, 1, "foo", (("Int",), ("String",))))
+                    self.assertTrue(implementation)
+                    self.assertEqual(run(program), ["number"])
+                    self.assertEqual(run(loads(dumps(program))), ["number"])
+
+    def test_checked_trait_witness_follows_forwarded_and_returned_values(self):
+        # The receiver passes through an abstract trait-typed parameter, and
+        # may be returned and passed to yet another function.  Neither call
+        # should select Real from runtime argument 1 or declaration order.
+        for definitions in (
+            ('define foo(v: Number) => "number"', 'define foo(v: Real) => "real"'),
+            ('define foo(v: Real) => "real"', 'define foo(v: Number) => "number"'),
+        ):
+            prefix = ("object Foo =>\n" + "\n".join(definitions) + "\nend\n")
+            prefix += "define through(g: trait => extend foo(Int) -> String end) => $g 1 foo\n"
+            cases = (
+                "define forward(g: trait => extend foo(Int) -> String end) => through $g\nforward Foo",
+                "define forward(g: trait => extend foo(Int) -> String end) => $g\nthrough forward Foo",
+            )
+            for case in cases:
+                source = prefix + case
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    program = compile_program(typed, optimize=optimize)
+                    with self.subTest(definitions=definitions, case=case, optimize=optimize):
+                        self.assertEqual(run(program), ["number"])
+                        self.assertEqual(run(loads(dumps(program))), ["number"])
+
+    def test_cast_to_anonymous_trait_carries_checked_witness(self):
+        # A cast followed by variable storage previously used the VM's Real
+        # overload, despite the analyser selecting the Number implementation.
+        from valiance.runtime.bytecode import OpCode
+        for declarations in (
+            ('define foo(v: Number) => "number"', 'define foo(v: Real) => "real"'),
+            ('define foo(v: Real) => "real"', 'define foo(v: Number) => "number"'),
+        ):
+            source = ("object Foo =>\n" + "\n".join(declarations) + "\nend\n"
+                      "define through(g: trait => extend foo(Int) -> String end) => $g 1 foo\n"
+                      "$g = Foo as[trait => extend foo(Int) -> String end]\n"
+                      "through $g")
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                with self.subTest(declarations=declarations, optimize=optimize):
+                    binds = [instruction for instruction in program.main.instructions
+                             if instruction.op is OpCode.BIND_TRAIT_WITNESSES]
+                    self.assertEqual(len(binds), 1)
+                    self.assertTrue(binds[0].arg[0][2])
+                    self.assertEqual(run(program), ["number"])
+                    self.assertEqual(run(loads(dumps(program))), ["number"])
+
+    def test_imported_guarded_generic_supertypes_remain_conditional(self):
+        from valiance.runtime.vm import _runtime_generic_supertype
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            (path / "models.vlnc").write_text(
+                "public trait[T] Holder => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T: Number] Box as Holder[T] => end\n",
+                encoding="utf-8",
+            )
+            for parameter, argument, expected in (
+                ("Int", "1", ("Int",)),
+                ("String", '"bad"', None),
+            ):
+                source = ("import {models.Box, models.Holder}\n"
+                          f"Box[{parameter}]({argument})")
+                analyser = Analyser(source_file=path / "main.vlnc")
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    program = compile_program(typed, optimize=optimize)
+                    for candidate in (program, loads(dumps(program))):
+                        box, = run(candidate)
+                        with self.subTest(parameter=parameter, optimize=optimize):
+                            self.assertEqual(
+                                _runtime_generic_supertype(box, "Holder"), expected
+                            )
+
+    def test_annotated_trait_variable_and_function_result_bind_witnesses(self):
+        trait = "trait => extend foo(Int) -> String end"
+        prefix = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+"""
+        call = f"define through(g: {trait}) => $g 1 foo\n"
+        for source in (
+            prefix + call + f"$g: {trait} = Foo\nthrough $g",
+            prefix + call + f"define \\make -> {trait} => Foo\nthrough \\make",
+        ):
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                with self.subTest(source=source, optimize=optimize):
+                    self.assertEqual(run(program), ["number"])
+                    self.assertEqual(run(loads(dumps(program))), ["number"])
+
+    def test_guarded_generic_supertypes_are_not_unconditional_runtime_facts(self):
+        from valiance.runtime.vm import _runtime_generic_supertype, _matches_cast_type
+        prefix = """trait[T] Root => end
+trait[T] Holder as Root[T] => end
+object[T] Box => $value: T end
+object[T: Number] Box as Holder[T] => end
+"""
+        for parameter, argument, applicable in (("Int", "1", True), ("String", '"bad"', False)):
+            source = prefix + f"Box[{parameter}]({argument})"
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for encoded in (program, loads(dumps(program))):
+                    box, = run(encoded)
+                    with self.subTest(parameter=parameter, optimize=optimize):
+                        expected = (parameter,) if applicable else None
+                        self.assertEqual(_runtime_generic_supertype(box, "Holder"), expected)
+                        self.assertEqual(_runtime_generic_supertype(box, "Root"), expected)
+                        for trait in ("Holder", "Root"):
+                            self.assertEqual(_matches_cast_type(
+                                box, ("nominal", trait, (parameter,))
+                            ), applicable)
+
+    def test_analysed_trait_witness_rejects_missing_implementation_id(self):
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+define through(g: trait => extend foo(Int) -> String end) => $g 1 foo
+through Foo"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        reference = next(
+            instr.arg for instr in program.main.instructions
+            if isinstance(instr.arg, ResolvedElementReference)
+            and instr.arg.name == 'through'
+        )
+        self.assertTrue(reference.structural_witnesses)
+        invalid = replace(
+            reference,
+            structural_witnesses=tuple(
+                (*item[:4], 'source:missing') for item in reference.structural_witnesses
+            ),
+        )
+        program = replace(
+            program,
+            main=replace(
+                program.main,
+                instructions=tuple(
+                    replace(instr, arg=invalid) if instr.arg is reference else instr
+                    for instr in program.main.instructions
+                ),
+            ),
+        )
+        for candidate in (program, loads(dumps(program))):
+            with self.assertRaisesRegex(RuntimeError, 'cannot link implementation'):
+                run(candidate)
+
+    def test_trait_object_witness_is_bound_at_function_entry(self):
+        source = """
+object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Int) => 99
+end
+define keep(g: trait => extend foo(Number) -> String end) => "kept"
+keep Foo
+"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        function = next(
+            instruction.arg for instruction in program.main.instructions
+            if isinstance(instruction.arg, FunctionCode) and instruction.arg.name == "keep"
+        )
+        self.assertEqual(
+            function.structural_parameters,
+            ((0, "foo", (("Number",), ("String",))),),
+        )
+        with VirtualMachine() as vm:
+            self.assertEqual(vm.run(program), ["kept"])
+            # There is no process-wide receiver-shape witness cache: the
+            # analyser's implementation ID belongs to the trait value.
+            self.assertFalse(hasattr(vm, "_bound_trait_witnesses"))
+        self.assertEqual(run(loads(dumps(program))), ["kept"])
+
+    def test_trait_views_carry_isolated_immutable_witnesses(self):
+        from valiance.runtime.runtime_values import (
+            TaggedValue, runtime_trait_witness, with_runtime_trait_witnesses,
+            update_runtime_tags, unwrap_runtime_value,
+        )
+        from valiance.vtypes import DataTag
+        receiver = ObjectValue("Foo", {})
+        requirement = (("Int",), ("String",))
+        first = with_runtime_trait_witnesses(
+            receiver, (("foo", requirement, "source:first"),)
+        )
+        second = with_runtime_trait_witnesses(
+            receiver, (("foo", requirement, "source:second"),)
+        )
+        self.assertIsInstance(first, TaggedValue)
+        self.assertIs(unwrap_runtime_value(first), receiver)
+        self.assertIs(unwrap_runtime_value(second), receiver)
+        self.assertEqual(runtime_trait_witness(first, "foo", requirement), "source:first")
+        self.assertEqual(runtime_trait_witness(second, "foo", requirement), "source:second")
+        self.assertIsNone(runtime_trait_witness(receiver, "foo", requirement))
+        retagged = update_runtime_tags(first, add=(DataTag("checked", 0),))
+        self.assertEqual(runtime_trait_witness(retagged, "foo", requirement), "source:first")
+        self.assertEqual(runtime_trait_witness(second, "foo", requirement), "source:second")
+
+    def test_higher_order_call_attaches_analysed_trait_witness(self):
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+$f = fn(g: trait => extend foo(Int) -> String end) => $g 1 foo end
+call($f, Foo)"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            bytecode = compile_program(typed, optimize=optimize)
+            calls = [instruction.arg for instruction in bytecode.main.instructions
+                     if isinstance(instruction.arg, ResolvedElementReference)
+                     and instruction.arg.name == "call"]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(calls[0].structural_witnesses), 1)
+            self.assertEqual(run(bytecode), ["number"])
+            self.assertEqual(run(loads(dumps(bytecode))), ["number"])
+
+    def test_optional_structural_cast_carries_checked_witness(self):
+        from valiance.runtime.runtime_values import (
+            TaggedValue, runtime_trait_witness, unwrap_runtime_value,
+        )
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+Foo as?[trait => extend foo(Int) -> String end]"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            compiled = compile_program(typed, optimize=optimize)
+            for program in (compiled, loads(dumps(compiled))):
+                some, = run(program)
+                self.assertEqual(some.type_name, "Some")
+                trait_value = some.fields["value"]
+                self.assertIsInstance(trait_value, TaggedValue)
+                self.assertEqual(unwrap_runtime_value(trait_value).type_name, "Foo")
+                self.assertIsNotNone(runtime_trait_witness(
+                    trait_value, "foo", (("Int",), ("String",)),
+                ))
+
+    def test_trait_witness_survives_aggregate_and_higher_order_forwarding(self):
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+define through(g: trait => extend foo(Int) -> String end) => $g 1 foo
+$g = Foo as[trait => extend foo(Int) -> String end]
+$xs = [$g]
+$f = fn(g: trait => extend foo(Int) -> String end) => through $g end
+call($f, $xs[0])"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            compiled = compile_program(typed, optimize=optimize)
+            for program in (compiled, loads(dumps(compiled))):
+                self.assertEqual(run(program), ["number"])
+
+    def test_lazy_higher_order_callbacks_receive_analysed_trait_witnesses(self):
+        # Previously accepted lambda callbacks failed only when their lazy
+        # results were consumed. A checked mapping must survive that delay.
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+[Foo] map fn(g: trait => extend foo(Int) -> String end) => $g 1 foo end"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            reference = next(
+                instr.arg for instr in program.main.instructions
+                if isinstance(instr.arg, ResolvedElementReference)
+                and instr.arg.name == "map"
+            )
+            self.assertTrue(reference.callable_witnesses)
+            for compiled in (program, loads(dumps(program))):
+                self.assertEqual(list(run(compiled)[0]), ["number"])
+
+    def test_higher_order_callback_rejects_tampered_witness_identity(self):
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+[Foo] map fn(g: trait => extend foo(Int) -> String end) => $g 1 foo end"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        reference = next(instr.arg for instr in program.main.instructions
+                         if isinstance(instr.arg, ResolvedElementReference)
+                         and instr.arg.name == "map")
+        invalid = replace(reference, callable_witnesses=tuple(
+            (*item[:5], "source:missing") for item in reference.callable_witnesses
+        ))
+        corrupted = replace(program, main=replace(program.main, instructions=tuple(
+            replace(instr, arg=invalid) if instr.arg is reference else instr
+            for instr in program.main.instructions
+        )))
+        for candidate in (corrupted, loads(dumps(corrupted))):
+            with self.assertRaisesRegex(RuntimeError, "cannot link implementation"):
+                run(candidate)
+
+    def test_explicit_returns_propagate_checked_trait_witness(self):
+        prefix = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+define through(g: trait => extend foo(Int) -> String end) => $g 1 foo
+"""
+        trait = "trait => extend foo(Int) -> String end"
+        for statement in (
+            "return Foo",
+            "return (Foo)",
+            "if (1 == 1) => return Foo\n  Foo",
+            "if (1 == 1) => return (Foo)\n  else => return (Foo)",
+        ):
+            source = (prefix + f"define \\make -> {trait} =>\n  "
+                      + statement + "\nend\nthrough \\make")
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [], source)
+            for optimize in (False, True):
+                bytecode = compile_program(typed, optimize=optimize)
+                with self.subTest(statement=statement, optimize=optimize):
+                    self.assertEqual(run(bytecode), ["number"])
+                    self.assertEqual(run(loads(dumps(bytecode))), ["number"])
+
+    def test_trait_call_without_witness_fails_closed(self):
+        source = """object Foo =>
+  define foo(v: Number) => "number"
+  define foo(v: Real) => "real"
+end
+define through(g: trait => extend foo(Int) -> String end) => $g 1 foo
+through Foo"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        reference = next(instr.arg for instr in program.main.instructions
+                         if isinstance(instr.arg, ResolvedElementReference)
+                         and instr.arg.name == "through")
+        self.assertTrue(reference.structural_witnesses)
+        tampered = replace(reference, structural_witnesses=())
+        invalid = replace(program, main=replace(
+            program.main, instructions=tuple(
+                replace(instr, arg=tampered) if instr.arg is reference else instr
+                for instr in program.main.instructions
+            ),
+        ))
+        for candidate in (invalid, loads(dumps(invalid))):
+            with self.assertRaisesRegex(RuntimeError, "missing analysis-proven trait witness"):
+                run(candidate)
+
+    def test_static_call_uses_declaration_identity_not_overload_position(self):
+        # The analyser's choice must survive even when a later compiler stage
+        # accidentally changes the advisory ordinal within an overload table.
+        source = """
+object Foo =>
+  define foo(v: String) => "string"
+  define foo(v: Int) => 99
+end
+$f = Foo
+$f 1 foo
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        original = next(
+            instr.arg for instr in program.main.instructions
+            if isinstance(instr.arg, ResolvedElementReference)
+            and instr.arg.name == "foo"
+        )
+        self.assertEqual(original.dispatch_kind, DispatchKind.STATIC)
+        self.assertIsNotNone(original.implementation_id)
+        self.assertFalse(hasattr(original, "overload_index"))
+
+        # Deliberately introduce the historical off-by-one failure. Linkage by
+        # declaration ID still chooses foo(Int), not the String overload.
+        broken_slot = original
+        corrupted = replace(
+            program,
+            main=replace(
+                program.main,
+                instructions=tuple(
+                    replace(instr, arg=broken_slot)
+                    if instr.arg is original else instr
+                    for instr in program.main.instructions
+                ),
+            ),
+        )
+        self.assertEqual(run(corrupted), [RuntimeNumber("99")])
+        self.assertEqual(run(loads(dumps(corrupted))), [RuntimeNumber("99")])
+
+    def test_prepared_builtin_wrapper_links_intrinsic_by_identity(self):
+        """Prepared higher-order calls must preserve the analyser's intrinsic choice."""
+        with VirtualMachine() as vm:
+            definitions = vm.globals["*"].element.definitions
+            repeat = next(
+                definition for definition in definitions
+                if tuple(str(typ) for typ in definition.signature.params)
+                == ("Int", "String")
+            )
+            reference = ResolvedElementReference(
+                "*",
+                implementation_id=repeat.signature.implementation_id,
+            )
+            function = FunctionValue(
+                FunctionCode(
+                    (
+                        Instruction(OpCode.LOAD_VAR, "count"),
+                        Instruction(OpCode.LOAD_VAR, "text"),
+                        Instruction(OpCode.CALL_RESOLVED_ELEMENT, reference),
+                        Instruction(OpCode.RETURN),
+                    ),
+                    params=("count", "text"), return_count=1,
+                ),
+                vm.globals,
+            )
+            prepared = vm.prepare_call(function, 2, 1)
+            self.assertEqual(prepared.strategy, "resolved-builtin")
+            self.assertEqual(prepared(RuntimeNumber("2"), "ha"), ("haha",))
+
+    def test_single_function_static_call_checks_implementation_identity(self):
+        """A singleton callable must not bypass stable static-call identity checks."""
+        source = """
+define increment(x: Int) => $x + 1
+1 increment
+"""
+        analyser = Analyser()
+        program = compile_program(analyser.analyse(parse(source)), optimize=False)
+        self.assertEqual(analyser.diagnostics, [])
+        original = next(
+            instruction.arg
+            for instruction in program.main.instructions
+            if isinstance(instruction.arg, ResolvedElementReference)
+            and instruction.arg.name == "increment"
+        )
+        self.assertIsNotNone(original.implementation_id)
+
+        def with_reference(reference):
+            return replace(
+                program,
+                main=replace(
+                    program.main,
+                    instructions=tuple(
+                        replace(instruction, arg=reference)
+                        if instruction.arg is original else instruction
+                        for instruction in program.main.instructions
+                    ),
+                ),
+            )
+
+        # Positional metadata is advisory when static identity is available.
+        self.assertFalse(hasattr(original, "overload_index"))
+        changed_slot = with_reference(original)
+        self.assertEqual(run(changed_slot), [RuntimeNumber("2")])
+        self.assertEqual(run(loads(dumps(changed_slot))), [RuntimeNumber("2")])
+
+        # An unknown identity must never silently execute the only available body.
+        wrong_id = with_reference(
+            replace(original, implementation_id="nonexistent:implementation")
+        )
+        for bytecode in (wrong_id, loads(dumps(wrong_id))):
+            with self.assertRaisesRegex(RuntimeError, "cannot link declaration"):
+                run(bytecode)
+
+    def test_structural_witness_instantiates_method_generics(self):
+        source = """
+object Foo =>
+  define foo(v: String) => "string"
+  define[T] foo(v: T) => $v
+end
+define via(g: trait => extend foo(Int) -> Int end) => $g 1 foo
+via Foo
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), [RuntimeNumber("1")])
+            self.assertEqual(run(loads(dumps(program))), [RuntimeNumber("1")])
+
+    def test_imported_methods_retain_inferred_structural_witness_results(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'foo.vlnc').write_text("""
+public object Foo =>
+  public define foo(v: Number) => "number"
+  public define foo(v: Int) => 99
+end
+""".strip() + "\n", encoding='utf-8')
+            source = """
+import { foo.Foo }
+define through(g: trait => extend foo(Number) -> String end) => $g 1 foo
+through Foo
+"""
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                bytecode = compile_program(typed, optimize=optimize)
+                with self.subTest(optimize=optimize):
+                    self.assertEqual(run(bytecode), ['number'])
+                    self.assertEqual(run(loads(dumps(bytecode))), ['number'])
 
     def test_vectorises_scalar_overloads_over_lazy_lists(self):
         program = Program(
@@ -5264,7 +6385,7 @@ end"""
                             Instruction(OpCode.CYCLE_BEGIN, (None, 0)),
                             Instruction(
                                 OpCode.CALL_RESOLVED_ELEMENT,
-                                ResolvedElementReference("+", 1),
+                                ResolvedElementReference("+", next(definition.signature.implementation_id for definition in runtime_elements()['+'].definitions if tuple(str(param) for param in definition.signature.params) == ('Number', 'Number'))),
                             ),
                             Instruction(OpCode.CYCLE_END),
                             Instruction(OpCode.RETURN),
@@ -5411,7 +6532,7 @@ end
                                         ),
                                         Instruction(
                                             OpCode.CALL_RESOLVED_ELEMENT,
-                                            ResolvedElementReference(">", 0),
+                                            ResolvedElementReference(">", next(definition.signature.implementation_id for definition in runtime_elements()['>'].definitions if tuple(str(param) for param in definition.signature.params) == ('Number', 'Number'))),
                                         ),
                                         Instruction(OpCode.JUMP_IF_FALSE, 11),
                                         Instruction(OpCode.LOAD_VAR, "n"),
@@ -5429,7 +6550,7 @@ end
                                         Instruction(OpCode.RETURN),
                                     ),
                                     params=("n",),
-                                    name="countdown",
+                                    name='countdown', implementation_id='test:countdown',
                                     cycle_params=True,
                                 ),
                             ),
@@ -5437,7 +6558,7 @@ end
                             Instruction(OpCode.PUSH_CONST, RuntimeNumber("3")),
                             Instruction(
                                 OpCode.CALL_RESOLVED_ELEMENT,
-                                ResolvedElementReference("countdown", 0),
+                                ResolvedElementReference("countdown", 'test:countdown'),
                             ),
                             Instruction(OpCode.RETURN),
                         ),

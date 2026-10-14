@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from valiance.vtypes.identities import overload_implementation_id
+
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import field, fields, replace
 from typing import cast
@@ -758,8 +760,86 @@ def _parameter_writes_in_value(
     return ()
 
 
+def _returned_trait_evidence(
+    body: tuple[TypedNode, ...],
+    signature: T.Overload,
+    ctx: T.Context | None,
+) -> tuple[TypedNode, ...]:
+    """Carry proven implementation identities through *all* return paths.
+
+    Explicit returns are represented by typed expression groups.  Rewriting
+    the groups here keeps the conversion at the value's origin, even if the
+    return exits from a nested branch or handler.  Forwarding an abstract
+    trait value needs no new proof: the existing witness follows the value.
+    """
+    if ctx is None or not body or len(signature.returns) != 1:
+        return body
+    expected = T.normalize(signature.returns[0])
+    if not isinstance(expected, T.AnonymousTraitType):
+        return body
+    from valiance.asts.nodes import (
+        CastNode, TypedCastNode, TypedReturnNode, TypedFunctionNode,
+    )
+
+    def evidence(source: T.Type | None) -> TypedCastNode | None:
+        """Select the checked conversion for one concrete return value."""
+        if source is None or not isinstance(T.normalize(source), T.NominalType):
+            return None
+        proof = T.checked_structural_witnesses(source, expected, ctx)
+        if not proof:
+            return None
+        return TypedCastNode(CastNode(typ=expected), expected, proof)
+
+    def convert_group(group: tuple[TypedNode, ...]) -> tuple[TypedNode, ...]:
+        """Append checked trait conversion evidence to a result group."""
+        if not group:
+            return group
+        conversion = evidence(group[-1].typ)
+        return (*group, conversion) if conversion is not None else group
+
+    def transform_sequence(items: tuple[TypedNode, ...]) -> tuple[TypedNode, ...]:
+        """Preserve trait evidence across explicit returns and nested control flow."""
+        result: list[TypedNode] = []
+        for item in items:
+            if isinstance(item, TypedReturnNode):
+                if item.expressions:
+                    groups = item.expressions
+                    if len(groups) == 1:
+                        item = replace(item, expressions=(convert_group(groups[0]),))
+                elif not item.explicit_values and result:
+                    conversion = evidence(result[-1].typ)
+                    if conversion is not None:
+                        result.append(conversion)
+            elif isinstance(item, TypedNode) and not isinstance(item, TypedFunctionNode):
+                updates: dict[str, object] = {}
+                for field_info in fields(item):
+                    value = getattr(item, field_info.name)
+                    transformed = transform_nested(value)
+                    if transformed is not value:
+                        updates[field_info.name] = transformed
+                if updates:
+                    item = replace(item, **updates)
+            result.append(item)
+        return tuple(result)
+
+    def transform_nested(value: object) -> object:
+        """Visit nested typed groups without entering independent function bodies."""
+        if isinstance(value, tuple):
+            if value and all(isinstance(item, TypedNode) for item in value):
+                return transform_sequence(value)
+            new = tuple(transform_nested(item) for item in value)
+            return new if any(x is not y for x, y in zip(new, value)) else value
+        return value
+
+    converted = transform_sequence(body)
+    if isinstance(converted[-1], TypedReturnNode):
+        return converted
+    return convert_group(converted)
+
+
 def _function_analysis_from_signatures(
     signatures: dict[T.Overload, tuple[TypedNode, ...]],
+    ctx: T.Context | None = None,
 ) -> _core.FunctionAnalysis | None:
     """Build the signatures for function analysis from during static analysis."""
     if not signatures:
@@ -771,10 +851,12 @@ def _function_analysis_from_signatures(
             key=lambda overload: T.show(T.Fn(overload.params, overload.returns)),
         )
     )
+    ordered = tuple(replace(signature, implementation_id=overload_implementation_id(signature))
+                    for signature in ordered)
     overload_typings = tuple(
         FunctionOverloadTyping(
             T.Fn(signature.params, signature.returns, signature.element_tags),
-            signatures[signature],
+            _returned_trait_evidence(signatures[signature], signature, ctx),
             signature,
         )
         for signature in ordered
@@ -1218,9 +1300,9 @@ def _collapse_equivalent_call_winners(
                 and candidate.applied.actual_returns == existing.applied.actual_returns
                 and candidate.branch == existing.branch
                 and candidate.call_arg_order == existing.call_arg_order
-                and candidate.callable_overload_index
-                == existing.callable_overload_index
-                and candidate.overload_index == existing.overload_index
+                and candidate.callable_implementation_id
+                == existing.callable_implementation_id
+                and candidate.implementation_id == existing.implementation_id
                 and candidate.dispatch_priority == existing.dispatch_priority
             ),
             None,
@@ -1267,7 +1349,7 @@ def _collapse_equivalent_friendly_multidispatch_winners(
         min(
             winners,
             key=lambda candidate: (
-                candidate.overload_index if candidate.overload_index is not None else -1
+                candidate.implementation_id or ""
             ),
         ),
     )

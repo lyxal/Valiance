@@ -44,6 +44,7 @@ from valiance.asts import (
     TypedAssertNode,
     TypedAtNode,
     TypedCallNode,
+    TypedCastNode,
     TypedConcurrentNode,
     TypedForNode,
     TypedFunctionNode,
@@ -285,7 +286,7 @@ def _at_node(
         function.overloads,
     )
 
-    candidates: list[tuple[int, T.AppliedOverload]] = []
+    candidates: list[tuple[str, T.AppliedOverload]] = []
     for index, overload_typing in enumerate(function.overloads):
         overload = overload_typing.overload
         if not isinstance(overload, T.Overload):
@@ -299,7 +300,7 @@ def _at_node(
             vectorised_depths=tuple(minimum_depths),
             vectorised_target_ranks=tuple(explicit_target_ranks),
         )
-        candidates.append((index, applied))
+        candidates.append((overload.implementation_id, applied))
 
     if not candidates:
         self._diagnose("at body does not accept the selected level values", node)
@@ -308,7 +309,7 @@ def _at_node(
         self._diagnose("at body has ambiguous inferred overloads", node)
         return _core.BranchSet()
 
-    overload_index, applied = candidates[0]
+    implementation_id, applied = candidates[0]
     result = popped.with_stack(popped.stack.push(*applied.actual_returns))
     result = result.with_element_tags(applied.element_tags)
     return _core.BranchSet(
@@ -319,7 +320,7 @@ def _at_node(
                     _calls._returns_result_type(applied.actual_returns),
                     typed_function,
                     applied,
-                    overload_index,
+                    implementation_id,
                 )
             ),
         )
@@ -595,8 +596,21 @@ def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranc
     result = T.optional(flowed) if node.optional else flowed
     if node.checked and statically_safe:
         node = replace(node, checked=False)
+    witnesses = ()
+    if statically_safe and isinstance(normalized_target, T.AnonymousTraitType):
+        try:
+            proof = T.checked_structural_witnesses(
+                source, normalized_target, self.env.context,
+            )
+        except T.AmbiguousStructuralWitness as exc:
+            self._diagnose(str(exc), node)
+            return _core.BranchSet()
+        if proof is not None:
+            witnesses = proof
     stack = T.TypeStack((*branch.stack.items[:-1], result))
-    return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, result)),))
+    return _core.BranchSet((branch.with_stack(stack).emit(
+        TypedCastNode(node, result, witnesses),
+    ),))
 
 
 def _minimum_rank_type(typ: T.Type, rank: int) -> T.Type:
@@ -981,7 +995,7 @@ def _link_node(
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     name = node.alias or Symbol(node.symbol.text, (node.namespace.text,))
     retained = tuple(node.returns)
-    return_conversion: tuple[str, int] | None = None
+    return_conversion: tuple[str, str] | None = None
     conversion_tags: frozenset[T.ElementTag] = frozenset()
     if node.converted_return is not None:
         if len(node.returns) != 1:
@@ -1012,13 +1026,7 @@ def _link_node(
         runtime_name = self.env.overload_runtime_name_for(
             Symbol("to"), conversion_overload
         ) or self.env.runtime_name_for(Symbol("to")) or Symbol("to")
-        runtime_index = self.env.overload_runtime_index_for(
-            Symbol("to"), conversion_overload
-        )
-        return_conversion = (
-            str(runtime_name),
-            conversion_index if runtime_index is None else runtime_index,
-        )
+        return_conversion = (str(runtime_name), conversion_overload.implementation_id)
         conversion_tags = conversion_overload.element_tags
         retained = (node.converted_return,)
     owned_return_free = None
@@ -1176,7 +1184,51 @@ def _import_node(
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
         for obj in objects:
-            runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
+            object_node = obj.typed.node
+            # Selected owned implementation evidence belongs to the imported
+            # constructor as well as to the analyser's nominal Context. A
+            # source module's implementation block need not be exported as an
+            # executable ObjectNode, so rebuilding its constructor otherwise
+            # drops subtype information used by runtime structural linking.
+            imported_supertypes = ()
+            imported_guarded_supertypes = ()
+            if (
+                isinstance(object_node, ObjectNode)
+                and object_node.kind.text == "object"
+                and object_node.target is None
+            ):
+                # Preserve unconditional generic projections as well as
+                # non-generic nominal edges. The implementation must cover
+                # the entire constructor, not merely some instantiations.
+                constructor_pattern = T.N(
+                    obj.name,
+                    *(T.V(generic.text) for generic in object_node.generics),
+                )
+                imported_supertypes = tuple(
+                    implementation.trait_pattern
+                    for implementation in trait_implementations
+                    if implementation.object_name == obj.name
+                    and implementation.subject_kind.text == "object"
+                    and implementation.object_pattern == constructor_pattern
+                    and implementation.trait_pattern is not None
+                    and implementation.generics == object_node.generics
+                    and not any(implementation.generic_constraints)
+                )
+                imported_guarded_supertypes = tuple(
+                    (implementation.trait_pattern, implementation.generic_constraints)
+                    for implementation in trait_implementations
+                    if implementation.object_name == obj.name
+                    and implementation.subject_kind.text == "object"
+                    and implementation.object_pattern == constructor_pattern
+                    and implementation.trait_pattern is not None
+                    and implementation.generics == object_node.generics
+                    and any(implementation.generic_constraints)
+                )
+            runtime_name = self._prelude.add_declaration(
+                obj.typed, obj.name,
+                imported_supertypes=imported_supertypes,
+                imported_guarded_supertypes=imported_guarded_supertypes,
+            )
             self._register_imported_object(obj, runtime_name)
             module_source = _show_import_path_for_diagnostic(resolved_spec.path)
             for definition in obj.private_friendly_definitions:
@@ -1208,14 +1260,12 @@ def _import_node(
                 merged_typed,
                 definition_name,
             )
-            runtime_index_offset = 0
             for definition in definition_group:
                 try:
                     self._register_imported_definition(
                         definition.name,
                         definition.typed,
                         runtime_name,
-                        runtime_index_offset,
                     )
                 except ValueError as exc:
                     self._diagnose(
@@ -1229,7 +1279,6 @@ def _import_node(
                     return _core.BranchSet(
                         (branch.emit(TypedNode(node, None)),)
                     )
-                runtime_index_offset += len(definition.typed.overloads)
         provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
         for implementation in trait_implementations:
             self.env.add_trait_impl(

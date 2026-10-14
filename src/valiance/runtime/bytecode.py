@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntFlag
 from functools import lru_cache
 from typing import Any
 
@@ -29,6 +29,7 @@ class OpCode(Enum):
     CHECK_CAST = "check_cast"
     TRY_CAST = "try_cast"
     CANONICALIZE_TAGS = "canonicalize_tags"
+    BIND_TRAIT_WITNESSES = "bind_trait_witnesses"
     BUILD_LIST = "build_list"
     ENSURE_MIN_RANK = "ensure_min_rank"
     BUILD_STRING = "build_string"
@@ -179,6 +180,15 @@ class NativeCallReference:
     callbacks: tuple[FFICallbackSpec, ...] = ()
 
 
+class DispatchKind(IntFlag):
+    """Analysis-authorised dispatch steps (composable when required)."""
+
+    STATIC = 0
+    TRAIT_WITNESS = 1
+    MULTIMETHOD = 2
+    UNION = 4
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedElementReference:
     """Named payload for CALL_RESOLVED_ELEMENT.
@@ -188,7 +198,7 @@ class ResolvedElementReference:
     """
 
     name: str
-    overload_index: int
+    implementation_id: str | None = None
     vectorised: bool = False
     vectorised_depths: tuple[int, ...] = ()
     vectorised_target_ranks: tuple[int | None, ...] = ()
@@ -199,9 +209,21 @@ class ResolvedElementReference:
     static_values: tuple[Any, ...] = ()
     arity_override: int | None = None
     consumed_override: int | None = None
-    multidispatch: bool = False
+    dispatch_kind: DispatchKind = DispatchKind.STATIC
     union_dispatch_plan: tuple[UnionDispatchBranch, ...] = ()
     extension: VectorExtensionReference | None = None
+    # A compiler-checked requirement, not a runtime argument overload search.
+    # The receiver is abstract; params exclude the implicit receiver.
+    structural_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+    # Proof-bearing call-site trait conversions. This must never be inferred
+    # from the runtime method argument or an overload-set position.
+    structural_witnesses: tuple[
+        tuple[int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
+    # Analyser-authorised conversions on callback inputs to built-in functions.
+    callable_witnesses: tuple[
+        tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +240,16 @@ class FunctionCode:
     recursive: bool = False
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
+    signature_types: tuple[str, ...] = ()
+    # Statically inferred results for structural-witness linking.
+    result_signature_types: tuple[str, ...] = ()
+    generic_type_parameters: tuple[str, ...] = ()
+    # Linked structural requirements for object parameters, installed at the
+    # function argument boundary rather than first use of each method.
+    structural_parameters: tuple[
+        tuple[int, str, tuple[tuple[str, ...], tuple[str, ...]]], ...
+    ] = ()
+    implementation_id: str | None = None
     return_count: int | None = None
     occurrence_effects: tuple[int | None, ...] = ()
     return_tags: tuple[tuple[DataTag, ...], ...] = ()

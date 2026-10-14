@@ -32,6 +32,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
     ResolvedElementReference,
+    DispatchKind,
     VectorExtensionReference,
     decode_stack_shuffle_spec,
 )
@@ -64,6 +65,8 @@ from valiance.runtime.runtime_values import (
     object_type_name,
     runtime_collection_rank,
     runtime_value_tags,
+    runtime_trait_witness,
+    with_runtime_trait_witnesses,
     unwrap_runtime_value,
     update_runtime_tags,
     with_runtime_collection_rank,
@@ -359,6 +362,9 @@ class OverloadedFunctionValue:
     overloads: tuple[FunctionValue, ...]
     dispatch_plan: tuple[UnionDispatchBranch, ...] = ()
     refcount: int = 1
+    implementation_lookup: dict[str, FunctionValue] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     def __repr__(self) -> str:
         """Return a developer-facing representation of this overloaded function value."""
@@ -412,6 +418,22 @@ class BuiltinValue:
         return f"<builtin {self.element.name.text}>"
 
     __str__ = __repr__
+
+
+def _linked_builtin_overload(
+    value: BuiltinValue, reference: ResolvedElementReference,
+) -> BuiltinOverload:
+    """Link a statically selected intrinsic without depending on catalogue order."""
+    if not isinstance(reference.implementation_id, str) or not reference.implementation_id:
+        raise RuntimeError("resolved intrinsic is missing its implementation identity")
+    matches = tuple(item for item in value.element.definitions
+                    if item.signature.implementation_id == reference.implementation_id)
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"intrinsic '{reference.name}' cannot link implementation "
+            f"{reference.implementation_id!r} ({len(matches)} matches)"
+        )
+    return matches[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1118,8 +1140,8 @@ class VirtualMachine:
                 if not isinstance(builtin, BuiltinValue):
                     return None
                 try:
-                    overload = builtin.element.definitions[reference.overload_index]
-                except IndexError:
+                    overload = _linked_builtin_overload(builtin, reference)
+                except RuntimeError:
                     return None
                 width = len(overload.signature.params)
                 if (
@@ -1127,7 +1149,7 @@ class VirtualMachine:
                     or reference.extension is not None
                     or reference.static_values
                     or reference.type_args
-                    or reference.multidispatch
+                    or (reference.dispatch_kind is not DispatchKind.STATIC)
                     or overload.implementation is None
                     or len(overload.signature.returns) != 1
                     or len(stack) < width
@@ -1456,7 +1478,7 @@ class VirtualMachine:
                     or reference.extension is not None
                     or reference.static_values
                     or reference.type_args
-                    or reference.multidispatch
+                    or (reference.dispatch_kind is not DispatchKind.STATIC)
                     or reference.arity_override is not None
                     or reference.consumed_override is not None
                     or reference.return_tags
@@ -1468,8 +1490,8 @@ class VirtualMachine:
                 if not isinstance(builtin, BuiltinValue):
                     return None
                 try:
-                    overload = builtin.element.definitions[reference.overload_index]
-                except IndexError:
+                    overload = _linked_builtin_overload(builtin, reference)
+                except RuntimeError:
                     return None
                 if (
                     overload.implementation is None
@@ -1678,7 +1700,7 @@ class VirtualMachine:
                 or reference.extension is not None
                 or reference.static_values
                 or reference.type_args
-                or reference.multidispatch
+                or (reference.dispatch_kind is not DispatchKind.STATIC)
                 or reference.arity_override is not None
                 or reference.consumed_override is not None
                 or reference.return_tags
@@ -1690,8 +1712,8 @@ class VirtualMachine:
             if not isinstance(builtin, BuiltinValue):
                 return None
             try:
-                overload = builtin.element.definitions[reference.overload_index]
-            except IndexError:
+                overload = _linked_builtin_overload(builtin, reference)
+            except RuntimeError:
                 return None
             if (
                 overload.implementation is None
@@ -1771,7 +1793,7 @@ class VirtualMachine:
             or reference.extension is not None
             or reference.static_values
             or reference.type_args
-            or reference.multidispatch
+            or (reference.dispatch_kind is not DispatchKind.STATIC)
             or reference.arity_override is not None
             or reference.consumed_override is not None
             or reference.return_tags
@@ -1783,8 +1805,10 @@ class VirtualMachine:
         if not isinstance(builtin, BuiltinValue):
             return None
         try:
-            overload = builtin.element.definitions[reference.overload_index]
-        except IndexError:
+            overload = _linked_builtin_overload(builtin, reference)
+        except RuntimeError:
+            # The generic VM path must report the invalid implementation ID;
+            # a prepared wrapper must never guess from the old ordinal.
             return None
         if (
             overload.implementation is None
@@ -1942,8 +1966,8 @@ class VirtualMachine:
                 if not isinstance(builtin, BuiltinValue):
                     return None
                 try:
-                    overload = builtin.element.definitions[reference.overload_index]
-                except IndexError:
+                    overload = _linked_builtin_overload(builtin, reference)
+                except RuntimeError:
                     return None
                 width = len(overload.signature.params)
                 if len(stack) < width:
@@ -1963,7 +1987,7 @@ class VirtualMachine:
                     or reference.extension is not None
                     or reference.static_values
                     or reference.type_args
-                    or reference.multidispatch
+                    or (reference.dispatch_kind is not DispatchKind.STATIC)
                 ):
                     return None
                 if width:
@@ -2153,27 +2177,18 @@ class VirtualMachine:
         self,
         value: Any,
         args: list[Any],
-        overload_index: int,
+        implementation_id: str | None,
         static_values: tuple[Any, ...] = (),
         vectorised: bool = False,
         vectorised_depths: tuple[int, ...] = (),
         vectorised_target_ranks: tuple[int | None, ...] = (),
     ) -> list[Any]:
         """Invoke one statically selected overload of a runtime callable."""
-        if isinstance(value, FunctionValue):
-            if overload_index != 0:
-                raise RuntimeError(f"function has no overload {overload_index}")
-            selected = value
-        elif isinstance(value, OverloadedFunctionValue):
-            try:
-                selected = value.overloads[overload_index]
-            except IndexError as exc:
-                raise RuntimeError(
-                    f"function has no overload {overload_index}"
-                ) from exc
-        else:
-            raise RuntimeError(f"cannot call value {_format_value(value)}")
-
+        if implementation_id is None and isinstance(value, OverloadedFunctionValue) and value.dispatch_plan:
+            # An abstract function parameter may carry an analyser-approved
+            # union plan instead of one fixed implementation selector.
+            return self.call_value(value, list((*args, *static_values)))
+        selected = _selected_function_implementation(value, implementation_id)
         call_args = (*args, *static_values)
         if not vectorised:
             if self.optimization_stats is not None:
@@ -2417,26 +2432,18 @@ class VirtualMachine:
         self,
         value: Any,
         args: tuple[Any, ...],
-        overload_index: int,
+        implementation_id: str | None,
         vectorised: bool = False,
         vectorised_depths: tuple[int, ...] = (),
         vectorised_target_ranks: tuple[int | None, ...] = (),
         runtime_static_values: tuple[Any, ...] = (),
     ):
         """Create a task-local resumable activation stack for one fixed call."""
-        if isinstance(value, FunctionValue):
-            if overload_index != 0:
-                raise RuntimeError(f"function has no overload {overload_index}")
-            selected = value
-        elif isinstance(value, OverloadedFunctionValue):
-            try:
-                selected = value.overloads[overload_index]
-            except IndexError as exc:
-                raise RuntimeError(
-                    f"function has no overload {overload_index}"
-                ) from exc
-        else:
-            raise RuntimeError(f"cannot call value {_format_value(value)}")
+        selected = (
+            _select_union_dispatch_overload(value, args)
+            if implementation_id is None and isinstance(value, OverloadedFunctionValue) and value.dispatch_plan
+            else _selected_function_implementation(value, implementation_id)
+        )
         if vectorised:
             execution_error: BaseException | None = None
             result: tuple[Any, ...] | None = None
@@ -2445,7 +2452,7 @@ class VirtualMachine:
                     self.call_value_overload(
                         value,
                         list(args),
-                        overload_index,
+                        implementation_id,
                         runtime_static_values,
                         True,
                         vectorised_depths,
@@ -2514,6 +2521,93 @@ class VirtualMachine:
                 return
         raise error
 
+    def _validate_checked_structural_witness(
+        self,
+        name: str,
+        identity: str,
+        globals_: dict[str, Any],
+    ) -> None:
+        """Validate the analyser's declaration ID without selecting a method."""
+        target = globals_.get(name)
+        if not isinstance(target, (OverloadedFunctionValue, FunctionValue)):
+            target = self.globals.get(name)
+        if isinstance(target, BuiltinValue):
+            # The operational name is the intrinsic, not the source method;
+            # this evidence has no executable trait-call binding here.
+            return
+        if isinstance(target, FunctionValue):
+            if target.code.implementation_id != identity:
+                raise RuntimeError(
+                    f"checked trait witness cannot link implementation {identity!r}"
+                )
+            return
+        if not isinstance(target, OverloadedFunctionValue):
+            raise RuntimeError(f"checked trait witness cannot find method {name!r}")
+        matches = [candidate for candidate in target.overloads
+                   if candidate.code.implementation_id == identity]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"checked trait witness cannot link implementation {identity!r}"
+            )
+
+    def _checked_call_witnesses(
+        self, frame: _Frame, reference: ResolvedElementReference,
+    ) -> tuple[tuple[int, tuple[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...]], ...]:
+        """Validate call-boundary evidence before forwarding it to the callee."""
+        if not reference.structural_witnesses:
+            return ()
+        grouped: dict[int, list[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str]]] = {}
+        args_cache: dict[int, tuple[Any, ...]] = {}
+        for index, arity, name, contract, identity in reference.structural_witnesses:
+            if arity not in args_cache:
+                try:
+                    args_cache[arity] = frame.source_args(arity)[0]
+                except _StackUnderflow as exc:
+                    raise RuntimeError("missing arguments for checked trait witness") from exc
+            args = args_cache[arity]
+            if not 0 <= index < len(args):
+                raise RuntimeError("invalid checked trait witness argument index")
+            if not isinstance(unwrap_runtime_value(args[index]), ObjectValue):
+                raise RuntimeError("checked trait witness expects an object receiver")
+            self._validate_checked_structural_witness(name, identity, frame.globals)
+            grouped.setdefault(index, []).append((name, contract, identity))
+        return tuple((index, tuple(proofs)) for index, proofs in grouped.items())
+
+    def _bind_structural_parameters(
+        self, function: FunctionValue, args: tuple[Any, ...]
+    ) -> None:
+        """Verify analysed trait evidence at function entry; never infer it.
+
+        A trait parameter is a checked abstraction.  An object can enter that
+        abstraction only through a conversion carrying its implementation
+        witness.  A previous call cannot authorize a later, unrelated value.
+        """
+        for index, name, contract in function.code.structural_parameters:
+            if index >= len(args):
+                continue
+            receiver = unwrap_runtime_value(args[index])
+            if not isinstance(receiver, ObjectValue):
+                continue
+            target = function.globals.get(name)
+            if isinstance(target, BuiltinValue):
+                # The object method is not the executable binding for this
+                # symbol (for example, postfix `1 toString` is the intrinsic).
+                continue
+            proven_id = runtime_trait_witness(args[index], name, contract)
+            if proven_id is None:
+                raise RuntimeError(
+                    f"missing analysis-proven trait witness for '{name}' "
+                    f"on {receiver.type_name}"
+                )
+            if not isinstance(target, OverloadedFunctionValue):
+                continue
+            matches = [candidate for candidate in target.overloads
+                       if candidate.code.implementation_id == proven_id]
+            if len(matches) != 1:
+                raise RuntimeError(
+                    f"trait witness cannot link checked implementation {proven_id!r}"
+                )
+
     def _function_request_activation(
         self,
         request: _FunctionCallRequest,
@@ -2538,6 +2632,7 @@ class VirtualMachine:
                 )
             explicit_args = args
             stack_args = ()
+        self._bind_structural_parameters(function, explicit_args)
         locals_, retained_locals = _function_call_locals(
             function,
             explicit_args,
@@ -2946,7 +3041,7 @@ class VirtualMachine:
                                 value,
                                 (FunctionValue, OverloadedFunctionValue),
                             ):
-                                stored = _store_value(existing, value)
+                                stored = _store_value(existing, value, self)
                             else:
                                 stored = value
                             if (
@@ -3101,6 +3196,27 @@ class VirtualMachine:
                                     raise
                                 ip = target
                                 continue
+                        case OpCode.BIND_TRAIT_WITNESSES:
+                            if not frame.stack:
+                                raise RuntimeError("trait conversion needs a value")
+                            receiver = unwrap_runtime_value(frame.stack[-1])
+                            if not isinstance(receiver, ObjectValue):
+                                raise RuntimeError("checked trait witness expects an object")
+                            proof = instruction.arg
+                            if not isinstance(proof, tuple):
+                                raise RuntimeError("invalid trait conversion evidence")
+                            for item in proof:
+                                if (not isinstance(item, tuple) or len(item) != 3
+                                        or not isinstance(item[0], str)
+                                        or not isinstance(item[2], str)):
+                                    raise RuntimeError("invalid trait conversion evidence")
+                                name, contract, identity = item
+                                self._validate_checked_structural_witness(
+                                    name, identity, frame.globals,
+                                )
+                            frame.stack[-1] = with_runtime_trait_witnesses(
+                                frame.stack[-1], proof,
+                            )
                         case OpCode.CHECK_CAST:
                             value = _pop(frame.stack, "checked cast")
                             cast_spec = _resolve_static_rank_variables(
@@ -3114,13 +3230,28 @@ class VirtualMachine:
                             frame.stack.append(value)
                         case OpCode.TRY_CAST:
                             value = _pop(frame.stack, "optional cast")
-                            if not isinstance(instruction.arg, tuple) or len(instruction.arg) != 2:
+                            if not isinstance(instruction.arg, tuple) or len(instruction.arg) != 3:
                                 raise RuntimeError("invalid optional cast payload")
-                            raw_cast, raw_contract = instruction.arg
+                            raw_cast, raw_contract, proof = instruction.arg
+                            if not isinstance(proof, tuple):
+                                raise RuntimeError("invalid optional cast trait evidence")
                             cast_spec = _resolve_static_rank_variables(raw_cast, frame.locals)
-                            if _matches_cast_type(value, cast_spec, allow_lazy_rank=False):
+                            proven_trait = (
+                                bool(proof)
+                                and cast_spec[0] == "structural"
+                                and isinstance(unwrap_runtime_value(value), ObjectValue)
+                            )
+                            if proven_trait or _matches_cast_type(
+                                value, cast_spec, allow_lazy_rank=False,
+                            ):
                                 contract = _resolve_static_rank_variables(raw_contract, frame.locals)
                                 refined = _canonicalize_runtime_value_tag_contract(value, contract, self.tag_parents)
+                                if proof:
+                                    for name, _required, identity in proof:
+                                        self._validate_checked_structural_witness(
+                                            name, identity, frame.globals,
+                                        )
+                                    refined = with_runtime_trait_witnesses(refined, proof)
                                 frame.stack.append(ObjectValue("Some", {"value": refined}))
                             else:
                                 frame.stack.append(ObjectValue("None", {}))
@@ -3555,11 +3686,14 @@ class VirtualMachine:
                         case OpCode.SPAWN_CALL:
                             if (
                                 not isinstance(instruction.arg, tuple)
-                                or len(instruction.arg) not in {2, 3, 4, 8, 9}
+                                or len(instruction.arg) != 9
                                 or not all(
                                     isinstance(item, int) and not isinstance(item, bool) and item >= 0
-                                    for item in instruction.arg[:3]
+                                    for item in instruction.arg[:2]
                                 )
+                                or (instruction.arg[2] is not None and (
+                                    not isinstance(instruction.arg[2], str) or not instruction.arg[2]
+                                ))
                                 or (
                                     len(instruction.arg) >= 4
                                     and (
@@ -3580,8 +3714,8 @@ class VirtualMachine:
                             ):
                                 raise RuntimeError("malformed spawn call plan")
                             arity, _output_count = instruction.arg[:2]
-                            overload_index = (
-                                instruction.arg[2] if len(instruction.arg) >= 3 else 0
+                            implementation_id = (
+                                instruction.arg[2]
                             )
                             unique_inputs = (
                                 instruction.arg[3]
@@ -3609,7 +3743,7 @@ class VirtualMachine:
                             def invoke_spawned(
                                 callable_value: Any = callee,
                                 call_args: tuple[Any, ...] = args,
-                                selected_overload: int = overload_index,
+                                selected_overload: str | None = implementation_id,
                             ):
                                 """Create the resumable runner for one prepared spawned call."""
                                 return self._task_call_runner(
@@ -4076,6 +4210,10 @@ class VirtualMachine:
         """Invoke resolved element during VM execution."""
         if not isinstance(reference, ResolvedElementReference):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
+        if not (reference.implementation_id is None
+                and reference.dispatch_kind & DispatchKind.TRAIT_WITNESS):
+            if not isinstance(reference.implementation_id, str) or not reference.implementation_id:
+                raise RuntimeError("resolved call is missing its implementation identity")
         cache_key = id(reference)
         cached_builtin = self._resolved_builtin_cache.get(cache_key)
         if (
@@ -4100,17 +4238,16 @@ class VirtualMachine:
                 reference.static_values,
                 reference.type_args,
                 reference.extension,
+                checked_witnesses=(
+                    self._checked_call_witnesses(frame, reference)
+                    if reference.name == "call" else ()
+                ),
+                callable_witnesses=reference.callable_witnesses,
             )
             return None
         value = _load_name(reference.name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
-            try:
-                overload = value.element.definitions[reference.overload_index]
-            except IndexError as exc:
-                raise RuntimeError(
-                    f"resolved element '{reference.name}' has no overload "
-                    f"{reference.overload_index}"
-                ) from exc
+            overload = _linked_builtin_overload(value, reference)
             if reference.name not in frame.locals:
                 self._resolved_builtin_cache[cache_key] = (
                     reference,
@@ -4133,6 +4270,11 @@ class VirtualMachine:
                 reference.static_values,
                 reference.type_args,
                 reference.extension,
+                checked_witnesses=(
+                    self._checked_call_witnesses(frame, reference)
+                    if reference.name == "call" else ()
+                ),
+                callable_witnesses=reference.callable_witnesses,
             )
             return None
         if isinstance(value, FunctionValue):
@@ -4145,14 +4287,13 @@ class VirtualMachine:
                 frame,
                 self,
                 reference.type_args,
-                reference.overload_index,
+                reference.implementation_id,
             )
             return None
         if isinstance(value, ObjectValue):
-            _require_single_resolved_slot(reference, "enum member")
             frame.stack.append(_duplicate_occurrence(value))
             return None
-        if reference.overload_index == 0 and not callable(value):
+        if not callable(value):
             frame.stack.append(_duplicate_occurrence(value))
             return None
         raise RuntimeError(f"resolved element '{reference.name}' is not callable")
@@ -4164,7 +4305,32 @@ class VirtualMachine:
         reference: ResolvedElementReference,
     ) -> _FunctionCallRequest | None:
         """Invoke resolved function value during VM execution."""
-        _require_single_resolved_slot(reference, "function")
+        if (
+            reference.dispatch_kind == DispatchKind.STATIC
+            and reference.implementation_id is not None
+        ):
+            if value.code.implementation_id != reference.implementation_id:
+                raise RuntimeError(
+                    f"static function '{reference.name}' cannot link declaration "
+                    f"{reference.implementation_id!r} "
+                    "(the bound function has a different implementation identity)"
+                )
+        elif reference.dispatch_kind & DispatchKind.TRAIT_WITNESS:
+            required = reference.structural_signature
+            if required is None:
+                raise RuntimeError("trait call is missing its structural contract")
+            try:
+                args, _, _, _ = frame.source_args(len(required[0]) + 1)
+            except _StackUnderflow as exc:
+                raise RuntimeError("not enough arguments for trait call") from exc
+            proven_id = runtime_trait_witness(args[0], reference.name, required)
+            if proven_id is None or value.code.implementation_id != proven_id:
+                raise RuntimeError(
+                    f"trait witness cannot link checked implementation {proven_id!r}"
+                )
+        else:
+            _selected_function_implementation(value, reference.implementation_id)
+        checked_witnesses = self._checked_call_witnesses(frame, reference)
         frame.stack.extend(reference.static_values)
         return self._call_function(
             value,
@@ -4177,6 +4343,7 @@ class VirtualMachine:
             return_tag_specs=reference.return_tag_specs,
             arity_override=reference.arity_override,
             consumed_override=reference.consumed_override,
+            checked_witnesses=checked_witnesses,
         )
 
     def _call_resolved_overloaded_function(
@@ -4186,14 +4353,38 @@ class VirtualMachine:
         reference: ResolvedElementReference,
     ) -> _FunctionCallRequest | None:
         """Invoke resolved overloaded function during VM execution."""
-        try:
-            overload = value.overloads[reference.overload_index]
-        except IndexError as exc:
-            raise RuntimeError(
-                f"resolved function '{reference.name}' has no overload "
-                f"{reference.overload_index}"
-            ) from exc
-        if reference.union_dispatch_plan:
+        if reference.dispatch_kind & DispatchKind.TRAIT_WITNESS:
+            required = reference.structural_signature
+            if required is None:
+                raise RuntimeError("trait call is missing its structural contract")
+            try:
+                args, _, _, _ = frame.source_args(len(required[0]) + 1)
+            except _StackUnderflow as exc:
+                raise RuntimeError("not enough arguments for trait call") from exc
+            receiver = unwrap_runtime_value(args[0])
+            if not isinstance(receiver, ObjectValue):
+                # Non-object-friendly symbolic calls use ordinary static or
+                # explicitly dynamic dispatch, not an invented object witness.
+                raise RuntimeError("trait method needs an object receiver")
+            proven_id = runtime_trait_witness(args[0], reference.name, required)
+            if proven_id is None:
+                raise RuntimeError(
+                    f"missing analysis-proven trait witness for '{reference.name}' "
+                    f"on {receiver.type_name}"
+                )
+            overload = value.implementation_lookup.get(proven_id)
+            if overload is None:
+                matches = [candidate for candidate in value.overloads
+                           if candidate.code.implementation_id == proven_id]
+                if len(matches) != 1:
+                    raise RuntimeError(
+                        f"trait witness cannot link checked implementation {proven_id!r}"
+                    )
+                overload = matches[0]
+                value.implementation_lookup[proven_id] = overload
+        else:
+            overload = _selected_function_implementation(value, reference.implementation_id)
+        if reference.dispatch_kind & DispatchKind.UNION:
             arity = len(overload.code.params)
             dispatch_value = OverloadedFunctionValue(
                 value.overloads,
@@ -4209,8 +4400,9 @@ class VirtualMachine:
             except _StackUnderflow:
                 args = ()
             overload = _select_union_dispatch_overload(dispatch_value, tuple(args))
-        elif reference.multidispatch:
+        elif reference.dispatch_kind & DispatchKind.MULTIMETHOD:
             overload = _select_multimethod_overload(value, overload, frame)
+        checked_witnesses = self._checked_call_witnesses(frame, reference)
         frame.stack.extend(reference.static_values)
         return self._call_function(
             overload,
@@ -4221,18 +4413,25 @@ class VirtualMachine:
             extension_reference=reference.extension,
             return_tags=reference.return_tags,
             return_tag_specs=reference.return_tag_specs,
+            checked_witnesses=checked_witnesses,
         )
 
     def _validate_tag(self, frame: _Frame, spec: object) -> None:
         """Update validate tag state during VM execution."""
-        tag_name, overload_index, added, removed = spec
+        if not isinstance(spec, tuple) or len(spec) != 4:
+            raise RuntimeError("invalid tag validator plan")
+        tag_name, implementation_id, added, removed = spec
+        if implementation_id is not None and (
+            not isinstance(implementation_id, str) or not implementation_id
+        ):
+            raise RuntimeError("invalid tag validator implementation identity")
         if not frame.stack:
             raise RuntimeError(f"cannot validate {tag_name} on an empty stack")
-        if overload_index is not None:
+        if implementation_id is not None:
             validator = _load_name(tag_name, frame.locals, frame.globals)
             value = _duplicate_occurrence(frame.stack[-1])
             try:
-                result = self.call_value_overload(validator, [value], overload_index)
+                result = self.call_value_overload(validator, [value], implementation_id)
             finally:
                 _release_value(value, self)
             if not result or not _truthy(result[-1]):
@@ -4355,6 +4554,9 @@ class VirtualMachine:
         return_tag_specs: tuple[object, ...] = (),
         arity_override: int | None = None,
         consumed_override: int | None = None,
+        checked_witnesses: tuple[
+            tuple[int, tuple[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...]], ...
+        ] = (),
     ) -> _FunctionCallRequest | None:
         """Invoke or suspend a user function during VM execution."""
         arity = (
@@ -4386,6 +4588,16 @@ class VirtualMachine:
             del frame.stack[-consumed_count:]
         frame.cycle_index = next_cycle_index
         frame.cycle_stack_remaining = next_cycle_stack_remaining
+        # Build occurrence-local trait views. The caller's object is unchanged;
+        # forwarding and returning this argument retains its checked dictionary.
+        if checked_witnesses:
+            converted = list(args)
+            for index, proof in checked_witnesses:
+                if not 0 <= index < len(converted):
+                    raise RuntimeError("checked trait witness argument index is invalid")
+                converted[index] = with_runtime_trait_witnesses(converted[index], proof)
+            args = tuple(converted)
+        self._bind_structural_parameters(callee, args)
         if vectorised:
             extension = _materialize_vector_extension(
                 self,
@@ -4485,8 +4697,8 @@ class VirtualMachine:
                         direct_leaf = False
                         break
                     try:
-                        overload = value.element.definitions[reference.overload_index]
-                    except IndexError:
+                        overload = _linked_builtin_overload(value, reference)
+                    except RuntimeError:
                         direct_leaf = False
                         break
                 elif (
@@ -4507,6 +4719,7 @@ class VirtualMachine:
         args: tuple[Any, ...],
     ) -> list[Any]:
         """Execute a proved leaf and return its raw stack result."""
+        self._bind_structural_parameters(function, args)
         locals_, retained_locals = _function_call_locals(function, args)
         cycle_values = tuple(args[function.code.cycle_param_offset :]) if function.code.cycle_params else ()
         initial_stack = [] if cycle_values else list(args[function.code.cycle_param_offset :])
@@ -4891,17 +5104,22 @@ def run(
         return vm.run(program)
 
 
-def _require_single_resolved_slot(
-    reference: ResolvedElementReference,
-    target_kind: str,
-) -> None:
-    """Update require single resolved slot state during VM execution."""
-    if reference.overload_index == 0:
-        return
-    raise RuntimeError(
-        f"resolved {target_kind} '{reference.name}' has no overload "
-        f"{reference.overload_index}"
-    )
+def _selected_function_implementation(
+    value: Any, implementation_id: str | None,
+) -> FunctionValue:
+    """Link a checked callable identity; an abstract single callable needs no selector."""
+    if implementation_id is not None and (
+        not isinstance(implementation_id, str) or not implementation_id
+    ):
+        raise RuntimeError("invalid function implementation identity")
+    if isinstance(value, FunctionValue):
+        if implementation_id is None or value.code.implementation_id == implementation_id:
+            return value
+    elif isinstance(value, OverloadedFunctionValue) and implementation_id is not None:
+        selected = _linked_function_implementation(value, implementation_id)
+        if selected is not None:
+            return selected
+    raise RuntimeError(f"function implementation {implementation_id!r} cannot be linked")
 
 
 def _closure_locals(frame: _Frame) -> dict[str, Any] | None:
@@ -5197,15 +5415,31 @@ def _exit_cycle(frame: _Frame) -> None:
     ) = frame.cycle_scopes.pop()
 
 
-def _store_value(existing: Any, value: Any) -> Any:
-    """Store value during VM execution."""
+def _store_value(existing: Any, value: Any, vm: VirtualMachine) -> Any:
+    """Merge declaration identities, sharing repeated imports of the same body."""
     function_types = (FunctionValue, OverloadedFunctionValue)
     if isinstance(existing, function_types) and isinstance(value, function_types):
+        merged = []
+        identities = {}
         for overload in _function_overloads(existing) + _function_overloads(value):
+            identity = overload.code.implementation_id
+            if identity is not None and identity in identities:
+                previous = identities[identity]
+                if replace(previous.code, dispatch_types=overload.code.dispatch_types) != overload.code:
+                    raise RuntimeError(f"conflicting function implementation {identity!r}")
+                if previous.code.dispatch_types and overload.code.dispatch_types and previous.code.dispatch_types != overload.code.dispatch_types:
+                    raise RuntimeError(f"conflicting dispatch predicates for {identity!r}")
+                selected = overload if overload.code.dispatch_types or not previous.code.dispatch_types else previous
+                merged[merged.index(previous)] = selected
+                identities[identity] = selected
+                continue
+            if identity is not None:
+                identities[identity] = overload
+            merged.append(overload)
+        for overload in merged:
             _duplicate_occurrence(overload)
-        return OverloadedFunctionValue(
-            _function_overloads(existing) + _function_overloads(value)
-        )
+        _release_value(value, vm)
+        return OverloadedFunctionValue(tuple(merged))
     return value
 
 
@@ -5240,6 +5474,17 @@ def _bind_recursive_value(value: Any, name: str) -> None:
             overload.globals.setdefault(name, value)
 
 
+
+def _runtime_projection_guard_tuple(value: object) -> tuple[tuple[str, str], ...]:
+    """Decode the (type argument, upper bound) obligations for a projection."""
+    if (not isinstance(value, tuple) or any(
+        not isinstance(item, tuple) or len(item) != 2
+        or not all(isinstance(part, str) for part in item)
+        for item in value
+    )):
+        raise RuntimeError(f"invalid generic implementation guards {value!r}")
+    return value
+
 def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
     """Decode lifecycle metadata, including declaration-order field names."""
     if value is None:
@@ -5255,8 +5500,10 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
     )
     accepted_names: tuple[str, ...] = ()
     generic_variances: tuple[str, ...] = ()
-    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
-    generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    type_facts: tuple[tuple[object, ...], ...] = ()
+    generic_supertypes: tuple[
+        tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]], ...
+    ] = ()
     if len(value) in ({9, 10} if has_field_order else {8, 9}):
         accepted_names = _runtime_string_tuple(
             value[5 + offset], "accepted type names"
@@ -5267,21 +5514,35 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         raw_facts = value[7 + offset]
         if not isinstance(raw_facts, tuple):
             raise RuntimeError(f"invalid runtime type facts {raw_facts!r}")
-        facts: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+        facts: list[tuple[object, ...]] = []
         for fact in raw_facts:
             if (
                 not isinstance(fact, tuple)
-                or len(fact) != 3
+                or len(fact) not in {3, 4}
                 or not isinstance(fact[0], str)
             ):
                 raise RuntimeError(f"invalid runtime type fact {fact!r}")
-            facts.append(
-                (
-                    fact[0],
-                    _runtime_string_tuple(fact[1], "accepted type names"),
-                    _runtime_string_tuple(fact[2], "generic variances"),
-                )
-            )
+            projections: list[
+                tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]
+            ] = []
+            if len(fact) == 4:
+                if not isinstance(fact[3], tuple):
+                    raise RuntimeError(f"invalid generic projection facts {fact[3]!r}")
+                for projection in fact[3]:
+                    if (not isinstance(projection, tuple) or len(projection) != 3
+                            or not isinstance(projection[0], str)):
+                        raise RuntimeError(f"invalid generic projection {projection!r}")
+                    projections.append((
+                        projection[0],
+                        _runtime_string_tuple(projection[1], "generic projection arguments"),
+                        _runtime_projection_guard_tuple(projection[2]),
+                    ))
+            facts.append((
+                fact[0],
+                _runtime_string_tuple(fact[1], "accepted type names"),
+                _runtime_string_tuple(fact[2], "generic variances"),
+                tuple(projections),
+            ))
         type_facts = tuple(facts)
     if len(value) == 9 + offset:
         raw_supertypes = value[8 + offset]
@@ -5289,22 +5550,21 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
             raise RuntimeError(
                 f"invalid generic supertype metadata {raw_supertypes!r}"
             )
-        supertypes: list[tuple[str, tuple[str, ...]]] = []
+        supertypes: list[
+            tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]
+        ] = []
         for supertype in raw_supertypes:
             if (
                 not isinstance(supertype, tuple)
-                or len(supertype) != 2
+                or len(supertype) != 3
                 or not isinstance(supertype[0], str)
             ):
-                raise RuntimeError(
-                    f"invalid generic supertype metadata {supertype!r}"
-                )
-            supertypes.append(
-                (
-                    supertype[0],
-                    _runtime_string_tuple(supertype[1], "supertype arguments"),
-                )
-            )
+                raise RuntimeError(f"invalid generic supertype metadata {supertype!r}")
+            supertypes.append((
+                supertype[0],
+                _runtime_string_tuple(supertype[1], "supertype arguments"),
+                _runtime_projection_guard_tuple(supertype[2]),
+            ))
         generic_supertypes = tuple(supertypes)
     return ObjectRuntimeType(
         destructor_name=cast(str | None, value[0]),
@@ -6060,8 +6320,26 @@ def _select_declared_dispatch_overload(
             "cannot dispatch overloaded function for runtime types "
             f"{tuple(_runtime_type_name(arg) for arg in args)}"
         )
-    # Analysis emits overloads in specificity order. Runtime applies that order;
-    # it never executes candidates to discover which body happens to succeed.
+    if len(matches) != 1:
+        raise RuntimeError("ambiguous declared callable dispatch")
+    return _selected_function_implementation(value, matches[0].code.implementation_id)
+
+
+def _linked_function_implementation(
+    value: OverloadedFunctionValue,
+    implementation_id: str,
+) -> FunctionValue | None:
+    """Resolve a checked implementation by identity, never by ordinal fallback."""
+    linked = value.implementation_lookup.get(implementation_id)
+    if linked is not None:
+        return linked
+    matches = tuple(
+        item for item in value.overloads
+        if item.code.implementation_id == implementation_id
+    )
+    if len(matches) != 1:
+        return None
+    value.implementation_lookup[implementation_id] = matches[0]
     return matches[0]
 
 
@@ -6079,18 +6357,28 @@ def _select_union_dispatch_overload(
             for arg, pattern in zip(args, branch.params, strict=True)
         )
     )
-    indexes = {branch.overload_index for branch in matches}
-    if len(indexes) != 1:
-        detail = "no branch" if not indexes else "ambiguous branches"
+    identities = {branch.implementation_id for branch in matches}
+    if len(identities) != 1 or None in identities:
+        detail = "no branch" if not identities else "ambiguous or unlinked branches"
         raise RuntimeError(
             f"cannot dispatch overloaded function: {detail} for runtime types "
             f"{tuple(_runtime_type_name(arg) for arg in args)}"
         )
-    index = indexes.pop()
-    try:
-        return value.overloads[index]
-    except IndexError as exc:
-        raise RuntimeError(f"function has no overload {index}") from exc
+    implementation_id = identities.pop()
+    overload = value.implementation_lookup.get(implementation_id)
+    if overload is None:
+        candidates = tuple(
+            item for item in value.overloads
+            if item.code.implementation_id == implementation_id
+        )
+        if len(candidates) != 1:
+            raise RuntimeError(
+                f"cannot link union implementation {implementation_id!r} "
+                f"({len(candidates)} matches)"
+            )
+        overload = candidates[0]
+        value.implementation_lookup[implementation_id] = overload
+    return overload
 
 
 def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
@@ -6253,7 +6541,7 @@ def _runtime_patterns_same_type(
 
 def _parse_runtime_type_pattern(
     text: str,
-    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (),
+    type_facts: tuple[tuple[object, ...], ...] = (),
 ) -> RuntimeTypePattern:
     """Compute parse runtime type pattern during VM execution."""
     text = text.strip()
@@ -6300,12 +6588,12 @@ def _parse_runtime_type_pattern(
 
 def _runtime_type_fact(
     name: str,
-    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
+    type_facts: tuple[tuple[object, ...], ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Look up closed-world nominal facts embedded in object metadata."""
-    for fact_name, accepted, variances in type_facts:
-        if fact_name == name:
-            return accepted, variances
+    for fact in type_facts:
+        if fact[0] == name:
+            return fact[1], fact[2]
     return (), ()
 
 
@@ -6334,6 +6622,145 @@ def _split_runtime_type_args(text: str, separator: str) -> tuple[str, ...]:
     parts.append(text[start:].strip())
     return tuple(part for part in parts if part)
 
+
+
+def _structural_declared_subtype(
+    actual: RuntimeTypePattern,
+    expected: RuntimeTypePattern,
+    *,
+    type_facts: tuple[tuple[object, ...], ...] = (),
+) -> bool:
+    """Compare declared types *directionally* for structural witness linking.
+
+    Runtime pattern overlap checking is not a subtype relation: for example,
+    it also accepts a base type when the target is its derived type. Trait
+    witnesses require the same directional parameter/return contracts checked
+    by analysis. Nominal ancestors and variance are compiler-supplied facts.
+    """
+    if actual.kind == "union":
+        return all(
+            _structural_declared_subtype(branch, expected, type_facts=type_facts)
+            for branch in actual.children
+        )
+    if expected.kind == "union":
+        return any(
+            _structural_declared_subtype(actual, branch, type_facts=type_facts)
+            for branch in expected.children
+        )
+    if actual.kind != expected.kind:
+        return False
+    if actual.kind != "nominal":
+        return actual == expected
+    if expected.name == "Any":
+        return True
+    if actual.name != expected.name:
+        if expected.children or any(
+            len(fact) >= 4 and any(
+                projection[0] == expected.name for projection in fact[3]
+            ) for fact in type_facts if fact[0] == actual.name
+        ):
+            # Project the full declared generic supertype rather than treating
+            # "Box[T] as Holder[T]" as an unparameterized name relationship.
+            # These templates are emitted by analysis, not inferred from values.
+            for fact in type_facts:
+                if fact[0] != actual.name or len(fact) < 4:
+                    continue
+                for parent, templates, guards in fact[3]:
+                    if parent != expected.name:
+                        continue
+                    arguments = tuple(
+                        _render_structural_type(child) for child in actual.children
+                    )
+                    if not _structural_projection_guards_hold(guards, arguments, type_facts):
+                        continue
+                    projected = tuple(
+                        _instantiate_structural_projection(template, arguments)
+                        for template in templates
+                    )
+                    if any("$" in item for item in projected):
+                        continue
+                    parent_type = _parse_runtime_type_pattern(
+                        f"{parent}[{', '.join(projected)}]", type_facts
+                    )
+                    if _structural_declared_subtype(
+                        parent_type, expected, type_facts=type_facts
+                    ):
+                        return True
+            return False
+        numeric_supertypes = {
+            "Int": frozenset({"Real", "Number"}),
+            "Real": frozenset({"Number"}),
+            "Number": frozenset(),
+        }
+        if actual.name in numeric_supertypes:
+            return expected.name in numeric_supertypes[actual.name]
+        return expected.name in actual.accepted_names
+    if not expected.children:
+        return True
+    if len(actual.children) != len(expected.children):
+        return False
+    variances = expected.variances or (
+        (Variance.INVARIANT,) * len(expected.children)
+    )
+    for source_arg, target_arg, variance in zip(
+        actual.children, expected.children, variances, strict=True
+    ):
+        if variance is Variance.COVARIANT:
+            if not _structural_declared_subtype(source_arg, target_arg, type_facts=type_facts):
+                return False
+        elif variance is Variance.CONTRAVARIANT:
+            if not _structural_declared_subtype(target_arg, source_arg, type_facts=type_facts):
+                return False
+        elif not _runtime_patterns_same_type(source_arg, target_arg):
+            return False
+    return True
+
+
+def _render_structural_type(pattern: RuntimeTypePattern) -> str:
+    """Render a checked nominal type to instantiate a generic projection."""
+    if pattern.kind == "union":
+        return " | ".join(_render_structural_type(child) for child in pattern.children)
+    if pattern.kind != "nominal":
+        raise RuntimeError("unsupported generic projection type")
+    if pattern.children:
+        return f"{pattern.name}[{', '.join(_render_structural_type(child) for child in pattern.children)}]"
+    return pattern.name
+
+
+def _instantiate_structural_projection(template: str, args: tuple[str, ...]) -> str:
+    """Substitute positional type arguments without aliasing $1 with $10."""
+    import re
+    return re.sub(
+        r"\$(\d+)",
+        lambda match: args[int(match.group(1))]
+        if int(match.group(1)) < len(args) else match.group(0),
+        template,
+    )
+
+
+
+def _structural_projection_guards_hold(
+    guards: tuple[tuple[str, str], ...],
+    arguments: tuple[str, ...],
+    type_facts: tuple[tuple[object, ...], ...],
+) -> bool:
+    """Require all declared generic bounds before using a nominal ancestor.
+
+    Bounds are compiler-supplied templates, not an overload search.  Unknown
+    runtime arguments or unsupported obligations fail closed.
+    """
+    for subject, bound in guards:
+        actual = _instantiate_structural_projection(subject, arguments)
+        expected = _instantiate_structural_projection(bound, arguments)
+        if "$" in actual or "$" in expected:
+            return False
+        if not _structural_declared_subtype(
+            _parse_runtime_type_pattern(actual, type_facts),
+            _parse_runtime_type_pattern(expected, type_facts),
+            type_facts=type_facts,
+        ):
+            return False
+    return True
 
 def _select_multimethod_overload(
     value: OverloadedFunctionValue,
@@ -6548,13 +6975,15 @@ def _call_object_constructor(
     frame: _Frame,
     vm: VirtualMachine,
     type_args: tuple[str, ...] = (),
-    overload_index: int | None = None,
+    implementation_id: str | None = None,
 ) -> None:
     """Invoke object constructor during VM execution."""
     if callee.initializer is None:
         arity = len(callee.required)
     else:
-        initializer = _object_constructor_initializer(callee, overload_index)
+        initializer = _object_constructor_initializer(
+            callee, implementation_id
+        )
         arity = len(initializer.code.params) - 1
     try:
         (
@@ -6627,32 +7056,15 @@ def _call_object_constructor(
 
 
 def _object_constructor_initializer(
-    callee: ObjectConstructorValue,
-    overload_index: int | None,
+    callee: ObjectConstructorValue, implementation_id: str | None = None,
 ) -> FunctionValue:
-    """Compute object constructor initializer during VM execution."""
-    initializer = callee.initializer
-    if isinstance(initializer, FunctionValue):
-        if overload_index not in (None, 0):
-            raise RuntimeError(
-                f"constructor '{callee.type_name}' has no overload {overload_index}"
-            )
-        return initializer
-    if isinstance(initializer, OverloadedFunctionValue):
-        if overload_index is None:
-            if len(initializer.overloads) != 1:
-                raise RuntimeError(
-                    f"cannot call overloaded constructor '{callee.type_name}' "
-                    "without a resolved slot"
-                )
-            return initializer.overloads[0]
-        try:
-            return initializer.overloads[overload_index]
-        except IndexError as exc:
-            raise RuntimeError(
-                f"constructor '{callee.type_name}' has no overload {overload_index}"
-            ) from exc
-    raise RuntimeError(f"constructor '{callee.type_name}' has no initializer")
+    """Link an explicit constructor without depending on initializer order."""
+    try:
+        return _selected_function_implementation(callee.initializer, implementation_id)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"constructor '{callee.type_name}' cannot link implementation {implementation_id!r}"
+        ) from exc
 
 
 def _accessed_value(value: Any) -> Any:
@@ -6678,8 +7090,15 @@ def _call_resolved_builtin(
     static_values: tuple[Any, ...] = (),
     type_args: tuple[str, ...] = (),
     extension_reference: VectorExtensionReference | None = None,
+    checked_witnesses: tuple[
+        tuple[int, tuple[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...]],
+        ...
+    ] = (),
+    callable_witnesses: tuple[
+        tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = (),
 ) -> None:
-    """Invoke resolved builtin during VM execution."""
+    """Invoke resolved builtin, applying checked trait evidence to its arguments."""
     arity = (
         arity_override if arity_override is not None else len(overload.signature.params)
     )
@@ -6698,6 +7117,13 @@ def _call_resolved_builtin(
                 _show_overload_inputs((overload,)),
             )
         ) from exc
+    if checked_witnesses:
+        bound = list(args)
+        for index, proof in checked_witnesses:
+            if not 0 <= index < len(bound):
+                raise RuntimeError("checked trait witness argument index is invalid")
+            bound[index] = with_runtime_trait_witnesses(bound[index], proof)
+        args = tuple(bound)
     consumed_count = (
         min(consumed_override, stack_count)
         if consumed_override is not None
@@ -6712,6 +7138,88 @@ def _call_resolved_builtin(
         if static_values or type_args
         else callee.context
     )
+    if callable_witnesses:
+        # Convert the *callback invocation*, not the shared closure. Built-ins
+        # may invoke callbacks lazily (map/filter), so capture the checked plan
+        # in the per-call runtime context rather than mutating the callback.
+        callback_proofs: dict[int, dict[int, list[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str]]]] = {}
+        for argument_index, argument_arity, parameter_index, method, contract, identity in callable_witnesses:
+            if argument_arity != len(args) or not 0 <= argument_index < len(args):
+                raise RuntimeError("invalid checked callback argument position")
+            vm._validate_checked_structural_witness(method, identity, frame.globals)
+            callback_id = id(args[argument_index])
+            callback_proofs.setdefault(callback_id, {}).setdefault(parameter_index, []).append(
+                (method, contract, identity)
+            )
+
+        def bind_callback_inputs(callback: Any, values: tuple[Any, ...]) -> tuple[Any, ...]:
+            """Install checked trait witnesses on one callback invocation."""
+            param_proofs = callback_proofs.get(id(callback))
+            if not param_proofs:
+                return values
+            converted = list(values)
+            for index, proof in param_proofs.items():
+                if not 0 <= index < len(converted):
+                    raise RuntimeError("invalid checked callback parameter position")
+                if not isinstance(unwrap_runtime_value(converted[index]), ObjectValue):
+                    raise RuntimeError("checked callback witness expects an object")
+                converted[index] = with_runtime_trait_witnesses(converted[index], tuple(proof))
+            return tuple(converted)
+
+        base_context = context
+
+        def adapted_call(callback: Any, values: list[Any]) -> list[Any]:
+            """Invoke a callback after binding its checked input witnesses."""
+            return base_context.call(callback, list(bind_callback_inputs(callback, tuple(values))))
+
+        class CheckedBuiltinCall:
+            """Preserve the built-in context's VM owner for cleanup helpers."""
+
+            def __init__(self) -> None:
+                """Retain the checked callback and its invocation plan."""
+                self.__self__ = vm
+
+            def __call__(self, callback: Any, values: list[Any]) -> list[Any]:
+                """Invoke the checked prepared callback with proved arguments."""
+                return adapted_call(callback, values)
+
+        def adapted_prepare(callback: Any, arity: int, multiplicity: int) -> PreparedCall:
+            """Prepare a callback while preserving invocation-local witnesses."""
+            if base_context.prepare_call is None:
+                raise RuntimeError("checked callback needs a prepare-call implementation")
+            prepared = base_context.prepare_call(callback, arity, multiplicity)
+            if id(callback) not in callback_proofs:
+                return prepared
+            return replace(
+                prepared,
+                strategy=f"checked-{prepared.strategy}",
+                implementation=lambda *values: prepared.invoke_proven(
+                    bind_callback_inputs(callback, values)
+                ),
+            )
+
+        def adapted_call_overload(callback: Any, values: list[Any], *extras: Any) -> list[Any]:
+            """Link the checked callback implementation before binding its inputs."""
+            if base_context.call_overload is None:
+                raise RuntimeError("checked callback needs a call-overload implementation")
+            return base_context.call_overload(
+                callback, list(bind_callback_inputs(callback, tuple(values))), *extras,
+            )
+
+        def adapted_predicate(callback: Any, item: Any) -> bool:
+            """Evaluate a guarded predicate through the checked callback adapter."""
+            if base_context.test_predicate is None:
+                raise RuntimeError("checked callback needs a predicate implementation")
+            converted = bind_callback_inputs(callback, (item,))
+            return base_context.test_predicate(callback, converted[0])
+
+        context = replace(
+            context,
+            call=CheckedBuiltinCall(),
+            prepare_call=adapted_prepare if base_context.prepare_call is not None else None,
+            call_overload=adapted_call_overload if base_context.call_overload is not None else None,
+            test_predicate=adapted_predicate if base_context.test_predicate is not None else None,
+        )
     if vectorised:
         extension = _materialize_vector_extension(vm, extension_reference, frame)
         try:
@@ -6944,7 +7452,8 @@ def _runtime_object_implements(value: Any, name: str) -> bool:
     return (
         isinstance(value, ObjectValue)
         and value.runtime_type is not None
-        and name in value.runtime_type.accepted_names
+        and (name in value.runtime_type.accepted_names
+             or _runtime_generic_supertype(value, name) is not None)
     )
 
 
@@ -7575,6 +8084,8 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     )
     if value.type_name == pattern or pattern in accepted_names:
         return True
+    if _runtime_generic_supertype(value, pattern) is not None:
+        return True
     if value.type_name.rsplit(".", 1)[-1] == pattern or any(
         name.rsplit(".", 1)[-1] == pattern for name in accepted_names
     ):
@@ -7637,6 +8148,17 @@ def _matches_cast_type(
     if not isinstance(spec, tuple) or not spec:
         return False
     kind = spec[0]
+    if kind == "structural":
+        return (
+            len(spec) == 2
+            and isinstance(spec[1], tuple)
+            and isinstance(unwrap_runtime_value(value), ObjectValue)
+            and all(
+                isinstance(requirement, tuple) and len(requirement) == 2
+                and runtime_trait_witness(value, requirement[0], requirement[1]) is not None
+                for requirement in spec[1]
+            )
+        )
     if kind == "none":
         return _is_none_result_value(value)
     if kind == "var":
@@ -7810,8 +8332,12 @@ def _runtime_generic_supertype(
     runtime_type = value.runtime_type
     if runtime_type is None:
         return None
-    for name, templates in runtime_type.generic_supertypes:
+    for name, templates, guards in runtime_type.generic_supertypes:
         if name != target_name:
+            continue
+        if not _structural_projection_guards_hold(
+            guards, value.type_args, runtime_type.type_facts,
+        ):
             continue
         instantiated: list[str] = []
         for template in templates:
@@ -9856,10 +10382,15 @@ def _canonicalize_runtime_value_tag_contract(
             for tag in existing
             if _runtime_variant_parent_is_retained(tag, declared_keys, tag_parents)
         )
-        return update_runtime_tags(payload, add=(*additions, *retained))
+        result = update_runtime_tags(payload, add=(*additions, *retained))
+        if isinstance(value, TaggedValue) and value.structural_witnesses:
+            return with_runtime_trait_witnesses(result, value.structural_witnesses)
+        return result
 
     payload = unwrap_runtime_value(value)
     if kind in {"any", "none", "nominal", "ffi"}:
+        if isinstance(value, TaggedValue) and value.structural_witnesses:
+            return with_runtime_trait_witnesses(payload, value.structural_witnesses)
         return payload
     if kind == "union":
         if len(spec) != 2 or not isinstance(spec[1], tuple) or not spec[1]:

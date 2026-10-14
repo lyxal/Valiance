@@ -131,7 +131,7 @@ def _call_site_checked_overload_signature(
                         applied.actual_returns,
                         call_site_body=len(explicit),
                         runtime_static_values=(
-                            callable_index,
+                            candidate.implementation_id,
                             "__call_static__",
                             applied.vectorised,
                             applied.vectorised_depths,

@@ -1,11 +1,13 @@
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
 from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
-from valiance.runtime import compile_program, run
+from valiance.runtime import compile_program, dumps, loads, run
+from valiance.runtime.bytecode import Instruction, OpCode, ResolvedElementReference
 from valiance.vtypes.symbols import Symbol
 
 
@@ -526,6 +528,47 @@ class GenericTraitToTraitImplementationTests(unittest.TestCase):
         ))
         self.assertEqual(analyser.diagnostics, [])
 
+    def test_scoped_generic_object_implementation_respects_bounds(self):
+        source = (
+            "trait[T] Holder => end\n"
+            "object[T] Box => $value: T end\n"
+            "object[T: Number] Box as Holder[T] => end\n"
+        )
+        invalid = Analyser()
+        invalid.analyse(parse(source + 'Box[String]("hi") as[Holder[String]]'))
+        self.assertTrue(any(
+            "cannot safely cast Box[String] to Holder[String]" in message
+            for message in invalid.diagnostics
+        ))
+        valid = Analyser()
+        valid.analyse(parse(source + "Box[Int](1) as[Holder[Int]]"))
+        self.assertEqual(valid.diagnostics, [])
+
+    def test_scoped_generic_object_constraint_survives_import(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "holders.vlnc").write_text(
+                "public trait[T] Holder => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T: Number] Box as Holder[T] => end\n",
+                encoding="utf-8",
+            )
+            good = Analyser(module_loader=ModuleLoader(), source_file=root / "good.vlnc")
+            good.analyse(parse(
+                "import {holders.Holder, holders.Box}\n"
+                "Box[Int](1) as[Holder[Int]]"
+            ))
+            self.assertEqual(good.diagnostics, [])
+            bad = Analyser(module_loader=ModuleLoader(), source_file=root / "bad.vlnc")
+            bad.analyse(parse(
+                "import {holders.Holder, holders.Box}\n"
+                'Box[String]("hi") as[Holder[String]]'
+            ))
+            self.assertTrue(any(
+                "cannot safely cast Box[String] to Holder[String]" in message
+                for message in bad.diagnostics
+            ))
+
     def test_generic_trait_implication_enforces_constraints(self):
         analyser = Analyser()
         analyser.analyse(parse(
@@ -626,7 +669,22 @@ class GenericImplementationElementDispatchTests(unittest.TestCase):
             )
             typed = analyser.analyse(parse(source))
             self.assertEqual(analyser.diagnostics, [])
-            self.assertEqual(run(compile_program(typed)), [1, 2])
+            program = compile_program(typed)
+            self.assertEqual(run(program), [1, 2])
+            selected = [
+                instruction.arg
+                for instruction in program.main.instructions
+                if instruction.op is OpCode.CALL_RESOLVED_ELEMENT
+                and isinstance(instruction.arg, ResolvedElementReference)
+                and instruction.arg.name == "produce"
+            ]
+            self.assertEqual(len(selected), 2)
+            self.assertTrue(all(item.implementation_id for item in selected))
+            self.assertNotEqual(selected[0].implementation_id, selected[1].implementation_id)
+            self.assertTrue(all(not hasattr(item, "overload_index") for item in selected))
+            adversarial = program
+            self.assertEqual(run(adversarial), [1, 2])
+            self.assertEqual(run(loads(dumps(adversarial))), [1, 2])
 
 
 class ImplementationElementGenericTests(unittest.TestCase):

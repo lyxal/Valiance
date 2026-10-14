@@ -313,8 +313,9 @@ A source definition may analyse to several overload bodies. Codegen compiles
 each one to `FunctionCode` and stores them in `FunctionSetCode`.
 
 The set may also contain a `dispatch_plan`. That plan does not ask the VM to
-solve overloads. It tells the VM which already-selected overload index belongs
-to each reified runtime branch of a union input.
+solve overloads. It tells the VM which checked implementation identity belongs
+to each reified runtime branch of a union input. An ordinal may appear in the
+analysed plan while codegen links it, but serialized branches carry identities.
 
 ### References carry structured payloads
 
@@ -322,7 +323,7 @@ Complex instructions use named dataclasses rather than positional tuples. For
 example, `ResolvedElementReference` carries:
 
 - `name`: runtime lookup name;
-- `overload_index`: selected slot;
+- `implementation_id`: analyser-selected declaration or intrinsic identity;
 - `vectorised`: whether to map rather than call once;
 - `vectorised_depths`: per-argument recursive mapping depth;
 - `vectorised_target_ranks`: exact runtime rank boundaries;
@@ -331,7 +332,13 @@ example, `ResolvedElementReference` carries:
 - `static_values`: hidden values such as solved rank variables, `where`
   results, or call-site-selected callable group arities;
 - `arity_override` and `consumed_override`: call-site checked stack contracts;
-- `multidispatch`: permission to select a `multi` specialisation; and
+- `dispatch_kind`: analyser-authorised steps (`STATIC` by default, with
+  `TRAIT_WITNESS`, `UNION`, or `MULTIMETHOD` bits when needed);
+- `structural_signature`: the statically required operand/result contract for
+  `TRAIT_WITNESS`, never the live argument types;
+- `implementation_id`: an analyser-selected source declaration identity used to
+  link static user-function calls to their concrete `FunctionCode`, independent
+  of the ordinal in the analyser's local overload table; and
 - `extension`: compiled unequal-length vector extension behaviour.
 
 Named fields matter because this record crosses compiler, serializer, and VM
@@ -404,13 +411,14 @@ call means.
 
 Examples:
 
-- `TypedElementNode.overload_index` chooses a runtime slot.
+- `TypedElementNode.implementation_id` identifies the checked candidate during
+  analysis; where available, lowering emits the selected implementation ID.
 - `call_arg_order` causes a `STACK_SHUFFLE` before the call.
 - `AppliedOverload.vectorised_depths` are copied to the resolved reference.
 - a typed `?` call becomes `TRY_UNWRAP`, because it must return from the current
   frame rather than merely invoke a built-in function;
 - `TypedAtNode` becomes a function value plus a resolved `call` carrying stop
-  ranks and the analysed body-overload index; and
+  ranks and a linked body-implementation ID when available; and
 - typed literal items are compiled instead of their raw equivalents so nested
   constructor type arguments are not lost; and
 - `TypedMatchNode` and `TypedForNode` retain analysed child bodies so resolved
@@ -452,19 +460,15 @@ The normal source element path is:
 TypedElementNode
   -> ResolvedElementReference
   -> CALL_RESOLVED_ELEMENT
-  -> direct runtime slot invocation
+  -> identity-linked implementation invocation
 ```
 
 The VM loads `reference.name`, examines what kind of runtime value it names, and
-uses `reference.overload_index` directly.
+links `reference.implementation_id` to the selected intrinsic.
 
-For a built-in, the slot indexes `BuiltinElement.definitions`.
-
-For a user-defined overload set, the slot indexes
-`OverloadedFunctionValue.overloads`.
-
-For a constructor, the slot selects the initializer overload and `type_args`
-are attached to the new `ObjectValue`.
+For built-ins and user functions, the VM requires exactly one matching
+implementation ID. Constructors link the selected initializer by ID and attach
+`type_args` to the new `ObjectValue`.
 
 This is the practical meaning of “overload resolution is static”: the VM is
 given an address inside the selected runtime definition.
@@ -515,24 +519,49 @@ because a built-in has received an actual callable value and must invoke it.
 
 A blanket rule that “the VM never dispatches” would be too strong. It performs
 three narrow kinds of dispatch whose permission and search space are compiled
-in advance.
+in advance. A resolved element call defaults to `DispatchKind.STATIC`:
+the VM invokes the analyser-selected implementation without resolving overloads
+again. For source-defined overloads, a stable source declaration ID is linked to
+its runtime closure and cached. Built-ins carry intrinsic identities generated
+from their definitions, constructors have initializer identities, and compiled
+union branches carry linked implementation identities. Inferred callable alternatives
+use signature identities scoped to their callable value. Runtime dispatch is limited
+to calls explicitly marked otherwise.
+
+### Abstract-receiver trait witnesses
+
+Anonymous trait requirements preserve the required method parameter and result
+signatures in `ResolvedElementReference.structural_signature`. Analysis selects
+the satisfying implementation when the concrete receiver enters the structural
+abstraction, and emits checked implementation IDs at calls and coercion sites.
+The VM verifies these identities and carries a dictionary on the individual
+trait value view. It never selects a method by matching the runtime receiver's
+argument types or reconstructs the analyser's structural proof. A missing
+witness is a linking error, including for forwarded and higher-order values.
+
+`TypedObjectNode.method_results` preserves return signatures inferred during
+analysis, including unannotated methods, and this metadata survives module
+exports/imports, compilation, and serialization. Method-level generic
+parameters also remain in `FunctionCode` as part of the implementation's
+checked contract. See **Trait value witnesses (0x33)** for the representation.
 
 ### Static union dispatch plans
 
 When analysis adapts an overload set to a union-typed callable, it emits
-`UnionDispatchBranch` records. Each record contains runtime type patterns and one
-overload index.
+`UnionDispatchBranch` records. Codegen links the analysed branch to a
+specific `implementation_id`; serialized plans do not rely on the branch's
+original implementation identity.
 
-The VM matches concrete arguments against those patterns and calls the recorded
-index. It does not rank overloads or choose a more specific return type.
+The VM matches concrete arguments against those patterns and links the recorded
+implementation identity. It does not rank overloads or choose a more specific return type.
 
 ### Multimethod dispatch
 
-A resolved call may set `multidispatch=True`. The selected slot is the analysed
+A resolved call may set `dispatch_kind=DispatchKind.MULTIMETHOD`. The selected slot is the analysed
 fallback, and the VM may replace it with a compatible `multi` specialisation
 whose runtime object types match.
 
-Without that flag, no multimethod search occurs.
+Without that mode, no multimethod search occurs.
 
 ### Runtime checks inside a selected implementation
 
@@ -1298,14 +1327,90 @@ Examples include:
 Adding a new opcode also requires a stable byte number in `_OP_TO_BYTE` and a
 reader mapping in `_BYTE_TO_OP`.
 
-### Positional overload slots are part of current bytecode behaviour
+### Stable implementation identities (0x35)
 
-Resolved calls serialize an overload index. Reordering built-in overload
-registration can therefore change the meaning of existing bytecode even if the
-source signatures are unchanged.
+Source-defined functions and object-friendly methods receive declaration IDs in
+`analysis/overload_identity.py`, independent of their overload-set positions.
+The IDs survive typed environments, module imports, `ResolvedElementReference`,
+and serialized `FunctionCode`. A statically selected call links to the exact
+matching implementation. A missing or ambiguous ID is a linking error, not a
+reason for runtime type-based overload selection.
 
-Treat overload order as compatibility-sensitive until the format uses stable
-explicit overload identifiers.
+Built-in overloads receive deterministic `intrinsic:` IDs derived from their
+registered definitions. Python standard-library hooks share `native:` identities
+between their analysed wrappers and runtime catalogues. Explicit object
+initializers use `constructor:` IDs. Inferred callable alternatives and source
+variants use signature fingerprints; table ordinals are never implementation
+identities. Union plans carry selected IDs from analysis through execution.
+
+Resolved calls, constructor initializers, validator plans, `call`, `at`, and
+`spawn` all link by identity. An abstract single function value needs no overload
+selector. Numeric selectors are rejected, and missing or duplicate checked IDs
+are link errors. Object method metadata is keyed by source declaration and
+callable input shape, so imported provider metadata does not depend on per-name
+method ordering. Static validator results are keyed by declaration identity.
+
+Explicit dynamic calls can match compiled predicates, then link the unique
+matching implementation. They never use a first matching function-table entry to
+resolve ambiguity or execute a body to test whether it fits. Trait dispatch
+requires the analyser-proven receiver witness.
+
+The portable bytecode format is **0x35**, analysed interface schema **3**, and
+compiler/interface ABI **3**. Older artifacts must be recompiled.
+
+Implicit-receiver structural requirements are checked in the analyser.
+Where the concrete implementation is known, typed conversion nodes and calls
+carry implementation identities; the VM validates those identities at the
+conversion boundary and never selects a method from runtime argument types.
+Trait values carry an immutable, occurrence-local implementation mapping
+through forwarding, rather than relying on a global receiver-shape cache.
+
+### Analysed structural conversion witnesses (0x31)
+
+When the type checker sees a **concrete nominal argument** passed to a
+function expecting an anonymous implicit-receiver trait, it now records the
+uniquely selected implementation identity in the typed element call. The
+bytecode carries this conversion evidence as `structural_witnesses`; the VM
+links the exact identity at the call boundary before entering the function.
+No live method-argument specificity check or VM-side nearest-signature ranking
+is involved for these conversions. Missing identities fail linking explicitly.
+
+Subsequent revisions extended that checked evidence through casts, typed
+assignments, explicit and implicit returns, higher-order `call` and aggregate
+value forwarding. The runtime signature-based witness selector was removed:
+a missing checked witness is a linking error, not permission to choose another
+overload. See **Trait value witnesses (0x33)** below.
+
+### Structural-witness nominal matching and remaining scope
+
+The structural witness linker now uses nominal subtype/variance evidence that
+code generation attaches to object constructors. In particular, a method
+accepting `Vehicle` can implement a requirement accepting `Car` when
+`Car as Vehicle` is declared, and a method returning `Car` can implement a
+requirement returning `Vehicle`. The comparison is directional: the reverse
+relations are *not* accepted. Selected unconditional object-to-trait
+implementations from imported modules are preserved in the typed import nodes
+so constructor metadata can retain the nominal relationship across module
+boundaries. Witness selection still does not consult the *live method argument*
+for overload specificity.
+
+Constructor metadata carries the analyser's generic-supertype projection
+templates alongside subtype/variance facts. They represent `Box[T] as Holder[T]`,
+composed trait ancestors, reordered generic arguments, and bounds on
+conditional implementations, including through imports. This runtime metadata
+checks nominal casts and ancestry; it is **not** a replacement structural-method
+overload resolver. Analyser-selected implementation IDs control method calls,
+so `foo(Number)` versus `foo(Real)` is decided statically, not by declaration
+order or runtime argument types.
+
+The previously reported `toString` collision (`$g 1 toString`) was **not a
+compiler bug**: the unary `toString` is invoked on the integer `1`, not on
+`$g`, so returning `"1"` is correct. No runtime method-lookup workaround
+should be added for that example.
+
+
+Bytecode format version was **`0x31`** at the analysed-witness stage. Older bytecode is not supported;
+recompile it with the current compiler.
 
 ### Round-trip testing is mandatory
 
@@ -1337,8 +1442,8 @@ Codegen produces a top-level shape like:
 0 MAKE_FUNCTION FunctionCode(name="addFive", params=("x",), ...)
 1 STORE_VAR "addFive"
 2 PUSH_CONST 10
-3 CALL_RESOLVED_ELEMENT name="addFive", overload_index=<selected>
-4 CALL_RESOLVED_ELEMENT name="println", overload_index=<selected>
+3 CALL_RESOLVED_ELEMENT name="addFive", implementation_id=<selected>
+4 CALL_RESOLVED_ELEMENT name="println", implementation_id=<selected>
 5 RETURN
 ```
 
@@ -1347,7 +1452,7 @@ The nested function code is approximately:
 ```text
 0 LOAD_VAR "x"
 1 PUSH_CONST 5
-2 CALL_RESOLVED_ELEMENT name="+", overload_index=<selected>
+2 CALL_RESOLVED_ELEMENT name="+", implementation_id=<selected>
 3 RETURN
 ```
 
@@ -1430,7 +1535,7 @@ metadata was lost.
 | source stack-function arguments | `_Frame.source_args` | manually slice stack and cycle values |
 | compile an overload set | `FunctionSetCode` | discard all but one body |
 | permit runtime union dispatch | analyser-produced `dispatch_plan` | try bodies until one works |
-| permit runtime multimethod selection | `multidispatch=True` on the resolved reference | inspect every overload unconditionally |
+| permit runtime multimethod selection | `dispatch_kind=DispatchKind.MULTIMETHOD` on the resolved reference | inspect every overload unconditionally |
 | vectorise a resolved call | compiled depths/target ranks | make scalar built-ins map themselves |
 | preserve lazy dependencies | `_bind_lazy_result_owners` and retain/release helpers | capture raw values without ownership |
 | add a value kind | `runtime_values.py` plus VM ownership/type/format paths | define format rules only in `println` |
@@ -1447,13 +1552,13 @@ order.
 
 Check:
 
-- selected overload index;
+- selected implementation identity;
 - argument order;
 - actual returns;
 - vectorised flag, depths, and target ranks;
 - runtime consumed count;
 - static rank values;
-- `multidispatch`; and
+- whether `dispatch_kind` explicitly authorises dynamic dispatch; and
 - constructor type arguments.
 
 If these are wrong, the bug is in analysis or type relations.
@@ -2287,3 +2392,70 @@ MSVC available. Locally, with a C compiler on `PATH` (or `CC` set), run:
 ```sh
 uv run --with pytest python -m pytest -q tests/test_bytecode_serialization.py tests/test_concurrency_execution.py tests/test_programs.py
 ```
+
+
+### Trait conversion evidence and guarded generic ancestry (0x32)
+
+The analyser now preserves selected implementation identities at additional
+conversion boundaries. Beyond concrete arguments in ordinary resolved calls,
+`TypedCastNode` and `TypedSetVariableNode` carry analysed witnesses for explicit
+`as[trait ...]` and annotated trait-typed assignments. Single-result functions
+whose implicit final expression is concrete and whose declared result is an
+anonymous trait also install a checked conversion before returning. Each emits
+`BIND_TRAIT_WITNESSES`; it does not rerun overload resolution.
+
+The VM links each checked ID against the bound method and stores the evidence
+on a value-local `TaggedValue` view (introduced in 0x33). Evidence survives
+assignments, function calls and returns, and immutable object-field
+reconstruction without mutating a shared nominal receiver. A missing checked
+method ID is a link error, never permission to select another overload. Cast,
+annotated assignment and result regressions deliberately distinguish
+`foo(Number)` from `foo(Real)` where both accept an `Int`.
+
+Runtime nominal facts now retain **guarded generic supertype projections**.
+For example, `object[T: Number] Box as Holder[T]` carries the obligation
+`$0 <: Number` instead of asserting every `Box[T] <: Holder[T]` unconditionally.
+The projection is available only when the instantiated bound holds; transitive
+projections carry all inherited guards. Imported implementation evidence
+preserves the same conditions. Generic ancestor matching can still check the
+compiled bounds without selecting a method by the live argument's type.
+
+### Trait value witnesses and checked callbacks (0x34)
+
+Checked structural implementation evidence is stored in an immutable mapping
+on each `TaggedValue` view of a receiver. Separate views can share the same
+`ObjectValue` without overwriting each other's dictionaries. The witness is
+preserved across tag canonicalisation, copies, variables, aggregates, function
+arguments, returns (including explicit returns within branches), and callbacks
+invoked through `call`. Analyser-checked callable parameter conversions
+also travel in `ResolvedElementReference.callable_witnesses`: a higher-order
+built-in such as `map` receives an invocation-local callback adapter, which
+installs the exact implementation ID before the callback executes (including
+lazy and prepared execution). The adapter does not mutate a reusable closure
+and cannot invent an overload if its checked identity is missing.
+The analyser emits `BIND_TRAIT_WITNESSES` for explicit
+conversions, typed assignments and return conversions. Optional structural
+casts `as?[trait ...]` also carry the checked evidence through `TRY_CAST`, with
+successful values containing a witness-bearing `Some.value`.
+
+At execution, `TRAIT_WITNESS` calls **only** invoke an identity provided by
+this checked evidence. The old runtime signature-based method selector and
+process-wide trait witness cache were deleted. A missing or mismatched
+implementation ID raises a linking error instead of resolving overloads from
+live arguments. The VM still checks compiled nominal ancestry and its generic
+guards when doing *nominal casts*; this must not be conflated with structural
+overload selection.
+
+The analyser must establish concrete method evidence when converting a
+nominal value into a structural abstraction. A value already carrying a trait
+witness forwards that evidence; a missing witness cannot be manufactured by
+the VM. Built-in postfix operations such as `1 toString` retain their existing
+receiver semantics.
+
+The identity migration now also covers resolved elements, constructors,
+validators, higher-order calls, spawned functions, and union plans. Manual
+bytecode must use the same identity protocol as compiler-generated bytecode.
+Parameter positions, source coordinates, and generic binder indices remain
+ordinary language/compiler metadata; they do not select overload bodies.
+
+The bytecode format is now **`0x35`**. Recompile older bytecode.

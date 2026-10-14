@@ -138,7 +138,7 @@ class _LoopAnalysis:
         function_analyser = self._child_analyser(self.env.lexical_child_scope())
         final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(node, final)
-        analysis = _functions._function_analysis_from_signatures(signatures)
+        analysis = _functions._function_analysis_from_signatures(signatures, self.env.context)
         if analysis is None:
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)

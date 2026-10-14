@@ -246,7 +246,6 @@ def commutative_overload_typing(
     name: Symbol,
     original: T.Overload,
     generated: T.Overload,
-    original_index: int,
 ) -> FunctionOverloadTyping:
     """Compute commutative overload typing while applying compiler annotations."""
     body: list[TypedNode] = []
@@ -268,7 +267,7 @@ def commutative_overload_typing(
                 (),
                 element_tags=original.element_tags,
             ),
-            original_index,
+            original.implementation_id,
         )
     )
     return FunctionOverloadTyping(

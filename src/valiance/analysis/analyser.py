@@ -202,7 +202,16 @@ class _AnalysisPrelude:
         if node not in self.nodes:
             self.nodes.append(node)
 
-    def add_declaration(self, node: TypedNode, source_name: Symbol) -> Symbol:
+    def add_declaration(
+        self,
+        node: TypedNode,
+        source_name: Symbol,
+        *,
+        imported_supertypes: tuple[T.Type, ...] = (),
+        imported_guarded_supertypes: tuple[
+            tuple[T.Type, tuple[T.Type | None, ...]], ...
+        ] = (),
+    ) -> Symbol:
         """Hoist one declaration and return its hidden runtime binding."""
         for existing, existing_source, runtime_name in self.bindings:
             if existing == node and existing_source == source_name:
@@ -212,7 +221,11 @@ class _AnalysisPrelude:
             source_name.text,
             (f"__valiance_import_{self.namespace_seed}_{index}",),
         )
-        self.nodes.append(with_import_runtime_name(node, runtime_name))
+        self.nodes.append(with_import_runtime_name(
+            node, runtime_name,
+            imported_supertypes=imported_supertypes,
+            imported_guarded_supertypes=imported_guarded_supertypes,
+        ))
         self.bindings.append((node, source_name, runtime_name))
         return runtime_name
 
@@ -367,7 +380,7 @@ class Analyser:
         self._ffi_structs: dict[str, T.FFIStructSpec] = {}
         self._ffi_handles: set[str] = set()
         self._top_level_declared_variable_names: frozenset[Symbol] = frozenset()
-        self._prescanned_definition_overloads: dict[int, list[tuple[Symbol, int]]] = {}
+        self._prescanned_definition_overloads: dict[int, list[tuple[Symbol, str]]] = {}
         self._incomplete_recursive_definitions: tuple[DefineNode, ...] = ()
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
@@ -1164,7 +1177,7 @@ class Analyser:
             if analysed is None:
                 return BranchSet((branch.emit(TypedNode(node, None)),))
             details, _ = analysed
-            matches: list[tuple[int, T.ResolvedOverload, AnalysisBranch, object, tuple[bool, ...]]] = []
+            matches: list[tuple[str, T.ResolvedOverload, AnalysisBranch, object, tuple[bool, ...]]] = []
             transfer_violation = None
             for index, item in enumerate(details.overloads):
                 overload = item.overload
@@ -1195,7 +1208,7 @@ class Analyser:
                         None,
                     )
                     if unsafe is None:
-                        matches.append((index, resolved, remaining, item, unique_inputs))
+                        matches.append((overload.implementation_id, resolved, remaining, item, unique_inputs))
                     elif transfer_violation is None:
                         transfer_violation = unsafe
             if not matches:
@@ -1224,7 +1237,7 @@ class Analyser:
                 matches = [
                     match for match in matches if match[1].overload == winner.overload
                 ]
-            overload_index, resolved, remaining, selected, unique_inputs = matches[0]
+            implementation_id, resolved, remaining, selected, unique_inputs = matches[0]
             callable_type = T.Fn(
                 resolved.params, resolved.returns, resolved.overload.element_tags
             )
@@ -1239,7 +1252,7 @@ class Analyser:
                 resolved.params,
                 resolved.returns,
                 typed_callable,
-                overload_index,
+                implementation_id,
                 unique_inputs,
                 resolved.vectorised,
                 resolved.vectorised_depths,
@@ -1286,7 +1299,7 @@ class Analyser:
             task_type = T.Task(*call_plan.actual_returns, effects=callable_type.element_tags)
             typed = TypedSpawnNode(
                 node, task_type, callable_type, call_plan.params, call_plan.actual_returns,
-                None, 0, unique_inputs, call_plan.vectorised,
+                None, None, unique_inputs, call_plan.vectorised,
                 call_plan.vectorised_depths, call_plan.vectorised_target_ranks,
                 call_plan.runtime_static_values,
             )

@@ -924,6 +924,7 @@ def _substitute_type(
                 T.AnonymousTraitRequirement(
                     requirement.name,
                     _substitute_overload(requirement.overload, ranks, free_types),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in typ.requirements
             ),

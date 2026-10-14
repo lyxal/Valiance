@@ -21,7 +21,7 @@ from valiance.asts import (
     TagOverlayNode,
     TypedFunctionNode,
 )
-from valiance.asts.nodes import TypedNode
+from valiance.asts.nodes import TypedNode, TypedObjectNode
 from valiance.vtypes.nodes import VarType, type_var_key
 from valiance.vtypes.relations import _substitute
 from valiance.asts.object_constructors import constructor_definitions
@@ -76,6 +76,8 @@ class ModuleTraitImplementation:
     generics: tuple[Symbol, ...] = ()
     generic_constraints: tuple[T.Type | None, ...] = ()
     subject_kind: Symbol = Symbol("object")
+    method_results: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    method_ids: tuple[tuple[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -727,6 +729,7 @@ def _module_objects(
         and node.kind == Symbol("trait")
     }
     friendly_by_owner: dict[Symbol, list[DefineNode]] = {}
+    metadata_by_owner = {}
     for typed_node in typed:
         node = typed_node.node
         if not isinstance(node, ObjectNode):
@@ -738,6 +741,9 @@ def _module_objects(
             target = T.normalize(node.target)
             if isinstance(target, T.NominalType):
                 friendly_by_owner.setdefault(node.name, []).extend(node.definitions)
+                if isinstance(typed_node, TypedObjectNode):
+                    metadata_by_owner.setdefault(node.name, []).append(typed_node)
+
 
     result: list[ModuleObject] = []
     for typed_node in typed:
@@ -749,6 +755,17 @@ def _module_objects(
             or (node.kind == Symbol("trait") and node.name in local_traits)
         ):
             continue
+        if isinstance(typed_node, TypedObjectNode):
+            results = dict(typed_node.method_results)
+            identities = {name: list(records) for name, records in typed_node.method_ids}
+            for implementation in metadata_by_owner.get(node.name, ()):
+                results.update(dict(implementation.method_results))
+                for name, records in implementation.method_ids:
+                    identities.setdefault(name, []).extend(records)
+            typed_node = replace(
+                typed_node, method_results=tuple(results.items()),
+                method_ids=tuple((name, tuple(records)) for name, records in identities.items()),
+            )
         result.append(
             ModuleObject(
                 node.name,
@@ -875,6 +892,14 @@ def _module_trait_implementations(
                     for constraint in node.generic_constraints
                 ),
                 subject_kind=Symbol("trait") if is_trait_impl else Symbol("object"),
+                method_results=(
+                    typed_node.method_results
+                    if isinstance(typed_node, TypedObjectNode) else ()
+                ),
+                method_ids=(
+                    typed_node.method_ids
+                    if isinstance(typed_node, TypedObjectNode) else ()
+                ),
             )
         )
     return tuple(result)
@@ -912,11 +937,26 @@ def import_behaviour_set_objects(
         implementation_node = obj.typed.node
         if not isinstance(implementation_node, ObjectNode):
             return
+        # The implementation block, not the owner declaration, supplies the
+        # source identity of overridden trait methods. Inherited methods still
+        # retain their owner's metadata.
+        result_metadata = (
+            dict(obj.typed.method_results)
+            if isinstance(obj.typed, TypedObjectNode) else {}
+        )
+        result_metadata.update(dict(implementation.method_results))
+        identity_metadata = (
+            dict(obj.typed.method_ids)
+            if isinstance(obj.typed, TypedObjectNode) else {}
+        )
+        identity_metadata.update(dict(implementation.method_ids))
         implementation_object = replace(
             obj,
-            typed=TypedNode(
+            typed=TypedObjectNode(
                 replace(implementation_node, definitions=definitions),
                 obj.typed.typ,
+                tuple(result_metadata.items()),
+                tuple(identity_metadata.items()),
             ),
             friendly_definitions=definitions,
         )
@@ -1125,7 +1165,11 @@ def _renamed_object(
     )
     return ModuleObject(
         name,
-        TypedNode(renamed, obj.typed.typ),
+        TypedObjectNode(
+            renamed, obj.typed.typ,
+            obj.typed.method_results if isinstance(obj.typed, TypedObjectNode) else (),
+            obj.typed.method_ids if isinstance(obj.typed, TypedObjectNode) else (),
+        ),
         obj.public,
         definitions,
         import_friendly,

@@ -289,12 +289,12 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.BUILD_TUPLE, 2),
                     Instruction(
                         OpCode.CALL_RESOLVED_ELEMENT,
-                        ResolvedElementReference("+", 0),
+                        ResolvedElementReference("+", "test:plus"),
                     ),
                     Instruction(OpCode.TRY_UNWRAP),
                     Instruction(OpCode.STACK_SHUFFLE, ("copy", ("x",), ("x",))),
                     Instruction(OpCode.SOURCE_ARGS, 1),
-                    Instruction(OpCode.VALIDATE_TAG, ("#checked", 0)),
+                    Instruction(OpCode.VALIDATE_TAG, ("#checked", "test:validator", (), ())),
                     Instruction(OpCode.WRAP_ASSERT_ERROR),
                     Instruction(OpCode.RETURN),
                 ),
@@ -305,7 +305,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x2a"))
+        self.assertTrue(data.startswith(b"VLNCBC\x35"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -446,7 +446,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                         OpCode.CALL_RESOLVED_ELEMENT,
                         ResolvedElementReference(
                             "+",
-                            0,
+                            "test:plus",
                             vectorised=True,
                             vectorised_depths=(0, 1),
                             vectorised_target_ranks=(1, None),
@@ -506,7 +506,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                 (
                     Instruction(OpCode.SCOPE_BEGIN, (0, 1)),
                     Instruction(OpCode.SCOPE_BEGIN, (1, 2)),
-                    Instruction(OpCode.SPAWN_CALL, (0, 1, 0)),
+                    Instruction(OpCode.SPAWN_CALL, (0, 1, None, (), False, (), (), (), None)),
                     Instruction(OpCode.WAIT_TASK, 1),
                     Instruction(OpCode.WAIT_TASKS_VECTORISED, 2),
                     Instruction(OpCode.CHANNEL_NEW, False),

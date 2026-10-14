@@ -27,17 +27,6 @@ from . import callable_values as _functions
 from ..support import analysis_utils as _utils
 
 
-def _overload_index(
-    overloads: tuple[T.Overload, ...],
-    overload: T.Overload,
-) -> int | None:
-    """Find the index for overload during static analysis."""
-    try:
-        return overloads.index(overload)
-    except ValueError:
-        return None
-
-
 def _atomic_call_requirements_satisfied(
     args: tuple[T.Type, ...],
     params: tuple[T.Type, ...],
@@ -416,9 +405,7 @@ def _call_element_candidates(
     if disambiguation and len(disambiguation) != len(explicit_args):
         return candidates
     application_branch = branch.with_stack(T.TypeStack(base_stack))
-    for callable_index, callable_overload in enumerate(
-        _functions._callable_overloads(function_type)
-    ):
+    for callable_overload in _functions._callable_overloads(function_type):
         declared = _call_site_static_overload(callable_overload)
         uses_static_values = bool(
             declared.where_clause
@@ -503,7 +490,7 @@ def _call_element_candidates(
                 ),
                 branch=result_branch,
                 call_arg_order=call_arg_order,
-                callable_overload_index=callable_index,
+                callable_implementation_id=callable_overload.implementation_id,
             )
         )
     return candidates

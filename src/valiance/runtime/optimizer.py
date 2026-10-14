@@ -17,6 +17,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
     ResolvedElementReference,
+    DispatchKind,
     VectorExtensionReference,
     decode_stack_shuffle_spec,
 )
@@ -308,7 +309,7 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
             return function
 
         store_counts: dict[str, int] = {}
-        candidates: dict[str, tuple[int, tuple[Instruction, ...]]] = {}
+        candidates: dict[str, tuple[int, tuple[Instruction, ...], str | None]] = {}
         instructions = function.instructions
         for index, instruction in enumerate(instructions):
             if instruction.op is OpCode.STORE_VAR and isinstance(instruction.arg, str):
@@ -325,7 +326,9 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
                     self.max_bytecode_size,
                 )
                 if body is not None:
-                    candidates[instructions[index + 1].arg] = (index + 1, body)
+                    candidates[instructions[index + 1].arg] = (
+                        index + 1, body, instruction.arg.implementation_id
+                    )
 
         replacements: list[_Replacement] = []
         for index, instruction in enumerate(instructions):
@@ -351,8 +354,15 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
             candidate = candidates.get(reference.name)
             if candidate is None or store_counts.get(reference.name) != 1:
                 continue
-            definition_index, body = candidate
+            definition_index, body, implementation_id = candidate
             if definition_index >= index or reference.name in function.params:
+                continue
+            if (
+                reference.implementation_id is not None
+                and reference.implementation_id != implementation_id
+            ):
+                # An inliner cannot replace a statically linked call with
+                # another declaration just because their names coincide.
                 continue
             replacements.append(_Replacement(index, 1, body))
 
@@ -764,9 +774,18 @@ def _fold_resolved_call(
     from valiance.elements.builtins import RuntimeContext, runtime_elements
 
     element = runtime_elements().get(reference.name)
-    if element is None or not 0 <= reference.overload_index < len(element.definitions):
+    if element is None:
         return None
-    overload = element.definitions[reference.overload_index]
+    if reference.implementation_id is not None:
+        matches = tuple(
+            candidate for candidate in element.definitions
+            if candidate.signature.implementation_id == reference.implementation_id
+        )
+        if len(matches) != 1:
+            return None
+        overload = matches[0]
+    else:
+        return None
     if overload.implementation is None or not overload.ownership_trivial:
         return None
     arity = len(overload.signature.params)
@@ -888,7 +907,7 @@ def _simple_resolved_reference(reference: ResolvedElementReference) -> bool:
         or reference.static_values
         or reference.arity_override is not None
         or reference.consumed_override is not None
-        or reference.multidispatch
+        or reference.dispatch_kind is not DispatchKind.STATIC
         or reference.extension is not None
     )
 
@@ -897,7 +916,7 @@ def _simple_zero_argument_reference(value: object) -> bool:
     """Return whether ``value`` is a direct zero-argument resolved call."""
     return (
         isinstance(value, ResolvedElementReference)
-        and value.overload_index == 0
+        and value.implementation_id is not None
         and _simple_resolved_reference(value)
     )
 
@@ -912,9 +931,18 @@ def _resolved_builtin_shape(value: object) -> tuple[int, int, bool] | None:
     from valiance.elements.builtins import runtime_elements
 
     element = runtime_elements().get(value.name)
-    if element is None or not 0 <= value.overload_index < len(element.definitions):
+    if element is None:
         return None
-    overload = element.definitions[value.overload_index]
+    if value.implementation_id is not None:
+        matches = tuple(
+            definition for definition in element.definitions
+            if definition.signature.implementation_id == value.implementation_id
+        )
+        if len(matches) != 1:
+            return None
+        overload = matches[0]
+    else:
+        return None
     if overload.implementation is None:
         return None
     return (
@@ -1076,6 +1104,7 @@ def _exact_straight_line_depth(
         OpCode.CHECK_CAST,
         OpCode.TRY_CAST,
         OpCode.CANONICALIZE_TAGS,
+        OpCode.BIND_TRAIT_WITNESSES,
         OpCode.VALIDATE_TAG,
     }:
         return depth if depth else None

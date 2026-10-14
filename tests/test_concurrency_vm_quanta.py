@@ -18,7 +18,7 @@ from valiance.vtypes.symbols import Symbol
 class VmActivationQuantumTests(unittest.TestCase):
 
     def _install_test_builtin(self, vm, name, implementation):
-        overload = BuiltinOverload(T.Overload((), ()), implementation)
+        overload = BuiltinOverload(T.Overload((), (), implementation_id="test:" + name), implementation)
         element = BuiltinElement(Symbol(name), (overload,))
         vm.globals[name] = BuiltinValue(
             element,
@@ -40,7 +40,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             (
                 Instruction(
                     OpCode.CALL_RESOLVED_ELEMENT,
-                    ResolvedElementReference("test.atomic", 0),
+                    ResolvedElementReference("test.atomic", 'test:test.atomic'),
                 ),
                 Instruction(OpCode.CANCEL_POLL),
                 Instruction(OpCode.RETURN),
@@ -49,7 +49,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             return_count=0,
         )
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), None)
         )
         vm.scheduler.root_scope.spawn(lambda: (events.append("sibling ran"),))
         self.assertEqual(vm.scheduler.wait(task), ())
@@ -79,11 +79,11 @@ class VmActivationQuantumTests(unittest.TestCase):
             (
                 Instruction(
                     OpCode.CALL_RESOLVED_ELEMENT,
-                    ResolvedElementReference("test.cancel.atomic", 0),
+                    ResolvedElementReference("test.cancel.atomic", 'test:test.cancel.atomic'),
                 ),
                 Instruction(
                     OpCode.CALL_RESOLVED_ELEMENT,
-                    ResolvedElementReference("test.cancel.later", 0),
+                    ResolvedElementReference("test.cancel.later", 'test:test.cancel.later'),
                 ),
                 Instruction(OpCode.RETURN),
             ),
@@ -91,7 +91,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             return_count=0,
         )
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), None)
         )
         self.assertTrue(vm.scheduler.step())
         self.assertEqual(events, ["builtin entered", "builtin completed"])
@@ -110,7 +110,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             (
                 Instruction(
                     OpCode.CALL_RESOLVED_ELEMENT,
-                    ResolvedElementReference("test.cancel.fault", 0),
+                    ResolvedElementReference("test.cancel.fault", 'test:test.cancel.fault'),
                 ),
                 Instruction(OpCode.RETURN),
             ),
@@ -118,7 +118,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             return_count=0,
         )
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), None)
         )
         self.assertTrue(vm.scheduler.step())
         self.assertEqual(task.control.state.name, "FAILED")
@@ -139,7 +139,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             return_count=3,
         )
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), None)
         )
         self.assertEqual(vm.scheduler.wait(task), (
             RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)
@@ -160,7 +160,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             return_count=2,
         )
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), None)
         )
         self.assertTrue(vm.scheduler.step())
         self.assertEqual(task.control.quantum_count, 1)
@@ -200,7 +200,7 @@ class VmActivationQuantumTests(unittest.TestCase):
             return_count=1,
         )
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(FunctionValue(parent, vm.globals), (), 0)
+            lambda: vm._task_call_runner(FunctionValue(parent, vm.globals), (), None)
         )
         self.assertEqual(vm.scheduler.wait(task), (RuntimeNumber(5),))
         self.assertGreaterEqual(task.control.quantum_count, 2)
@@ -220,7 +220,7 @@ class VmActivationQuantumTests(unittest.TestCase):
         )
         task = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(code, dict(vm.globals)), (), 0
+                FunctionValue(code, dict(vm.globals)), (), None
             )
         )
         self.assertTrue(vm.scheduler.step())
@@ -256,7 +256,7 @@ class VmActivationQuantumTests(unittest.TestCase):
         )
         task = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(parent, dict(vm.globals)), (), 0
+                FunctionValue(parent, dict(vm.globals)), (), None
             )
         )
         for _ in range(4):
@@ -303,7 +303,7 @@ class VmActivationQuantumTests(unittest.TestCase):
         )
         callable_value = FunctionValue(code, dict(vm.globals))
         task = vm.scheduler.root_scope.spawn(
-            lambda: vm._task_call_runner(callable_value, (), 0)
+            lambda: vm._task_call_runner(callable_value, (), None)
         )
         self.assertTrue(vm.scheduler.step())
         task.control.request_cancel()

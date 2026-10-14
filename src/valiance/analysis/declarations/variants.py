@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..overload_identity import declaration_id
+
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import (
     dataclass,
@@ -179,7 +181,7 @@ class _VariantDeclarations:
                     requirements_by_name.get(definition.name),
                 )
 
-        return BranchSet((current,))
+        return BranchSet((self._attach_method_results(current, node),))
 
     def _register_variant_member_definition(
         self,
@@ -324,6 +326,9 @@ class _VariantDeclarations:
             ),
             definition.annotations,
         )
+        concrete = replace(concrete, implementation_id=declaration_id(
+            self.source_file, definition.location, concrete,
+        ))
         variant_type = _utils._declared_nominal(variant.name, variant.generics)
         exposed = replace(
             concrete,

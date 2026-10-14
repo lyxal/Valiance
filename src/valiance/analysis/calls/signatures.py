@@ -11,7 +11,10 @@ import valiance.vtypes as T
 from valiance.analysis.state.transformations import transform_overload_types
 
 _transform_overload_types = transform_overload_types
-from valiance.vtypes.structural import anonymous_trait_subject_name
+from valiance.vtypes.structural import (
+    anonymous_trait_subject_name,
+    anonymous_trait_requirement_signature,
+)
 
 _anonymous_trait_subject_name = anonymous_trait_subject_name
 
@@ -567,6 +570,7 @@ def _genericize_type(
                 T.AnonymousTraitRequirement(
                     requirement.name,
                     _genericize_overload(requirement.overload, generics, scope),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in typ.requirements
             ),
@@ -682,8 +686,13 @@ def _collect_anonymous_trait_overloads(
 ) -> None:
     """Collect anonymous trait overloads during static analysis."""
     if isinstance(typ, T.AnonymousTraitType):
+        receiver = _anonymous_trait_subject_view(typ)
         overloads.extend(
-            (requirement.name, requirement.overload) for requirement in typ.requirements
+            (
+                requirement.name,
+                anonymous_trait_requirement_signature(typ, requirement, receiver),
+            )
+            for requirement in typ.requirements
         )
         for requirement in typ.requirements:
             for item in requirement.overload.params + requirement.overload.returns:

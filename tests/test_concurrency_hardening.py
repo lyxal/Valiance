@@ -102,7 +102,7 @@ class ChannelScopeCancellationTests(unittest.TestCase):
         )
         receiver = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(receiver_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(receiver_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         failure = vm.scheduler.root_scope.spawn(
@@ -134,7 +134,7 @@ class ChannelScopeCancellationTests(unittest.TestCase):
         )
         producer = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(producer_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(producer_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         failure = vm.scheduler.root_scope.spawn(
@@ -224,7 +224,7 @@ class ResumableScopeCloseTests(unittest.TestCase):
             (
                 Instruction(OpCode.SCOPE_BEGIN, (0, 1)),
                 Instruction(OpCode.MAKE_FUNCTION, child_code),
-                Instruction(OpCode.SPAWN_CALL, (0, 1, 0)),
+                Instruction(OpCode.SPAWN_CALL, (0, 1, None, (), False, (), (), (), None)),
                 Instruction(OpCode.POP),
                 Instruction(OpCode.PUSH_CONST, 9),
                 Instruction(OpCode.SCOPE_END, (0, 1)),
@@ -235,7 +235,7 @@ class ResumableScopeCloseTests(unittest.TestCase):
         )
         owner = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(owner_code, vm.globals), (), 0
+                FunctionValue(owner_code, vm.globals), (), None
             )
         )
 
@@ -272,7 +272,7 @@ class ResumableScopeCloseTests(unittest.TestCase):
             (
                 Instruction(OpCode.SCOPE_BEGIN, (0, 1)),
                 Instruction(OpCode.MAKE_FUNCTION, child_code),
-                Instruction(OpCode.SPAWN_CALL, (0, 0, 0)),
+                Instruction(OpCode.SPAWN_CALL, (0, 0, None, (), False, (), (), (), None)),
                 Instruction(OpCode.POP),
             )
             + cpu_work
@@ -286,7 +286,7 @@ class ResumableScopeCloseTests(unittest.TestCase):
         )
         owner = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(owner_code, vm.globals), (), 0
+                FunctionValue(owner_code, vm.globals), (), None
             )
         )
 

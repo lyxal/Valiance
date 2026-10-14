@@ -47,6 +47,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedIfNode,
     TypedNode,
+    TypedSetVariableNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
     TypedWhileNode,
@@ -308,12 +309,25 @@ def _set_variable(
             )
         )
 
+    witnesses = ()
+    normalized_target = T.normalize(variable_type)
+    if isinstance(normalized_target, T.AnonymousTraitType):
+        try:
+            proof = T.checked_structural_witnesses(
+                value_type, normalized_target, self.env.context,
+            )
+        except T.AmbiguousStructuralWitness as exc:
+            self._diagnose(str(exc), node)
+            return _core.BranchSet()
+        if proof is not None:
+            witnesses = proof
+
     replaced_type = branch.variables.read(node.name)
     assigned = branch.with_variables(write.variables).pop()
     if replaced_type is not None:
         assigned = assigned.with_element_tags(release_effects(self.env, replaced_type))
     return _core.BranchSet(
-        (assigned.emit(TypedNode(node, variable_type)),)
+        (assigned.emit(TypedSetVariableNode(node, variable_type, witnesses)),)
     )
 
 @_core.register(SetVariablesNode)

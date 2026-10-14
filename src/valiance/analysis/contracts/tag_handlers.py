@@ -267,9 +267,9 @@ def _tag_application_node(
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
     validator: T.AppliedOverload | None = None
-    validator_index: int | None = None
+    validator_implementation_id: str | None = None
     validator_runtime_name: Symbol | None = None
-    validator_plans: list[tuple[Symbol, int]] = []
+    validator_plans: list[tuple[Symbol, str]] = []
     added_tags: tuple[T.DataTag, ...] = ()
     removed_tags: tuple[T.DataTag, ...] = ()
     if node.tag.absent:
@@ -346,12 +346,7 @@ def _tag_application_node(
                         node,
                     )
                 return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-            selected_index = next(
-                index
-                for index, overload in enumerate(validator_overloads)
-                if overload is resolved.overload or overload == resolved.overload
-            )
-            selected = validator_overloads[selected_index]
+            selected = resolved.overload
             if not _calls._validator_overload_ok(selected, self.env.context):
                 self._diagnose(
                     f"tag validator '{validator_name}' must return " "#boolean Number",
@@ -366,7 +361,7 @@ def _tag_application_node(
             assert applied is not None
             static_result = self.env.tag_validator_static_result(
                 validator_name,
-                selected_index,
+                selected.implementation_id,
             )
             if static_result is True:
                 continue
@@ -376,11 +371,12 @@ def _tag_application_node(
                     node,
                 )
                 return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-            runtime_name = self.env.runtime_name_for(validator_name) or validator_name
-            validator_plans.append((runtime_name, selected_index))
+            runtime_name = (self.env.overload_runtime_name_for(validator_name, selected)
+                            or self.env.runtime_name_for(validator_name) or validator_name)
+            validator_plans.append((runtime_name, selected.implementation_id))
             if applied_tag.name == node.tag.name:
                 validator = applied
-                validator_index = selected_index
+                validator_implementation_id = selected.implementation_id
                 validator_runtime_name = runtime_name
 
     stack = base_branch.stack.push(tagged)
@@ -388,7 +384,7 @@ def _tag_application_node(
         node,
         tagged,
         validator,
-        validator_index,
+        validator_implementation_id,
         added_tags,
         removed_tags,
         validator_runtime_name,

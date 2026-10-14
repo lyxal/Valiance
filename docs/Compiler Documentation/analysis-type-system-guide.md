@@ -328,7 +328,7 @@ language reference.
 where an `OverloadSetType` is used as a `FunctionType` whose input contains a
 top-level union. It expands the cartesian product of union branches, resolves
 one best overload for every combination, unions each return position, and emits
-a `UnionDispatchPlan` that records the selected overload index for that branch.
+a `UnionDispatchPlan` that records the selected implementation identity for that branch.
 
 The plan uses reified `RuntimeTypePattern` values. Nominal patterns contain the
 closed-world subtype set known during analysis, so broader numeric types,
@@ -399,7 +399,7 @@ Applied overloads also carry the element tags contributed by the selected
 operation. The analyser treats those as sticky effect facts: if a function body
 calls an `IO` operation, the inferred function type also carries `IO`.
 - actual returns after vectorisation/tag flow
-- for elements, the overload index within the element definition, which lets
+- for elements, the implementation identity within the element definition, which lets
   codegen find the runtime implementation without re-resolving overloads by type
 - optional-parameter defaults copied from `define` declarations on
   `Overload.param_defaults`
@@ -657,6 +657,18 @@ the inline requirements as local-only overloads while checking the function body
 so operations such as `reduce: +` type-check against the required behavior. At
 call sites, relation checks use the visible overload catalogue in `Context` to
 verify that the actual subject type has matching element overloads.
+
+Anonymous trait method signatures may omit the receiver, as named trait
+requirements do: `trait => extend addVertex(Int) -> String end` matches a method
+with signature `(Receiver, Int) -> String`. The matching receiver is the
+concrete subject being checked. Symbolic operator requirements (such as
+`extend ===(T, T)`) and requirements with colon-prefixed stack operands (such
+as `extend +(:T, :T)`) retain their explicit-operand meaning. During
+function-body analysis, implicit-receiver requirements get a local-only
+overload with the
+receiver inserted. Calls through such requirements use the analyser-proven implementation identity
+stored on the receiver's structural witness. The VM does not choose a method
+from the live method argument's type or from an overload-table ordinal.
 
 ## Collection Types
 
@@ -1287,7 +1299,7 @@ A declaration `trait Child as Parent` imports the parent's requirements into the
 child trait and makes parent default bodies available while checking child
 defaults. Requirements are exposed temporarily with the receiver specialized to
 the child trait; they are not left in the persistent overload table, because
-that would disturb runtime overload indexes for concrete implementations.
+that would disturb concrete implementation bindings.
 
 An object implementing the child must satisfy inherited abstract requirements,
 but inherited default methods need no repeated implementation. Anonymous trait

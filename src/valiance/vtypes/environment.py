@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .identities import overload_implementation_id
+
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 
@@ -86,7 +88,6 @@ class ProtocolProvider:
 
     name: Symbol
     overload: Overload
-    overload_index: int
 
 
 @dataclass(frozen=True)
@@ -220,8 +221,8 @@ class Environment:
     overloads: dict[Symbol, list[Overload]] = field(
         default_factory=dict[Symbol, list[Overload]]
     )
-    object_friendly_overloads: dict[Symbol, set[int]] = field(
-        default_factory=dict[Symbol, set[int]]
+    object_friendly_overloads: dict[Symbol, set[str]] = field(
+        default_factory=dict[Symbol, set[str]]
     )
     objects: dict[Symbol, ObjectDefinition] = field(
         default_factory=dict[Symbol, ObjectDefinition]
@@ -260,17 +261,13 @@ class Environment:
     tag_attached_elements: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
     )
-    tag_validator_static_results: dict[Symbol, dict[int, bool]] = field(
-        default_factory=dict[Symbol, dict[int, bool]]
+    tag_validator_static_results: dict[Symbol, dict[str, bool]] = field(
+        default_factory=dict[Symbol, dict[str, bool]]
     )
     runtime_names: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     overload_runtime_names: dict[tuple[Symbol, Overload], Symbol] = field(
         default_factory=dict[tuple[Symbol, Overload], Symbol]
     )
-    overload_runtime_indexes: dict[tuple[Symbol, Overload], int] = field(
-        default_factory=dict[tuple[Symbol, Overload], int]
-    )
-
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
         return Environment(context=self.context, parent=self)
@@ -284,29 +281,12 @@ class Environment:
         source_name: Symbol,
         runtime_name: Symbol,
         overload: Overload | None = None,
-        runtime_index: int | None = None,
     ) -> None:
         """Bind a source name, optionally for one overload, to runtime storage."""
         if overload is None:
             self.runtime_names[source_name] = runtime_name
         else:
             self.overload_runtime_names[(source_name, overload)] = runtime_name
-            if runtime_index is not None:
-                self.overload_runtime_indexes[(source_name, overload)] = runtime_index
-
-    def overload_runtime_index_for(
-        self,
-        source_name: Symbol,
-        overload: Overload,
-    ) -> int | None:
-        """Return an overload's slot within its hidden imported overload set."""
-        runtime_index = self.overload_runtime_indexes.get((source_name, overload))
-        if runtime_index is not None:
-            return runtime_index
-        if self.parent is not None:
-            return self.parent.overload_runtime_index_for(source_name, overload)
-        return None
-
     def overload_runtime_name_for(
         self,
         source_name: Symbol,
@@ -629,48 +609,39 @@ class Environment:
                     f"{_counted_word(expected_returns, 'value')}, got "
                     f"{len(overload.returns)}"
                 )
-        overload_index = len(candidates)
+        overload = replace(overload, implementation_id=overload_implementation_id(overload))
         candidates.append(overload)
         if object_friendly:
-            self.object_friendly_overloads.setdefault(name, set()).add(overload_index)
+            self.object_friendly_overloads.setdefault(name, set()).add(overload.implementation_id)
         self.context.define_structural_overload(name, overload)
 
-    def overload_is_object_friendly(self, name: Symbol, index: int) -> bool:
+    def overload_is_object_friendly(self, name: Symbol, implementation_id: str | None) -> bool:
         """Return whether one visible overload is an unqualified friendly one."""
+        if implementation_id is None:
+            return False
         if name.text.startswith("*::"):
             if self.parent is None:
                 builtin_name = Symbol(name.text.removeprefix("*::"))
-                return index in self.object_friendly_overloads.get(
+                return implementation_id in self.object_friendly_overloads.get(
                     builtin_name,
                     set(),
                 )
-            return self.parent.overload_is_object_friendly(name, index)
+            return self.parent.overload_is_object_friendly(name, implementation_id)
         local = tuple(self.overloads.get(name, ()))
         if local or self.parent is None:
-            return index in self.object_friendly_overloads.get(name, set())
-        return self.parent.overload_is_object_friendly(name, index)
-
-    def non_object_friendly_overload_index(
-        self,
-        name: Symbol,
-        overload: Overload,
-    ) -> int | None:
-        """Return the index of a matching non-friendly overload, if present."""
-        for index, candidate in enumerate(self.overloads_for(name)):
-            if candidate == overload and not self.overload_is_object_friendly(
-                name,
-                index,
-            ):
-                return index
-        return None
+            return implementation_id in self.object_friendly_overloads.get(name, set())
+        return self.parent.overload_is_object_friendly(name, implementation_id)
 
     def has_non_object_friendly_overload(
-        self,
-        name: Symbol,
-        overload: Overload,
+        self, name: Symbol, overload: Overload,
     ) -> bool:
         """Return whether a matching visible overload is not a friendly default."""
-        return self.non_object_friendly_overload_index(name, overload) is not None
+        return any(
+            candidate == overload and not self.overload_is_object_friendly(
+                name, candidate.implementation_id,
+            )
+            for candidate in self.overloads_for(name)
+        )
 
     def has_local_non_object_friendly_overload(
         self,
@@ -685,8 +656,8 @@ class Environment:
         """
         friendly = self.object_friendly_overloads.get(name, set())
         return any(
-            candidate == overload and index not in friendly
-            for index, candidate in enumerate(self.overloads.get(name, ()))
+            candidate == overload and candidate.implementation_id not in friendly
+            for candidate in self.overloads.get(name, ())
         )
 
     def protocol_providers(self, protocol: str) -> tuple[ProtocolProvider, ...]:
@@ -705,7 +676,7 @@ class Environment:
                     if getattr(overload, attribute) is None or overload in seen_overloads:
                         continue
                     seen_overloads.add(overload)
-                    providers.append(ProtocolProvider(name, overload, index))
+                    providers.append(ProtocolProvider(name, overload))
             current = current.parent
         return tuple(providers)
 
@@ -968,24 +939,24 @@ class Environment:
     def set_tag_validator_static_result(
         self,
         validator: Symbol,
-        overload_index: int,
+        implementation_id: str,
         result: bool,
     ) -> None:
         """Remember that one validator overload is statically constant."""
         self.tag_validator_static_results.setdefault(validator, {})[
-            overload_index
+            implementation_id
         ] = result
 
     def tag_validator_static_result(
         self,
         validator: Symbol,
-        overload_index: int,
+        implementation_id: str,
     ) -> bool | None:
         """Return a statically known validator result, if one exists."""
-        if overload_index in self.tag_validator_static_results.get(validator, {}):
-            return self.tag_validator_static_results[validator][overload_index]
+        if implementation_id in self.tag_validator_static_results.get(validator, {}):
+            return self.tag_validator_static_results[validator][implementation_id]
         if self.parent is not None:
-            return self.parent.tag_validator_static_result(validator, overload_index)
+            return self.parent.tag_validator_static_result(validator, implementation_id)
         return None
 
     def apply(

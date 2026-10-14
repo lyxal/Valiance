@@ -134,7 +134,7 @@ class _CallArguments:
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
         """Source an element overload's ordinary arguments from the branch stack."""
         sources: list[ElementArguments] = []
-        for overload_index, overload in enumerate(overloads):
+        for overload in overloads:
             for args, popped, ordered_modifiers in _calls._source_element_arguments(
                 branch,
                 overload,
@@ -145,7 +145,7 @@ class _CallArguments:
                 sources.append(
                     ElementArguments(
                         overload=overload,
-                        overload_index=overload_index,
+                        implementation_id=overload.implementation_id,
                         arguments=args,
                         branch=popped,
                         modifiers=ordered_modifiers,
@@ -163,7 +163,7 @@ class _CallArguments:
         """Merge explicit call arguments with stack inputs in parameter order."""
         sources: list[ElementArguments] = []
         terminal: list[AnalysisBranch] = []
-        for overload_index, overload in enumerate(overloads):
+        for overload in overloads:
             prepared = _calls._prepare_element_call_branches(
                 branch,
                 overload,
@@ -215,7 +215,7 @@ class _CallArguments:
                     sources.append(
                         ElementArguments(
                             overload=overload,
-                            overload_index=overload_index,
+                            implementation_id=overload.implementation_id,
                             arguments=args,
                             branch=popped,
                             modifiers=ordered_modifiers,

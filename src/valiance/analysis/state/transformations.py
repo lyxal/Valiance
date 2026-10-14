@@ -27,6 +27,9 @@ from valiance.asts import (
     TypedIfNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
+    TypedCastNode,
+    TypedSetVariableNode,
+    TypedObjectNode,
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
@@ -205,7 +208,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             tuple(_refine_type(item, old, new) for item in typed_node.input_types),
             tuple(_refine_type(item, old, new) for item in typed_node.output_types),
             callable_node,
-            typed_node.overload_index,
+            typed_node.implementation_id,
             typed_node.unique_inputs,
             typed_node.vectorised,
             typed_node.vectorised_depths,
@@ -266,7 +269,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.node,
             typ,
             typed_node.validator,
-            typed_node.validator_index,
+            typed_node.validator_implementation_id,
             typed_node.added_tags,
             typed_node.removed_tags,
             typed_node.validator_runtime_name,
@@ -277,12 +280,16 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.node,
             typ,
             typed_node.overload,
-            typed_node.overload_index,
+            typed_node.implementation_id,
             typed_node.modifier_args,
             typed_node.call_arg_order,
-            typed_node.call_overload_index,
+            typed_node.call_implementation_id,
             _refine_typed_extension(typed_node.extension, old, new),
             typed_node.runtime_name,
+            typed_node.behaviour_definition,
+            typed_node.behaviour_provider,
+            structural_witnesses=typed_node.structural_witnesses,
+            callable_witnesses=typed_node.callable_witnesses,
         )
     if isinstance(typed_node, TypedCallNode):
         return TypedCallNode(
@@ -363,7 +370,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typ,
             refined_function,
             typed_node.overload,
-            typed_node.function_overload_index,
+            typed_node.function_implementation_id,
         )
     if isinstance(typed_node, TypedMatchNode):
         return TypedMatchNode(
@@ -374,12 +381,19 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.case_pattern_arities,
             typed_node.case_guard_arities,
         )
+    if isinstance(typed_node, TypedSetVariableNode):
+        return TypedSetVariableNode(typed_node.node, typ, typed_node.structural_witnesses)
+    if isinstance(typed_node, TypedCastNode):
+        return TypedCastNode(typed_node.node, typ, typed_node.structural_witnesses)
     if isinstance(typed_node, TypedImportedObjectNode):
         return TypedImportedObjectNode(
-            typed_node.node,
-            typ,
-            typed_node.runtime_name,
+            typed_node.node, typ, typed_node.method_results,
+            typed_node.method_ids, typed_node.runtime_name,
+            typed_node.imported_supertypes,
+            typed_node.imported_guarded_supertypes,
         )
+    if isinstance(typed_node, TypedObjectNode):
+        return TypedObjectNode(typed_node.node, typ, typed_node.method_results, typed_node.method_ids)
     return TypedNode(typed_node.node, typ)
 
 
@@ -429,6 +443,7 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                         requirement.overload,
                         lambda item: _refine_type(item, old, new),
                     ),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in typ.requirements
             ),
@@ -456,6 +471,7 @@ def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                         requirement.overload,
                         lambda item: _refine_input_requirement(item, old, new),
                     ),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in typ.requirements
             ),

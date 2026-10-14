@@ -199,7 +199,7 @@ def _typed_element_node(value: TypedElementNode, level: int) -> str:
     lines = [
         "TypedElementNode("
         f"type={_type_label(value.typ)}, "
-        f"overload_index={value.overload_index}, "
+        f"implementation_id={value.implementation_id}, "
         f"vectorised={value.overload.vectorised if value.overload else False}, "
         f"overload={overload}, "
         "node="

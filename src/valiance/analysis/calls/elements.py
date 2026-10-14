@@ -421,10 +421,14 @@ class _ElementCalls:
                         None,
                     )
                     if provider_index is not None and provider_index < len(specialized):
-                        # A trait signature is an analysis-only view of the
-                        # provider's concrete implementation. Keep its slot so
-                        # bytecode dispatch still targets the real overload.
-                        specialized[provider_index] = contract
+                        # The trait-specific signature is an analysis-only view
+                        # of an imported concrete method. Keep its declaration
+                        # identity: its position is not a stable runtime link.
+                        original = specialized[provider_index]
+                        specialized[provider_index] = replace(
+                            contract,
+                            implementation_id=original.implementation_id,
+                        )
                     else:
                         specialized.append(contract)
                 else:

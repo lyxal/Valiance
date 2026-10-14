@@ -56,8 +56,10 @@ Vehicle = N(VEHICLE)
 Car = N(CAR)
 
 
-def requirement(name: Symbol, params: tuple, returns: tuple):
-    return AnonymousTraitRequirement(name, Overload(params, returns))
+def requirement(name: Symbol, params: tuple, returns: tuple, *, implicit_receiver=False):
+    return AnonymousTraitRequirement(
+        name, Overload(params, returns), implicit_receiver=implicit_receiver
+    )
 
 
 def unary_trait(
@@ -267,6 +269,24 @@ class RowPolymorphismTests(unittest.TestCase):
 
 
 class AnonymousTraitTests(unittest.TestCase):
+    def test_implicit_receiver_is_included_in_structural_requirement(self):
+        method = Symbol("addVertex")
+        trait = AnonymousTrait((), (requirement(method, (Int,), (String,), implicit_receiver=True),))
+        ctx = Context()
+        ctx.define_structural_overload(method, Overload((Foo, Int), (String,)))
+
+        self.assertTrue(assignable(Foo, trait, ctx))
+        self.assertFalse(assignable(Bar, trait, ctx))
+        self.assertFalse(assignable(Int, trait, ctx))
+
+    def test_implicit_receiver_does_not_accept_unrelated_free_function(self):
+        method = Symbol("addVertex")
+        trait = AnonymousTrait((), (requirement(method, (Int,), (String,), implicit_receiver=True),))
+        ctx = Context()
+        ctx.define_structural_overload(method, Overload((Int,), (String,)))
+
+        self.assertFalse(assignable(Foo, trait, ctx))
+
     def test_requirement_parameters_are_contravariant_and_returns_covariant(self):
         trait = AnonymousTrait(
             (Symbol("T"),),

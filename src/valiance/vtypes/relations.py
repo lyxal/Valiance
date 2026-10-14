@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from .identities import overload_implementation_id
+
 from collections.abc import Callable, Iterable
 from itertools import product
 from dataclasses import dataclass, field
 
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.structural import anonymous_trait_subject_name
+from valiance.vtypes.structural import (
+    anonymous_trait_subject_name,
+    anonymous_trait_requirement_signature,
+)
 from valiance.vtypes.builders import (
     ERR,
     OK,
@@ -357,12 +362,19 @@ def _implementation_constraints_hold(
     """Return whether every inferred implementation generic meets its bound."""
     names = getattr(implementation, "generic_names", ())
     constraints = getattr(implementation, "generic_constraints", ())
+    # Implementation generics can have scoped TypeVarIds. A lookup by the
+    # source spelling ("T") silently skipped constraints on those variables.
+    keys = {
+        var.name: type_var_key(var)
+        for var in _ordered_type_vars(implementation.object_pattern)
+    }
     for name, constraint in zip(names, constraints, strict=False):
         if constraint is None:
             continue
-        value = substitution.get(name.text)
+        value = substitution.get(keys.get(name.text, name.text))
         if value is None:
-            continue
+            # Unknown constraints cannot be treated as satisfied.
+            return False
         bound = _substitute(constraint, substitution)
         if not subtype(value, bound, ctx):
             return False
@@ -744,7 +756,9 @@ def _solve_anonymous_trait(
             return
         requirement = target.requirements[index]
         for updated in _anonymous_requirement_constraint_options(
+            target,
             requirement,
+            source,
             current,
             ctx,
         ):
@@ -902,18 +916,21 @@ def _first_type_var_name(typ: Type) -> str | None:
 
 
 def _anonymous_requirement_constraint_options(
+    target: AnonymousTraitType,
     requirement: AnonymousTraitRequirement,
+    source: Type,
     constraints: dict[TypeVarKey, list[Type]],
     ctx: Context,
 ) -> tuple[dict[TypeVarKey, list[Type]], ...]:
     """Return every coherent candidate solution for one trait requirement."""
     options: list[dict[TypeVarKey, list[Type]]] = []
+    required = anonymous_trait_requirement_signature(target, requirement, source)
     for candidate in ctx.overloads_for_structural_trait(requirement.name):
         merged = {key: list(values) for key, values in constraints.items()}
         subst = _combined_substitution(merged, ctx)
         if subst is None:
             continue
-        expected = _substitute_overload(requirement.overload, subst)
+        expected = _substitute_overload(required, subst)
         inferred = _solve_overload_shape(expected, candidate, ctx)
         if inferred is None:
             continue
@@ -922,10 +939,82 @@ def _anonymous_requirement_constraint_options(
         subst = _combined_substitution(merged, ctx)
         if subst is None:
             continue
-        expected = _substitute_overload(requirement.overload, subst)
+        expected = _substitute_overload(required, subst)
         if _overload_satisfies_requirement(candidate, expected, ctx):
             options.append(merged)
     return tuple(options)
+
+
+class AmbiguousStructuralWitness(ValueError):
+    """A concrete trait conversion has no unique statically selected method."""
+
+
+def checked_structural_witnesses(
+    source: Type,
+    target: AnonymousTraitType,
+    ctx: Context,
+) -> tuple[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...] | None:
+    """Preserve the concrete declarations proven to implement a trait.
+
+    Returns None when a closed, unique, identity-bearing witness cannot be
+    established. Only implicit-receiver requirements are materialized here:
+    explicit-operand requirements retain their existing execution semantics.
+    This is a static proof, never a lookup based on the runtime argument value.
+    """
+    if not isinstance(normalize(source), NominalType):
+        return None
+    result: list[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str]] = []
+    for requirement in target.requirements:
+        if not requirement.implicit_receiver:
+            continue
+        expected = anonymous_trait_requirement_signature(target, requirement, source)
+        candidates: list[AppliedOverload] = []
+        for candidate in ctx.overloads_for_structural_trait(requirement.name):
+            if candidate.implementation_id is None:
+                continue
+            if _solve_overload_shape(expected, candidate, ctx) is None:
+                continue
+            if not _overload_satisfies_requirement(candidate, expected, ctx):
+                continue
+            applied = apply_overload(candidate, expected.params, ctx)
+            if applied is not None and not applied.vectorised:
+                candidates.append(applied)
+        winners = [
+            candidate for candidate in candidates
+            if not any(
+                other is not candidate and _overload_match_dominates(
+                    other.scores, other.params,
+                    candidate.scores, candidate.params, ctx,
+                )
+                for other in candidates
+            )
+        ]
+        # Preserve an unambiguous static identity, rather than choosing a
+        # runtime heuristic when the proof does not identify one method.
+        if len(winners) > 1:
+            if all(
+                item.params == winners[0].params
+                and item.actual_returns == winners[0].actual_returns
+                for item in winners[1:]
+            ):
+                # Equivalent declarations obey the existing latest-definition
+                # rule, but a genuinely incomparable pair is a static error.
+                winners = winners[-1:]
+            else:
+                raise AmbiguousStructuralWitness(
+                    f"ambiguous structural implementation for "
+                    f"'{requirement.name.dotted()}'"
+                )
+        if not winners:
+            return None
+        identity = winners[0].overload.implementation_id
+        assert identity is not None
+        contract = (
+            tuple(show(t) for t in requirement.overload.params),
+            tuple(show(t) for t in requirement.overload.returns),
+        )
+        result.append((requirement.name.dotted(), contract, identity))
+    return tuple(result)
 
 
 def _combined_substitution(
@@ -2220,6 +2309,7 @@ def _substitute(t: Type, subst: dict[TypeVarKey, Type]) -> Type:
                 AnonymousTraitRequirement(
                     requirement.name,
                     _substitute_overload(requirement.overload, local_subst),
+                    implicit_receiver=requirement.implicit_receiver,
                 )
                 for requirement in t.requirements
             ),
@@ -2468,7 +2558,7 @@ def union_dispatched_callable_plan(
         branches.append(
             UnionDispatchBranch(
                 tuple(pattern for pattern in patterns if pattern is not None),
-                argument.overloads.index(applied.overload),
+                overload_implementation_id(applied.overload),
             )
         )
         branch_results.append(applied.actual_returns)
@@ -2576,7 +2666,7 @@ def _dispatch_plan_has_ambiguous_overlap(
     """Return the Boolean result of dispatch plan has ambiguous overlap during type solving and overload resolution."""
     for index, left in enumerate(branches):
         for right in branches[index + 1 :]:
-            if left.overload_index == right.overload_index:
+            if left.implementation_id == right.implementation_id:
                 continue
             if all(
                 _runtime_patterns_overlap(a, b, ctx)

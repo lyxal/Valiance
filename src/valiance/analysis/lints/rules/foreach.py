@@ -239,14 +239,13 @@ def _call_permits_vectorisation(typed: TypedNode) -> bool:
         return False
     if any(isinstance(T.normalize(param), T.NoVecType) for param in applied.overload.params):
         return False
-    if not isinstance(typed, TypedElementNode) or typed.overload_index is None:
+    if not isinstance(typed, TypedElementNode) or typed.implementation_id is None:
         return True
 
     name = typed.runtime_name or getattr(typed.node, "name", None)
     for element in BUILTIN_ELEMENTS:
         if element.name != name:
             continue
-        if typed.overload_index >= len(element.definitions):
-            return False
-        return element.definitions[typed.overload_index].vectorisable
+        return any(definition.signature.implementation_id == typed.implementation_id
+                   and definition.vectorisable for definition in element.definitions)
     return True

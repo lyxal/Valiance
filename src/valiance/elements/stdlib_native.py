@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from valiance.vtypes.identities import overload_implementation_id
+
 import importlib
 import pkgutil
 from collections.abc import Callable
@@ -213,7 +215,8 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
     params = _effective_params(function)
     param_names = _effective_param_names(function)
     runtime_name = Symbol(function.name.text, ("std", module_name))
-    overload = T.Overload(params, function.returns, param_names=param_names)
+    identity = _native_implementation_id(module_name, function)
+    overload = T.Overload(params, function.returns, param_names=param_names, implementation_id=identity)
     applied = T.AppliedOverload(
         overload,
         {},
@@ -231,7 +234,7 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
             ElementNode(runtime_name),
             function.returns[-1] if function.returns else None,
             applied,
-            0,
+            identity,
         ),
     )
     function_type = T.Fn(params, function.returns)
@@ -257,13 +260,20 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
     )
 
 
+def _native_implementation_id(module_name: str, function: NativeFunction) -> str:
+    """Share a stable native identity between analysis, wrappers, and execution."""
+    signature = T.Overload(_effective_params(function), function.returns)
+    return f"native:std.{module_name}.{function.name}:" + overload_implementation_id(signature)
+
+
 def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinElement:
     """Compute runtime element for native standard-library registration."""
     return BuiltinElement(
         Symbol(function.name.text, ("std", module_name)),
         (
             BuiltinOverload(
-                T.Overload(_effective_params(function), function.returns),
+                T.Overload(_effective_params(function), function.returns,
+                           implementation_id=_native_implementation_id(module_name, function)),
                 function.implementation,
             ),
         ),

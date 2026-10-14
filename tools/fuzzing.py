@@ -34,6 +34,7 @@ from valiance.runtime import (
     run,
 )
 from valiance.runtime.bytecode import (
+    DispatchKind,
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
@@ -703,7 +704,7 @@ def _simple_value(rng: random.Random, depth: int) -> object:
                     _random_pattern(rng, max(0, depth - 1))
                     for _ in range(rng.randint(0, 3))
                 ),
-                rng.randrange(len(overloads)),
+                "fuzz:branch:" + _random_string(rng, 12),
             )
             for _ in range(rng.randint(0, 2))
         )
@@ -714,7 +715,7 @@ def _simple_value(rng: random.Random, depth: int) -> object:
         )
         return ResolvedElementReference(
             name=_random_string(rng, 12) or "+",
-            overload_index=rng.randint(0, 20),
+            implementation_id=_random_string(rng, 20) or "fuzz:implementation",
             vectorised=rng.choice((False, True)),
             vectorised_depths=tuple(
                 rng.randint(0, 4) for _ in range(rng.randint(0, 4))
@@ -742,7 +743,7 @@ def _simple_value(rng: random.Random, depth: int) -> object:
             ),
             arity_override=None if rng.random() < 0.5 else rng.randint(0, 8),
             consumed_override=None if rng.random() < 0.5 else rng.randint(0, 8),
-            multidispatch=rng.choice((False, True)),
+            dispatch_kind=rng.choice((DispatchKind.STATIC, DispatchKind.MULTIMETHOD)),
             extension=extension,
         )
     if choice == "extension":
@@ -799,8 +800,11 @@ def _valid_concurrency_argument(
     """Return a serializer-valid argument for one concurrency opcode."""
     if op is OpCode.MAKE_CLOSED_FUNCTION:
         return _random_function(rng, max(0, depth - 1))
+    if op is OpCode.VALIDATE_TAG:
+        return ("#fuzz", None, (), ())
     if op is OpCode.SPAWN_CALL:
-        return (rng.randint(0, 4), rng.randint(0, 4), rng.randint(0, 3))
+        arity = rng.randint(0, 4)
+        return (arity, rng.randint(0, 4), None, (False,) * arity, False, (), (), (), None)
     if op in {OpCode.WAIT_TASK, OpCode.WAIT_TASKS_VECTORISED}:
         return rng.randint(0, 4)
     if op is OpCode.TIMEOUT_TASK:
@@ -1211,7 +1215,7 @@ def _fuzz_runtime_bytecode(
                 op,
                 _valid_concurrency_argument(op, rng, 1)
                 if op in {
-                    OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
+                    OpCode.VALIDATE_TAG, OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
                     OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
                     OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.MAKE_CLOSED_FUNCTION,
                     OpCode.CHANNEL_NEW, OpCode.CHANNEL_SEND,

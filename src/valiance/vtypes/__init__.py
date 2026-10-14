@@ -128,6 +128,8 @@ from valiance.vtypes.relations import (
     apply_overload_to_stack,
     apply_overloads_to_stack,
     choose_best_overload,
+    checked_structural_witnesses,
+    AmbiguousStructuralWitness,
     assignable,
     collection_item_type,
     compatible,

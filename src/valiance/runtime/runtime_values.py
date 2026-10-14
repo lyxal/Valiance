@@ -415,6 +415,11 @@ class TaggedValue:
 
     value: Any
     tags: frozenset[DataTag] = field(default_factory=frozenset)
+    # An immutable, occurrence-local trait dictionary.  Different views of
+    # the same nominal object never overwrite one another's checked evidence.
+    structural_witnesses: tuple[
+        tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
 
     def __iter__(self):
         """Iterate over values stored by this tagged value."""
@@ -440,6 +445,39 @@ class TaggedValue:
 def unwrap_runtime_value(value: Any) -> Any:
     """Return the payload beneath any runtime tag evidence wrapper."""
     return value.value if isinstance(value, TaggedValue) else value
+
+
+def runtime_trait_witness(
+    value: Any,
+    name: str,
+    contract: tuple[tuple[str, ...], tuple[str, ...]],
+) -> str | None:
+    """Read the analysis-selected method from a single trait value view."""
+    if not isinstance(value, TaggedValue):
+        return None
+    for method, signature, identity in value.structural_witnesses:
+        if method == name and signature == contract:
+            return identity
+    return None
+
+
+def with_runtime_trait_witnesses(
+    value: Any,
+    proofs: tuple[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...],
+) -> Any:
+    """Attach checked evidence to this occurrence, never the shared object."""
+    if not proofs:
+        return value
+    payload = unwrap_runtime_value(value)
+    previous = value.structural_witnesses if isinstance(value, TaggedValue) else ()
+    tags = runtime_value_tags(value)
+    merged = {(name, contract): identity for name, contract, identity in previous}
+    for name, contract, identity in proofs:
+        merged[(name, contract)] = identity
+    return TaggedValue(
+        payload, tags,
+        tuple((name, contract, identity) for (name, contract), identity in merged.items()),
+    )
 
 
 def runtime_value_tags(value: Any) -> frozenset[DataTag]:
@@ -474,9 +512,11 @@ def update_runtime_tags(
     if isinstance(value, TaggedValue):
         payload = value.value
         current = value.tags
+        witnesses = value.structural_witnesses
     else:
         payload = value
         current = frozenset()
+        witnesses = ()
 
     if not remove:
         additions = _cached_runtime_tag_additions(add)
@@ -488,11 +528,11 @@ def update_runtime_tags(
         tags = frozenset(tag for tag in current if (tag.name, tag.depth) not in removed)
         tags = tags.union(tag for tag in add if not tag.absent)
 
-    if not tags:
+    if not tags and not witnesses:
         return payload
-    if isinstance(payload, (Decimal, str, int, bool, type(None))):
+    if not witnesses and isinstance(payload, (Decimal, str, int, bool, type(None))):
         return _cached_tagged_scalar(payload, tags)
-    return TaggedValue(payload, tags)
+    return TaggedValue(payload, tags, witnesses)
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,8 +546,11 @@ class ObjectRuntimeType:
     mustcall_methods: tuple[str, ...] = ()
     accepted_names: tuple[str, ...] = ()
     generic_variances: tuple[str, ...] = ()
-    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
-    generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # Each fact includes a constructor's generic-supertype projections.
+    type_facts: tuple[tuple[object, ...], ...] = ()
+    generic_supertypes: tuple[
+        tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]], ...
+    ] = ()
     field_order: tuple[str, ...] = ()
 
 
@@ -702,6 +745,8 @@ class ObjectValue:
         compare=False,
         repr=False,
     )
+    # Trait evidence belongs to a value occurrence (TaggedValue), not to
+    # this shared nominal object: a single object can have multiple views.
     cleaning_up: bool = field(default=False, compare=False, repr=False)
     destructor_borrowed: bool = field(default=False, compare=False, repr=False)
     destroyed: bool = field(default=False, compare=False, repr=False)

@@ -215,6 +215,8 @@ dispatch, and the `Analyser` orchestration class. Focused private modules own:
 - `handlers/core.py`: remaining cross-domain concrete AST handlers;
 - `calls/arguments.py`: stack and explicit argument sourcing;
 - `calls/candidates.py` and `calls/selection.py`: candidate construction, overload application, ranking, and commitment;
+- `analysis/overload_identity.py`: persistent IDs for source declarations selected
+  statically, distinct from environment-local overload-set ordinals;
 - `calls/vectorisation.py`: rank solving, vectorisation, and result propagation;
 - `calls/callable_values.py` and `calls/signatures.py`: callable narrowing, function inference, genericisation, and signature transformations;
 - `control_flow/patterns.py`: pattern typing, subject narrowing, and branch joins;
@@ -1234,7 +1236,7 @@ Unknown name handling belongs here, before type solving.
 - explicit-call preparation and parameter-order merging.
 
 Modifier function arguments are inserted in their declared parameter slots.
-Each `ElementArguments` record retains the originating overload index and branch.
+Each `ElementArguments` record retains the originating implementation identity and branch.
 
 ### 3. Candidate construction
 
@@ -1261,9 +1263,9 @@ specializations may deliberately survive as separate branches.
 - computes annotation-adjusted returns;
 - analyses element extensions;
 - pushes `actual_returns`; and
-- emits `TypedElementNode` with the exact overload index and call plan.
+- emits `TypedElementNode` with the exact implementation identity and call plan.
 
-This last point is crucial: preserve the selected overload index. Recovering an
+This last point is crucial: preserve the selected implementation identity. Recovering an
 index later through structural equality can collapse distinct declarations.
 
 ## Function inference, step by step
@@ -1674,7 +1676,7 @@ A valid candidate may still lose to a more specific one or remain tied.
 
 ### 7. Typed-node payload
 
-Confirm the chosen overload index, argument order, substitution, vectorisation
+Confirm the chosen implementation identity, argument order, substitution, vectorisation
 plan, and actual returns survived into typed AST.
 
 ### 8. Runtime only after that
@@ -1964,6 +1966,17 @@ retains one legacy string fallback solely for environment and builtin overload
 metadata that still constructs unscoped `VarType` values. Removing `str` from
 `TypeVarKey` therefore requires binder identities for that metadata, not further
 function-parameter work. No new unscoped analyser producer should be added.
+
+### Generic implementation bounds and scoped identities
+
+Object-to-trait and trait-to-trait implementation constraints must be checked
+against the solved declaration's **scoped** `TypeVarId`, not a variable's source
+spelling. `_implementation_constraints_hold` finds keys in the implementation's
+subject pattern and rejects missing or out-of-bound substitutions. A constraint
+such as `object[T: Number] Box as Holder[T]` must reject `Box[String] as
+Holder[String]`, including when the implementation is imported. The compiler's
+runtime type-fact registry is not yet a complete representation of conditional
+implementation evidence; static conformance must not rely on its projections.
 
 ## Concurrency type and transfer contracts
 

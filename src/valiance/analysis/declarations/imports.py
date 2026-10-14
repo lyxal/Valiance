@@ -62,6 +62,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
+    TypedObjectNode,
     TypedMatchNode,
     TypedNode,
     TypedTagApplicationNode,
@@ -171,6 +172,8 @@ class _ImportDeclarations:
             for typing in typed_node.overloads
             if isinstance(typing.overload, T.Overload)
         )
+        if len(declared) == 1:
+            return declared
         result = []
         for selected in _functions._callable_overloads(typed_node.typ):
             result.append(next(
@@ -245,19 +248,14 @@ class _ImportDeclarations:
         name: Symbol,
         typed_node: TypedFunctionNode,
         runtime_name: Symbol,
-        runtime_index_offset: int = 0,
     ) -> None:
         """Register imported definition during static analysis."""
-        for runtime_index, overload in enumerate(
-            self._selected_import_overloads(typed_node),
-            start=runtime_index_offset,
-        ):
+        for overload in self._selected_import_overloads(typed_node):
             self.env.define_overload(name, overload)
             self.env.bind_runtime_name(
                 name,
                 runtime_name,
                 overload,
-                runtime_index,
             )
 
     def _register_imported_friendly_runtime_elements(
@@ -333,6 +331,10 @@ class _ImportDeclarations:
                 current,
                 obj.name,
                 friendly_definitions,
+                implementation_ids=(
+                    dict(obj.typed.method_ids)
+                    if isinstance(obj.typed, TypedObjectNode) else None
+                ),
             )
 
 

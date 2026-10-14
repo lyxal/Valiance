@@ -20,7 +20,7 @@ class VmSuspensionTests(unittest.TestCase):
         )
         producer = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(producer_code, vm.globals), (), 0
+                FunctionValue(producer_code, vm.globals), (), None
             )
         )
         waiter_code = FunctionCode(
@@ -34,7 +34,7 @@ class VmSuspensionTests(unittest.TestCase):
         )
         waiter = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(waiter_code, {**vm.globals, "target": producer}), (), 0
+                FunctionValue(waiter_code, {**vm.globals, "target": producer}), (), None
             )
         )
         # Reorder so waiter reaches WAIT_TASK before producer completes.
@@ -69,12 +69,12 @@ class VmSuspensionTests(unittest.TestCase):
         )
         receiver = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(receive_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(receive_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         sender = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(send_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(send_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         self.assertEqual(
@@ -107,12 +107,12 @@ class VmSuspensionTests(unittest.TestCase):
         )
         sender = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(send_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(send_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         receiver = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(receive_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(receive_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         self.assertEqual(vm.scheduler.wait(sender), ())
@@ -135,7 +135,7 @@ class VmSuspensionTests(unittest.TestCase):
         )
         receiver = vm.scheduler.root_scope.spawn(
             lambda: vm._task_call_runner(
-                FunctionValue(receive_code, {**vm.globals, "channel": channel}), (), 0
+                FunctionValue(receive_code, {**vm.globals, "channel": channel}), (), None
             )
         )
         self.assertTrue(vm.scheduler.step())
@@ -165,7 +165,7 @@ class VmSuspensionTests(unittest.TestCase):
                     send_code, {**vm.globals, "channel": channel}
                 ),
                 (),
-                0,
+                None,
             )
         )
         self.assertTrue(vm.scheduler.step())
@@ -198,7 +198,7 @@ class VmSuspensionTests(unittest.TestCase):
                     receive_code, {**vm.globals, "channel": channel}
                 ),
                 (),
-                0,
+                None,
             )
         )
         self.assertTrue(vm.scheduler.step())

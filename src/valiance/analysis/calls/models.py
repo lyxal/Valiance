@@ -37,7 +37,7 @@ class ModifierArgumentAnalysis:
 @dataclass(frozen=True)
 class ElementArguments:
     overload: T.Overload
-    overload_index: int
+    implementation_id: str
     arguments: tuple[T.Type, ...]
     branch: AnalysisBranch
     modifiers: tuple[ModifierArgumentAnalysis, ...] = ()
@@ -54,9 +54,12 @@ class CallCandidate:
     branch: AnalysisBranch
     modifiers: tuple[ModifierArgumentAnalysis, ...] = ()
     call_arg_order: tuple[int, ...] = ()
-    callable_overload_index: int | None = None
-    overload_index: int | None = None
+    callable_implementation_id: str | None = None
+    implementation_id: str | None = None
     dispatch_priority: int = 1
+    # Concrete argument types, retained for compile-time trait evidence.
+    source_arguments: tuple[T.Type, ...] = ()
+    state_arity: int | None = None
 
 @dataclass(frozen=True)
 class ElementCallPreparation:

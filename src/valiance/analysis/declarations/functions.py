@@ -81,6 +81,7 @@ from valiance.asts.object_constructors import (
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
 
+from ..overload_identity import declaration_id
 from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
 from ..control_flow import patterns as _patterns
@@ -182,7 +183,7 @@ class _FunctionDeclarations:
         variants = self._overload_function_variants(function_node, node)
         if variants is None:
             return
-        for variant in variants:
+        for variant_index, variant in enumerate(variants):
             if node.name.text.startswith("\\") and variant.params is None:
                 variant = replace(variant, params=())
             declared_overload = _functions._fully_typed_overload(variant)
@@ -192,6 +193,12 @@ class _FunctionDeclarations:
                 declared_overload,
                 node.annotations,
             )
+            declared_overload = replace(
+                declared_overload,
+                implementation_id=declaration_id(
+                    self.source_file, node.location, declared_overload
+                ),
+            )
             # Equal signatures are deliberate redefinitions. Keep each source
             # declaration in the overload set so declaration order can break an
             # otherwise equal match in favour of the latest definition.
@@ -200,9 +207,8 @@ class _FunctionDeclarations:
                 declared_overload,
                 node,
             ):
-                index = len(self.env.overloads.get(node.name, ())) - 1
                 self._prescanned_definition_overloads.setdefault(id(node), []).append(
-                    (node.name, index)
+                    (node.name, declared_overload.implementation_id)
                 )
 
     def _define(
@@ -244,27 +250,29 @@ class _FunctionDeclarations:
         if name.text.startswith("\\") and declared_signature_node.params is None:
             declared_signature_node = replace(declared_signature_node, params=())
         declared_overload = _functions._fully_typed_overload(declared_signature_node)
-        owned_declarations = self._prescanned_definition_overloads.get(id(node), ())
-        declared_index: int | None = None
         if declared_overload is not None:
-            declared_index = next(
+            declared_overload = replace(declared_overload, implementation_id=declaration_id(
+                self.source_file, node.location, declared_overload,
+            ))
+        owned_declarations = self._prescanned_definition_overloads.get(id(node), ())
+        declared_identity: str | None = None
+        if declared_overload is not None:
+            declared_identity = next(
                 (
-                    index
-                    for declared_name, index in owned_declarations
-                    if declared_name == name
-                    and index < len(self.env.overloads.get(name, ()))
-                    and self.env.overloads[name][index] == declared_overload
+                    identity
+                    for declared_name, identity in owned_declarations
+                    if declared_name == name and identity == declared_overload.implementation_id
                 ),
                 None,
             )
-            if declared_index is None:
+            if declared_identity is None:
                 if not self._define_overload_with_diagnostic(
                     name,
                     declared_overload,
                     node,
                 ):
                     return BranchSet((branch.emit(TypedNode(node, None)),))
-                declared_index = len(self.env.overloads.get(name, ())) - 1
+                declared_identity = declared_overload.implementation_id
         result = self._analyse_overloaded_function_literal(
             branch,
             function_node,
@@ -292,20 +300,21 @@ class _FunctionDeclarations:
         for typing_index, typing in enumerate(function.overloads):
             if not isinstance(typing.overload, T.Overload):
                 continue
-            typing_declared_index = next(
+            typing_declared_identity = next(
                 (
-                    index
-                    for declared_name, index in unused_owned_declarations
-                    if declared_name == name
-                    and index < len(self.env.overloads.get(name, ()))
-                    and self.env.overloads[name][index] == typing.overload
+                    identity
+                    for declared_name, identity in unused_owned_declarations
+                    if declared_name == name and any(
+                        candidate.implementation_id == identity and candidate == typing.overload
+                        for candidate in self.env.overloads.get(name, ())
+                    )
                 ),
                 None,
             )
-            if typing_declared_index is not None:
-                unused_owned_declarations.remove((name, typing_declared_index))
+            if typing_declared_identity is not None:
+                unused_owned_declarations.remove((name, typing_declared_identity))
             elif typing_index == 0:
-                typing_declared_index = declared_index
+                typing_declared_identity = declared_identity
             overload = self.prepare_defined_overload(
                 node,
                 branch,
@@ -314,8 +323,14 @@ class _FunctionDeclarations:
             )
             if overload is None:
                 continue
+            overload = replace(
+                overload,
+                implementation_id=declaration_id(
+                    self.source_file, node.location, overload
+                ),
+            )
             overload_typings[typing_index] = replace(typing, overload=overload)
-            if typing_declared_index is not None:
+            if typing_declared_identity is not None:
                 # Replacement bypasses define_overload, so protocol metadata
                 # must still be validated against the fully prepared overload.
                 try:
@@ -328,27 +343,36 @@ class _FunctionDeclarations:
                 # Replace this definition's provisional interface with its
                 # validated form without disturbing equal slots owned by other
                 # source definitions.
-                self.env.overloads[name][typing_declared_index] = overload
-                original_index = typing_declared_index
+                self.env.overloads[name] = [
+                    overload if candidate.implementation_id == typing_declared_identity else candidate
+                    for candidate in self.env.overloads[name]
+                ]
             else:
-                # Every definition owns a runtime overload slot, even when an
-                # earlier definition inferred the same signature. Equal matches
-                # are resolved by source order, with the latest slot winning.
+                # Every definition owns an implementation identity. Equal signatures
+                # retain the language's latest-declaration selection during analysis.
                 if not self._define_overload_with_diagnostic(name, overload, node):
                     return BranchSet(
                         (typed_branch.emit(TypedNode(node, None)),)
                     )
-                original_index = len(self.env.overloads.get(name, ())) - 1
-            if name.text.startswith("#") and original_index is not None:
+            if name.text.startswith("#"):
                 static_result = _calls._static_validator_result(typing.body)
                 if static_result is not None:
                     self.env.set_tag_validator_static_result(
                         name,
-                        original_index,
+                        overload.implementation_id,
                         static_result,
                     )
             if annotation_hooks.has_annotation(node.annotations, "commutative"):
                 for generated in annotation_hooks.commutative_overloads(overload):
+                    # Generated permutations are distinct declarations too.
+                    # The call analyser and bytecode compiler must agree on an
+                    # identity, instead of falling back to their current slot.
+                    generated = replace(
+                        generated,
+                        implementation_id=declaration_id(
+                            self.source_file, node.location, generated
+                        ),
+                    )
                     if not self.env.has_non_object_friendly_overload(
                         name,
                         generated,
@@ -366,7 +390,6 @@ class _FunctionDeclarations:
                             name,
                             overload,
                             generated,
-                            original_index or 0,
                         )
                     )
         if node.attached_tag is not None:
@@ -377,7 +400,11 @@ class _FunctionDeclarations:
                     node,
                 )
             self.env.define_tag_attached_element(node.attached_tag.name, name)
-        typed_node = TypedFunctionNode(node, function.typ, tuple(overload_typings))
+        callable_type = (
+            T.Overloads(*(typing.overload for typing in overload_typings))
+            if isinstance(function.typ, T.OverloadSetType) else function.typ
+        )
+        typed_node = TypedFunctionNode(node, callable_type, tuple(overload_typings))
         return BranchSet((typed_branch.emit(typed_node),))
 
     def _define_overload_with_diagnostic(

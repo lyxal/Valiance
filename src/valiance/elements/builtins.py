@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import builtins as python_builtins
 import ctypes
+import hashlib
 import math
 import operator
 from collections.abc import Callable, Iterator
@@ -659,7 +660,7 @@ class RuntimeContext:
             [
                 Any,
                 list[Any],
-                int,
+                str | None,
                 tuple[Any, ...],
                 bool,
                 tuple[int, ...],
@@ -874,6 +875,22 @@ def builtin(
         """Register the decorated callable for the built-in catalogue and runtime."""
         for tag_name, tag_kind in data_tags:
             _DATA_TAG_REGISTRY[_name_key(tag_name)] = tag_kind
+        # The intrinsic's semantic identity is independent of registry order.
+        # Aliases share this identity; differing signatures never share a slot.
+        canonical_name = _name_key(name)
+        intrinsic_key = repr((
+            canonical_name,
+            tuple(T.show(typ) for typ in params),
+            tuple(T.show(typ) for typ in returns),
+            tuple(repr(rule) for rule in generic_constraints),
+            tuple(repr(rule) for rule in where_clause),
+            tuple(sorted(str(tag) for tag in element_tags)),
+            T.show(conversion_target) if conversion_target is not None else None,
+            fn.__module__, fn.__qualname__,
+        ))
+        intrinsic_id = 'intrinsic:' + hashlib.sha256(
+            intrinsic_key.encode('utf-8')
+        ).hexdigest()
         overload = BuiltinOverload(
             T.Overload(
                 params,
@@ -884,6 +901,7 @@ def builtin(
                 call_site_body=call_site,
                 element_tags=frozenset(element_tags),
                 conversion_target=conversion_target,
+                implementation_id=intrinsic_id,
             ),
             fn,
             vectorisable,
@@ -1507,7 +1525,7 @@ def _call(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         hidden_static_values = tuple(ctx.static_values[1:])
     callable_code = getattr(callable_value, "code", None)
     if (
-        selected in (None, 0)
+        selected is None
         and not vectorised
         and not hidden_static_values
         and callable_code is not None
@@ -1516,7 +1534,7 @@ def _call(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
         if prepared is not None:
             return prepared.invoke_proven(tuple(call_args))
-    if isinstance(selected, int) and ctx.call_overload is not None:
+    if ctx.static_values and ctx.call_overload is not None:
         return tuple(
             ctx.call_overload(
                 callable_value,
@@ -3129,6 +3147,10 @@ def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 def _all_elements() -> tuple[BuiltinElement, ...]:
     """Compute all elements for the built-in catalogue and runtime."""
+    for name, definitions in _REGISTRY.items():
+        identities = [item.signature.implementation_id for item in definitions]
+        if len(set(identities)) != len(identities):
+            raise ValueError(f"duplicate intrinsic identity for {name!r}")
     return tuple(
         BuiltinElement(
             _symbol_key(name),

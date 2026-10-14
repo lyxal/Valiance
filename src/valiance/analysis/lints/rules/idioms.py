@@ -281,10 +281,10 @@ def _element_call_vectorisable(node: TypedElementNode) -> bool:
         return False
     name = node.runtime_name or getattr(node.node, "name", None)
     for element in BUILTIN_ELEMENTS:
-        if element.name == name and node.overload_index is not None:
+        if element.name == name and node.implementation_id is not None:
             return (
-                node.overload_index < len(element.definitions)
-                and element.definitions[node.overload_index].vectorisable
+                any(definition.signature.implementation_id == node.implementation_id
+                    and definition.vectorisable for definition in element.definitions)
             )
     return True
 

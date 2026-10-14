@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+from valiance.elements.builtins import runtime_elements
+
+
+def _intrinsic_id(name: str, params: tuple[str, ...]) -> str:
+    """Select test bytecode by semantic signature, independently of catalogue order."""
+    return next(definition.signature.implementation_id
+                for definition in runtime_elements()[name].definitions
+                if tuple(str(typ) for typ in definition.signature.params) == params)
+
+
 import contextlib
 import io
 import unittest
@@ -162,7 +172,7 @@ $value()
                     Instruction(OpCode.MAKE_OBJECT_CONSTRUCTOR, constructor),
                     Instruction(
                         OpCode.CALL_RESOLVED_ELEMENT,
-                        ResolvedElementReference("example", 0, extension=extension),
+                        ResolvedElementReference("example", "test:example", extension=extension),
                     ),
                     Instruction(OpCode.RETURN),
                 ),
@@ -219,7 +229,7 @@ define add(left: Number, right: Number) -> Number => + end
         self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("7")])
 
     def test_explicit_argument_pass_leaves_nested_cycle_scopes_implicit(self):
-        reference = ResolvedElementReference("+", 1)
+        reference = ResolvedElementReference("+", _intrinsic_id("+", ("Number", "Number")))
         function = FunctionCode(
             (
                 Instruction(OpCode.CYCLE_BEGIN, (None, 0)),
@@ -240,7 +250,7 @@ define add(left: Number, right: Number) -> Number => + end
         self.assertEqual(optimized.main, function)
 
     def test_explicit_argument_pass_leaves_non_scalar_parameters_implicit(self):
-        reference = ResolvedElementReference("==", 0)
+        reference = ResolvedElementReference("==", _intrinsic_id("==", ("String", "String")))
         function = FunctionCode(
             (
                 Instruction(OpCode.CALL_RESOLVED_ELEMENT, reference),
@@ -257,6 +267,56 @@ define add(left: Number, right: Number) -> Number => + end
         ).optimize(Program(function))
 
         self.assertEqual(optimized.main, function)
+
+    def test_constant_inlining_never_discards_a_static_declaration_identity(self):
+        """Inlining must not turn an invalid source ID into a successful call."""
+        wrong_reference = ResolvedElementReference(
+            "answer", implementation_id="source:other-declaration"
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(
+                        OpCode.MAKE_FUNCTION,
+                        FunctionCode(
+                            (Instruction(OpCode.PUSH_CONST, "wrong"),
+                             Instruction(OpCode.RETURN)),
+                            name="answer", implementation_id="source:actual-declaration",
+                            return_count=1,
+                        ),
+                    ),
+                    Instruction(OpCode.STORE_VAR, "answer"),
+                    Instruction(OpCode.CALL_RESOLVED_ELEMENT, wrong_reference),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<main>",
+            )
+        )
+        optimized = optimize_program(program)
+        self.assertTrue(any(
+            item.op is OpCode.CALL_RESOLVED_ELEMENT
+            for item in optimized.main.instructions
+        ))
+        with self.assertRaisesRegex(RuntimeError, "cannot link declaration"):
+            run(optimized)
+
+    def test_builtin_stack_shape_uses_static_intrinsic_identity(self):
+        """Stack optimisations must agree with the intrinsic selected by analysis."""
+        from valiance.elements.builtins import runtime_elements
+        from valiance.runtime.optimizer import _resolved_builtin_shape
+
+        definitions = runtime_elements()["map"].definitions
+        self.assertEqual(len(definitions[0].signature.returns), 1)
+        self.assertEqual(len(definitions[-1].signature.returns), 0)
+        reference = ResolvedElementReference(
+            "map", implementation_id=definitions[-1].signature.implementation_id
+        )
+        self.assertEqual(_resolved_builtin_shape(reference), (2, 0, False))
+        self.assertIsNone(
+            _resolved_builtin_shape(
+                replace(reference, implementation_id="intrinsic:missing")
+            )
+        )
 
     def test_constant_folding_reduces_pure_resolved_calls(self):
         analyser = Analyser()
@@ -430,7 +490,7 @@ end
         self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("10")])
 
     def test_constant_folding_respects_rebound_builtin_names(self):
-        reference = ResolvedElementReference("+", 0)
+        reference = ResolvedElementReference("+", _intrinsic_id("+", ("String", "String")))
         program = Program(
             FunctionCode(
                 (

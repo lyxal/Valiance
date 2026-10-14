@@ -734,8 +734,8 @@ instruction sequence; avoid hidden compiler-side stack mutation.
 Resolved built-in elements use analyser-selected overloads.
 
 ```text
-TypedElementNode("+", overload_index=N)
-  -> CALL_RESOLVED_ELEMENT ResolvedElementReference("+", N, vectorised)
+TypedElementNode("+", implementation_id=ID)
+  -> CALL_RESOLVED_ELEMENT ResolvedElementReference("+", ID, vectorised=vectorised)
 VM invokes the selected built-in overload directly, vectorising only when the
 compiled reference says to do so
 ```
@@ -825,10 +825,10 @@ arguments when invoking the selected user-defined overload, allowing function
 bodies to read computed static variables such as `$n`. Built-in overloads
 should not infer or recompute these values at runtime.
 
-Be careful with saved bytecode. The current bytecode format encodes positional
-overload indices, so changing built-in overload order is a compatibility
-concern. Prefer explicit stable overload ids before bytecode is treated as
-durable.
+Bytecode version **0x35** carries stable implementation identities without a
+numeric overload selector. Reordering intrinsic catalogues or function tables
+cannot change an analysed call's target. Missing or duplicate identities fail
+linking. Recompile artifacts from earlier bytecode versions.
 
 ## Optional-safe field bytecode
 
@@ -903,7 +903,7 @@ suffix proven by analysis.
 
 When analysis adapts an overload set to a function with union inputs, compiled
 `FunctionSetCode` carries a branch-to-overload dispatch plan. Each branch has
-reified runtime predicates and the index of the overload chosen during static
+reified runtime predicates and the implementation identity chosen during static
 resolution. The VM matches the arguments against the plan and calls that exact
 overload. It does not redo overload resolution from a more specific runtime
 type; doing so could change the statically calculated return type.

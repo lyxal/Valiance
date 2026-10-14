@@ -333,7 +333,7 @@ def _unfold_node(
             _core.CallCandidate(
                 applied=applied,
                 branch=popped.with_element_tags(condition_element_tags),
-                callable_overload_index=state_arity,
+                state_arity=state_arity,
             )
         )
 
@@ -351,7 +351,7 @@ def _unfold_node(
                 TypedUnfoldNode(
                     node,
                     list_type,
-                    state_arity=cast(int, candidate.callable_overload_index),
+                    state_arity=cast(int, candidate.state_arity),
                     function=TypedFunctionNode(
                         body_function,
                         body_analysis.typ,

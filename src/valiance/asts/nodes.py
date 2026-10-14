@@ -52,14 +52,48 @@ class TypedElementNode(TypedNode):
     """A typed element application with its compile-time resolved overload."""
 
     overload: AppliedOverload | None = None
-    overload_index: int | None = None
+    implementation_id: str | None = None
     modifier_args: tuple[TypedFunctionNode, ...] = ()
     call_arg_order: tuple[int, ...] = ()
-    call_overload_index: int | None = None
+    call_implementation_id: str | None = None
     extension: TypedElementExtension | None = None
     runtime_name: Symbol | None = None
     behaviour_definition: object | None = None
     behaviour_provider: Symbol | None = None
+    # (argument index, explicit arity, method, requirement, implementation ID)
+    structural_witnesses: tuple[
+        tuple[int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
+    # (callback argument, call arity, callback parameter, method, contract, identity)
+    callable_witnesses: tuple[
+        tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedSetVariableNode(TypedNode):
+    """A checked value-to-structural-variable conversion."""
+
+    structural_witnesses: tuple[
+        tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedCastNode(TypedNode):
+    """An explicit trait conversion with analyser-selected method witnesses."""
+
+    structural_witnesses: tuple[
+        tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
+    ] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedObjectNode(TypedNode):
+    """Method results and identities keyed by source declaration and input shape."""
+
+    method_results: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    method_ids: tuple[tuple[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +119,7 @@ class TypedSpawnNode(TypedNode):
     input_types: tuple[Type, ...] = ()
     output_types: tuple[Type, ...] = ()
     callable_node: TypedFunctionNode | None = None
-    overload_index: int = 0
+    implementation_id: str | None = None
     unique_inputs: tuple[bool, ...] = ()
     vectorised: bool = False
     vectorised_depths: tuple[int, ...] = ()
@@ -129,11 +163,11 @@ class TypedTagApplicationNode(TypedNode):
     """A typed data-tag application with an optional runtime validator."""
 
     validator: AppliedOverload | None = None
-    validator_index: int | None = None
+    validator_implementation_id: str | None = None
     added_tags: tuple[DataTag, ...] = ()
     removed_tags: tuple[DataTag, ...] = ()
     validator_runtime_name: Symbol | None = None
-    validator_plans: tuple[tuple[Symbol, int], ...] = ()
+    validator_plans: tuple[tuple[Symbol, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +240,7 @@ class TypedAtNode(TypedNode):
 
     function: TypedFunctionNode | None = None
     overload: AppliedOverload | None = None
-    function_overload_index: int = 0
+    function_implementation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,10 +282,16 @@ class TypedImportedFunctionNode(TypedFunctionNode):
 
 
 @dataclass(frozen=True, slots=True)
-class TypedImportedObjectNode(TypedNode):
-    """An imported object declaration stored under a hidden runtime name."""
+class TypedImportedObjectNode(TypedObjectNode):
+    """An imported object declaration with its checked method metadata."""
 
     runtime_name: Symbol | None = None
+    # Unconditional nominal supertypes provided by imported module evidence.
+    imported_supertypes: tuple[Type, ...] = ()
+    # Conditional implementation edges carry their generic obligations.
+    imported_guarded_supertypes: tuple[
+        tuple[Type, tuple[Type | None, ...]], ...
+    ] = ()
 
 
 @dataclass(frozen=True)
@@ -696,6 +736,7 @@ class TraitRequirementNode(ASTNode):
     params: tuple[FunctionParam, ...] | None = None
     returns: tuple[Type, ...] | None = None
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset)
+    is_operator: bool = False
 
 
 @dataclass(frozen=True)

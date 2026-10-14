@@ -511,7 +511,7 @@ class _CallableValues:
             node, node, function_analyser.env,
         )
         signatures = self._function_signatures(node, final)
-        analysis = _functions._function_analysis_from_signatures(signatures)
+        analysis = _functions._function_analysis_from_signatures(signatures, self.env.context)
         if analysis is None and mode is InputMode.INFER_INPUTS:
             retry = self._retry_function_with_collection_inputs(
                 node,
@@ -597,7 +597,7 @@ class _CallableValues:
                 node.body,
             )
             signatures = self._function_signatures(node, final)
-            analysis = _functions._function_analysis_from_signatures(signatures)
+            analysis = _functions._function_analysis_from_signatures(signatures, self.env.context)
             if analysis is not None:
                 return analysis, retry_analyser
         return None
@@ -708,7 +708,7 @@ class _CallableValues:
             BranchSet((initial,)), call_site_node.body
         )
         signatures = self._function_signatures(call_site_node, final)
-        return _functions._function_analysis_from_signatures(signatures)
+        return _functions._function_analysis_from_signatures(signatures, self.env.context)
 
 
     def _function_signatures(

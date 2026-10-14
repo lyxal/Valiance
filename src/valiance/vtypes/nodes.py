@@ -245,6 +245,7 @@ class AnonymousTraitRequirement:
 
     name: Symbol
     overload: Overload
+    implicit_receiver: bool = False
 
 
 @dataclass(frozen=True)
@@ -295,7 +296,7 @@ class UnionDispatchBranch:
     """One cartesian union branch and its statically selected overload."""
 
     params: tuple[RuntimeTypePattern, ...]
-    overload_index: int
+    implementation_id: str
 
 
 @dataclass(frozen=True)
@@ -382,7 +383,7 @@ class NativeLinkSpec:
     owned_return_free: str | None = None
     owned_return_count: int | None = None
     nullable_return: bool = False
-    return_conversion: tuple[str, int] | None = None
+    return_conversion: tuple[str, str] | None = None
     callbacks: tuple[FFICallbackSpec, ...] = ()
 
 
@@ -419,6 +420,9 @@ class Overload:
     update_target: Type | None = field(default=None, compare=False, hash=False)
     conversion_target: Type | None = field(default=None, compare=False, hash=False)
     native_link: object | None = field(default=None, compare=False, hash=False)
+    is_structural_requirement: bool = field(default=False, compare=False, hash=False)
+    # Assigned at the declaration source, not derived from a local overload slot.
+    implementation_id: str | None = field(default=None, compare=False, hash=False)
 
 
 @dataclass(frozen=True)
