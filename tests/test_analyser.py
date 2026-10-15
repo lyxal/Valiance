@@ -7845,6 +7845,25 @@ $point = makePoint
         analyser.analyse(parse(source))
         self.assertTrue(any("no writable field 'x'" in item for item in analyser.diagnostics))
 
+class FFICallbackAnalysisTests(unittest.TestCase):
+    def test_ffi_callback_retains_native_parameter_types_inside_spawn(self):
+        source = '''import {ffi("/tmp/callback") as cb}
+link cb.apply_foreign(:Function[&int -> &int]) -> &int as applyForeign
+$task = fn -> &int =>
+  fn (value: &int) -> &int => $value end
+  applyForeign
+end | spawn
+$task wait
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        task_type = typed[-2].typ
+        self.assertIsInstance(task_type, T.TaskType)
+        self.assertTrue(T.same(task_type.outputs[0], T.FFI(Symbol("int"))))
+        self.assertIn(T.ElementTag(Symbol("Unsafe")), task_type.effects)
+
+
 class FFILinkedReturnConversionAnalysisTests(unittest.TestCase):
     def test_missing_declared_conversion_is_rejected(self):
         source = '''import {ffi("/tmp/missing") as native}

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import copy
 import unittest
+
+import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.analysis.contracts import ContractAnalyser
 from valiance.analysis.contracts import annotations, where_clauses
 from valiance.parsing import parse
+from valiance.vtypes.symbols import Symbol
 
 
 class ContractBoundaryTests(unittest.TestCase):
@@ -38,6 +41,21 @@ class ContractBoundaryTests(unittest.TestCase):
         """Static where-clause rank operations use their contract module."""
         self.assertTrue(hasattr(where_clauses, "evaluate_where_clause"))
         self.assertTrue(hasattr(where_clauses, "substitute_rank_variables"))
+
+    def test_rank_substitution_preserves_nested_ffi_nominal_identity(self) -> None:
+        native_int = T.FFI(Symbol("int"))
+        native_container = T.FFI(Symbol("Buffer"), native_int)
+        callback = T.Fn((native_container,), (native_int,))
+        transformed = where_clauses.substitute_rank_variables(callback, {})
+        self.assertTrue(T.same(transformed, callback))
+        self.assertIsInstance(transformed.params[0], T.FFINamedType)
+        self.assertIsInstance(transformed.returns[0], T.FFINamedType)
+
+        generic_callback = T.Fn((T.FFI(Symbol("Buffer"), T.V("T")),), (T.V("T"),))
+        specialized = where_clauses.substitute_static_type(
+            generic_callback, types={"T": native_int}
+        )
+        self.assertTrue(T.same(specialized, callback))
 
     def test_contract_service_survives_session_copy(self) -> None:
         """REPL preview copies preserve contract-service context delegation."""

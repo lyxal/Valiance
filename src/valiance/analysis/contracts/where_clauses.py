@@ -863,8 +863,8 @@ def _substitute_type(
             rank = ranks.get(rank.name, rank)
         return T.C(type(typ), _substitute_type(typ.base, ranks, types), rank)
     if isinstance(typ, T.NominalType):
-        return T.N(
-            typ.name,
+        return T.rebuild_nominal(
+            typ,
             *(_substitute_type(arg, ranks, types) for arg in typ.args),
         )
     if isinstance(typ, T.UnionType):
