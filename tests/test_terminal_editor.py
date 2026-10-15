@@ -2102,8 +2102,8 @@ class TerminalWorkerTests(unittest.TestCase):
             self.probe.submit(
                 f'import {{ffi("{library}") as native}}\n'
                 "link native.block(&CString, &CString) -> &int as block\n"
-                f'"{Path(sys.executable).as_posix()}" to[&CString] '
-                f'"{marker.as_posix()}" to[&CString] block'
+                f'"{Path(sys.executable).as_posix()}" to[&CString] | '
+                f'"{marker.as_posix()}" to[&CString] | block'
             )
             deadline = time.monotonic() + 10
             observed = []
