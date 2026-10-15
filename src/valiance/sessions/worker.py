@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 
 from valiance.sessions.events import (
+    CompletionItem,
     DiagnosticEvent,
     OutputEvent,
     ResultEvent,
@@ -31,6 +32,7 @@ class WorkerEvent:
     text: str = ""
     request: int = 0
     sequence: int = 0
+    items: tuple[CompletionItem, ...] = ()
 
 
 class _Output(io.TextIOBase):
@@ -124,6 +126,15 @@ def _serve(commands, inputs, output, events, stop, dropped) -> None:
             executed = False
             if operation == "shutdown":
                 break
+            if operation == "complete":
+                events.send(
+                    WorkerEvent(
+                        "completion",
+                        request=request,
+                        items=session.complete_draft(source, message.offset),
+                    )
+                )
+                continue
             events.send(WorkerEvent("started", operation, request))
             old_stdin = sys.stdin
             sys.stdin = _Input(inputs, events, request)
@@ -223,6 +234,7 @@ class SessionWorker:
         self.context = mp.get_context("spawn")
         self.process = None
         self.busy = False
+        self.preview_pending = False
         self.ready = False
         self.request = 0
         self._reported_drops = 0
@@ -235,7 +247,7 @@ class SessionWorker:
         """Spawn explicitly so import and packaging behavior matches Windows."""
         if self.process is not None:
             raise RuntimeError("worker already started")
-        self.commands = self.context.Queue(maxsize=1)
+        self.commands = self.context.Queue(maxsize=2)
         self.inputs = self.context.Queue(maxsize=1)
         self.output = self.context.Queue(maxsize=128)
         self.events, writer = self.context.Pipe(duplex=False)
@@ -288,6 +300,22 @@ class SessionWorker:
         """Acknowledge preparation only when the UI still owns that revision."""
         self.commands.put_nowait((request, "commit", current))
 
+    def complete(self, source: str, offset: int) -> int:
+        """Queue one non-executing preview while the persistent session is idle."""
+        if not self.ready or self.busy or self.preview_pending:
+            raise RuntimeError("worker is not ready for completion")
+        self.request += 1
+        self.commands.put_nowait(
+            SessionRequest(
+                self.request,
+                "complete",
+                source,
+                offset=offset,
+            )
+        )
+        self.preview_pending = True
+        return self.request
+
     def provide_input(self, text: str) -> None:
         """Supply one program-input line without turning it into a REPL command."""
         self.inputs.put_nowait(text.rstrip("\n") + "\n")
@@ -304,6 +332,8 @@ class SessionWorker:
                     self._completions.append(event)
                     continue
                 result.append(event)
+                if event.kind == "completion":
+                    self.preview_pending = False
                 if event.kind == "ready":
                     self.ready = True
                 if event.kind in {

@@ -10,7 +10,8 @@ launch route, including basic file runs/persistent commands pulled forward from
 Stage 5 during feedback. Stage 3 diagnostics/basic inspection are implemented;
 Stage 4 surviving-world inspection is implemented; its validation is recorded
 below. Stage 5 input/presentation and lifecycle implementation is available;
-real native-call CI validation and physical-terminal acceptance remain pending. Public CLI
+real native-call CI validation and physical-terminal acceptance remain pending.
+Stage 6 diagnostic interactions and semantic completion are implemented. Public CLI
 switching has not started.
 
 The [behavior specification](terminal-editor-design.md) is the product contract;
@@ -548,6 +549,49 @@ from name lists alone.
 **Exit:** selected-error and completion lifecycles pass in wrapped source,
 imports, incomplete edits, multiple worlds, REPL history, and locked input.
 
+Stage 6 implementation (15 October 2026):
+
+- Errors are grouped under file headings and entry points disappear when current
+  analysis has no errors. Selecting a diagnostic reuses its open document and
+  shows compiler details/help, with unrelated source dimmed. Moving away restores
+  brightness immediately and retains a compact filename/location/message pin.
+  The pin expands or dismisses through keyboard-accessible buttons. Any source
+  edit, undo/redo or invalidated disk dependency dismisses the selection.
+  New errors keep cursor inspection active; blocked loads retain source focus.
+- `analysis/completion.py` queries scope and stack applicability with ordinary
+  compiler element application on private copies. Cursor products retain private
+  read-only semantic checkpoints, without runtime values or accumulated typed
+  bodies; widgets receive grouped presentation items. Selected surviving worlds
+  and control-flow states supply the query context. Unfinished calls in rejected
+  functions use provisional context only to enumerate possible replacements;
+  each replacement must restore a surviving world after full-function validation.
+  Unknown/stale/unreachable context never supplies invented stack facts.
+- `SessionService.complete_draft` analyses the draft from copied session types,
+  variables, definitions and imports. The existing worker transports previews
+  separately from execution events; a pending preview does not reject the next
+  submission. Draft/session changes, Stop and Reset reject obsolete previews.
+  Preview analysis cannot execute or commit the draft.
+- `terminal_editor/completion.py` coalesces source queries off the UI loop and
+  anchors a scrollable overlay using TextArea's wrapped cursor coordinates.
+  Compiler tokens determine name fragments. Automatic opening counts all
+  applicable grouped names (1–8); Ctrl+Space includes larger sets and retains
+  explicit filtering while typing. Up/Down precede cursor/history actions,
+  Tab accepts, Escape dismisses, and Enter retains newline/submission behavior.
+  Accepted completion joins contiguous prefix edits in native undo/redo history.
+  Program stdin has no language completion.
+
+Stage 6 validation: the editor/CLI/fundamental-program/docstring run executed
+217 tests, with one expected local Windows FFI skip. Its sole error-pin ordering
+regression was corrected; all seven final UI interaction tests passed, including
+import grouping, immediate brightness restoration, edit/undo/redo dismissal,
+wrapped Unicode completion/undo, the automatic threshold, stale replies, and
+locked REPL input. All 21 final compiler, worker-preview and docstring checks
+passed. The fundamental-program suite's 46 tests passed without modifying its
+test file. A further 1,996 repository tests passed across resumed partitions;
+45 FFI/native checks were excluded locally. Production editor/session/completion
+Ruff lint and formatting checks pass. Physical-terminal key delivery and real
+native-call CI validation remain the previously recorded acceptance gates.
+
 ### Stage 7 — terminal styling and compatibility hardening
 
 Complete named themes and independently configurable roles, default screenshot
@@ -613,5 +657,5 @@ to satisfy a new-editor feature, and terminal state is restored on all exits.
 
 These are explicit implementation decisions with owners and gates, not reasons
 to reopen already confirmed interactions. Stage 0 was accepted after user review;
-Stages 1–5 have implementation coverage. Stage 5's real native-call CI and
+Stages 1–6 have implementation coverage. Stage 5's real native-call CI and
 physical-terminal validation gates remain open before public-default acceptance.

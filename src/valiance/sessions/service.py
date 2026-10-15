@@ -322,6 +322,30 @@ class SessionService:
             items[text] = CompletionItem(text, f"variable: {T.show(typ)}")
         return tuple(items.values())
 
+    def complete_draft(self, source: str, offset: int) -> tuple[CompletionItem, ...]:
+        """Preview draft types without executing or changing the session."""
+        from valiance.analysis.completion import CompletionContext, completion_prefix
+        from valiance.parsing.parser import parse_with_diagnostics
+
+        fragment = completion_prefix(source, offset)
+        if fragment is None or self.analyser is None or self.branch is None:
+            return ()
+        start, prefix = fragment
+        analyser, branch = copy.deepcopy((self.analyser, self.branch))
+        analyser.observer = None
+        analyser.trace = None
+        analyser.diagnostics.clear()
+        parsed = parse_with_diagnostics(source[:start])
+        if parsed.diagnostics:
+            return ()
+        final = analyser.analyse_block(
+            BranchSet((replace(branch, typed_body=(), trace=None),)), parsed.nodes
+        )
+        valid = [item for item in final if not item.failed]
+        if analyser.diagnostics or len(valid) != 1:
+            return ()
+        return CompletionContext(analyser.env, valid[0]).candidates(prefix)
+
     def element_documentation(self, name: str, source: str) -> str | None:
         """Render every loaded docstring available for a selected element."""
         normalized = name.strip().removeprefix("\\")

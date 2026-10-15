@@ -20,6 +20,9 @@ DocumentEditor { height: 1fr; border: none; }
 #error-list { height: auto; max-height: 12; }
 #error-list Label { width: 100%; height: auto; }
 #diagnostic-detail { color: #ef8794; margin-top: 1; }
+#error-pin, #dismiss-error { height: auto; min-height: 1; width: 100%; min-width: 0; border: none; color: #ef8794; background: transparent; text-align: left; }
+Screen { layers: base completion; }
+#completion-list { layer: completion; position: absolute; overlay: screen; border: solid #667088; background: #202532; padding: 0; }
 PaneDivider { color: $divider; background: #282d3b; }
 PaneDivider:hover { background: #3a4b65; color: #bfcfe6; }
 PaneDivider:focus { background: #526380; color: white; }

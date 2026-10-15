@@ -110,6 +110,98 @@ class CompilerInspectionTests(unittest.TestCase):
         root = RootSource("root", source, 7, directory or Path.cwd(), path)
         return analyse_sources((root, *overlays), root, 12)
 
+    def test_completion_fragments_follow_compiler_name_tokens(self):
+        from valiance.analysis.completion import completion_end, completion_prefix
+
+        for source in ("empty?", "module.empty?", "$cafe\u0301", "*::dup", "\\dup"):
+            with self.subTest(source=source):
+                start, prefix = completion_prefix(source, len(source))
+                self.assertEqual(start, 0)
+                self.assertEqual(prefix, source.replace("e\u0301", "é"))
+        self.assertIsNone(completion_prefix('"empty?"', 5))
+        self.assertIsNone(completion_prefix("#? empty?", 9))
+        self.assertEqual(completion_end("empty?", 3), 6)
+        self.assertEqual(completion_end("cafe\u0301", 3), 5)
+
+    def test_completion_filters_stack_groups_overloads_and_does_not_mutate(self):
+        source = (
+            "define choose(x: Int) -> Int => $x\n"
+            "define choose(x: String) -> String => $x\n"
+            "1 cho"
+        )
+        product = self.analyse(source)
+        context = product.at(source.rindex("cho")).completion
+        self.assertIsNotNone(context)
+        items = context.candidates("cho")
+        self.assertEqual([item.text for item in items], ["choose"])
+        self.assertIn("Int", items[0].meta)
+        self.assertNotIn("String", items[0].meta)
+        self.assertEqual(context.candidates("cho"), items)
+        self.assertEqual(context.candidates("nonexistent"), ())
+        empty = self.analyse("cho").at(0).completion
+        self.assertEqual(empty.candidates("dup"), ())
+
+    def test_completion_tracks_selected_surviving_world(self):
+        source = (
+            "define pick(x: Int) -> Int => $x\n"
+            "define pick(x: String) -> String => $x\n"
+            "define f =>\n pick\n dup\nend\n"
+        )
+        product = self.analyse(source)
+        offset = source.rindex("dup")
+        scope = product.scope_at(offset)
+        self.assertEqual(len(scope.worlds), 2)
+        details = [
+            product.at(offset, world.identity).completion.candidates("pic")[0].meta
+            for world in scope.worlds
+        ]
+        self.assertTrue(any("Int" in item and "String" not in item for item in details))
+        self.assertTrue(any("String" in item and "Int" not in item for item in details))
+
+    def test_completion_recovers_incomplete_function_and_checks_later_constraints(self):
+        source = (
+            "define pick(x: Int) -> Int => $x\n"
+            "define pick(x: String) -> String => $x\n"
+            "define only(x: Int) -> Int => $x\n"
+            "define f(x: Int) -> Int =>\n pi\n only\nend\n"
+        )
+        product = self.analyse(source)
+        self.assertTrue(product.diagnostics)
+        context = product.completion_at(source.rindex(" pi") + 1).completion
+        self.assertIsNotNone(context)
+        self.assertEqual([item.text for item in context.candidates("pi")], ["pick"])
+        rejected = source.replace("f(x: Int) -> Int", "f(x: String) -> Int")
+        product = self.analyse(rejected)
+        context = product.completion_at(rejected.rindex(" pi") + 1).completion
+        self.assertIsNotNone(context)
+        self.assertEqual(context.candidates("pi"), ())
+
+    def test_session_completion_previews_draft_without_execution_or_commit(self):
+        from valiance.sessions.service import SessionService
+
+        session = SessionService()
+        try:
+            prepared = session.prepare("define only(x: Int) -> Int => $x\n1")
+            session.execute(prepared.prepared)
+            version = session._state_version
+            stack = tuple(session.branch.stack.items)
+            self.assertEqual(
+                [item.text for item in session.complete_draft("on", 2)], ["only"]
+            )
+            self.assertEqual(session.complete_draft('"string" on', 11), ())
+            self.assertEqual(
+                [
+                    item.text
+                    for item in session.complete_draft('println "not executed" du', 25)
+                ],
+                ["dup"],
+            )
+            self.assertEqual(tuple(session.branch.stack.items), stack)
+            self.assertEqual(session._state_version, version)
+            self.assertEqual(session.complete_draft('"du', 3), ())
+        finally:
+            session.close()
+
     def test_chain_gaps_variable_types_function_context_and_empty_stack(self):
         source = (
             "object Circle =>\n  $radius: Real\nend\n"
@@ -206,6 +298,18 @@ class CompilerInspectionTests(unittest.TestCase):
             self.assertIn("Unsaved value docs", facts.documentation)
             self.assertEqual(facts.target, (dependency, 1, 14))
             self.assertEqual(product.at(source.rindex("println") + 7).stack, ("Int",))
+            suggestions = facts.completion.candidates("val")
+            self.assertEqual([item.text for item in suggestions], ["value"])
+            self.assertIn("Int", suggestions[0].meta)
+            self.assertNotIn("String", suggestions[0].meta)
+            qualified = "import {library}\n1 library.val"
+            product = self.analyse(qualified, root, overlays=(overlay,))
+            context = product.at(qualified.index("library.val")).completion
+            self.assertIsNotNone(context)
+            self.assertEqual(
+                [item.text for item in context.candidates("library.val")],
+                ["library.value"],
+            )
 
     def test_inspection_does_not_execute_source_or_alter_ordinary_analysis(self):
         from unittest.mock import patch
@@ -239,8 +343,12 @@ class CompilerInspectionTests(unittest.TestCase):
         self.assertEqual(len(scope.worlds), 2)
         for world in scope.worlds:
             typ = "String" if "String" in world.signature else "Int"
-            self.assertIn(typ, product.at(source.rindex("pick"), world.identity).element)
-            self.assertEqual(product.at(source.rindex("pick") + 4, world.identity).stack, (typ,))
+            self.assertIn(
+                typ, product.at(source.rindex("pick"), world.identity).element
+            )
+            self.assertEqual(
+                product.at(source.rindex("pick") + 4, world.identity).stack, (typ,)
+            )
         source = prefix + "define f =>\n pick\n only\nend\n"
         product = self.analyse(source)
         self.assertFalse(product.diagnostics)
@@ -269,17 +377,25 @@ class CompilerInspectionTests(unittest.TestCase):
         self.assertEqual(len(scope.worlds), 2)
         for world in scope.worlds:
             docs = first.at(source.rindex("pick"), world.identity).documentation
-            expected = "Text choice" if "String" in world.signature else "Integer choice"
+            expected = (
+                "Text choice" if "String" in world.signature else "Integer choice"
+            )
             self.assertIn(expected, docs)
             row = 3 if "String" in world.signature else 1
-            self.assertEqual(first.at(source.rindex("pick"), world.identity).target,
-                             (None, row, 7))
+            self.assertEqual(
+                first.at(source.rindex("pick"), world.identity).target, (None, row, 7)
+            )
         edited = "\n" + source.replace(" pick\n", "   pick\n")
         second = self.analyse(edited)
         updated = second.scope_at(edited.rindex("pick"))
         self.assertEqual(scope.identity, updated.identity)
-        self.assertEqual([w.identity for w in scope.worlds], [w.identity for w in updated.worlds])
-        self.assertEqual(second.at(edited.rindex("pick"), "removed"), second.at(edited.rindex("pick")))
+        self.assertEqual(
+            [w.identity for w in scope.worlds], [w.identity for w in updated.worlds]
+        )
+        self.assertEqual(
+            second.at(edited.rindex("pick"), "removed"),
+            second.at(edited.rindex("pick")),
+        )
 
     def test_selected_local_declaration_shadows_identical_global_signature(self):
         source = (
@@ -297,7 +413,9 @@ class CompilerInspectionTests(unittest.TestCase):
         undocumented = source.replace(" #?? Local docs.\n", "\n")
         facts = self.analyse(undocumented).at(undocumented.rindex("pick"))
         self.assertNotIn("Global docs", facts.documentation)
-        generic = source.replace("define pick(x: Int) -> Int", "define[T] pick(x: T) -> T")
+        generic = source.replace(
+            "define pick(x: Int) -> Int", "define[T] pick(x: T) -> T"
+        )
         facts = self.analyse(generic).at(generic.rindex("pick"))
         self.assertIn("Local docs", facts.documentation)
         self.assertEqual(facts.target, (None, 4, 11))
@@ -332,12 +450,13 @@ class CompilerInspectionTests(unittest.TestCase):
         )
         product = self.analyse(source)
         self.assertFalse(product.diagnostics)
-        self.assertIn("identity(x: Int) -> Int", product.at(source.rindex("identity")).element)
+        self.assertIn(
+            "identity(x: Int) -> Int", product.at(source.rindex("identity")).element
+        )
         facts = product.at(source.rindex("$local") + 6)
         self.assertIn(("local", "Int"), facts.locals)
         source = (
-            "define f(x: Int) -> Int =>\n $x match =>\n"
-            "  1 => 2\n  _ => 3\n end\nend\n"
+            "define f(x: Int) -> Int =>\n $x match =>\n  1 => 2\n  _ => 3\n end\nend\n"
         )
         product = self.analyse(source)
         self.assertFalse(product.diagnostics)
@@ -479,6 +598,216 @@ class EditorInspectionApplicationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause(0.02)
         await pilot.pause()
 
+    async def test_selected_error_minimizes_restores_brightness_and_edits_dismiss(self):
+        from valiance.terminal_editor.app import EditorApp
+
+        app = EditorApp(watch_files=False, with_worker=False)
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.source_editor.load_text("1 unknown_name\n2\n")
+            await pilot.pause()
+            await self.settled(app, pilot)
+            await pilot.press("f9")
+            await pilot.pause()
+            self.assertTrue(app._error_expanded)
+            self.assertIsNotNone(app.source_editor.selected_error)
+            app.source_editor.move_cursor((1, 0))
+            await pilot.pause()
+            self.assertFalse(app._error_expanded)
+            self.assertIsNone(app.source_editor.selected_error)
+            self.assertTrue(app.query_one("#error-pin").display)
+            app.expand_error_pressed()
+            self.assertTrue(app._error_expanded)
+            await pilot.press("3")
+            await pilot.pause()
+            self.assertIsNone(app._selected_diagnostic)
+            self.assertFalse(app.query_one("#error-pin").display)
+            await self.settled(app, pilot)
+            await pilot.press("f9")
+            await pilot.pause()
+            app.source_editor.action_undo()
+            await pilot.pause()
+            self.assertIsNone(app._selected_diagnostic)
+            await self.settled(app, pilot)
+            await pilot.press("f9")
+            await pilot.pause()
+            app.source_editor.action_redo()
+            await pilot.pause()
+            self.assertIsNone(app._selected_diagnostic)
+
+    async def test_grouped_import_errors_reuse_open_document_and_keep_source_focus(
+        self,
+    ):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from textual.widgets import OptionList
+
+        from valiance.terminal_editor.app import EditorApp
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "library.vlnc"
+            dependency.write_text("public define broken(x: Int) -> String => $x\n")
+            main = root / "main.vlnc"
+            main.write_text("import {library.broken}\n")
+            app = EditorApp(launch_directory=root, watch_files=False, with_worker=False)
+            async with app.run_test(size=(120, 40)) as pilot:
+                imported = app.files.open(dependency)
+                await app._mount_document(imported.id)
+                document = app.files.open(main)
+                await app._mount_document(document.id)
+                await self.settled(app, pilot)
+                self.assertTrue(app.source_editor.has_focus)
+                self.assertFalse(app.query_one("#error-list").display)
+                listing = app.query_one("#error-list", OptionList)
+                self.assertTrue(
+                    any(
+                        listing.get_option_at_index(i).disabled
+                        for i in range(listing.option_count)
+                    )
+                )
+                index = next(
+                    i
+                    for i, item in enumerate(app.analysis.snapshot.diagnostics)
+                    if item.source_file == dependency
+                )
+                app._navigate_diagnostic(index)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertEqual(app.workspace.active_document, imported.id)
+                self.assertEqual(
+                    sum(
+                        item.path == dependency
+                        for item in app.workspace.documents.values()
+                    ),
+                    1,
+                )
+                self.assertTrue(app._error_expanded)
+                app.source_editor.load_text(
+                    "public define fixed(x: Int) -> Int => $x\n"
+                )
+                await pilot.pause()
+                self.assertIsNone(app._selected_diagnostic)
+                await self.settled(app, pilot)
+                self.assertFalse(app.query_one("#show-errors").display)
+
+    async def test_completion_threshold_keyboard_precedence_and_stale_results(self):
+        from valiance.sessions.events import CompletionItem
+        from valiance.terminal_editor.app import EditorApp
+
+        app = EditorApp(watch_files=False, with_worker=False)
+        async with app.run_test(size=(80, 24)) as pilot:
+            source = (
+                "\n".join(f"define candidate{i}(x: Int) -> Int => $x" for i in range(9))
+                + "\n1 cand"
+            )
+            editor = app.source_editor
+            editor.load_text(source)
+            editor.move_cursor(editor.document.end)
+            await pilot.pause()
+            await self.settled(app, pilot)
+            await pilot.pause(0.3)
+            self.assertFalse(app.completion.listing.display)
+            await pilot.press("ctrl+space")
+            await pilot.pause(0.5)
+            self.assertTrue(
+                app.completion.listing.display,
+                (
+                    app.focused,
+                    app.completion.key,
+                    app.completion.explicit,
+                    app.completion.task.exception()
+                    if app.completion.task and app.completion.task.done()
+                    else None,
+                ),
+            )
+            self.assertEqual(len(app.completion.items), 9)
+            cursor = editor.cursor_location
+            await pilot.press("down")
+            self.assertEqual(editor.cursor_location, cursor)
+            self.assertEqual(app.completion.listing.highlighted, 1)
+            await pilot.press("escape")
+            self.assertFalse(app.completion.listing.display)
+            await pilot.pause(0.2)
+            self.assertFalse(app.completion.listing.display)
+            await pilot.press("ctrl+space")
+            await pilot.pause(0.5)
+            await pilot.press("tab")
+            self.assertTrue(editor.text.endswith("candidate0"))
+            editor.action_undo()
+            await pilot.pause()
+            self.assertTrue(editor.text.endswith("cand"))
+            old_key = app.completion.key
+            editor.insert("x")
+            await pilot.pause()
+            app.completion.poll()
+            app.completion.show((CompletionItem("wrong", ""),), old_key)
+            self.assertFalse(app.completion.listing.display)
+
+    async def test_completion_in_locked_repl_overrides_history_but_not_enter(self):
+        from valiance.terminal_editor.app import EditorApp
+        from valiance.terminal_editor.runtime import CommandInput
+
+        app = EditorApp(watch_files=False)
+        async with app.run_test(size=(120, 40)) as pilot:
+            deadline = time.monotonic() + 10
+            while not app.runtime.worker.ready:
+                self.assertLess(time.monotonic(), deadline)
+                await pilot.pause(0.05)
+            app.runtime.worker.submit("1")
+            while app.runtime.worker.busy:
+                self.assertLess(time.monotonic(), deadline)
+                await pilot.pause(0.05)
+            editor = app.query_one("#command", CommandInput)
+            app.state.input.history = ["history"]
+            editor.load_text("du")
+            editor.move_cursor((0, 2))
+            editor.focus()
+            editor.toggle_lock()
+            await pilot.pause()
+            deadline = time.monotonic() + 10
+            while not app.completion.listing.display:
+                self.assertLess(time.monotonic(), deadline)
+                await pilot.pause(0.05)
+            await pilot.press("down")
+            self.assertEqual(editor.text, "du")
+            self.assertEqual(editor.cursor_location, (0, 2))
+            await pilot.press("escape")
+            self.assertTrue(app.state.input.locked)
+            await pilot.press("ctrl+space")
+            deadline = time.monotonic() + 10
+            while not app.completion.listing.display:
+                self.assertLess(time.monotonic(), deadline)
+                await pilot.pause(0.05)
+            await pilot.press("enter")
+            self.assertEqual(editor.text, "du\n")
+            self.assertTrue(app.state.input.locked)
+
+    async def test_automatic_completion_in_wrapped_unicode_source_joins_undo(self):
+        from valiance.terminal_editor.app import EditorApp
+
+        app = EditorApp(watch_files=False, with_worker=False)
+        async with app.run_test(size=(80, 24)) as pilot:
+            editor = app.source_editor
+            prefix = '"λ" ' + " " * 90
+            editor.load_text(prefix)
+            editor.move_cursor(editor.document.end)
+            await pilot.press("d", "u")
+            await self.settled(app, pilot)
+            deadline = time.monotonic() + 10
+            while not app.completion.listing.display:
+                self.assertLess(time.monotonic(), deadline)
+                await pilot.pause(0.05)
+            self.assertEqual([item.text for item in app.completion.items], ["dup"])
+            await pilot.press("tab")
+            self.assertEqual(editor.text, prefix + "dup")
+            editor.action_undo()
+            await pilot.pause()
+            self.assertEqual(editor.text, prefix)
+            editor.action_redo()
+            await pilot.pause()
+            self.assertEqual(editor.text, prefix + "dup")
+
     async def test_world_pages_keyboard_sync_and_silent_fallback(self):
         from textual.widgets import Static
         from valiance.terminal_editor.app import EditorApp
@@ -498,13 +827,19 @@ class EditorInspectionApplicationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertTrue(app.query_one("#world-pages").display)
             await pilot.press("alt+right")
-            self.assertIn("String", str(app.query_one("#inspection-facts", Static).content))
+            self.assertIn(
+                "String", str(app.query_one("#inspection-facts", Static).content)
+            )
             app.source_editor.move_cursor((5, 0))
             await pilot.pause()
-            self.assertIn("String", str(app.query_one("#inspection-facts", Static).content))
+            self.assertIn(
+                "String", str(app.query_one("#inspection-facts", Static).content)
+            )
             self.assertTrue(app.source_editor.has_focus)
             await pilot.click("#world-pages", offset=(11, 0))
-            self.assertIn("Int", str(app.query_one("#inspection-facts", Static).content))
+            self.assertIn(
+                "Int", str(app.query_one("#inspection-facts", Static).content)
+            )
             await pilot.press("alt+right")
             app.source_editor.move_cursor((4, 2))
             await pilot.pause()
@@ -516,7 +851,9 @@ class EditorInspectionApplicationTests(unittest.IsolatedAsyncioTestCase):
             app.source_editor.move_cursor((4, 2))
             await pilot.pause()
             self.assertFalse(app.query_one("#world-pages").display)
-            self.assertIn("Int", str(app.query_one("#inspection-facts", Static).content))
+            self.assertIn(
+                "Int", str(app.query_one("#inspection-facts", Static).content)
+            )
 
     async def test_caret_views_errors_and_definition_navigation(self):
         from textual.widgets import Static
@@ -898,7 +1235,9 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("f5")
             await self.wait_runtime(
                 pilot,
-                lambda: app.state.loaded_source is not None and not app.runtime.worker.busy,
+                lambda: (
+                    app.state.loaded_source is not None and not app.runtime.worker.busy
+                ),
             )
             self.assertEqual(app.state.transcript.entries[-1].text, "7\n")
             self.assertLessEqual(app.state.transcript.characters, 64_000)
@@ -1643,6 +1982,24 @@ class TerminalWorkerTests(unittest.TestCase):
             self.probe.commit(prepared.request, True)
             events = wait_for(self.probe, "finished")
             self.assertEqual(next(e.text for e in events if e.kind == "finished"), "9")
+
+    def test_production_worker_preview_allows_submission_and_preserves_stack(self):
+        from valiance.sessions.worker import SessionWorker
+
+        self.probe.close()
+        self.probe = SessionWorker()
+        self.probe.start()
+        wait_for(self.probe, "ready")
+        self.probe.submit("1")
+        wait_for(self.probe, "finished")
+        request = self.probe.complete("du", 2)
+        self.assertFalse(self.probe.busy)
+        self.probe.submit("2 +")
+        events = wait_for(self.probe, "finished")
+        preview = next(item for item in events if item.kind == "completion")
+        self.assertEqual(preview.request, request)
+        self.assertIn("dup", [item.text for item in preview.items])
+        self.assertEqual(events[-1].text, "3")
 
     def test_production_worker_delivers_output_before_completion(self):
         from valiance.sessions.worker import SessionWorker

@@ -36,6 +36,8 @@ class DocumentEditor(SourceEditor):
 
     async def _on_key(self, event: events.Key) -> None:
         """Make a newline or completed closing keyword one native undoable edit."""
+        if hasattr(self.app, "completion") and self.app.completion.handle_key(event):
+            return
         if not self.read_only and event.key == "enter":
             start, end = sorted(self.selection)
             prefix = self.text[: self.source_offset(start)]
@@ -119,3 +121,35 @@ class DocumentEditor(SourceEditor):
     def action_dedent_lines(self) -> None:
         """Dedent source rows, with a distinguishable fallback key."""
         self._indent_lines(True)
+
+    def apply_completion(self, start: int, end: int, text: str) -> None:
+        """Join accepted completion to its immediately typed prefix in native undo.
+
+        Textual isolates multi-character replacements. This adapter joins only
+        a contiguous prefix batch, preserving native Edit records and redo.
+        It is covered against the supported Textual 6.x dependency.
+        """
+        batches = self.history._undo_stack
+        previous = batches[-1] if batches else None
+        boundary = self.cursor_location
+        prefix_start = self.source_location(start)
+        self.replace(
+            text,
+            self.source_location(start),
+            self.source_location(end),
+            maintain_selection_offset=False,
+        )
+        if previous is not None and len(batches) >= 2 and batches[-2] is previous:
+            while len(batches) >= 2:
+                previous = batches[-2]
+                last = previous[-1]
+                if (
+                    not last.text
+                    or last._edit_result.end_location != boundary
+                    or last.from_location < prefix_start
+                    or last.from_location != last.to_location
+                ):
+                    break
+                boundary = previous[0].from_location
+                previous.extend(batches.pop())
+        self.history.checkpoint()

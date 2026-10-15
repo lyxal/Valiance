@@ -63,9 +63,10 @@ class SessionRequest:
     """
 
     request_id: int
-    operation: Literal["load", "command", "reset", "stop", "shutdown"]
+    operation: Literal["load", "command", "reset", "stop", "shutdown", "complete"]
     source: str = ""
     snapshot: WorkspaceSnapshot | None = None
+    offset: int = 0
 
 
 @dataclass(frozen=True, slots=True)

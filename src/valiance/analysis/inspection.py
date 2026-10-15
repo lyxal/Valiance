@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from pathlib import Path
 
 import valiance.vtypes as T
 from valiance.analysis.analyser import Analyser
+from valiance.analysis.completion import CompletionContext
 from valiance.analysis.diagnostics import Diagnostic, SourceLocation, from_message
 from valiance.analysis.traces import TraceCollector
 from valiance.asts import (
@@ -48,6 +49,9 @@ class Inspection:
     locals: tuple[tuple[str, str], ...] = ()
     states: tuple[Inspection, ...] = ()
     unavailable: str = ""
+    completion: CompletionContext | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +84,39 @@ class InspectionScope:
 
 
 @dataclass(frozen=True, slots=True)
+class CompletionRecovery:
+    """Validate replacements in an unfinished function against its complete body."""
+
+    context: CompletionContext
+    roots: tuple[RootSource, ...]
+    root: RootSource
+    start: int
+    end: int
+
+    def candidates(self, prefix: str):
+        """Offer only replacements that restore a surviving function world."""
+        if not prefix:
+            return ()
+        result = []
+        for item in self.context.candidates(prefix):
+            source = (
+                self.root.source[: self.start]
+                + item.text
+                + self.root.source[self.end :]
+            )
+            root = replace(self.root, source=source)
+            roots = tuple(
+                root if other.document_id == root.document_id else other
+                for other in self.roots
+            )
+            product = analyse_sources(roots, root, 0)
+            scope = product.scope_at(self.start)
+            if scope is not None and scope.worlds:
+                result.append(item)
+        return tuple(result)
+
+
+@dataclass(frozen=True, slots=True)
 class InspectionSnapshot:
     """Revision-bound diagnostics and cursor indexes, safe to hand to the UI."""
 
@@ -89,6 +126,22 @@ class InspectionSnapshot:
 
     scopes: tuple[InspectionScope, ...] = ()
     trace_limited: bool = False
+    completion_recovery: tuple[CompletionRecovery, ...] = ()
+
+    def completion_at(self, offset: int, world: str | None = None):
+        """Use surviving checkpoints, or validate an unfinished call's replacement."""
+        facts = self.at(offset, world)
+        if facts.completion is not None or facts.states:
+            return facts
+        recovery = next(
+            (
+                item
+                for item in self.completion_recovery
+                if item.start <= offset < item.end
+            ),
+            None,
+        )
+        return replace(facts, completion=recovery) if recovery else facts
 
     def scope_at(self, offset: int) -> InspectionScope | None:
         """Choose the innermost lexical function containing a cursor."""
@@ -152,6 +205,8 @@ def analyse_sources(
         if span.node.location
     }
     observations = []
+    completion_contexts = {}
+    completion_environments = {}
     trace = TraceCollector(trace_limit)
 
     def observe(owner, node, before, after):
@@ -172,6 +227,35 @@ def analyse_sources(
         if node.location:
             node = canonical.get((type(node), node.location.offset), node)
             typed = [replace(item, node=node) for item in typed]
+
+        def contexts(branches):
+            """Retain only single, valid compiler checkpoints for completion."""
+            valid = [branch for branch in branches if not branch.failed]
+            return (
+                CompletionContext(
+                    completion_environments.setdefault(id(node), owner.env),
+                    replace(valid[0], typed_body=(), trace=None),
+                    node
+                    if branches is before and isinstance(node, ElementNode)
+                    else None,
+                )
+                if len(valid) == 1
+                else None
+            )
+
+        context_pair = (contexts(before), contexts(after))
+        completion_contexts[id(node)] = context_pair
+        locals_key = (
+            tuple(
+                (str(name), T.show(typ))
+                for name, typ in next(iter(after)).variables.visible_items()
+            )
+            if len(after) == 1
+            else ()
+        )
+        completion_contexts[(id(node), _stack(before), _stack(after), locals_key)] = (
+            context_pair
+        )
         operation = (
             root.source[node.location.offset :].splitlines()[0] if node.location else ""
         )
@@ -342,7 +426,31 @@ def analyse_sources(
         all_observations,
         accepted_scopes=accepted,
         scope_definitions=definitions,
+        completion_contexts=completion_contexts,
     )
+    recovery = []
+    if not trace.truncated:
+        for span in parsed.spans:
+            context = completion_contexts.get(id(span.node), (None, None))[0]
+            if context is None or not isinstance(
+                span.node, (ElementNode, GetVariableNode)
+            ):
+                continue
+            if any(
+                region.start <= span.start < region.end and identity not in accepted
+                for identity, region in regions.items()
+            ):
+                recovery.append(
+                    CompletionRecovery(
+                        context,
+                        roots,
+                        root,
+                        span.start,
+                        span.start
+                        + len(str(span.node.name))
+                        + int(isinstance(span.node, GetVariableNode)),
+                    )
+                )
     declaration_products = [
         replace(
             typed, overloads=tuple(replace(item, body=()) for item in typed.overloads)
@@ -390,6 +498,7 @@ def analyse_sources(
             ):
                 continue
             observations.clear()
+            completion_contexts.clear()
             checkpoints = list(trace.checkpoints(ancestry))
             checkpoints.sort(
                 key=lambda item: item[0].location.offset if item[0].location else -1
@@ -435,6 +544,7 @@ def analyse_sources(
                 ),
                 accepted_scopes=accepted,
                 scope_definitions=definitions,
+                completion_contexts=completion_contexts,
             )
             worlds.append(InspectionWorld(identity, signature, world_ranges))
         if worlds:
@@ -474,6 +584,7 @@ def analyse_sources(
         tuple(ranges),
         tuple(scopes),
         trace.truncated,
+        tuple(recovery) if not trace.truncated else (),
     )
 
 
@@ -490,6 +601,7 @@ def _inspection_ranges(
     terminal_offsets=(),
     accepted_scopes=(),
     scope_definitions=None,
+    completion_contexts=None,
 ):
     """Build source hit indexes from already collected semantic checkpoints."""
     spans = {id(span.node): span for span in parsed.spans}
@@ -539,13 +651,30 @@ def _inspection_ranges(
         if window is None or window.start <= boundary.start < window.end
     )
     records = {}
+    completion_contexts = completion_contexts or {}
     states = {}
+    before_contexts = {}
     for node, before, after, operation, _typed, _owner, locals_ in observations:
         if node.location is None:
             continue
         key = id(node)
+        candidate = completion_contexts.get(
+            (key, before, after, locals_), (None, None)
+        )[0]
+        if candidate is not None:
+            before_contexts.setdefault(key, {})[
+                (candidate.branch.stack, candidate.branch.variables)
+            ] = candidate
         facts = (before, after, operation, context(node))
-        state = Inspection(after, operation, context(node), locals=locals_)
+        state = Inspection(
+            after,
+            operation,
+            context(node),
+            locals=locals_,
+            completion=completion_contexts.get(
+                (id(node), before, after, locals_), (None, None)
+            )[1],
+        )
         if state not in states.setdefault(key, []):
             states[key].append(state)
         if key in records and records[key] != facts:
@@ -628,13 +757,9 @@ def _inspection_ranges(
         ranges.append(
             CursorRange(region.start, region.end, Inspection(function=function), 0)
         )
-    for node, _before, _after, operation, typed, _owner, _locals in observations:
+    for node, _before, _after, operation, _typed, _owner, _locals in observations:
         span = spans.get(id(node))
-        if (
-            span is None
-            or not typed
-            or not isinstance(node, (ElementNode, GetVariableNode))
-        ):
+        if span is None or not isinstance(node, (ElementNode, GetVariableNode)):
             continue
         position = {
             "line": node.location.line - 1,
@@ -650,15 +775,22 @@ def _inspection_ranges(
             start = navigation["range"]["start"]
             target = (_uri_path(navigation["uri"]), start["line"], start["character"])
         width = len(str(node.name)) + int(isinstance(node, GetVariableNode))
+        selected = Inspection(
+            element=operation,
+            documentation=hover["contents"]["value"] if hover else "",
+            target=target,
+            completion=completion_contexts.get(id(node), (None, None))[0],
+        )
+        alternatives = []
+        for candidate in before_contexts.get(id(node), {}).values():
+            alternatives.append(replace(selected, completion=candidate))
+        if len(alternatives) > 1:
+            selected = replace(selected, states=tuple(alternatives))
         ranges.append(
             CursorRange(
                 node.location.offset,
                 node.location.offset + width,
-                Inspection(
-                    element=operation,
-                    documentation=hover["contents"]["value"] if hover else "",
-                    target=target,
-                ),
+                selected,
                 4,
             )
         )
@@ -677,6 +809,10 @@ def _inspection_ranges(
                 window.start <= offset < span.start for offset in terminal_offsets
             )
             facts = Inspection(unavailable="Unreachable" if unreachable else "")
+            facts = replace(
+                facts,
+                completion=completion_contexts.get(id(span.node), (None, None))[0],
+            )
             ranges.append(CursorRange(span.start, span.end, facts, 5))
     for error in parsed.diagnostics:
         lines = root.source.splitlines(keepends=True)
@@ -689,7 +825,43 @@ def _inspection_ranges(
         ranges.append(CursorRange(start, end, Inspection(), 5))
     # Before the first executable statement an empty module stack is known.
     first = min((span.start for span in parsed.regions), default=len(root.source) + 1)
-    ranges.append(CursorRange(0, first, Inspection(stack=()), -1))
+    from valiance.analysis.state import AnalysisBranch, InputMode
+
+    if window is not None:
+        initial = min(
+            (
+                node
+                for node, *_ in observations
+                if node.location
+                and window.start < node.location.offset < window.end
+                and completion_contexts.get(id(node), (None, None))[0] is not None
+            ),
+            key=lambda node: node.location.offset,
+            default=None,
+        )
+        if initial is not None:
+            ranges.append(
+                CursorRange(
+                    window.start,
+                    initial.location.offset,
+                    Inspection(completion=completion_contexts[id(initial)][0]),
+                    -2,
+                )
+            )
+
+    ranges.append(
+        CursorRange(
+            0,
+            first,
+            Inspection(
+                stack=(),
+                completion=CompletionContext(
+                    analyser.env, AnalysisBranch(input_mode=InputMode.TOP_LEVEL)
+                ),
+            ),
+            -1,
+        )
+    )
     return tuple(
         item
         for item in ranges

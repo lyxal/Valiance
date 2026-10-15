@@ -7845,6 +7845,34 @@ $point = makePoint
         analyser.analyse(parse(source))
         self.assertTrue(any("no writable field 'x'" in item for item in analyser.diagnostics))
 
+class FFILinkParameterAnalysisTests(unittest.TestCase):
+    def test_native_scalar_parameter_matches_raw_ffi_constructor(self):
+        source = (
+            'import {ffi("ucrtbase.dll") as crt}\n'
+            'link crt.abs(&int) -> &int as cAbs\n'
+            'FFI.&int(-7) cAbs\n'
+        )
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(T.same(typed[-1].typ, T.FFI(Symbol("int"))))
+        [overload] = analyser.env.overloads_for(Symbol("cAbs"))
+        self.assertIsInstance(overload.params[0], T.FFINamedType)
+        self.assertTrue(T.same(overload.params[0], T.FFI(Symbol("int"))))
+        self.assertEqual(overload.native_link.param_types, ("&int",))
+        self.assertIn(T.ElementTag(Symbol("Unsafe")), overload.element_tags)
+
+    def test_native_scalar_parameter_does_not_match_non_ffi_nominal(self):
+        source = (
+            'import {ffi("ucrtbase.dll") as crt}\n'
+            'link crt.abs(&int) -> &int as cAbs\n'
+            '1 cAbs\n'
+        )
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(any("no overloads" in item for item in analyser.diagnostics))
+
+
 class FFICallbackAnalysisTests(unittest.TestCase):
     def test_ffi_callback_retains_native_parameter_types_inside_spawn(self):
         source = '''import {ffi("/tmp/callback") as cb}

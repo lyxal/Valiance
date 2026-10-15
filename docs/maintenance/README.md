@@ -74,6 +74,13 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   [Process containment](../../src/valiance/sessions/process_scope.py) reclaims
   ordinary worker descendants on Stop, Reset, fault and exit. Real Windows
   Valiance FFI cancellation is validated in CI, not on the local machine.
+  Stage 6 adds [compiler-backed completion queries](../../src/valiance/analysis/completion.py)
+  and a [coalesced completion overlay](../../src/valiance/terminal_editor/completion.py).
+  Source suggestions use selected surviving-world checkpoints; unfinished calls
+  are checked against the complete function. REPL previews copy session types
+  inside the existing worker without execution. Errors are grouped by file;
+  selected details emphasize source, minimize to a pin on cursor movement and
+  dismiss on edits, including undo/redo.
   Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
   and [compilation database tests](../../tests/test_compilation_database.py).
 - [Understanding the type system](type-system.md) gives a human-first mental

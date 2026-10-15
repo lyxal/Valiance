@@ -53,6 +53,8 @@ class SourceEditor(TextArea):
         self._source_text: str | None = None
         self._styled_lines: dict[int, list[tuple[int, int, str]]] = {}
         self._emphasis: tuple[SourceEmphasis, ...] = ()
+        self.selected_error: tuple[int, int] | None = None
+        self.notified_source = text
         super().__init__(
             text,
             soft_wrap=True,
@@ -70,10 +72,19 @@ class SourceEditor(TextArea):
         self.notify_style_update()
         self.refresh()
 
+    def select_error(self, span: tuple[int, int] | None) -> None:
+        """Dim unrelated source only while selected diagnostic details are expanded."""
+        if self.selected_error == span:
+            return
+        self.selected_error = span
+        self.notify_style_update()
+        self.refresh()
+
     @on(TextArea.Changed)
     def _source_changed(self, message: TextArea.Changed) -> None:
         """Dismiss obsolete overlays on every edit, including undo and redo."""
         if message.text_area is self:
+            self.select_error(None)
             self.set_emphasis(())
 
     def _index_styles(self) -> None:
@@ -121,4 +132,15 @@ class SourceEditor(TextArea):
         line = super().get_line(line_index)
         for start, end, style in self._styled_lines.get(line_index, ()):
             line.stylize(style, start, end)
+        if self.selected_error is not None:
+            offset = sum(
+                len(row) + len(self.document.newline)
+                for row in self.document.lines[:line_index]
+            )
+            start, end = self.selected_error
+            line.stylize("dim")
+            if start < offset + len(line) and end > offset:
+                line.stylize(
+                    "not dim bold", max(0, start - offset), min(len(line), end - offset)
+                )
         return line

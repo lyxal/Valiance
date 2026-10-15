@@ -106,6 +106,8 @@ class CommandInput(DocumentEditor):
 
     async def _on_key(self, event: events.Key) -> None:
         """Keep command submission separate from the native newline action."""
+        if hasattr(self.app, "completion") and self.app.completion.handle_key(event):
+            return
         if event.key in {"ctrl+enter", "shift+enter"}:
             event.stop()
             event.prevent_default()
@@ -195,6 +197,7 @@ class EditorRuntime:
                 self.write("notice", "Source changed during preparation; run again\n")
                 return
             self.pending = snapshot
+            self.app.completion.invalidate_session()
             self.worker.submit(snapshot=snapshot)
         except (OSError, UnicodeError, RuntimeError, ValueError) as exc:
             self.app.notify(str(exc), title="Run failed", severity="error")
@@ -241,6 +244,7 @@ class EditorRuntime:
                 action()
                 return
             self.write("command", f"> {source}\n")
+            self.app.completion.invalidate_session()
             self.worker.submit(source)
             self.command_source = source
             self.app.state.input.record(source)
@@ -257,7 +261,9 @@ class EditorRuntime:
         batch.sort(key=lambda item: item.kind in {"finished", "failed", "cancelled"})
         self._polling = True
         for event in batch:
-            if event.kind == "ready":
+            if event.kind == "completion":
+                self.app.completion.receive(event)
+            elif event.kind == "ready":
                 self.label = "Ready"
             elif event.kind == "prepared":
                 current = bool(
@@ -334,6 +340,7 @@ class EditorRuntime:
         if self.closing:
             return
         self.closing = True
+        self.app.completion.invalidate_session()
         self.generation += 1
         self.label = "Run failed" if fault else "Stopping"
         self.app._status()

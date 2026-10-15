@@ -27,6 +27,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from .analysis import EditorAnalysis
+from .completion import CompletionList, EditorCompletion
 from .dialogs import ChoiceDialog, MenuDialog, PathDialog
 from .divider import PaneDivider
 from .editing import DocumentEditor
@@ -44,6 +45,8 @@ class InspectorPane(VerticalScroll, can_focus=True):
         """Keep stack facts, selected documentation and error navigation independent."""
         yield Button("Errors (F11)", id="show-errors")
         yield OptionList(id="error-list")
+        yield Button(id="error-pin")
+        yield Button("Dismiss error", id="dismiss-error")
         yield Static(id="world-pages")
         yield Static(id="control-state-pages")
         yield Static("State unavailable", id="inspection-facts", markup=False)
@@ -127,9 +130,14 @@ class EditorApp(App):
         self._search_document: str | None = None
         self._was_compact = False
         self.analysis = EditorAnalysis(self)
+        self.completion = EditorCompletion(self)
         self._errors_open = False
         self._diagnostic_index = -1
         self._diagnostics_product = None
+        self._selected_diagnostic = None
+        self._selected_error_document = None
+        self._selected_error_range = None
+        self._error_expanded = False
         self._inspection_key = None
         self._world_selection = {}
         self._control_state_key = None
@@ -200,11 +208,13 @@ class EditorApp(App):
             yield TranscriptView(id="transcript")
             yield CommandInput(self.state.input, id="command")
         yield Static(id="status", markup=False)
+        yield CompletionList(id="completion-list")
 
     def on_mount(self) -> None:
         """Set section labels and start a non-executing disk watcher."""
         self._was_compact = self.size.width < 100 or self.size.height < 30
         self.query_one("#search-bar").display = False
+        self.query_one("#completion-list").display = False
         self.query_one("#transcript", TranscriptView).border_title = "REPL output"
         self.query_one("#load-errors").display = False
         self.query_one("#command", CommandInput).update_guidance()
@@ -217,6 +227,7 @@ class EditorApp(App):
         self._status()
         self.analysis.poll()
         self.set_interval(0.1, self.analysis.poll)
+        self.set_interval(0.1, self.completion.poll)
         if self.runtime:
             self.runtime.start()
             self.set_interval(0.05, self.runtime.poll)
@@ -439,11 +450,17 @@ class EditorApp(App):
         if self.runtime is not None:
             self.runtime.submit_command()
 
+    @on(OptionList.OptionSelected, "#completion-list")
+    def completion_selected(self) -> None:
+        """Accept mouse-selected completion without transferring input focus."""
+        self.completion.accept()
+
     async def on_unmount(self) -> None:
         """Reap the session process on every application exit."""
         if self.runtime is not None:
             await self.runtime.close()
         await self.analysis.close()
+        await self.completion.close()
         try:
             await self._save_preferences()
         except OSError:
@@ -456,12 +473,17 @@ class EditorApp(App):
         if isinstance(editor, DocumentEditor):
             document_id = editor.id.removeprefix("source-")
             if document_id in self.workspace.documents:
+                if editor.notified_source != editor.text:
+                    self.dismiss_diagnostic()
+                    editor.notified_source = editor.text
                 self.state.edit_document(document_id, editor.text)
                 self.analysis.poll()
                 self._labels()
                 self._status()
                 self.refresh_inspection()
                 self.editor_screen.query_one("#load-errors").display = False
+        if isinstance(editor, DocumentEditor):
+            self.completion.poll()
 
     @on(TextArea.SelectionChanged)
     def selection_changed(self, message: TextArea.SelectionChanged) -> None:
@@ -470,6 +492,14 @@ class EditorApp(App):
         if isinstance(editor, DocumentEditor):
             document_id = editor.id.removeprefix("source-")
             if document_id in self.workspace.documents:
+                if self._error_expanded and (
+                    document_id != self._selected_error_document
+                    or not self._selected_error_range[0]
+                    <= editor.source_offset(editor.cursor_location)
+                    < self._selected_error_range[1]
+                ):
+                    self._error_expanded = False
+                    self._render_selected_diagnostic()
                 self.workspace.update(
                     document_id,
                     editor.text,
@@ -481,6 +511,9 @@ class EditorApp(App):
                 )
                 self._status()
                 self.refresh_inspection()
+
+        if isinstance(editor, DocumentEditor):
+            self.completion.poll()
 
     def _labels(self) -> None:
         """Disambiguate matching basenames and mark dirty tabs."""
@@ -558,6 +591,8 @@ class EditorApp(App):
             self._control_state_index,
             self._errors_open,
             self.workspace.active_document,
+            self._error_expanded,
+            self._selected_diagnostic,
         )
         if presentation_key == self._inspection_key:
             return
@@ -570,10 +605,14 @@ class EditorApp(App):
         if product is not self._diagnostics_product:
             self._diagnostics_product = product
             self._diagnostic_index = -1
-            self.editor_screen.query_one("#diagnostic-detail", Static).update("")
             self._populate_errors(diagnostics)
+            if product is not None and not diagnostics:
+                self._errors_open = False
+        self._render_selected_diagnostic()
         facts_widget = self.editor_screen.query_one("#inspection-facts", Static)
         docs_widget = self.editor_screen.query_one("#inspection-docs", Markdown)
+        facts_widget.display = not self._error_expanded
+        docs_widget.display = not self._error_expanded
         pages = self.editor_screen.query_one("#world-pages", Static)
         pages.display = False
         state_pages = self.editor_screen.query_one("#control-state-pages", Static)
@@ -670,13 +709,16 @@ class EditorApp(App):
                         )
                     )
                 facts_widget.update("\n".join(lines))
-            docs_widget.display = bool(facts.documentation)
+            docs_widget.display = bool(facts.documentation) and not self._error_expanded
             if (
                 facts.documentation
                 and facts.documentation != self._inspection_documentation
             ):
                 docs_widget.update(facts.documentation)
                 self._inspection_documentation = facts.documentation
+        if self._error_expanded:
+            pages.display = False
+            state_pages.display = False
         self._status()
 
     def action_select_control_state(self, index: int) -> None:
@@ -731,16 +773,75 @@ class EditorApp(App):
         """Replace error rows synchronously without cancelling widget removal tasks."""
         listing = self.editor_screen.query_one("#error-list", OptionList)
         listing.clear_options()
-        for index, diagnostic in enumerate(diagnostics):
+        groups = dict.fromkeys(item.source_file for item in diagnostics)
+        for path in groups:
+            listing.add_option(
+                Option(
+                    Text(str(path) if path else "Untitled", style="bold"), disabled=True
+                )
+            )
+            for index, diagnostic in enumerate(diagnostics):
+                if diagnostic.source_file != path:
+                    continue
+                location = diagnostic.location
+                coordinate = f"{location.line}:{location.column}" if location else ""
+                listing.add_option(
+                    Option(
+                        Text(f"  {coordinate} · {diagnostic.message}"),
+                        id=f"diagnostic-{index}",
+                    )
+                )
+
+    def dismiss_diagnostic(self) -> None:
+        """Dismiss details and pin on every source edit, including undo/redo."""
+        self._selected_diagnostic = None
+        self._error_expanded = False
+        self._render_selected_diagnostic()
+
+    def _render_selected_diagnostic(self) -> None:
+        """Keep source brightness and pin visibility in sync with selected details."""
+        if not self.is_mounted:
+            return
+        diagnostic = self._selected_diagnostic
+        for editor in self.editor_screen.query("DocumentEditor"):
+            editor.select_error(
+                self._selected_error_range
+                if self._error_expanded
+                and editor.id == f"source-{self._selected_error_document}"
+                else None
+            )
+        pin = self.editor_screen.query_one("#error-pin", Button)
+        pin.display = diagnostic is not None and not self._error_expanded
+        self.editor_screen.query_one("#dismiss-error").display = diagnostic is not None
+        detail = self.editor_screen.query_one("#diagnostic-detail", Static)
+        detail.display = diagnostic is not None and self._error_expanded
+        if diagnostic is not None:
             location = diagnostic.location
             name = diagnostic.source_file.name if diagnostic.source_file else "Untitled"
             coordinate = f":{location.line}:{location.column}" if location else ""
-            listing.add_option(
-                Option(
-                    Text(f"{name}{coordinate} · {diagnostic.message}"),
-                    id=f"diagnostic-{index}",
-                )
+            pin.label = f"{name}{coordinate} · {diagnostic.message.splitlines()[0]}"
+            detail.update(
+                f"{name}{coordinate}\n{diagnostic.message}"
+                + ("\n\n" + diagnostic.help if diagnostic.help else "")
             )
+
+    @on(Button.Pressed, "#dismiss-error")
+    def dismiss_error_pressed(self) -> None:
+        """Remove the pin without removing current compiler diagnostics."""
+        self.dismiss_diagnostic()
+        self.refresh_inspection()
+
+    @on(Button.Pressed, "#error-pin")
+    def expand_error_pressed(self) -> None:
+        """Reopen retained diagnostic details and their source emphasis."""
+        if self._selected_error_document in self.workspace.documents:
+            self._activate(self._selected_error_document)
+            self.source_editor.move_cursor(
+                self.source_editor.source_location(self._selected_error_range[0])
+            )
+            self.source_editor.scroll_cursor_visible()
+        self._error_expanded = True
+        self.refresh_inspection()
 
     def _cursor_offset(self) -> int:
         """Map Unicode source coordinates without involving wrapped terminal cells."""
@@ -800,12 +901,18 @@ class EditorApp(App):
                 (diagnostic.location.line - 1, diagnostic.location.column - 1)
             )
             self.source_editor.scroll_cursor_visible()
-        detail = diagnostic.message + (
-            "\n\n" + diagnostic.help if diagnostic.help else ""
-        )
-        self.editor_screen.query_one("#diagnostic-detail", Static).update(detail)
+        self._selected_diagnostic = diagnostic
+        self._selected_error_document = self.workspace.active_document
+        start = self._cursor_offset()
+        end = start + 1
+        source = self.source_editor.text
+        while end < len(source) and not source[end].isspace():
+            end += 1
+        self._selected_error_range = (start, end)
+        self._error_expanded = True
         self.inspector_requested = True
         self._layout()
+        self.refresh_inspection()
 
     @on(SourceEditor.SourceClicked)
     def source_diagnostic_clicked(self, message: SourceEditor.SourceClicked) -> None:
@@ -975,6 +1082,8 @@ class EditorApp(App):
             await self._reload(document_id)
         elif action == "close":
             if await self._protect(document_id):
+                if self._selected_error_document == document_id:
+                    self.dismiss_diagnostic()
                 self.workspace.close_document(document_id)
                 self.files.observed.pop(document_id, None)
                 await self.query_one(f"#source-{document_id}").remove()

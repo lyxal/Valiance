@@ -1,6 +1,6 @@
 # Terminal editor and REPL design
 
-Status: interaction design accepted on 9 October 2026. Stages 0–5 are
+Status: interaction design accepted on 9 October 2026. Stages 0–6 are
 implemented through the internal Python launch route. Stage 5 native-call
 validation in CI and the physical-terminal acceptance matrix remain pending.
 Live diagnostics and surviving overload-world inspection are implemented. Bare `vln` still uses the existing REPL.
@@ -35,6 +35,8 @@ presentation.
 | F9 / Shift+F9 | Next / previous recoverable error, including imported files |
 | F11 | Toggle the error list; new errors leave cursor inspection active |
 | F12 | Go to the selected element's definition |
+| Ctrl+Space | Request completion, including lists larger than eight names |
+| Completion Up / Down, Tab, Escape | Select a suggestion, accept it, or dismiss; Enter retains its normal behavior |
 | F5 / Alt+X / Run button | Run the active buffer, including unsaved text, in a fresh session |
 | F8 / Stop button | Stop and reap the worker; discard runtime state and retain documents/transcript |
 | REPL Enter | Submit when unlocked; insert an indented newline when locked; send requested program input |
@@ -59,8 +61,16 @@ gaps follow evaluation order, not the nearest source token. Empty stacks are
 distinct from unavailable states. Syntax and import diagnostics appear in the
 status/error list and as clickable source underlines. Analysis is coalesced off
 the UI loop, cannot execute source, and discards obsolete workspace results.
-Multiple surviving worlds and local control-flow states are available; completion
-is Stage 6. REPL controls provide Enter lock, Clear, Reset and Save Transcript,
+Multiple surviving worlds and local control-flow states are available. Completion
+uses their compiler checkpoints in source and statically previews drafts against
+the current session in REPL. Applicable overloads are grouped by name; 1–8 names
+open automatically, while Ctrl+Space also opens larger lists. Unavailable or
+stale context produces no suggestions. Unfinished function-call replacements
+must restore a surviving world after the complete function is checked. Errors
+are grouped by file; expanded details emphasize their source, cursor movement
+minimizes them to a pin and immediately restores brightness, and every edit
+(including undo/redo) dismisses the selection. REPL controls provide Enter lock,
+Clear, Reset and Save Transcript,
 also available from Edit. History retains the latest 500 nonempty submissions
 in `terminal-editor.json` beside the existing preferences, without replaying them
 or saving the draft/lock/runtime. Recall restores draft text, selection and scroll.

@@ -1096,21 +1096,8 @@ def _link_node(
         return_conversion,
         tuple(callback_specs),
     )
-    def visible_parameter(item: T.Type) -> T.Type:
-        """Mirror the runtime-call analyser's erased FFI nominal spelling."""
-        normalized = T.normalize(item)
-        if isinstance(normalized, T.FFINamedType):
-            return T.N(normalized.name, *normalized.args)
-        if isinstance(normalized, T.CollectionType):
-            return T.C(
-                type(normalized), visible_parameter(normalized.base), normalized.rank
-            )
-        if isinstance(normalized, T.FunctionType):
-            return normalized
-        return normalized
-
     overload = T.Overload(
-        tuple(visible_parameter(item) for item in node.params),
+        tuple(node.params),
         retained,
         native_link=spec,
         element_tags=frozenset(

@@ -75,6 +75,7 @@ class EditorAnalysis:
         """Invalidate unopened saved dependencies when their captured bytes change."""
         current = await asyncio.to_thread(product.workspace.disk_is_current)
         if not current and not self.closed and product is self.snapshot:
+            self.app.dismiss_diagnostic()
             self.invalidate()
             self.requested = None
 
