@@ -9860,9 +9860,29 @@ def _native_argument(name: str, value: Any, structs: dict[str, type[ctypes.Struc
         ctype = structs[name]
         source_fields = value.fields if isinstance(value, FFIStructValue) else tuple(value.fields.items())
         converted = []
+        char_arrays: list[tuple[str, bytes]] = []
+        field_types = dict(ctype._fields_)
         for field_name, field_value in source_fields:
-            converted.append(_native_argument_value(dict(ctype._fields_)[field_name], field_value, structs))
-        return ctype(*converted)
+            field_ctype = field_types[field_name]
+            if issubclass(field_ctype, ctypes.Array) and field_ctype._type_ is ctypes.c_char:
+                if not isinstance(field_value, FFIBufferValue):
+                    raise TypeError("embedded char array requires an FFI buffer")
+                array = _native_argument(field_value.ffi_type, field_value, structs)
+                if len(array) != field_ctype._length_:
+                    raise ValueError(f"embedded {field_name} requires {field_ctype._length_} bytes")
+                converted.append(b"")
+                char_arrays.append((field_name, bytes(array)))
+            else:
+                converted.append(_native_argument_value(field_ctype, field_value, structs))
+        native = ctype(*converted)
+        for field_name, raw in char_arrays:
+            # ctypes treats char[N] struct initializers as C strings and
+            # truncates at NUL; copy all N bytes into the inline field.
+            ctypes.memmove(
+                ctypes.addressof(native) + getattr(ctype, field_name).offset,
+                raw, len(raw),
+            )
+        return native
     if not isinstance(value, FFIScalarValue) or value.ffi_type != name:
         raise TypeError(f"expected {name} value")
     payload = value.value
@@ -9870,11 +9890,16 @@ def _native_argument(name: str, value: Any, structs: dict[str, type[ctypes.Struc
         if not isinstance(payload, str) or "\0" in payload:
             raise ValueError("CString requires text without embedded null bytes")
         return payload.encode("utf-8")
-    if name == "&char" and isinstance(payload, str):
-        encoded = payload.encode("utf-8")
-        if len(encoded) != 1:
-            raise ValueError("&char requires one encoded byte")
-        return encoded
+    if name == "&char":
+        if isinstance(payload, str):
+            encoded = payload.encode("utf-8")
+            if len(encoded) != 1:
+                raise ValueError("&char requires one encoded byte")
+            return encoded
+        if isinstance(payload, int):
+            # ctypes.c_char requires a single byte, including for checked
+            # signed numeric &char values (e.g. -1 represents 0xff).
+            return bytes((payload & 0xff,))
     return payload
 
 
@@ -9891,6 +9916,8 @@ def _native_argument_value(ctype: type, value: Any, structs: dict[str, type[ctyp
 
 def _ffi_from_native(name: str, result: Any, ref: NativeCallReference) -> Any:
     """Copy one native result into its corresponding Valiance FFI value."""
+    if name.endswith("+"):
+        raise ValueError("native buffer returns require @owned and an explicit size")
     if name in ref.handles:
         address = int(result or 0)
         if address == 0:
@@ -9898,7 +9925,15 @@ def _ffi_from_native(name: str, result: Any, ref: NativeCallReference) -> Any:
         return FFIHandleValue(name, address)
     spec = next((item for item in ref.structs if item.name == name), None)
     if spec is None:
-        if isinstance(result, bytes):
+        if name == "&char":
+            if isinstance(result, bytes):
+                if len(result) != 1:
+                    raise ValueError("native &char must contain exactly one byte")
+                result = int.from_bytes(result, "little", signed=True)
+            else:
+                # ctypes returns an integer when reading a byte by index.
+                result = ctypes.c_byte(result).value
+        elif isinstance(result, bytes):
             result = result.decode("utf-8" if name == "&CString" else "latin1")
         return FFIScalarValue(name, result)
     fields = tuple(
@@ -9910,7 +9945,18 @@ def _ffi_from_native(name: str, result: Any, ref: NativeCallReference) -> Any:
                 field.type_name,
                 tuple(
                     _ffi_from_native(field.type_name, item, ref)
-                    for item in getattr(result, field.name)
+                    for item in (
+                        # ctypes exposes c_char[] structure fields as a
+                        # null-terminated bytes string, dropping any tail.
+                        # Read the entire fixed-size array from the struct.
+                        ctypes.string_at(
+                            ctypes.addressof(result)
+                            + getattr(type(result), field.name).offset,
+                            field.fixed_size,
+                        )
+                        if field.type_name == "&char"
+                        else getattr(result, field.name)
+                    )
                 ),
             ),
         )

@@ -681,6 +681,435 @@ class FFIFlatBufferAndEmbeddedArrayTests(unittest.TestCase):
             self.assertEqual(result.fields["checksum"], FFIScalarValue("&int", 10))
 
 
+    def test_signed_char_input_and_scalar_return_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+
+        with native_library_directory() as directory:
+            source_path = os.path.join(directory, "char_input.c")
+            library = shared_library_path(directory, "char_input")
+            with open(source_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    "FFI_EXPORT int signed_sum(const char* data, int n) {"
+                    " int sum=0; for(int i=0;i<n;i++) sum+=(signed char)data[i];"
+                    " return sum; }\n"
+                    "FFI_EXPORT char echo_char(char value) { return value; }\n"
+                )
+            build_shared_library(source_path, library)
+            source = (
+                f'import {{ffi("{library}") as chars}}\n'
+                'link chars.signed_sum(:&char+, :&int) -> &int as signedSum\n'
+                'link chars.echo_char(:&char) -> &char as echoChar\n'
+                '[-1, 0, 65] to[&char+]\n'
+                '3 to[&int]\n'
+                'signedSum\n'
+                'to[Int]\n'
+                '-1 to[&char]\n'
+                'echoChar\n'
+                'to[Int]\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(result, [RuntimeNumber(64), RuntimeNumber(-1)])
+
+    def test_borrowed_buffer_return_and_buffer_callbacks_are_rejected(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+
+        cases = (
+            (
+                'link f.values() -> &int+ as values\n',
+                "native buffer returns require @owned",
+            ),
+            (
+                'link f.apply(:Function[&int+ -> &int]) -> &int as apply\n',
+                "FFI callback parameters and returns must be primitive",
+            ),
+            (
+                'link f.apply(:Function[&int -> &int+]) -> &int as apply\n',
+                "FFI callback parameters and returns must be primitive",
+            ),
+        )
+        for declaration, message in cases:
+            with self.subTest(declaration=declaration):
+                analyser = Analyser()
+                analyser.analyse(parse('import {ffi("/tmp/list") as f}\n' + declaration))
+                self.assertTrue(
+                    any(message in diagnostic for diagnostic in analyser.diagnostics),
+                    analyser.diagnostics,
+                )
+
+    def test_embedded_char_array_preserves_null_and_signed_bytes(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+
+        with native_library_directory() as directory:
+            source_path = os.path.join(directory, "char_struct.c")
+            library = shared_library_path(directory, "char_struct")
+            with open(source_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    "typedef struct { char data[4]; int count; } Packet;\n"
+                    "FFI_EXPORT Packet make_packet(void) {"
+                    " Packet p = {{65, 0, (char)255, 90}, 4}; return p; }\n"
+                    "FFI_EXPORT int sum_packet(Packet p) {"
+                    " int sum=p.count; for(int i=0;i<4;i++) sum+=(signed char)p.data[i];"
+                    " return sum; }\n"
+                )
+            build_shared_library(source_path, library)
+            source = (
+                f'import {{ffi("{library}") as chars}}\n'
+                'link chars.Packet as &Packet =>\n'
+                '  $data: &char+ size => 4\n'
+                '  $count: &int\nend\n'
+                'link chars.make_packet() -> &Packet as makePacket\n'
+                'link chars.sum_packet(:&Packet) -> &int as sumPacket\n'
+                '$packet = makePacket\n'
+                '$packet\n'
+                'sumPacket\n'
+                'to[Int]\n'
+                '$packet.data to[Int+]\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(
+                result,
+                [RuntimeNumber(158), [RuntimeNumber(x) for x in (65, 0, -1, 90)]],
+            )
+
+
+class FFIStructArrayTests(unittest.TestCase):
+    def test_embedded_struct_array_round_trip_through_native_call(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.runtime_values import FFIBufferValue, ObjectValue
+
+        with native_library_directory() as directory:
+            source_path = os.path.join(directory, "struct_arrays.c")
+            library = shared_library_path(directory, "struct_arrays")
+            with open(source_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    "typedef struct { int values[3]; } Row;\n"
+                    "typedef struct { Row rows[2]; } Grid;\n"
+                    "FFI_EXPORT Grid make_grid(void) {"
+                    " Grid grid={{{{1,2,3}}, {{4,5,6}}}}; return grid; }\n"
+                    "FFI_EXPORT int sum_grid(Grid grid) { int total=0;"
+                    " for(int i=0;i<2;i++) for(int j=0;j<3;j++)"
+                    " total+=grid.rows[i].values[j]; return total; }\n"
+                )
+            build_shared_library(source_path, library)
+            source = (
+                f'import {{ffi("{library}") as native}}\n'
+                'link native.Row as &Row =>\n'
+                '  $values: &int+ size => 3\nend\n'
+                'link native.Grid as &Grid =>\n'
+                '  $rows: &Row+ size => 2\nend\n'
+                'link native.make_grid() -> &Grid as makeGrid\n'
+                'link native.sum_grid(:&Grid) -> &int as sumGrid\n'
+                '$grid = makeGrid\n'
+                '$grid\nsumGrid\nto[Int]\n'
+                '$grid.rows\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(result[0], RuntimeNumber(21))
+            buffer = result[1]
+            self.assertIsInstance(buffer, FFIBufferValue)
+            self.assertEqual(buffer.ffi_type, "&Row+")
+            self.assertEqual(len(buffer), 2)
+            self.assertTrue(all(isinstance(row, ObjectValue) for row in buffer))
+            self.assertEqual(
+                [[item.value for item in row.fields["values"].values] for row in buffer],
+                [[1, 2, 3], [4, 5, 6]],
+            )
+            self.assertIn("&Row+", str(buffer))
+
+    def test_nested_struct_char_arrays_preserve_embedded_nul_on_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+
+        with native_library_directory() as directory:
+            source_path = os.path.join(directory, "nested_chars.c")
+            library = shared_library_path(directory, "nested_chars")
+            with open(source_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    "typedef struct { char bytes[4]; } Row;\n"
+                    "typedef struct { Row rows[2]; } Grid;\n"
+                    "FFI_EXPORT Grid make_grid(void) {"
+                    " Grid result={{{{65,0,(char)255,90}},{{1,2,3,4}}}};"
+                    " return result; }\n"
+                    "FFI_EXPORT int sum_grid(Grid grid) { int result=0;"
+                    " for(int i=0;i<2;i++) for(int j=0;j<4;j++)"
+                    " result+=(signed char)grid.rows[i].bytes[j];"
+                    " return result; }\n"
+                )
+            build_shared_library(source_path, library)
+            source = (
+                f'import {{ffi("{library}") as native}}\n'
+                'link native.Row as &Row =>\n'
+                '  $bytes: &char+ size => 4\nend\n'
+                'link native.Grid as &Grid =>\n'
+                '  $rows: &Row+ size => 2\nend\n'
+                'link native.make_grid() -> &Grid as makeGrid\n'
+                'link native.sum_grid(:&Grid) -> &int as sumGrid\n'
+                '$grid = makeGrid\n'
+                '$grid.rows\n'
+                '$grid\nsumGrid\nto[Int]\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(result[1], RuntimeNumber(164))
+            self.assertEqual(
+                [[item.value for item in row.fields["bytes"].values]
+                 for row in result[0]],
+                [[65, 0, -1, 90], [1, 2, 3, 4]],
+            )
+
+    def test_owned_struct_array_is_copied_and_freed(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.runtime_values import FFIBufferValue
+
+        with native_library_directory() as directory:
+            source_path = os.path.join(directory, "owned_rows.c")
+            library = shared_library_path(directory, "owned_rows")
+            with open(source_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    "#include <stdlib.h>\n"
+                    "typedef struct { int values[3]; } Row;\n"
+                    "static int release_count=0;\n"
+                    "FFI_EXPORT Row* make_rows(void) {"
+                    " Row* rows=malloc(2*sizeof(Row));"
+                    " for(int i=0;i<2;i++) for(int j=0;j<3;j++)"
+                    " rows[i].values[j]=i*3+j+1; return rows; }\n"
+                    "FFI_EXPORT void release(void* p) { release_count++; free(p); }\n"
+                    "FFI_EXPORT int releases(void) { return release_count; }\n"
+                    "FFI_EXPORT int sum_rows(const Row* rows, int n) { int total=0;"
+                    " for(int i=0;i<n;i++) for(int j=0;j<3;j++)"
+                    " total+=rows[i].values[j]; return total; }\n"
+                )
+            build_shared_library(source_path, library)
+            source = (
+                f'import {{ffi("{library}") as native}}\n'
+                'link native.Row as &Row =>\n'
+                '  $values: &int+ size => 3\nend\n'
+                '@owned("release", size = 2) '
+                'link native.make_rows() -> &Row+ as makeRows\n'
+                'link native.sum_rows(:&Row+, :&int) -> &int as sumRows\n'
+                'link native.releases() -> &int as releases\n'
+                '$rows = makeRows\n'
+                '$rows\n2 to[&int]\nsumRows\nto[Int]\n'
+                'releases\nto[Int]\n'
+                '$rows\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(result[0:2], [RuntimeNumber(21), RuntimeNumber(1)])
+            self.assertIsInstance(result[2], FFIBufferValue)
+            self.assertEqual(len(result[2]), 2)
+            self.assertEqual(result[2].values[1].fields["values"].values[2].value, 6)
+
+    def test_struct_buffer_constant_survives_bytecode_serialization(self):
+        from valiance.runtime.runtime_values import FFIBufferValue, FFIStructValue
+        from valiance.runtime.runtime_values import FFIScalarValue
+
+        rows = FFIBufferValue(
+            "&Row", (
+                FFIStructValue("&Row", (("x", FFIScalarValue("&int", 1)),)),
+                FFIStructValue("&Row", (("x", FFIScalarValue("&int", 2)),)),
+            ),
+        )
+        program = Program(FunctionCode((
+            Instruction(OpCode.PUSH_CONST, rows), Instruction(OpCode.RETURN),
+        ), name="<main>"))
+        self.assertEqual(run(loads(dumps(program))), [rows])
+        with self.assertRaises(TypeError):
+            FFIBufferValue("&Row", (FFIScalarValue("&int", 3),))
+
+
+class FFIRectangularMatrixTests(unittest.TestCase):
+    def _execute(self, source):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        return run(loads(dumps(compile_program(typed, optimize=True))))
+
+    def test_matrix_and_tensor_flatten_row_major_with_shape_checking(self):
+        from valiance.runtime.runtime_values import FFIBufferValue
+
+        result = self._execute(
+            '[[1,2,3],[4,5,6]] {2,3} cArr\n'
+            '[[[1,2],[3,4]],[[5,6],[7,8]]] {2,2,2} cArr\n'
+            '[[1.5,2.5],[3.5,4.5]] [2,2] cArr\n'
+        )
+        self.assertEqual(len(result), 3)
+        for index, expected in enumerate(((1, 2, 3, 4, 5, 6),
+                                          (1, 2, 3, 4, 5, 6, 7, 8),
+                                          (1.5, 2.5, 3.5, 4.5))):
+            self.assertIsInstance(result[index], FFIBufferValue)
+            self.assertEqual(tuple(item.value for item in result[index].values), expected)
+
+    def test_carr_element_type_is_inferred_or_explicit(self):
+        from valiance.runtime.runtime_values import FFIBufferValue
+
+        result = self._execute(
+            '[[1,2],[3,4]] {2,2} cArr\n'
+            '[[1.25,2.5],[3.75,4.0]] {2,2} cArr\n'
+            '[[1,2],[3,4]] {2,2} cArr[&short]\n'
+            '[[-1,0],[127,23]] {2,2} cArr[&char]\n'
+            '[] as[Int++] {0,3} cArr[&unsignedint]\n'
+            '[[1.5,2.5],[3.5,4.5]] {2,2} cArr[&float]\n'
+        )
+        self.assertEqual([v.element_type for v in result],
+                         ['&int', '&double', '&short', '&char',
+                          '&unsignedint', '&float'])
+        self.assertTrue(all(isinstance(v, FFIBufferValue) for v in result))
+        self.assertEqual([v.value for v in result[0].values], [1,2,3,4])
+        self.assertEqual([v.value for v in result[1].values], [1.25,2.5,3.75,4.0])
+        self.assertEqual([v.value for v in result[2].values], [1,2,3,4])
+        self.assertEqual([v.value for v in result[3].values], [-1,0,127,23])
+        self.assertEqual(len(result[4].values), 0)
+
+    def test_carr_checks_element_ranges_and_types(self):
+        with self.assertRaisesRegex(RuntimeError, 'RangeFault'):
+            self._execute('[[0,40000]] {1,2} cArr[&short]\n')
+        with self.assertRaisesRegex(RuntimeError, 'RangeFault'):
+            self._execute('[[-1,3]] {1,2} cArr[&unsignedchar]\n')
+        for source in (
+            '[["a","b"]] {1,2} cArr',
+            '[[1.5]] {1,1} cArr[&short]',
+            '[[1,2]] {1,2} cArr[&CString]',
+        ):
+            with self.subTest(source=source):
+                from valiance.analysis import Analyser
+                from valiance.parsing import parse
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
+
+    def test_shaped_ffi_conversion_is_contiguous_row_major(self):
+        from valiance.runtime.runtime_values import FFIBufferValue
+
+        result = self._execute(
+            '[[1,2,3],[4,5,6]] to[&int{2,3}]\n'
+            '[[[1,2],[3,4]],[[5,6],[7,8]]] to[&int{2,2,2}]\n'
+            '[[1.5,2.5],[3.5,4.5]] to[&double{2,2}]\n'
+            '[4,5,6] to[&int{3}]\n'
+            '[] as[Int++] to[&int{0,3}]\n'
+        )
+        for item, expected in zip(
+            result,
+            ((1, 2, 3, 4, 5, 6), (1, 2, 3, 4, 5, 6, 7, 8),
+             (1.5, 2.5, 3.5, 4.5), (4, 5, 6), ()),
+            strict=True,
+        ):
+            self.assertIsInstance(item, FFIBufferValue)
+            self.assertEqual(tuple(value.value for value in item.values), expected)
+
+    def test_shaped_ffi_conversion_rejects_invalid_shapes(self):
+        for matrix, target in (
+            ('[[1,2],[3]]', '&int{2,2}'),
+            ('[[1,2,3],[4]]', '&int{2,2}'),
+            ('[1,2,3,4]', '&int{2,2}'),
+            ('[[1,2],[3,4]]', '&int{4}'),
+            ('[[1,2],[3,4]]', '&int{2,3}'),
+            ('[[1,2],[3,4]]', '&int{1,4}'),
+        ):
+            with self.subTest(matrix=matrix, target=target):
+                with self.assertRaisesRegex(RuntimeError, 'ShapeFault'):
+                    self._execute(f'{matrix} to[{target}]\n')
+
+    def test_shaped_ffi_conversion_rejects_invalid_dimension_syntax(self):
+        from valiance.parsing import ParseError, parse
+
+        for target in ('&int{}', '&int{-1,2}', '&int{1.5,2}',
+                       '&int{2,}', '&int{2,*}'):
+            with self.subTest(target=target):
+                with self.assertRaises(ParseError):
+                    parse(f'[[1,2]] to[{target}]\n')
+
+    def test_shape_mismatches_raise_shape_fault(self):
+        cases = (
+            ('[[1,2],[3]]', '{2,2}'),  # ragged, total would be valid for other shapes
+            ('[[1,2,3],[4]]', '{2,2}'),  # total count is correct but layout is ragged
+            ('[1,2,3,4]', '{2,2}'),  # correct element count, insufficient nesting
+            ('[[1,2],[3,4]]', '{4}'),  # correct count, excessive nesting
+            ('[[1,2],[3,4]]', '{2,3}'),
+            ('[[1,2],[3,4]]', '{1,4}'),
+            ('[[1,2],[3,4]]', '{-1,2}'),
+            ('[[1,2],[3,4]]', '{1.5,2}'),
+        )
+        for matrix, shape in cases:
+            with self.subTest(matrix=matrix, shape=shape):
+                with self.assertRaisesRegex(RuntimeError, "ShapeFault"):
+                    self._execute(f'{matrix} {shape} cArr\n')
+
+    def test_zero_sized_axes_and_empty_shape(self):
+        from valiance.elements.builtins import _flatten_rectangular_values
+        from valiance.elements.builtins import PanicSignal
+
+        dim = lambda *dims: tuple(RuntimeNumber(n) for n in dims)
+        self.assertEqual(_flatten_rectangular_values([[], []], dim(2, 0)), ())
+        self.assertEqual(_flatten_rectangular_values([], dim(0, 3)), ())
+        with self.assertRaises(PanicSignal):
+            _flatten_rectangular_values([[]], dim(2, 0))
+        with self.assertRaises(PanicSignal):
+            _flatten_rectangular_values([], ())
+
+    def test_native_matrix_arguments_and_owned_flat_return(self):
+        with native_library_directory() as directory:
+            source_path = os.path.join(directory, "matrices.c")
+            library = shared_library_path(directory, "matrices")
+            with open(source_path, "w", encoding="utf-8") as stream:
+                stream.write(
+                    "#include <stdlib.h>\n"
+                    "FFI_EXPORT int matrix_sum(const int* a, int rows, int cols) {"
+                    " int result=0; for(int i=0;i<rows*cols;i++) result+=a[i];"
+                    " return result; }\n"
+                    "FFI_EXPORT int sum_short(const short* a,int n){int r=0;"
+                    " for(int i=0;i<n;i++)r+=a[i];return r;}\n"
+                    "FFI_EXPORT int* make_matrix(void) {"
+                    " int* a=malloc(sizeof(int)*6);"
+                    " for(int i=0;i<6;i++) a[i]=i+1; return a; }\n"
+                    "FFI_EXPORT void release(void* ptr) { free(ptr); }\n"
+                )
+            build_shared_library(source_path, library)
+            source = (
+                f'import {{ffi("{library}") as native}}\n'
+                'link native.matrix_sum(:&int+, :&int, :&int) -> &int as matrixSum\n'
+                'link native.sum_short(:&short+, :&int) -> &int as sumShort\n'
+                '@owned("release", size = 6) '
+                'link native.make_matrix() -> &int+ as makeMatrix\n'
+                '[[1,2,3],[4,5,6]] {2,3} cArr\n'
+                '2 to[&int]\n3 to[&int]\n'
+                'matrixSum\nto[Int]\n'
+                '[[1,2],[3,4]] {2,2} cArr[&short]\n'
+                '4 to[&int]\nsumShort\nto[Int]\n'
+                'makeMatrix\nto[Int+]\nreshape {2,3}\n'
+            )
+            result = self._execute(source)
+            self.assertEqual(result, [RuntimeNumber(21), RuntimeNumber(10),
+                                      [[RuntimeNumber(n) for n in (1,2,3)],
+                                       [RuntimeNumber(n) for n in (4,5,6)]]])
+
 
 class FFIOwnedHandleLeaseTests(unittest.TestCase):
     def test_destroy_metadata_and_handle_state_survive_native_execution(self):
@@ -754,6 +1183,7 @@ class FFIOwnedReturnTests(unittest.TestCase):
                 "FFI_EXPORT char* bad_utf8(void){char* p=malloc(2);p[0]=(char)0xff;p[1]=0;return p;}\n"
                 "FFI_EXPORT char* maybe_null(void){return 0;}\n"
                 "FFI_EXPORT int* numbers(void){int* p=malloc(3*sizeof(int));p[0]=2;p[1]=4;p[2]=6;return p;}\n"
+                "FFI_EXPORT char* bytes(void){char* p=malloc(4);p[0]=65;p[1]=0;p[2]=(char)255;p[3]=90;return p;}\n"
                 "FFI_EXPORT void release(void* p){frees++;free(p);}\n"
                 "FFI_EXPORT int free_count(void){return frees;}\n"
             )
@@ -819,6 +1249,70 @@ class FFIOwnedReturnTests(unittest.TestCase):
             typed = analyser.analyse(parse(source))
             self.assertEqual(analyser.diagnostics, [])
             self.assertEqual(run(loads(dumps(self._compile_program(typed)))), [None])
+
+
+    def test_owned_signed_char_buffer_converts_to_integer_list(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+
+        with native_library_directory() as directory:
+            library = self._compile_library(directory)
+            source = (
+                f'import {{ffi("{library}") as owned}}\n'
+                '@owned("release", size = 4) link owned.bytes() -> &char+ as bytes\n'
+                'bytes\n'
+                'to[Int+]\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(result, [[RuntimeNumber(x) for x in (65, 0, -1, 90)]])
+
+    def test_owned_buffer_linked_conversion_returns_visible_type(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        import valiance.vtypes as T
+
+        with native_library_directory() as directory:
+            library = self._compile_library(directory)
+            source = (
+                f'import {{ffi("{library}") as owned}}\n'
+                '@owned("release", size = 3) '
+                'link owned.numbers() -> (Int+) &int+ as numbers\n'
+                'numbers\n'
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertTrue(T.same(typed[-1].typ, T.ExactList(T.Int)))
+            result = run(loads(dumps(compile_program(typed, optimize=True))))
+            self.assertEqual(result, [[RuntimeNumber(x) for x in (2, 4, 6)]])
+
+    def test_unsupported_owned_linked_conversions_are_rejected(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+
+        with native_library_directory() as directory:
+            library = self._compile_library(directory)
+            declarations = (
+                '@owned("release") '
+                'link owned.greeting() -> (String) &CString as greeting\n',
+                '@owned("release", size = 3) @nullable '
+                'link owned.numbers() -> (Int+) &int+ as numbers\n',
+            )
+            for declaration in declarations:
+                with self.subTest(declaration=declaration):
+                    source = f'import {{ffi("{library}") as owned}}\n' + declaration
+                    analyser = Analyser()
+                    analyser.analyse(parse(source))
+                    self.assertTrue(
+                        any("@owned linked-return conversion requires" in item
+                            for item in analyser.diagnostics),
+                        analyser.diagnostics,
+                    )
 
 class FFIComputedLinkedFieldTests(unittest.TestCase):
     def test_nested_scalar_and_embedded_array_fields_survive_bytecode(self):

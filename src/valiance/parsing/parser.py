@@ -1867,9 +1867,16 @@ class Parser:
                 if token.kind is TokenKind.OP
                 else self._qualified_symbol(token)
             )
-            generic_args = self._element_generic_arguments(self._previous)
+            generic_args, ffi_shape = self._element_generic_arguments(
+                self._previous, name=name
+            )
             disambiguation = self._element_disambiguation(self._previous)
-            call_anchor = self._previous
+            if ffi_shape is not None:
+                if disambiguation:
+                    self._error("shaped FFI conversion cannot use overload hints")
+                return self._shaped_ffi_conversion_piece(
+                    token, generic_args[0], ffi_shape, annotations=(annotation,)
+                )
             return self._element_piece(
                 ElementNode(
                     name,
@@ -1989,7 +1996,9 @@ class Parser:
                 if token.kind is TokenKind.OP
                 else self._qualified_symbol(token)
             )
-            generic_args = self._element_generic_arguments(self._previous)
+            generic_args, ffi_shape = self._element_generic_arguments(
+                self._previous, name=name
+            )
             disambiguation = self._element_disambiguation(self._previous)
             call_anchor = self._previous
             call_args: tuple[CallArgument, ...] = ()
@@ -2005,6 +2014,12 @@ class Parser:
             if self._match(TokenKind.COLON):
                 modifier_args = self._modifier_arguments(token)
                 breaks_chain = True
+            if ffi_shape is not None:
+                if disambiguation or call_args or modifier_args:
+                    self._error(
+                        "shaped FFI conversion must use postfix to[&type{dimensions}]"
+                    )
+                return self._shaped_ffi_conversion_piece(token, generic_args[0], ffi_shape)
             return self._element_piece(
                 ElementNode(
                     name,
@@ -2879,17 +2894,67 @@ class Parser:
                 return tuple(args)
             self._expect(TokenKind.COMMA)
 
-    def _element_generic_arguments(self, start: Token) -> tuple[Type | None, ...]:
-        """Parse caller-supplied generic arguments in square brackets."""
+    def _element_generic_arguments(
+        self, start: Token, *, name: Symbol
+    ) -> tuple[tuple[Type | None, ...], tuple[int, ...] | None]:
+        """Parse generic arguments and the FFI-only shaped conversion sugar.
+
+        ``to[&int{2, 3}]`` is a conversion operation, not a new native pointer
+        type: it lowers to a typed ``cArr[&int]`` call.
+        Shape literals therefore never escape into the general type system.
+        """
         if not self._check(TokenKind.LBRACKET) or not self._adjacent(
             start, self._current
         ):
-            return ()
+            return (), None
         self._advance()
+        if name == Symbol("to") and self._check_op("&"):
+            mark = self.index
+            base_type = self.parse_type_expression()
+            if isinstance(base_type, FFINamedType) and self._match(TokenKind.LBRACE):
+                dimensions = self._ffi_conversion_dimensions()
+                self._expect(TokenKind.RBRACKET)
+                return (C(ListExactType, base_type),), dimensions
+            self.index = mark
         return self._element_type_arguments(
             close_kind=TokenKind.RBRACKET,
             empty_message="empty generic argument list is invalid",
+        ), None
+
+    def _ffi_conversion_dimensions(self) -> tuple[int, ...]:
+        """Read nonnegative, static C-buffer extents from ``&type{...}``."""
+        values: list[int] = []
+        if self._check(TokenKind.RBRACE):
+            self._error("shaped FFI conversion requires at least one dimension")
+        while True:
+            token = self._expect(TokenKind.NUMBER)
+            if not token.value.isdecimal():
+                self._error("FFI buffer dimensions must be nonnegative integers")
+            values.append(int(token.value))
+            if self._match(TokenKind.RBRACE):
+                return tuple(values)
+            self._expect(TokenKind.COMMA)
+
+    def _shaped_ffi_conversion_piece(
+        self,
+        token: Token,
+        target: Type | None,
+        dimensions: tuple[int, ...],
+        *,
+        annotations: tuple[ASTNode, ...] = (),
+    ) -> _ChainPiece:
+        """Lower a shaped conversion to a checked native cArr call."""
+        assert isinstance(target, CollectionType)
+        location = _loc(token)
+        dims = TupleLiteralNode(
+            tuple((NumberLiteralNode(str(n), location=location),) for n in dimensions),
+            location=location,
         )
+        convert = ElementNode(
+            Symbol("cArr"), generic_args=(target.base,), annotations=annotations,
+            location=location,
+        )
+        return _ChainPiece((dims, convert), is_element=True)
 
     def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
         """Parse positional overload hints in adjacent curly braces."""

@@ -607,16 +607,22 @@ class FFIHandleValue:
 
 @dataclass(frozen=True, slots=True)
 class FFIBufferValue:
-    """Flat rank-one FFI buffer whose backing storage is pinned per native call."""
+    """Copied rank-one native array of primitive or linked C struct values."""
     element_type: str
-    values: tuple["FFIScalarValue", ...]
+    values: tuple["FFIScalarValue | FFIStructValue | ObjectValue", ...]
 
     def __post_init__(self) -> None:
-        """Validate and normalize this FFI runtime value after construction."""
-        if not self.element_type.startswith("&"):
-            raise ValueError("FFI buffer element type must begin with '&'")
-        if any(value.ffi_type != self.element_type for value in self.values):
-            raise TypeError("FFI buffer items must match the declared element type")
+        """Require each element to be a matching scalar or copied C struct."""
+        if not self.element_type.startswith("&") or self.element_type.endswith("+"):
+            raise ValueError("FFI buffer element type must be a scalar or struct")
+        for value in self.values:
+            if not isinstance(value, (FFIScalarValue, FFIStructValue, ObjectValue)):
+                raise TypeError("FFI buffer items must be scalar or struct values")
+            actual_type = (
+                value.type_name if isinstance(value, ObjectValue) else value.ffi_type
+            )
+            if actual_type != self.element_type:
+                raise TypeError("FFI buffer items must match the declared element type")
 
     @property
     def ffi_type(self) -> str:
@@ -638,7 +644,11 @@ class FFIBufferValue:
 
     def __str__(self) -> str:
         """Return the user-facing representation of this FFI value."""
-        return f"{self.ffi_type}[" + ", ".join(str(item.value) for item in self.values) + "]"
+        return f"{self.ffi_type}[" + ", ".join(
+            str(item.value) if isinstance(item, FFIScalarValue)
+            else format_runtime_value(item)
+            for item in self.values
+        ) + "]"
 
 
 @dataclass(frozen=True, slots=True)
