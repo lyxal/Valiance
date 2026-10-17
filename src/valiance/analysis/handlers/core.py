@@ -964,7 +964,11 @@ def _link_node(
                 """Return the canonical primitive C ABI spelling for a callback type."""
                 storage = _ffi_storage_type(value)
                 if storage is not None:
-                    return storage[0] + ("+" if storage[1] else "")
+                    # A callback has no buffer length or ownership contract.
+                    # Treat only scalar primitives as callback values.
+                    if storage[1]:
+                        return None
+                    return storage[0]
                 value = T.normalize(value)
                 if isinstance(value, T.NominalType) and not isinstance(value, T.FFINamedType):
                     candidate = "&" + value.name.text
@@ -987,11 +991,18 @@ def _link_node(
         elif _ffi_storage_type(item) is None:
             self._diagnose("link parameters must be FFI storage types or FFI callbacks", node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-    if not all(_ffi_storage_type(item) is not None for item in node.returns):
+    return_storage = tuple(_ffi_storage_type(item) for item in node.returns)
+    if any(storage is None for storage in return_storage):
         self._diagnose("link returns must be scalar FFI types or flat FFI buffers", node)
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     if len(node.returns) > 1:
         self._diagnose("a primitive link may return at most one value", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    if any(storage[1] for storage in return_storage if storage is not None) and not any(
+        isinstance(annotation, AnnotationNode) and annotation.name.text == "owned"
+        for annotation in node.annotations
+    ):
+        self._diagnose("native buffer returns require @owned with an explicit size", node)
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     name = node.alias or Symbol(node.symbol.text, (node.namespace.text,))
     retained = tuple(node.returns)
@@ -1065,7 +1076,19 @@ def _link_node(
         else:
             self._diagnose("@owned currently supports &CString and flat primitive buffers", node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-        retained = (T.optional(visible) if nullable_return else visible,)
+        if return_conversion is not None:
+            # The VM copies owned flat buffers as FFI buffers before applying
+            # the selected conversion. CString returns are already Strings,
+            # and nullable returns cannot be passed unconditionally to it.
+            if result_name == "&CString" or nullable_return:
+                self._diagnose(
+                    "@owned linked-return conversion requires a non-nullable flat FFI buffer",
+                    node,
+                )
+                return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+            retained = (node.converted_return,)
+        else:
+            retained = (T.optional(visible) if nullable_return else visible,)
     elif nullable_return:
         self._diagnose("@nullable currently requires an @owned return", node)
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))

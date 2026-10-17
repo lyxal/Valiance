@@ -2238,7 +2238,18 @@ array field, not a pointer, preserving declaration order, alignment, and
 
 Flat buffers are borrowed for one native call. C cannot retain the pointer.
 Pointer-length relationships and output or input-output buffers are not
-represented by the current ownership and direction metadata.
+represented by the current ownership and direction metadata. A native pointer
+return declared as `&T+` must use `@owned("release", size = N)` so the runtime
+knows how many elements to copy. Unowned buffer returns are rejected during
+analysis; passing flat buffers through callbacks is likewise unsupported
+because callbacks have no length or ownership metadata.
+
+C `char` follows the checked signed `&char` integer representation. For native
+calls, numeric characters are packed as single bytes and copied native bytes
+are converted back to signed integers. Embedded `char[N]` struct fields preserve
+all `N` bytes, including embedded null bytes, rather than being interpreted as
+null-terminated text. Use `&CString` when a null-terminated UTF-8 string is
+intended instead.
 
 ### Opaque-handle destruction and leases
 
@@ -2272,7 +2283,11 @@ them as strict UTF-8. For a primitive flat buffer, `size = N` supplies the exact
 number of elements to copy into an immutable `FFIBufferValue`. In both cases the
 free function runs in a `finally` block. It therefore executes exactly once when
 copying succeeds, UTF-8 decoding fails, element conversion fails, or another
-conversion exception is raised.
+conversion exception is raised. An explicitly converted `@owned` flat buffer
+retains its declared converted return type; the conversion receives the copied
+FFI buffer. Explicit linked-return conversion is unsupported for owned strings
+(already decoded to `String`) and nullable owned returns (which can produce
+`None`), and these combinations are rejected during analysis.
 
 `@nullable` is permitted with `@owned`. A null address becomes `None` and is not
 passed to the free function. Without `@nullable`, a null owned return is a runtime
@@ -2459,3 +2474,22 @@ Parameter positions, source coordinates, and generic binder indices remain
 ordinary language/compiler metadata; they do not select overload bodies.
 
 The bytecode format is now **`0x35`**. Recompile older bytecode.
+
+## FFI struct arrays and checked rectangular flattening
+
+`FFIBufferValue` represents an **array** of native values. Its elements can be
+primitive `FFIScalarValue` instances or copies of linked struct values
+(`ObjectValue` / `FFIStructValue`) whose names match the buffer's element type.
+`vm._ffi_from_native` copies nested fixed-length C arrays and owned arrays of
+structs recursively, and `_native_argument` reconstructs ctypes arrays when
+passing them back into C. Owned pointers are freed after their contents are
+copied. The bytes of embedded `char[N]` fields are preserved even after NUL.
+
+Use `to[&int{2, 3}]` or `to[&double{2, 3}]` to validate a multidimensional
+language list and convert it directly to a contiguous, row-major native buffer.
+For runtime-computed shapes, `values shape cArr` directly returns the checked
+native buffer (`&int+` for `Int` inputs or `&double+` for `Real` inputs).
+`values shape cArr[&short]` selects another checked C element type and returns
+`&short+` without a separate conversion. A mismatch or ragged input raises
+`Panic[ShapeFault]`. The FFI ABI remains rank-one contiguous arrays, **not**
+pointer tables (`int**`), and callers must provide dimensions separately.

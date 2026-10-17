@@ -5669,15 +5669,23 @@ end
 
 - FFI buffers are always flat and rank-1: `&int+`, pointer plus length.
   No higher-rank FFI array type exists.
-- Multi-dimensional data is flattened by hand before crossing, with each
-  dimension passed as an ordinary integer argument alongside the buffer —
-  matching how a real C function (`matrix_sum(double* values, int rows,
-  int cols)`) already expresses shape: as data, in the argument list, not
-  as a type.
-- List rank (`+n`) describes nesting depth only, not rectangularity — a
-  `Number+2` may be ragged. Converting a possibly-ragged list to a flat
-  FFI buffer validates rectangularity as part of the conversion and raises
-  `ShapeFault` if it fails, rather than silently truncating or padding.
+- Use `matrix to[&double{2, 3}]` to validate and flatten a nested list
+  directly to a contiguous, row-major C buffer (`double*`). The dimensions
+  inside braces must be nonnegative integer literals. This is **conversion
+  syntax**, not a multidimensional C pointer type: the result still has the
+  ordinary `&double+` type. A linked function requiring `&double+` accepts it.
+- Native functions requiring dimensions still need each dimension passed as an
+  ordinary integer argument, matching the C ABI
+  (`matrix_sum(double* values, int rows, int cols)`). Neither `int**` nor a
+  shape header is silently introduced.
+- List rank (`+n`) describes nesting depth, not rectangularity — a `Number+2`
+  may be ragged. Shaped FFI conversion checks every axis and produces a
+  row-major buffer; ragged and wrong-ranked inputs raise `ShapeFault`.
+  `cArr` accepts dynamic, runtime-computed shapes (tuples or lists of dimensions)
+  and directly produces a native buffer. It infers `&int+` for `Int` inputs and
+  `&double+` for `Real` inputs, or accepts an explicit element type such as
+  `cArr[&short]` (returning `&short+`). Unlike `cArr`, `reshape` only rearranges
+  scalar leaves by count without validating the original nesting.
 
 ## 27.10. Strings
 
@@ -5951,6 +5959,28 @@ Primitive rank-one lists may be converted to flat FFI buffers with forms such as
 the resulting contiguous storage remains valid for the duration of one native
 call. Buffer parameters are borrowed by C for that call only.
 
+For multidimensional inputs, use shaped FFI conversion directly:
+
+```valiance
+[[1, 2, 3], [4, 5, 6]] to[&int{2, 3}]
+# contiguous row-major &int+; pass row and column counts separately to C
+```
+
+`to[&int{2, 3}]` accepts an `Int++` directly. It checks the complete nesting
+(including rectangularity) and applies checked per-element conversion; ragged
+or otherwise inconsistent shapes raise `ShapeFault`. A one-dimensional shape
+such as `to[&int{4}]` works as well, and zero-length axes are valid. The
+annotation supplies the **expected** dimensions, not a new type or a size
+parameter passed to the C ABI: the result is an ordinary flat `&int+` (`int*`).
+For runtime-computed dimensions, use `values shape cArr` directly; it returns
+`&int+` for integer lists and `&double+` for real lists. Choose a different
+C element type explicitly with `values shape cArr[&short]` (result `&short+`).
+Both paths validate rectangularity, convert elements with C range checks,
+and preserve row-major order. No extra `to[...]` call is needed.
+Owned native `&int+` results still require an explicit size and can be
+reconstructed with `to[Int+] reshape {rows, cols}`. Native callers cannot
+retain pointers to temporary conversion buffers beyond the call.
+
 A fixed C array embedded in a linked struct is declared by attaching a positive
 size to a rank-one FFI field:
 
@@ -5962,8 +5992,16 @@ end
 ```
 
 The field is laid out as an inline C array in declaration order. Returned inline
-arrays are copied back into ordinary immutable FFI buffer values. Dynamic sizes,
-output buffers, and pointers retained by C are not supported.
+arrays are copied back into ordinary immutable FFI buffer values. The element
+may also be a linked C struct: `&Row+ size => 2` in a `&Grid` field copies two
+complete `Row` values (including any embedded arrays), and can be passed back to
+C by value. An `@owned` `&Row+` return with an explicit `size` also copies each
+struct before invoking its registered native deallocator. Dynamic sizes,
+output buffers, and pointers retained by C are not supported. Native `&T+`
+returns require `@owned` with an explicit `size`; borrowed buffer returns and
+buffer arguments/returns in FFI callbacks are rejected during analysis. `&char`
+buffers contain signed integer byte values, including embedded zeros, rather
+than null-terminated strings.
 
 ### 27.17. Explicit native destruction and in-flight leases
 
@@ -6015,8 +6053,12 @@ link text.maybe_message() -> &CString as maybeMessage
 ```
 
 Null becomes `None` and is not freed. A null result without `@nullable` is a
-runtime fault. Dynamic pointer-length pairs, custom allocator contexts, and
-borrowed pointer returns are not supported.
+runtime fault. A non-nullable owned flat buffer can also specify an explicit
+linked-return conversion, e.g. `-> (Int+) &int+`; the conversion receives the
+copied `&int+` value, and the link returns `Int+`. Combining `@owned` with
+explicit linked-return conversion is not supported for strings or nullable
+returns, and is rejected during analysis. Dynamic pointer-length pairs, custom
+allocator contexts, and borrowed pointer returns are not supported.
 
 ### 27.19. Computed fields on linked structures
 

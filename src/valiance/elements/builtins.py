@@ -316,6 +316,22 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The filtered list.",
         category="Lists",
     ),
+    "cArr": element_documentation(
+        "Validate dimensions and convert a nested numeric list into a contiguous C array.",
+        parameters=(
+            ("values", "A finite list, nested to the declared depth."),
+            ("shape", "Non-empty list or tuple of non-negative integer dimensions."),
+        ),
+        returns="A flat FFI buffer, `&int+` for Int or `&double+` for Real by default.",
+        notes=(
+            "`cArr[&short]` or another supported FFI scalar target selects the C "
+            "element type. Panics with ShapeFault for mismatched or ragged "
+            "dimensions, and RangeFault for an unrepresentable scalar. "
+            "The C ABI remains a flat pointer, not an int**."
+        ),
+        examples=(("[[1, 2], [3, 4]] {2, 2} cArr", "&int+ buffer [1, 2, 3, 4]"),),
+        category="Collections",
+    ),
     "first": element_documentation(
         "Return the first item of a non-empty list or string.",
         parameters=(("values", "Non-empty input value."),),
@@ -2482,6 +2498,60 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (result,)
 
 
+def _rectangular_shape_fault(message: str) -> PanicSignal:
+    """Signal that a nested list does not match its declared shape."""
+    return PanicSignal(ObjectValue("ShapeFault", {"message": message}))
+
+
+def _flatten_rectangular_values(values: Any, raw_shape: Any) -> tuple[Any, ...]:
+    """Verify each axis of a nested list and copy its row-major scalar leaves."""
+    shape: list[int] = []
+    for raw in raw_shape:
+        if not isinstance(raw, RuntimeNumber) or not raw.is_integer():
+            raise _rectangular_shape_fault("rectangular list dimensions must be integers")
+        dimension = int(raw)
+        if dimension < 0:
+            raise _rectangular_shape_fault("rectangular list dimensions cannot be negative")
+        shape.append(dimension)
+    if not shape:
+        raise _rectangular_shape_fault("rectangular lists require at least one dimension")
+
+    flattened: list[Any] = []
+
+    def visit(value: Any, depth: int) -> None:
+        """Check the current axis and append leaves in storage order."""
+        if not (is_list_like(value) or isinstance(value, tuple)):
+            raise _rectangular_shape_fault(
+                f"expected a list at rectangular axis {depth + 1}"
+            )
+        iterator = iter(value)
+        for _ in range(shape[depth]):
+            try:
+                item = next(iterator)
+            except StopIteration:
+                raise _rectangular_shape_fault(
+                    f"rectangular axis {depth + 1} has fewer than {shape[depth]} elements"
+                ) from None
+            if depth + 1 == len(shape):
+                if is_list_like(item) or isinstance(item, tuple):
+                    raise _rectangular_shape_fault(
+                        "rectangular list has more nesting than its declared shape"
+                    )
+                flattened.append(item)
+            else:
+                visit(item, depth + 1)
+        if next(iterator, _RECTANGULAR_SHAPE_SENTINEL) is not _RECTANGULAR_SHAPE_SENTINEL:
+            raise _rectangular_shape_fault(
+                f"rectangular axis {depth + 1} has more than {shape[depth]} elements"
+            )
+
+    visit(values, 0)
+    return tuple(flattened)
+
+
+_RECTANGULAR_SHAPE_SENTINEL = object()
+
+
 @builtin(
     "reshape",
     (T.C(T.ListRuggedType, T.V("Item")), T.ExactList(T.Number)),
@@ -3233,6 +3303,17 @@ def _raw_ffi_constructor(ffi_name: str, value: Any) -> FFIScalarValue:
     return FFIScalarValue(ffi_name, float(value))
 
 
+def _checked_ffi_buffer(values: Any, ffi_name: str) -> FFIBufferValue:
+    """Copy a finite sequence of numbers to a checked contiguous native buffer."""
+    converted = tuple(
+        _checked_ffi_integer(value, ffi_name)
+        if ffi_name in _FFI_INTEGER_CTYPES
+        else _checked_ffi_float(value, ffi_name)
+        for value in values
+    )
+    return FFIBufferValue(ffi_name, converted)
+
+
 def _register_ffi_boundary_builtins() -> None:
     """Register raw constructors and target-directed primitive conversions."""
     for ffi_name in (*_FFI_INTEGER_CTYPES, *_FFI_FLOAT_CTYPES, "&CString"):
@@ -3298,15 +3379,7 @@ def _register_ffi_boundary_builtins() -> None:
 
         def buffer_checked(args, _ctx, ffi_name=ffi_name):
             """Materialize one finite rank-one Valiance list as an FFI buffer."""
-            source = args[0]
-            values = tuple(source)
-            converted = tuple(
-                _checked_ffi_integer(value, ffi_name)
-                if ffi_name in _FFI_INTEGER_CTYPES
-                else _checked_ffi_float(value, ffi_name)
-                for value in values
-            )
-            return (FFIBufferValue(ffi_name, converted),)
+            return (_checked_ffi_buffer(args[0], ffi_name),)
 
         builtin(
             "to", (source_list,), (target_buffer,),
@@ -3330,6 +3403,38 @@ def _register_ffi_boundary_builtins() -> None:
             element_tags=(_UNSAFE_TAG,), vectorisable=False,
             conversion_target=source_list,
         )(buffer_back)
+
+    # cArr validates arbitrary-rank rectangular nesting and directly yields
+    # a rank-one FFI buffer. Defaults are &int for Int and &double for Real;
+    # typed calls such as cArr[&short] select a checked C scalar explicitly.
+    shape_types = (T.TupRepeat(T.Number), T.ExactList(T.Number))
+    matrix_faults = (
+        _UNSAFE_TAG, _RANGE_PANIC_TAG,
+        T.ElementTag(Symbol("Panic"), (T.N(Symbol("ShapeFault")),)),
+    )
+    for ffi_name in (*_FFI_INTEGER_CTYPES, *_FFI_FLOAT_CTYPES):
+        scalar_type = T.Int if ffi_name in _FFI_INTEGER_CTYPES else T.Real
+        scalar_target = T.FFI(Symbol(ffi_name[1:]))
+        buffer_target = T.ExactList(scalar_target)
+
+        def c_array(args, _ctx, ffi_name=ffi_name):
+            """Check every axis, then construct a checked native scalar buffer."""
+            return (_checked_ffi_buffer(_flatten_rectangular_values(*args), ffi_name),)
+
+        for shape_type in shape_types:
+            builtin(
+                "cArr", (T.C(T.ListRuggedType, scalar_type), shape_type),
+                (buffer_target,), param_names=("values", "shape"),
+                element_tags=matrix_faults, vectorisable=False,
+                conversion_target=scalar_target,
+            )(c_array)
+
+            if ffi_name in ("&int", "&double"):
+                builtin(
+                    "cArr", (T.C(T.ListRuggedType, scalar_type), shape_type),
+                    (buffer_target,), param_names=("values", "shape"),
+                    element_tags=matrix_faults, vectorisable=False,
+                )(c_array)
 
     def cstring_back(args, _ctx):
         """Convert validated CString text to an ordinary Valiance string."""

@@ -1518,6 +1518,17 @@ def _apply_call_site_checked_overload(
     generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply a deferred overload after solving its static program."""
+    # Reconstructed call-site signatures do not retain the @convert target.
+    # Check it on the declared overload before specializing a variadic call,
+    # then consume the target argument (it is not a free generic parameter).
+    if overload.conversion_target is not None:
+        if (
+            len(generic_args) != 1
+            or generic_args[0] is None
+            or not T.same(generic_args[0], overload.conversion_target)
+        ):
+            return None
+        generic_args = ()
     static_source = _call_site_static_overload(overload)
     args = _row_views_for_arguments(args, static_source.params, env)
     if len(args) != len(static_source.params):

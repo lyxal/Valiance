@@ -135,6 +135,7 @@ class _CallSelection:
                 _functions._best_candidates(candidates, branch)
             )
         )
+        winners = self._prefer_strict_declared_subtype(winners)
         winners = self._prefer_latest_equal_winners(winners)
         if not winners:
             provider_ambiguity = self._overload_provider_ambiguity(
@@ -242,6 +243,49 @@ class _CallSelection:
                 if len(providers) > 1:
                     return actual.name, parameter.name, providers
         return None
+
+    def _prefer_strict_declared_subtype(
+        self, winners: tuple[CallCandidate, ...]
+    ) -> tuple[CallCandidate, ...]:
+        """Use declared parameter specificity when instantiation erases it.
+
+        Call-site checked overloads specialize their parameter types to the
+        arguments before scoring. Consequently, `Int~` and `Real~` can both
+        look like an exact `Int+2` match. Only break such a tie when one
+        *declared* parameter list is strictly narrower than another, and the
+        applied arguments and source branch are otherwise identical.
+        """
+        if len(winners) < 2:
+            return winners
+
+        def narrower(left: CallCandidate, right: CallCandidate) -> bool:
+            if (
+                left.branch != right.branch
+                or left.applied.params != right.applied.params
+                or len(left.applied.overload.params)
+                != len(right.applied.overload.params)
+            ):
+                return False
+            left_params = left.applied.overload.params
+            right_params = right.applied.overload.params
+            return (
+                all(
+                    T.assignable(a, b, self.env.context)
+                    for a, b in zip(left_params, right_params, strict=True)
+                )
+                and any(
+                    not T.assignable(b, a, self.env.context)
+                    for a, b in zip(left_params, right_params, strict=True)
+                )
+            )
+
+        return tuple(
+            item for item in winners
+            if not any(
+                other is not item and narrower(other, item)
+                for other in winners
+            )
+        )
 
     @staticmethod
     def _prefer_latest_equal_winners(
