@@ -1,44 +1,41 @@
-$surface: #171a22;
-$ink: #d4daea;
-$divider: #667088;
-Screen { background: $surface; color: $ink; }
+Screen { background: $editor-background; color: $editor-text; }
 #file-strip { height: 3; padding-top: 1; }
 #file-strip Button { min-width: 0; width: auto; height: 1; border: none; background: transparent; text-style: none; }
-#file-strip Button:hover, #file-strip Button:focus { background: #282d3b; }
+#file-strip Button:hover, #file-strip Button:focus { background: $editor-tabs; }
 #tabs { width: 1fr; height: 2; }
-Tab { background: #282d3b; }
-Tab.-active { background: #10131a; color: white; }
+Tab { background: $editor-tabs; }
+Tab.-active { background: $editor-active-tab; color: $editor-text; text-style: bold underline; }
 #search-bar { height: 3; }
 #search-bar Input { width: 1fr; }
 #search-bar Button { min-width: 5; width: auto; }
 #working-area { height: 1fr; min-height: 4; }
 #documents-view { width: 1fr; }
 DocumentEditor { height: 1fr; border: none; }
-#inspector { height: 1fr; padding: 1; background: #202532; }
+#inspector { height: 1fr; padding: 1; background: $editor-panel; }
 #inspection-facts, #inspection-docs, #diagnostic-detail { height: auto; }
 #show-errors { width: 100%; height: 3; }
 #error-list { height: auto; max-height: 12; }
 #error-list Label { width: 100%; height: auto; }
-#diagnostic-detail { color: #ef8794; margin-top: 1; }
-#error-pin, #dismiss-error { height: auto; min-height: 1; width: 100%; min-width: 0; border: none; color: #ef8794; background: transparent; text-align: left; }
+#diagnostic-detail { color: $editor-diagnostic; margin-top: 1; }
+#error-pin, #dismiss-error { height: auto; min-height: 1; width: 100%; min-width: 0; border: none; color: $editor-diagnostic; background: transparent; text-align: left; }
 Screen { layers: base completion; }
-#completion-list { layer: completion; position: absolute; overlay: screen; border: solid #667088; background: #202532; padding: 0; }
-PaneDivider { color: $divider; background: #282d3b; }
-PaneDivider:hover { background: #3a4b65; color: #bfcfe6; }
-PaneDivider:focus { background: #526380; color: white; }
+#completion-list { color: $editor-text; layer: completion; position: absolute; overlay: screen; border: solid $editor-divider; background: $editor-completion; padding: 0; }
+PaneDivider { color: $editor-divider; background: $editor-tabs; }
+PaneDivider:hover { background: $editor-selection; color: $editor-text; }
+PaneDivider:focus { background: $editor-selection; color: $editor-text; }
 #state-divider { width: 3; height: 1fr; }
 #repl-divider { height: 1; }
 #repl { min-height: 8; }
 #repl-controls { height: 1; }
-#repl-controls Button, #load-errors { height: 1; min-width: 0; width: auto; border: none; background: #282d3b; margin-right: 1; text-style: none; }
-#repl-controls Button:hover, #repl-controls Button:focus { background: #3a4b65; }
-#load-errors { color: #ef8794; width: 100%; }
-#transcript { height: 1fr; min-height: 3; border: solid $divider; }
-#command { height: 4; border: solid $divider; background: #242e41; }
-#command:focus { border: solid #8bb9df; }
-#status { height: 1; color: $divider; }
+#repl-controls Button, #load-errors { height: 1; min-width: 0; width: auto; border: none; background: $editor-tabs; margin-right: 1; text-style: none; }
+#repl-controls Button:hover, #repl-controls Button:focus { background: $editor-selection; }
+#load-errors { color: $editor-diagnostic; width: 100%; }
+#transcript { height: 1fr; min-height: 3; border: solid $editor-divider; }
+#command { height: 4; border: solid $editor-divider; background: $editor-input; }
+#command:focus { border: solid $editor-focus; }
+#status { height: 1; color: $editor-status; }
 ChoiceDialog, PathDialog { align: center middle; background: #00000088; }
-.dialog { width: 70%; max-width: 100; height: auto; max-height: 90%; padding: 1 2; border: solid $divider; background: #202532; overflow-y: auto; }
+.dialog { width: 70%; max-width: 100; height: auto; max-height: 90%; padding: 1 2; border: solid $editor-divider; background: $editor-panel; overflow-y: auto; }
 .dialog Label { height: auto; margin-bottom: 1; }
 .dialog Button { width: 100%; height: 3; }
 .path-dialog { height: 80%; }
@@ -50,10 +47,23 @@ MenuDialog { align: left top; background: transparent; padding: 0; overflow: hid
 .menu-dialog { position: absolute; constrain: inside inside; width: 34; max-width: 100%; max-height: 100%; padding: 0 1; }
 .menu-dialog Label { margin-bottom: 0; }
 .menu-dialog Button { height: 1; min-width: 0; border: none; text-align: left; content-align: left middle; background: transparent; text-style: none; }
-.menu-dialog Button:hover, .menu-dialog Button:focus { background: #3a4b65; }
+.menu-dialog Button:hover, .menu-dialog Button:focus { background: $editor-selection; }
 
 #world-pages, #control-state-pages {
     height: auto;
     color: $text-muted;
     margin-bottom: 1;
 }
+
+TextArea { background: $editor-background; color: $editor-text; }
+Button:focus { text-style: bold reverse; }
+#inspector:focus { outline-left: heavy $editor-focus; }
+#transcript:focus { border: heavy $editor-focus; }
+#command:focus { border: heavy $editor-focus; }
+.ascii-borders #transcript, .ascii-borders #command, .ascii-borders .dialog, .ascii-borders #completion-list { border: ascii $editor-divider; }
+.ascii-borders #transcript:focus, .ascii-borders #command:focus { border: ascii $editor-focus; }
+AppearanceDialog { align: center middle; background: #00000088; }
+AppearanceDialog .dialog { width: 76; }
+AppearanceDialog Button { height: 1; min-height: 1; border: none; margin-bottom: 1; }
+AppearanceDialog Select, AppearanceDialog Input { height: 3; }
+#color-error { color: $editor-diagnostic; }

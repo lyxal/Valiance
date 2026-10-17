@@ -11,7 +11,9 @@ Stage 5 during feedback. Stage 3 diagnostics/basic inspection are implemented;
 Stage 4 surviving-world inspection is implemented; its validation is recorded
 below. Stage 5 input/presentation and lifecycle implementation is available;
 real native-call CI validation and physical-terminal acceptance remain pending.
-Stage 6 diagnostic interactions and semantic completion are implemented. Public CLI
+Stage 6 diagnostic interactions and semantic completion are implemented. Stage 7
+styling and compatibility hardening are implemented; physical-terminal acceptance
+remains pending. Public CLI
 switching has not started.
 
 The [behavior specification](terminal-editor-design.md) is the product contract;
@@ -607,6 +609,54 @@ at target sizes, including light/low-color modes. Usability review validates
 subtle overload controls and unobtrusive warnings. No required behavior depends
 on browser APIs or a mouse.
 
+Stage 7 implementation (16 October 2026):
+
+- `terminal_editor/appearance.py` owns six named palettes and independently
+  validated roles. CSS, source tokens, native text-area gutters/selections and
+  transcript events share those roles. The default follows the screenshot's
+  near-black panes, gray tabs, magenta keywords, cyan types, orange numbers,
+  muted comments and green results. Shared lexical categories live in
+  `source_tools/syntax.py`; the editor does not import the legacy frontend.
+- View → Appearance edits a private draft, validates role colors, offers per-role
+  and complete appearance defaults, and persists only committed settings.
+  Auto detects terminal depth, with explicit ANSI/monochrome modes, NO_COLOR
+  precedence, ASCII border controls and optional OSC 52 forwarding. Local
+  clipboard operations remain available when remote forwarding is disabled.
+- F2 → Edit/View and Shift+F6 provide function-key routes to every toolbar action.
+  View focuses resize handles and transcript. Transcript Ctrl+Home/Ctrl+End
+  navigate retained output; inspector scrolling uses native keyboard controls.
+  Tab labels use unique path suffixes, literal text and full-path tooltips;
+  the open-tab picker resolves overflow. Tab close/double-click rename reuse
+  protected file operations. Stale activation messages cannot reopen removed tabs.
+- Existing persisted pane dimensions are retained across launches, with matching
+  resize/load bounds; responsive collapse and hidden panes preserve requested
+  dimensions. History/recent retention remains 500 commands/20 paths.
+  Failed analysis no longer leaves an indefinite Updating indicator. Shutdown
+  closes analysis/completion even if runtime teardown faults.
+- Automated coverage includes the nine reference scenarios, target sizes, six
+  themes plus reduced-color modes, override validation, undo/selection retention,
+  deep stacks, transcript scrollback, keyboard controls, tab overflow, and external
+  reload while analysis or execution is active. Driver restoration calls are
+  checked on quit and presentation faults. These checks do not claim actual
+  terminal-protocol restoration or physical key/clipboard delivery.
+
+Physical acceptance remains open for Windows Terminal/PowerShell, a Unix terminal,
+and SSH/no-mouse with light/low-color settings. Review overload-control subtlety,
+warning prominence and final screenshot appearance in those environments. Real
+Valiance native-call cleanup remains a CI gate; local Windows FFI tests are skipped.
+The public entry-point switch remains Stage 8.
+
+Stage 7 validation: 2,094 other repository regressions passed, excluding 32 native/
+FFI checks locally. The fundamental-program, source-tool and docstring run passed
+60 checks; the final production docstring check also passed. The editor suite ran
+85 checks with one expected native-call skip. Its five initial failures were
+resolved and all five passed on focused rerun: fixture corrections for the fault
+screen/boolean literal, explicit slow-save gating, transcript focus retention,
+and an inspector outline that does not shift mouse targets on focus. The other
+79 editor checks passed in the full run. Production editor/shared-syntax Ruff
+lint and formatting checks and whitespace validation pass. The fundamental test
+file was not modified. Physical acceptance and real native-call CI remain open.
+
 ### Stage 8 — switch the entry point and retire old scratch mode
 
 Route no-argument `vln` on a capable terminal to the completed editor, starting
@@ -652,10 +702,12 @@ to satisfy a new-editor feature, and terminal state is restored on all exits.
    transactional REPL compile failure behavior.
 3. Stage 3/4: remaining comment/declaration/block-edge hit rules, unreachable and
    branch-state labels, world identity across edits, and trace cost limits.
-4. Stage 7/8: configuration/history retention limits, cross-launch pane-size
-   preferences, alias/non-TTY behavior, and exact supported terminal matrix.
+4. Stage 7 retains 20 recent paths/500 history commands and persists bounded pane
+   dimensions across launches. The target physical matrix is Windows
+   Terminal/PowerShell, a Unix terminal and SSH; acceptance remains pending.
+   Stage 8 must close alias/non-TTY behavior before switching public defaults.
 
 These are explicit implementation decisions with owners and gates, not reasons
 to reopen already confirmed interactions. Stage 0 was accepted after user review;
-Stages 1–6 have implementation coverage. Stage 5's real native-call CI and
+Stages 1–7 have implementation coverage. Stage 5's real native-call CI and
 physical-terminal validation gates remain open before public-default acceptance.

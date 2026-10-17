@@ -36,6 +36,8 @@ class EditorAnalysis:
         """Delay progress text while replacing obsolete facts immediately."""
         if self.snapshot is not None:
             return str(len(self.snapshot.diagnostics))
+        if self.failure:
+            return "unavailable"
         return "Updating…" if monotonic() - self.started >= 0.5 else "unavailable"
 
     def invalidate(self) -> None:
@@ -115,7 +117,7 @@ class EditorAnalysis:
                     end = start + 1
                     while end < len(source) and not source[end].isspace():
                         end += 1
-                    spans.append(SourceEmphasis(start, end, "underline #ef8794"))
+                    spans.append(SourceEmphasis(start, end, "diagnostic"))
                 editor.set_emphasis(tuple(spans))
             self.app.refresh_inspection()
         except Exception as error:

@@ -7,7 +7,112 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.geometry import Offset
 from textual.screen import ModalScreen
-from textual.widgets import Button, DirectoryTree, Input, Label
+from textual.widgets import Button, DirectoryTree, Input, Label, Select
+
+from .appearance import COLOR_MODES, REFERENCE, THEMES, palette, valid_color
+
+
+class AppearanceDialog(ModalScreen[dict | None]):
+    """Edit a private settings draft; only Save commits validated appearance."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, preferences) -> None:
+        """Copy overrides so cancelling cannot modify the live editor."""
+        super().__init__()
+        self.selected_theme = preferences.theme
+        self.role_colors = dict(preferences.colors)
+        self.mode = preferences.color_mode
+
+    def compose(self) -> ComposeResult:
+        """Expose named palettes, individual colors and fallback modes by keyboard."""
+        with Vertical(classes="dialog"):
+            yield Label("Appearance — Tab moves, Enter selects, Escape cancels")
+            yield Select(
+                [(label, key) for key, (label, _) in THEMES.items()],
+                value=self.selected_theme,
+                allow_blank=False,
+                id="theme-name",
+            )
+            yield Select(
+                [(key.replace("_", " ").title(), key) for key in REFERENCE],
+                value="background",
+                allow_blank=False,
+                id="color-role",
+            )
+            yield Input(id="role-color", placeholder="#rrggbb or ansi_color")
+            yield Label("", id="color-error", markup=False)
+            yield Button("Apply role color", id="apply-color")
+            yield Button("Use theme color for this role", id="reset-color")
+            yield Select(
+                [(value.title(), value) for value in COLOR_MODES],
+                value=self.mode,
+                allow_blank=False,
+                id="color-mode",
+            )
+            yield Button("Restore appearance defaults", id="restore-appearance")
+            yield Button("Save appearance", id="save-appearance")
+            yield Button("Cancel", id="cancel-appearance")
+
+    def on_mount(self) -> None:
+        """Populate the first role and begin at the theme selector."""
+        self._show_color()
+        self.query_one("#theme-name").focus()
+
+    def _show_color(self) -> None:
+        """Show the effective RGB value while retaining independent overrides."""
+        role = self.query_one("#color-role", Select).value
+        theme = self.query_one("#theme-name", Select).value
+        self.query_one("#role-color", Input).value = palette(
+            theme, self.role_colors, "truecolor"
+        )[role]
+        self.query_one("#color-error", Label).update("")
+
+    @on(Select.Changed)
+    def selection_changed(self) -> None:
+        """Changing a palette or role discards only unapplied field text."""
+        self._show_color()
+
+    @on(Button.Pressed)
+    def pressed(self, message: Button.Pressed) -> None:
+        """Validate color input without closing the dialog on mistakes."""
+        message.stop()
+        action = message.button.id
+        role = self.query_one("#color-role", Select).value
+        if action == "apply-color":
+            value = self.query_one("#role-color", Input).value.strip()
+            if not valid_color(value):
+                self.query_one("#color-error", Label).update(
+                    "Use #rrggbb or an ANSI color name."
+                )
+                self.query_one("#role-color").focus()
+                return
+            self.role_colors[role] = value
+            self.query_one("#color-error", Label).update(
+                "Role color applied to this draft."
+            )
+        elif action == "reset-color":
+            self.role_colors.pop(role, None)
+            self._show_color()
+        elif action == "restore-appearance":
+            self.role_colors.clear()
+            self.query_one("#theme-name", Select).value = "reference-dark"
+            self.query_one("#color-mode", Select).value = "auto"
+            self._show_color()
+        elif action == "save-appearance":
+            self.dismiss(
+                {
+                    "theme": self.query_one("#theme-name", Select).value,
+                    "colors": self.role_colors,
+                    "color_mode": self.query_one("#color-mode", Select).value,
+                }
+            )
+        elif action == "cancel-appearance":
+            self.action_cancel()
+
+    def action_cancel(self) -> None:
+        """Leave the active palette unchanged."""
+        self.dismiss(None)
 
 
 class ChoiceDialog(ModalScreen[str | None]):

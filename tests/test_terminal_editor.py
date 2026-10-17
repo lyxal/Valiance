@@ -524,6 +524,31 @@ class CompilerInspectionTests(unittest.TestCase):
 class EditorAnalysisWorkerTests(unittest.IsolatedAsyncioTestCase):
     """Protect coalescing and stale-result gates independently of terminal rendering."""
 
+    async def test_failed_analysis_does_not_leave_a_permanent_progress_indicator(self):
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from valiance.terminal_editor.analysis import EditorAnalysis
+        from valiance.terminal_editor.models import EditorWorkspace
+
+        app = SimpleNamespace(
+            workspace=EditorWorkspace(Path.cwd()),
+            editor_screen=SimpleNamespace(query=lambda _: ()),
+            refresh_inspection=lambda: None,
+        )
+        controller = EditorAnalysis(app)
+        with patch(
+            "valiance.terminal_editor.analysis.analyse_sources",
+            side_effect=ValueError("failed"),
+        ):
+            controller.poll()
+            await controller.task
+        controller.started -= 1
+        self.assertEqual(controller.label, "unavailable")
+        self.assertIn("failed", controller.failure)
+        await controller.close()
+
     async def test_delayed_requests_cannot_restore_root_or_dependency_facts(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
@@ -587,6 +612,67 @@ class EditorAnalysisWorkerTests(unittest.IsolatedAsyncioTestCase):
 
 class EditorInspectionApplicationTests(unittest.IsolatedAsyncioTestCase):
     """Check real cursor rendering and diagnostic keyboard/source navigation."""
+
+    async def test_nine_reference_views_at_target_sizes_with_real_compiler_data(self):
+        from textual.widgets import Static
+
+        from valiance.terminal_editor.app import EditorApp
+
+        app = EditorApp(watch_files=False, with_worker=False)
+        source = (
+            "object Circle =>\n  $radius: Real\nend\n"
+            "define area(c: Circle) -> Real => $c.radius 2 **\n"
+            "define perimeter(c: Circle) -> Real => $c.radius\n"
+            "$circle = Circle(2.0)\nprintln perimeter $circle\n"
+            "$circle\n$circle | area\n"
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            editor = app.source_editor
+            editor.load_text(source)
+            editor.move_cursor(editor.document.end)
+            await self.settled(app, pilot)
+            self.assertFalse(app.analysis.snapshot.diagnostics)
+            self.assertEqual(
+                app.analysis.snapshot.at(len(source)).stack, ("Real", "Circle")
+            )
+            # Hero, two function contexts and a selected operator.
+            for offset in (
+                len(source),
+                source.index("=> $c"),
+                source.index("=> $c", source.index("define perimeter")),
+                source.index("**"),
+            ):
+                editor.move_cursor(editor.source_location(offset))
+                await pilot.pause()
+                self.assertTrue(app.query_one("#inspection-facts", Static).render())
+            for width, height in ((80, 24), (120, 40), (160, 50)):
+                await pilot.resize_terminal(width, height)
+                await pilot.pause()
+                # REPL only, no REPL, source only, retaining the same editor.
+                app._view_action("repl-only")
+                self.assertTrue(app.query_one("#repl").display)
+                self.assertFalse(app.query_one("#documents-view").display)
+                app._view_action("repl-only")
+                app.repl_requested = False
+                app.compact_view = "editor"
+                app._layout()
+                self.assertFalse(app.query_one("#repl").display)
+                app.inspector_requested = False
+                app._layout()
+                self.assertFalse(app.query_one("#inspector").display)
+                self.assertIs(app.source_editor, editor)
+                app.inspector_requested = app.repl_requested = True
+                app._layout()
+            # Errors present and selected error, with actual diagnostic details.
+            editor.insert("unknown_reference_name")
+            await pilot.pause()
+            await self.settled(app, pilot)
+            self.assertTrue(app.query_one("#show-errors").display)
+            self.assertFalse(app._errors_open)
+            await pilot.press("f9")
+            await pilot.pause()
+            self.assertTrue(app._error_expanded)
+            self.assertIsNotNone(editor.selected_error)
 
     async def settled(self, app, pilot):
         deadline = time.monotonic() + 5
@@ -1017,6 +1103,76 @@ class DocumentFileTests(unittest.TestCase):
         self.files.save(document.id)
         self.assertEqual(path.read_bytes(), data)
 
+    def test_appearance_preferences_validate_each_field_independently(self):
+        import json
+
+        from valiance.terminal_editor.files import EditorPreferences
+
+        path = self.root / "settings.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "theme": "paper",
+                    "color_mode": "ansi",
+                    "ascii_borders": True,
+                    "system_clipboard": False,
+                    "inspector_width": True,
+                    "repl_height": 1000,
+                    "indent_width": 4,
+                    "colors": {
+                        "number": "#123abc",
+                        "text": "ansi_white",
+                        "background": "red; background: blue",
+                        "unknown": "#ffffff",
+                    },
+                }
+            )
+        )
+        loaded = EditorPreferences.load(path)
+        self.assertEqual(loaded.theme, "paper")
+        self.assertEqual(loaded.color_mode, "ansi")
+        self.assertTrue(loaded.ascii_borders)
+        self.assertFalse(loaded.system_clipboard)
+        self.assertEqual((loaded.inspector_width, loaded.repl_height), (32, 12))
+        self.assertEqual(loaded.colors, {"number": "#123abc", "text": "ansi_white"})
+        loaded.save(path)
+        self.assertEqual(EditorPreferences.load(path), loaded)
+        for invalid in ([], {}, 42, True, "missing-theme"):
+            path.write_text(
+                json.dumps({"theme": invalid, "color_mode": invalid, "colors": invalid})
+            )
+            self.assertEqual(EditorPreferences.load(path), EditorPreferences())
+
+    def test_terminal_palette_fallbacks_and_safe_overrides(self):
+        from unittest.mock import patch
+
+        from valiance.terminal_editor.appearance import (
+            ANSI,
+            REFERENCE,
+            color_mode,
+            palette,
+            valid_color,
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(color_mode("auto", "truecolor"), "truecolor")
+            self.assertEqual(color_mode("auto", "256"), "truecolor")
+            self.assertEqual(color_mode("auto", "standard"), "ansi")
+            self.assertEqual(color_mode("auto", "windows"), "ansi")
+            self.assertEqual(color_mode("auto", None), "monochrome")
+            with patch.dict(os.environ, {"TERM": "dumb"}):
+                self.assertEqual(color_mode("auto", "truecolor"), "monochrome")
+            with patch.dict(os.environ, {"NO_COLOR": ""}):
+                self.assertEqual(color_mode("truecolor", "truecolor"), "monochrome")
+        self.assertEqual(palette("bad", {}, "truecolor"), REFERENCE)
+        self.assertEqual(palette("paper", {"result": "#123456"}, "ansi"), ANSI)
+        self.assertEqual(
+            set(palette("paper", {}, "monochrome").values()), {"ansi_default"}
+        )
+        self.assertFalse(valid_color("#123456; color: red"))
+        self.assertFalse(valid_color([]))
+        self.assertTrue(valid_color("ansi_bright_cyan"))
+
 
 class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
     """Drive real keyboard/modal workflows and retained TextArea editing state."""
@@ -1307,11 +1463,11 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(view.text, "> 7\nprinted\n7\n")
             self.assertIn(
-                view.STYLES["result"],
+                view.event_styles["result"],
                 [str(span.style) for span in view.get_line(2).spans],
             )
             self.assertNotIn(
-                view.STYLES["result"],
+                view.event_styles["result"],
                 [str(span.style) for span in view.get_line(1).spans],
             )
             view.selection = Selection((1, 0), (1, 7))
@@ -1340,7 +1496,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 row = 1 if app.state.transcript.truncated else 0
                 styles = [str(span.style) for span in view.get_line(row).spans]
-                self.assertIn(view.STYLES[kind], styles)
+                self.assertIn(view.event_styles[kind], styles)
 
     async def test_compact_load_clear_reset_fault_and_history_persistence(self):
         from valiance.terminal_editor.app import EditorApp
@@ -1507,7 +1663,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         def slow_write(path, data):
             started.set()
-            release.wait(5)
+            release.wait(30)
             atomic_write(path, data)
 
         async with app.run_test(size=(120, 40)) as pilot:
@@ -1517,9 +1673,12 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
                 path = self.root / "source.vlnc"
                 await self.choose_path(pilot, path)
                 self.assertTrue(started.is_set())
-                app.source_editor.focus()
-                await pilot.press("b")
-                release.set()
+                self.assertTrue(app._file_busy)
+                try:
+                    app.source_editor.focus()
+                    await pilot.press("b")
+                finally:
+                    release.set()
                 await app.workers.wait_for_complete()
             self.assertEqual(app.source_editor.text, "ab")
             self.assertTrue(
@@ -1689,6 +1848,268 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.resize_terminal(120, 40)
             await pilot.pause()
             self.assertTrue(app.query_one("#inspector").display)
+
+    async def test_named_themes_roles_and_terminal_modes_preserve_editing(self):
+        from unittest.mock import patch
+
+        from textual.widgets import TextArea
+
+        from valiance.terminal_editor.appearance import THEMES
+        from valiance.terminal_editor.models import TranscriptEntry
+        from valiance.terminal_editor.transcript import TranscriptView
+
+        app = self.app
+        app.preferences.color_mode = "truecolor"
+        async with app.run_test(size=(120, 40)) as pilot:
+            editor = app.source_editor
+            editor.insert("define sample -> Int => 123 end\n#? comment\n")
+            await pilot.pause()
+            view = app.query_one(TranscriptView)
+            app.state.transcript.append(TranscriptEntry("output", "printed\n"))
+            app.state.transcript.append(TranscriptEntry("result", "123\n"))
+            view.refresh_transcript(app.state.transcript)
+            selection = editor.selection
+            for theme in THEMES:
+                app.preferences.theme = theme
+                app.preferences.colors = {"number": "#123abc", "result": "#456def"}
+                with patch.dict(os.environ, {}, clear=True):
+                    app.apply_appearance()
+                await pilot.pause()
+                self.assertEqual(editor.selection, selection)
+                self.assertIn(
+                    "#123abc", [str(span.style) for span in editor.get_line(0).spans]
+                )
+                self.assertEqual(view.event_styles["result"], "#456def")
+                self.assertNotEqual(
+                    view.event_styles["result"], view.event_styles["output"]
+                )
+                self.assertEqual(app.current_theme.dark, theme != "paper")
+                self.assertEqual(
+                    app.get_css_variables()["editor-background"],
+                    app.appearance_colors["background"],
+                )
+            for mode in ("ansi", "monochrome"):
+                app.preferences.color_mode = mode
+                with patch.dict(os.environ, {}, clear=True):
+                    app.apply_appearance()
+                await pilot.pause()
+                self.assertTrue(app.ansi_color)
+                self.assertEqual(app.appearance_mode, mode)
+                for area in app.query(TextArea):
+                    self.assertIsNotNone(area.get_line(0))
+                self.assertNotEqual(
+                    view.event_styles["result"], view.event_styles["output"]
+                )
+            app._view_action("ascii-borders")
+            self.assertTrue(app.query_one("#state-divider").ascii_borders)
+            self.assertIn("|", app.query_one("#state-divider").render())
+            self.assertEqual(app.query_one("#command").styles.border.top[0], "ascii")
+            await pilot.press("ctrl+z")
+            self.assertEqual(editor.text, "")
+
+    async def test_appearance_dialog_validates_saves_cancels_and_restores(self):
+        from textual.widgets import Input, Select
+
+        from valiance.terminal_editor.dialogs import AppearanceDialog
+
+        app = self.app
+        app.config_path = self.root / "settings.json"
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.press("f2")
+            app.screen.query_one("#menu-action-view").focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            app.screen.query_one("#menu-action-appearance").focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, AppearanceDialog)
+            app.screen.query_one("#theme-name", Select).value = "paper"
+            app.screen.query_one("#color-role", Select).value = "number"
+            await pilot.pause()
+            app.screen.query_one("#role-color", Input).value = "bogus"
+            await self.choose(pilot, "apply-color")
+            self.assertIsInstance(app.screen, AppearanceDialog)
+            self.assertFalse(app.screen.role_colors)
+            app.screen.query_one("#role-color", Input).value = "#123456"
+            await self.choose(pilot, "apply-color")
+            await self.choose(pilot, "save-appearance")
+            self.assertEqual(app.preferences.theme, "paper")
+            self.assertEqual(app.preferences.colors, {"number": "#123456"})
+            self.assertTrue(app.config_path.exists())
+            app.action_file_action("appearance")
+            await self.choose(pilot, "restore-appearance")
+            await pilot.press("escape")
+            self.assertEqual(app.preferences.theme, "paper")
+            app.action_file_action("appearance")
+            await self.choose(pilot, "restore-appearance")
+            await self.choose(pilot, "save-appearance")
+            self.assertEqual(app.preferences.theme, "reference-dark")
+            self.assertEqual(app.preferences.colors, {})
+
+    async def test_keyboard_controls_resize_scrolling_and_local_clipboard(self):
+        from unittest.mock import patch
+
+        from textual.widgets import TextArea
+
+        from valiance.terminal_editor.models import TranscriptEntry
+        from valiance.terminal_editor.transcript import TranscriptView
+
+        app = self.app
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("shift+f6")
+            self.assertEqual(app.focused.id, "file-menu")
+            app._view_action("resize-state")
+            width = app.preferences.inspector_width
+            await pilot.press("left")
+            self.assertEqual(app.preferences.inspector_width, width + 1)
+            # Actual compiler data produces a stack much taller than the inspector.
+            app.source_editor.load_text(" ".join(str(i) for i in range(100)))
+            app.source_editor.move_cursor(app.source_editor.document.end)
+            await EditorInspectionApplicationTests.settled(self, app, pilot)
+            app.query_one("#inspector").focus()
+            await pilot.press("end")
+            await pilot.pause()
+            self.assertGreater(app.query_one("#inspector").scroll_y, 0)
+            view = app.query_one(TranscriptView)
+            app.state.transcript.append(TranscriptEntry("output", "line\n" * 150))
+            view.refresh_transcript(app.state.transcript)
+            app._view_action("focus-transcript")
+            await pilot.press("ctrl+home")
+            await pilot.pause()
+            self.assertEqual(view.scroll_y, 0)
+            view.selection = Selection((0, 0), (0, 4))
+            app.preferences.system_clipboard = False
+            with patch.object(app._driver, "write") as write:
+                await pilot.press("ctrl+c")
+                write.assert_not_called()
+            self.assertEqual(app.clipboard, "line")
+            command = app.query_one("#command", TextArea)
+            command.focus()
+            command.action_paste()
+            self.assertEqual(command.text, "line")
+
+    async def test_overflow_tab_list_and_tab_close_target_clicked_document(self):
+        from textual.widgets import Tab
+
+        app = self.app
+        async with app.run_test(size=(80, 24)) as pilot:
+            documents = []
+            for index in range(12):
+                path = self.root / str(index) / "[source].vlnc"
+                path.parent.mkdir()
+                path.write_text("1")
+                document = app.files.open(path)
+                await app._mount_document(document.id)
+                documents.append(document)
+            await pilot.pause()
+            first = documents[0]
+            label = app.query_one(f"#tab-{first.id}", Tab).label_text
+            self.assertEqual(
+                label, "0\\[source].vlnc ×" if os.name == "nt" else "0/[source].vlnc ×"
+            )
+            app.action_file_action("tabs")
+            await self.choose(pilot, f"open-{first.id}")
+            self.assertEqual(app.workspace.active_document, first.id)
+            tab = app.query_one(f"#tab-{first.id}")
+            await pilot.pause()
+            await pilot.click(tab, offset=(tab.size.width - 2, 0))
+            await pilot.pause()
+            self.assertNotIn(first.id, app.workspace.documents)
+            await pilot.press("ctrl+pageup")
+            self.assertIn(app.workspace.active_document, app.workspace.documents)
+
+    async def test_external_reload_during_analysis_discards_the_old_product(self):
+        from threading import Event
+        from unittest.mock import patch
+
+        from valiance.analysis.inspection import analyse_sources
+
+        app = self.app
+        path = self.root / "reload.vlnc"
+        path.write_text("1")
+        started, release = Event(), Event()
+
+        def delayed(roots, root, revision):
+            if root.source == "1":
+                started.set()
+                release.wait(10)
+            return analyse_sources(roots, root, revision)
+
+        with patch("valiance.terminal_editor.analysis.analyse_sources", delayed):
+            async with app.run_test(size=(120, 40)) as pilot:
+                document = app.files.open(path)
+                await app._mount_document(document.id)
+                try:
+                    self.assertTrue(await asyncio.to_thread(started.wait, 5))
+                    path.write_text("2")
+                    app.post_message(app.FilesChanged(app.files.external_changes()))
+                    await self.choose(pilot, "reload")
+                    self.assertEqual(app.source_editor.text, "2")
+                finally:
+                    release.set()
+                await EditorInspectionApplicationTests.settled(self, app, pilot)
+                self.assertEqual(app.analysis.snapshot.workspace.root.source, "2")
+                self.assertIsNone(app.state.loaded_source)
+
+    async def test_external_reload_during_execution_preserves_the_running_snapshot(
+        self,
+    ):
+        from valiance.terminal_editor.runtime import EditorRuntime
+
+        app = self.app
+        app.runtime = EditorRuntime(app)
+        path = self.root / "running.vlnc"
+        path.write_text("while (true) => end")
+        async with app.run_test(size=(120, 40)) as pilot:
+            document = app.files.open(path)
+            await app._mount_document(document.id)
+            await self.wait_runtime(pilot, lambda: app.runtime.worker.ready)
+            await pilot.press("f5")
+            await self.wait_runtime(pilot, lambda: app.state.loaded_source is not None)
+            loaded = app.state.loaded_source
+            self.assertTrue(app.runtime.worker.busy)
+            path.write_text("7")
+            app.post_message(app.FilesChanged(app.files.external_changes()))
+            await self.choose(pilot, "reload")
+            self.assertEqual(app.source_editor.text, "7")
+            self.assertEqual(app.state.loaded_source, loaded)
+            self.assertTrue(app.runtime.worker.busy)
+            self.assertIn("source changed", app._session_label())
+            await pilot.press("f8")
+            await self.wait_runtime(pilot, lambda: app.state.loaded_source is None)
+        self.assertIsNone(app.runtime.worker.process)
+
+    async def test_terminal_driver_restores_on_quit_and_presentation_fault(self):
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from textual.drivers.headless_driver import HeadlessDriver
+
+        from valiance.terminal_editor.app import EditorApp
+        from valiance.terminal_editor.app import __file__ as editor_module_path
+
+        class FailingEditor(EditorApp):
+            """Inject a presentation exception after normal widget setup."""
+
+            CSS_PATH = Path(editor_module_path).with_name("editor.tcss")
+
+            def on_mount(self):
+                super().on_mount()
+                raise ValueError("presentation failure")
+
+        with patch.object(HeadlessDriver, "stop_application_mode") as restore:
+            app = self.app
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.press("ctrl+q")
+            self.assertTrue(restore.called)
+            self.assertTrue(app.analysis.closed)
+        with patch.object(HeadlessDriver, "stop_application_mode") as restore:
+            failed = FailingEditor(watch_files=False, with_worker=False)
+            with self.assertRaisesRegex(ValueError, "presentation failure"):
+                async with failed.run_test(size=(80, 24)):
+                    pass
+            self.assertTrue(restore.called)
+            self.assertTrue(failed.analysis.closed)
 
 
 class EditorModelTests(unittest.TestCase):

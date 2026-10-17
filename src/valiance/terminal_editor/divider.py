@@ -26,17 +26,21 @@ class PaneDivider(Widget, can_focus=True):
         """Choose a vertical bar or horizontal row."""
         super().__init__(**kwargs)
         self.vertical = vertical
+        self.ascii_borders = False
         self._last_position: int | None = None
         self.tooltip = "Drag to resize panels, or focus here and use arrow keys."
 
     def render(self) -> str:
         """Draw an obvious handle that also has a keyboard focus target."""
         if self.vertical:
-            lines = [" │ "] * max(1, self.size.height)
-            lines[len(lines) // 2] = " ↔ "
+            lines = [" | " if self.ascii_borders else " │ "] * max(1, self.size.height)
+            lines[len(lines) // 2] = "<> " if self.ascii_borders else " ↔ "
             return "\n".join(lines)
-        label = " ↕ Drag to resize " if self.size.width >= 20 else " ↕ "
-        return label.center(self.size.width, "─")[: self.size.width]
+        handle = "^v" if self.ascii_borders else "↕"
+        label = f" {handle} Drag to resize " if self.size.width >= 20 else f" {handle} "
+        return label.center(self.size.width, "-" if self.ascii_borders else "─")[
+            : self.size.width
+        ]
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Capture primary-button dragging even outside the divider."""

@@ -18,80 +18,10 @@ from dataclasses import dataclass
 from typing import Protocol, TextIO
 
 from valiance.sessions.events import CompletionItem
+from valiance.source_tools.syntax import KEYWORDS as _KEYWORDS
+from valiance.source_tools.syntax import TYPE_NAMES as _TYPE_NAMES
 
 _REPL_MODE_ENV = "VALIANCE_REPL_MODE"
-
-_KEYWORDS = frozenset(
-    {
-        "above",
-        "any",
-        "arr",
-        "as",
-        "assert",
-        "at",
-        "novec",
-        "break",
-        "companion",
-        "computed",
-        "const",
-        "constructed",
-        "copy",
-        "default",
-        "define",
-        "dep",
-        "dict",
-        "disjoint",
-        "eager",
-        "else",
-        "end",
-        "enum",
-        "exact",
-        "except",
-        "extend",
-        "false",
-        "fn",
-        "foreach",
-        "handle",
-        "if",
-        "import",
-        "match",
-        "move",
-        "multi",
-        "object",
-        "private",
-        "property",
-        "public",
-        "readable",
-        "record",
-        "return",
-        "root",
-        "tag",
-        "trait",
-        "true",
-        "try",
-        "unfold",
-        "unit",
-        "variant",
-        "where",
-        "while",
-    }
-)
-
-_TYPE_NAMES = frozenset(
-    {
-        "Any",
-        "Boolean",
-        "Function",
-        "Int",
-        "Never",
-        "\\None",
-        "Number",
-        "Real",
-        "Result",
-        "Some",
-        "String",
-    }
-)
 
 _REPL_COMMANDS = (
     (":help", "show REPL help"),
