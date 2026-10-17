@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from rich.style import Style
 from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
@@ -26,12 +25,10 @@ from textual.widgets import (
     TextArea,
 )
 from textual.widgets.option_list import Option
-from textual.widgets.text_area import TextAreaTheme
 
 from .analysis import EditorAnalysis
-from .appearance import REFERENCE, application_theme, color_mode, palette, rich_color
 from .completion import CompletionList, EditorCompletion
-from .dialogs import AppearanceDialog, ChoiceDialog, MenuDialog, PathDialog
+from .dialogs import ChoiceDialog, MenuDialog, PathDialog
 from .divider import PaneDivider
 from .editing import DocumentEditor
 from .editor import SourceEditor
@@ -61,32 +58,11 @@ class InspectorPane(VerticalScroll, can_focus=True):
         self.app.analysis.closed = True
 
 
-class DocumentTab(Tab):
-    """Keep close and double-click rename attached to the clicked document."""
-
-    def _on_click(self, event: events.Click) -> None:
-        """Activate first, then use the same protected actions as the File menu."""
-        event.prevent_default()
-        if event.button != 1 or self.app._file_busy:
-            return
-        identity = self.id.removeprefix("tab-")
-        self.app._activate(identity)
-        if event.x >= self.size.width - 3:
-            self.app.action_file_action("close")
-        elif event.chain == 2:
-            self.app.action_file_action("rename")
-        event.stop()
-
-
 class EditorApp(App):
     """Own presentation and file actions; execute source through an isolated worker."""
 
     CSS_PATH = "editor.tcss"
     BINDINGS = [
-        Binding("shift+f6", "focus_controls", "Controls", priority=True),
-        Binding("alt+f", "file_action('menu')", "File menu", priority=True),
-        Binding("alt+e", "file_action('edit')", "Edit menu", priority=True),
-        Binding("alt+v", "file_action('view')", "View menu", priority=True),
         Binding("alt+up", "cycle_control_state(-1)", "Previous state", priority=True),
         Binding("alt+down", "cycle_control_state(1)", "Next state", priority=True),
         Binding("alt+left", "cycle_world(-1)", "Previous world", priority=True),
@@ -139,12 +115,6 @@ class EditorApp(App):
         self.files = DocumentFiles(self.state.workspace)
         self.config_path = config_path
         self.preferences = EditorPreferences.load(config_path)
-        self.appearance_mode = color_mode(
-            self.preferences.color_mode, self.console.color_system
-        )
-        self.appearance_colors = palette(
-            self.preferences.theme, self.preferences.colors, self.appearance_mode
-        )
         self.state.input.history = list(self.preferences.history)
         self._preferences_lock = asyncio.Lock()
         self.watch_files = watch_files
@@ -174,102 +144,6 @@ class EditorApp(App):
         self._control_state_index = 0
         self._inspection_documentation = ""
 
-    def get_css_variables(self) -> dict[str, str]:
-        """Provide one role palette to every screen, including modal dialogs."""
-        return super().get_css_variables() | {
-            "editor-" + key.replace("_", "-"): value
-            for key, value in getattr(self, "appearance_colors", REFERENCE).items()
-        }
-
-    def style_text_area(self, editor: TextArea) -> None:
-        """Apply native gutter/selection styling without replacing text or undo."""
-        colors = self.appearance_colors
-        background = "input" if editor.id == "command" else "background"
-        name = "editor-a" if editor.theme != "editor-a" else "editor-b"
-        editor.register_theme(
-            TextAreaTheme(
-                name,
-                base_style=Style(
-                    color=rich_color(colors["text"]),
-                    bgcolor=rich_color(colors[background]),
-                ),
-                gutter_style=Style(
-                    color=rich_color(colors["gutter_text"]),
-                    bgcolor=rich_color(colors["gutter"]),
-                ),
-                cursor_style=Style(reverse=True),
-                cursor_line_style=Style(),
-                cursor_line_gutter_style=Style(bold=True),
-                selection_style=Style(
-                    bgcolor=rich_color(colors["selection"]),
-                    reverse=self.appearance_mode == "monochrome",
-                ),
-            )
-        )
-        editor.theme = name
-        if isinstance(editor, SourceEditor):
-            editor.role_colors = dict(colors)
-            editor._source_text = None
-        if isinstance(editor, TranscriptView):
-            editor.event_styles = {
-                kind: rich_color(colors[role])
-                for kind, role in {
-                    "result": "result",
-                    "command": "command",
-                    "input": "command",
-                    "output": "output",
-                    "diagnostic": "diagnostic",
-                    "load": "notice",
-                    "notice": "notice",
-                    "truncated": "warning",
-                }.items()
-            }
-            if self.appearance_mode == "monochrome":
-                editor.event_styles["result"] = "bold default"
-                editor.event_styles["diagnostic"] = "bold underline default"
-                editor.event_styles["notice"] = "dim default"
-        editor.refresh()
-
-    def apply_appearance(self) -> None:
-        """Refresh all retained widgets after a validated preference change."""
-        self.appearance_mode = color_mode(
-            self.preferences.color_mode, self.console.color_system
-        )
-        self.appearance_colors = palette(
-            self.preferences.theme, self.preferences.colors, self.appearance_mode
-        )
-        # Alternate names so role changes also trigger framework theme refresh.
-        name = "valiance-b" if self.theme == "valiance-a" else "valiance-a"
-        self.register_theme(
-            application_theme(
-                name,
-                self.appearance_colors,
-                self.appearance_mode,
-                dark=self.preferences.theme != "paper",
-            )
-        )
-        self.theme = name
-        self.ansi_color = self.appearance_mode != "truecolor"
-        self.refresh_css(animate=False)
-        for editor in self.editor_screen.query(TextArea):
-            self.style_text_area(editor)
-        self.set_class(self.preferences.ascii_borders, "ascii-borders")
-        for divider in self.editor_screen.query(PaneDivider):
-            divider.ascii_borders = self.preferences.ascii_borders
-            divider.refresh()
-
-    def copy_to_clipboard(self, text: str) -> None:
-        """Keep local copy/paste usable when OSC 52 is disabled by an SSH host."""
-        if self.preferences.system_clipboard:
-            super().copy_to_clipboard(text)
-        else:
-            self._clipboard = text
-
-    def action_focus_controls(self) -> None:
-        """Escape the source Tab indentation loop using an ordinary function key."""
-        if len(self.screen_stack) == 1:
-            self.query_one("#file-menu").focus()
-
     @property
     def editor_screen(self):
         """Keep background analysis attached to the editor while modal screens open."""
@@ -294,7 +168,6 @@ class EditorApp(App):
         )
         editor.soft_wrap = self.preferences.soft_wrap
         editor.indent_width = self.preferences.indent_width
-        self.style_text_area(editor)
         return editor
 
     def compose(self) -> ComposeResult:
@@ -302,8 +175,7 @@ class EditorApp(App):
         with Horizontal(id="file-strip"):
             yield Button("File (F2)", id="file-menu", compact=True)
             yield Tabs(
-                DocumentTab("Untitled ×", id=f"tab-{self.workspace.active_document}"),
-                id="tabs",
+                Tab("Untitled", id=f"tab-{self.workspace.active_document}"), id="tabs"
             )
             yield Button("Edit", id="edit-menu", compact=True)
             yield Button("View", id="view-menu", compact=True)
@@ -340,7 +212,6 @@ class EditorApp(App):
 
     def on_mount(self) -> None:
         """Set section labels and start a non-executing disk watcher."""
-        self.apply_appearance()
         self._was_compact = self.size.width < 100 or self.size.height < 30
         self.query_one("#search-bar").display = False
         self.query_one("#completion-list").display = False
@@ -586,18 +457,14 @@ class EditorApp(App):
 
     async def on_unmount(self) -> None:
         """Reap the session process on every application exit."""
+        if self.runtime is not None:
+            await self.runtime.close()
+        await self.analysis.close()
+        await self.completion.close()
         try:
-            if self.runtime is not None:
-                await self.runtime.close()
-        finally:
-            try:
-                await self.analysis.close()
-            finally:
-                await self.completion.close()
-                try:
-                    await self._save_preferences()
-                except OSError:
-                    pass
+            await self._save_preferences()
+        except OSError:
+            pass
 
     @on(TextArea.Changed)
     def source_changed(self, message: TextArea.Changed) -> None:
@@ -649,7 +516,7 @@ class EditorApp(App):
             self.completion.poll()
 
     def _labels(self) -> None:
-        """Use the shortest unique path suffix; keep full identities in tooltips."""
+        """Disambiguate matching basenames and mark dirty tabs."""
         documents = tuple(self.workspace.documents.values())
         for document in documents:
             name = document.path.name if document.path else document.suggested_name
@@ -661,20 +528,9 @@ class EditorApp(App):
                 )
                 > 1
             ):
-                for depth in range(2, len(document.path.parts) + 1):
-                    suffix = document.path.parts[-depth:]
-                    if not any(
-                        item.id != document.id
-                        and item.path
-                        and item.path.parts[-depth:] == suffix
-                        for item in documents
-                    ):
-                        name = str(Path(*suffix))
-                        break
-            tab = self.query_one(f"#tab-{document.id}", Tab)
-            tab.label = Text(name + (" *" if document.dirty else "") + " ×")
-            tab.tooltip = (
-                str(document.path) if document.path else document.suggested_name
+                name = str(document.path)
+            self.query_one(f"#tab-{document.id}", Tab).label = name + (
+                " •" if document.dirty else ""
             )
 
     async def _mount_document(self, document_id: str) -> None:
@@ -685,7 +541,7 @@ class EditorApp(App):
                 self._editor(document_id)
             )
             await self.query_one("#tabs", Tabs).add_tab(
-                DocumentTab("Untitled ×", id=f"tab-{document_id}")
+                Tab("Untitled", id=f"tab-{document_id}")
             )
         self._activate(document_id)
         self._labels()
@@ -1113,11 +969,7 @@ class EditorApp(App):
     def tab_activated(self, message: Tabs.TabActivated) -> None:
         """Use tab identity rather than labels for mouse and keyboard activation."""
         document_id = message.tab.id.removeprefix("tab-")
-        if (
-            document_id in self.workspace.documents
-            and document_id != self.workspace.active_document
-            and self.editor_screen.query("#documents-view")
-        ):
+        if document_id != self.workspace.active_document:
             self._activate(document_id)
 
     def _cycle_tab(self, delta: int) -> None:
@@ -1158,7 +1010,6 @@ class EditorApp(App):
                     not self.repl_only
                     and self.compact_view == "editor"
                     and self._search_document is None
-                    and not isinstance(self.focused, (PaneDivider, TranscriptView))
                 ):
                     self.source_editor.focus()
 
@@ -1184,8 +1035,6 @@ class EditorApp(App):
                         ("Reload", "reload"),
                         ("Close — Ctrl+W", "close"),
                         ("Quit — Ctrl+Q", "quit"),
-                        ("Edit menu", "edit"),
-                        ("View menu", "view"),
                     ],
                     anchor=self.query_one("#file-menu", Button),
                 )
@@ -1258,13 +1107,6 @@ class EditorApp(App):
                         ),
                         ("REPL only / return to editor", "repl-only"),
                         ("Toggle wrapping", "wrap"),
-                        ("Appearance…", "appearance"),
-                        ("Toggle ASCII borders", "ascii-borders"),
-                        ("Toggle system clipboard (OSC 52)", "system-clipboard"),
-                        ("Open tabs…", "tabs"),
-                        ("Resize State (arrows)", "resize-state"),
-                        ("Resize REPL (arrows)", "resize-repl"),
-                        ("Focus transcript", "focus-transcript"),
                     ]
                     if action == "view"
                     else [
@@ -1289,9 +1131,7 @@ class EditorApp(App):
                     ),
                 )
             )
-            if choice in {"appearance", "tabs"}:
-                await self._perform(choice)
-            elif choice == "indent-width":
+            if choice == "indent-width":
                 width = await self.push_screen_wait(
                     ChoiceDialog(
                         "Indent width",
@@ -1307,29 +1147,6 @@ class EditorApp(App):
                         editor.indent_width = self.preferences.indent_width
             elif choice:
                 self._view_action(choice)
-        elif action == "appearance":
-            values = await self.push_screen_wait(AppearanceDialog(self.preferences))
-            if values:
-                for name, value in values.items():
-                    setattr(self.preferences, name, value)
-                self.apply_appearance()
-                await self._save_preferences()
-        elif action == "tabs":
-            documents = tuple(self.workspace.documents.values())
-            choice = await self.push_screen_wait(
-                ChoiceDialog(
-                    "Open tabs",
-                    [
-                        (
-                            str(item.path) if item.path else item.suggested_name,
-                            f"open-{item.id}",
-                        )
-                        for item in documents
-                    ],
-                )
-            )
-            if choice:
-                self._activate(choice.removeprefix("open-"))
 
     async def _save(self, document_id: str, action: str = "save") -> bool:
         """Commit disk and overlays on success; cancellation keeps tabs."""
@@ -1535,28 +1352,7 @@ class EditorApp(App):
 
     def _view_action(self, action: str) -> None:
         """Apply menu choices through the same native editing and layout actions."""
-        if action in {"ascii-borders", "system-clipboard"}:
-            name = action.replace("-", "_")
-            setattr(self.preferences, name, not getattr(self.preferences, name))
-            self.apply_appearance()
-        elif action in {"resize-state", "resize-repl"}:
-            target = self.query_one(
-                "#state-divider" if action == "resize-state" else "#repl-divider"
-            )
-            if target.display:
-                target.focus()
-            else:
-                self.notify(
-                    "Resize panes in the wide editor layout (100×30 or larger)."
-                )
-        elif action == "focus-transcript":
-            self.repl_requested = True
-            self.compact_view = "repl"
-            self._layout()
-            transcript = self.query_one("#transcript")
-            transcript.focus()
-            self.call_after_refresh(transcript.focus)
-        elif action == "repl":
+        if action == "repl":
             self.action_toggle_repl()
         elif action == "enter-lock":
             self.query_one("#command", CommandInput).toggle_lock()
@@ -1654,7 +1450,6 @@ class EditorApp(App):
                 24,
                 min(
                     self.size.width - 45,
-                    200,
                     self.preferences.inspector_width - message.delta,
                 ),
             )
@@ -1662,9 +1457,7 @@ class EditorApp(App):
             self.preferences.repl_height = max(
                 8,
                 min(
-                    self.size.height - 12,
-                    100,
-                    self.preferences.repl_height - message.delta,
+                    self.size.height - 12, self.preferences.repl_height - message.delta
                 ),
             )
         self._layout()

@@ -5236,6 +5236,464 @@ Counter 0 | increment | increment | increment | pop
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "destroy 3, 3\n")
 
+    def test_nodup_self_reconstruction_forwards_one_lifetime(self):
+        """@self must not duplicate or prematurely destruct its @nodup receiver."""
+        source = """
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  private $count = 0
+  @self define writeLine(text: String) =>
+    $self.count := + 1
+  end
+  define ~Writer => println "destroy ${$self.count}" end
+end
+Writer | writeLine "1" | writeLine "2" | pop
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        writer = next(
+            instruction.arg for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.params == ("self", "text")
+        )
+        self.assertIn(Instruction(OpCode.LOAD_VAR_BORROW, "self"), writer.instructions)
+        self.assertEqual(writer.instructions[-2], Instruction(OpCode.LOAD_VAR_FORWARD, "self"))
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), "destroy 2\n")
+
+    def test_nodup_explicit_rebinding_forwards_state(self):
+        """Explicit immutable state rebinding moves the old named occurrence."""
+        source = """
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  private $count = 0
+  @self define writeLine(text: String) =>
+    $self.count := + 1
+  end
+  define ~Writer => println "destroy ${$self.count}" end
+end
+
+define \\exercise -> =>
+  $f = Writer
+  $f = $f writeLine "1"
+  $f = $f writeLine "2"
+end
+\\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), "destroy 2\n")
+
+    def test_nodup_named_void_calls_borrow_without_destroying_owner(self):
+        """A no-output operation may repeatedly observe the named @nodup owner."""
+        source = """
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  define writeLine(text: String) => println $text end
+  define ~Writer => "destroy" println end
+end
+
+define \\exercise -> =>
+  $f = Writer
+  $f writeLine "1"
+  $f writeLine "2"
+end
+\\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        exercise = next(
+            instruction.arg for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == r"\exercise"
+        )
+        self.assertEqual(
+            [instruction.op for instruction in exercise.instructions
+             if instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}
+             and instruction.arg == "f"],
+            [OpCode.LOAD_VAR_BORROW, OpCode.LOAD_VAR_BORROW],
+        )
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), "1\n2\ndestroy\n")
+
+    def test_nodup_typed_void_borrow_follows_stack_permutation(self):
+        """Borrow at the checked call, even if the argument was reordered."""
+        source = r"""
+@nodup("Writer cannot be duplicated")
+@mustcall(any = ["finish"])
+object Writer =>
+  define writeLine(text: String) => println $text end
+  define finish => "finished" println end
+  define ~Writer => "destroy" println end
+end
+
+define \exercise -> =>
+  $f = Writer
+  $f "first" | swap | swap | writeLine
+  $f "second" | swap | swap | writeLine
+  $f finish
+end
+\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            exercise = next(
+                instruction.arg for instruction in program.main.instructions
+                if instruction.op is OpCode.MAKE_FUNCTION
+                and instruction.arg.name == r"\exercise"
+            )
+            if not optimize:
+                self.assertEqual(
+                    [instruction.op for instruction in exercise.instructions
+                     if instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}
+                     and instruction.arg == "f"],
+                    [OpCode.LOAD_VAR_BORROW] * 3,
+                )
+            for candidate in (program, loads(dumps(program))):
+                with self.subTest(optimize=optimize, serialized=candidate is not program):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(run(candidate), [])
+                    self.assertEqual(output.getvalue(), "first\nsecond\nfinished\ndestroy\n")
+
+    def test_nodup_typed_void_borrow_with_explicit_call_arguments(self):
+        """Explicit argument syntax is already flattened and checked by analysis."""
+        source = r"""
+@nodup("Resource cannot be duplicated")
+object Resource =>
+  define ~Resource => "destroy" println end
+end
+
+define inspect(r: Resource) => "inspected" println end
+
+define \exercise -> =>
+  $r = Resource
+  inspect($r)
+  inspect($r)
+end
+\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            exercise = next(
+                instruction.arg for instruction in program.main.instructions
+                if instruction.op is OpCode.MAKE_FUNCTION
+                and instruction.arg.name == r"\exercise"
+            )
+            if not optimize:
+                self.assertEqual(
+                    [instruction.op for instruction in exercise.instructions
+                     if instruction.arg == "r"
+                     and instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}],
+                    [OpCode.LOAD_VAR_BORROW, OpCode.LOAD_VAR_BORROW],
+                )
+            for candidate in (program, loads(dumps(program))):
+                with self.subTest(optimize=optimize, serialized=candidate is not program):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(run(candidate), [])
+                    self.assertEqual(output.getvalue(), "inspected\ninspected\ndestroy\n")
+
+    def test_nodup_void_borrow_does_not_outlive_named_binding(self):
+        """Rebinding an owner invalidates older stack-value borrow candidates."""
+        source = r"""
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  define writeLine(text: String) => println $text end
+  define ~Writer => "destroy" println end
+end
+
+define \exercise -> =>
+  $f = Writer
+  $f
+  $f = Writer
+  "first" | writeLine
+end
+\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        exercise = next(
+            instruction.arg for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == r"\exercise"
+        )
+        self.assertEqual(
+            [instruction.op for instruction in exercise.instructions
+             if instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}
+             and instruction.arg == "f"],
+            [OpCode.LOAD_VAR],
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            run(program)
+        self.assertIn("DuplicationFault", str(caught.exception))
+
+    def test_nodup_typed_indirect_void_call_borrows(self):
+        """A typed callable's stack contract suffices without a known target."""
+        source = r"""
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  define ~Writer => "destroy" println end
+end
+
+define \exercise -> =>
+  $perform = fn (r: Writer) => "seen" println end
+  $f = Writer
+  $f $perform call
+  $f $perform call
+end
+\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            exercise = next(
+                instruction.arg for instruction in program.main.instructions
+                if instruction.op is OpCode.MAKE_FUNCTION
+                and instruction.arg.name == r"\exercise"
+            )
+            if not optimize:
+                self.assertEqual(
+                    [instruction.op for instruction in exercise.instructions
+                     if instruction.arg == "f"
+                     and instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}],
+                    [OpCode.LOAD_VAR_BORROW, OpCode.LOAD_VAR_BORROW],
+                )
+            for candidate in (program, loads(dumps(program))):
+                with self.subTest(optimize=optimize, serialized=candidate is not program):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(run(candidate), [])
+                    self.assertEqual(output.getvalue(), "seen\nseen\ndestroy\n")
+
+    def test_nodup_typed_returning_call_still_rejects_through_shuffle(self):
+        """Checked output effects forbid borrowing a state-returning call."""
+        source = r"""
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  @self define writeLine(text: String) => println $text end
+end
+
+define \exercise -> =>
+  $f = Writer
+  $f "first" | swap | swap | writeLine
+end
+\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        exercise = next(
+            instruction.arg for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == r"\exercise"
+        )
+        self.assertIn(OpCode.LOAD_VAR, [
+            instruction.op for instruction in exercise.instructions
+            if instruction.arg == "f"
+        ])
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+                self.assertIn("DuplicationFault", str(caught.exception))
+
+    def test_nodup_typed_void_call_does_not_borrow_same_owner_twice(self):
+        """One call cannot receive two borrowed copies of one named owner."""
+        source = r"""
+@nodup("Resource cannot be duplicated")
+object Resource => end
+
+define useBoth(first: Resource, second: Resource) =>
+  "both" println
+end
+
+define \exercise -> =>
+  $r = Resource
+  $r $r | useBoth
+end
+\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        exercise = next(
+            instruction.arg for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == r"\exercise"
+        )
+        self.assertEqual(
+            [instruction.op for instruction in exercise.instructions
+             if instruction.arg == "r"
+             and instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}],
+            [OpCode.LOAD_VAR, OpCode.LOAD_VAR],
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            run(program)
+        self.assertIn("DuplicationFault", str(caught.exception))
+
+    def test_nodup_named_returning_call_still_rejects_second_owner(self):
+        """Only void calls borrow; retaining the old and returned owner is invalid."""
+        source = """
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  @self define writeLine(text: String) => println $text end
+end
+
+define \\exercise -> =>
+  $f = Writer
+  $f writeLine "1"
+  $f writeLine "2"
+end
+\\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+                self.assertIn("DuplicationFault", str(caught.exception))
+
+    def test_nodup_void_calls_borrow_direct_free_function_arguments(self):
+        """Borrowing is a call property, not restricted to object-friendly names."""
+        source = """
+@nodup("Resource cannot be duplicated")
+object Resource =>
+  define ~Resource => "destroy" println end
+end
+
+define inspect(value: Resource) => println $value end
+
+define \\exercise -> =>
+  $x = Resource
+  inspect $x
+  inspect $x
+end
+\\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue().count("destroy\n"), 1)
+
+    def test_nodup_void_borrow_satisfies_mustcall_on_success(self):
+        """Required methods invoked through borrowed receivers still count."""
+        source = """
+@nodup("Resource cannot be duplicated")
+@mustcall(any = ["finish"])
+object Resource =>
+  define finish(reason: String) => println $reason end
+  define ~Resource => "destroy" println end
+end
+
+define \\exercise -> =>
+  $r = Resource
+  $r finish "finished"
+end
+\\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), "finished\ndestroy\n")
+
+    def test_nodup_temporary_borrow_cannot_be_materialised_by_generic_callee(self):
+        """Borrowing for a void call must not allow an independent owner to escape."""
+        source = """
+@nodup("Resource cannot be duplicated")
+object Resource => end
+
+define[T] store(value: T) =>
+  $stored = $value
+end
+
+define \\exercise -> =>
+  $r = Resource
+  store $r
+end
+\\exercise
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+                self.assertIn("DuplicationFault", str(caught.exception))
+
+    def test_nodup_reader_value_output_and_swap_transfer(self):
+        """State below an extracted value can be shuffled without duplication."""
+        source = """
+@nodup("Reader cannot be duplicated")
+object Reader =>
+  define ~Reader => "destroyed" println end
+end
+
+define read(reader: Reader) -> Reader, String =>
+  $reader
+  "line"
+end
+Reader | read | swap | swap | println | pop
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), "line\ndestroyed\n")
+
     def test_destructor_panic_is_catchable_after_structural_teardown(self):
         output = io.StringIO()
         source = """

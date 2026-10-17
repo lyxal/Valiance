@@ -4,40 +4,21 @@ from rich.text import Text
 from textual.document._document import Selection
 from textual.widgets import TextArea
 
-from .appearance import REFERENCE
 from .models import Transcript
 
 
 class TranscriptView(TextArea):
     """Reuse native selection/copy and wrapping without retaining a second log."""
 
-    BINDINGS = [
-        ("ctrl+home", "transcript_start", "Oldest output"),
-        ("ctrl+end", "transcript_end", "Latest output"),
-    ]
-
-    def action_transcript_start(self) -> None:
-        """Move to retained output's beginning without depending on a mouse wheel."""
-        self.move_cursor((0, 0))
-        self.scroll_home(animate=False)
-
-    def action_transcript_end(self) -> None:
-        """Resume following output from its most recent retained character."""
-        self.move_cursor(self.document.end)
-        self.scroll_end(animate=False)
-
     STYLES = {
-        kind: REFERENCE[role]
-        for kind, role in {
-            "result": "result",
-            "command": "command",
-            "input": "command",
-            "output": "output",
-            "diagnostic": "diagnostic",
-            "load": "notice",
-            "notice": "notice",
-            "truncated": "warning",
-        }.items()
+        "result": "#8bcf91",
+        "command": "#bfc9e0",
+        "input": "#bfc9e0",
+        "output": "#d4daea",
+        "diagnostic": "#ef8794",
+        "load": "#8bb9df",
+        "notice": "#dcb778",
+        "truncated": "#dcb778",
     }
 
     def __init__(self, **kwargs) -> None:
@@ -47,7 +28,6 @@ class TranscriptView(TextArea):
         self._discarded = 0
         self._marker_length = 0
         self._entries = ()
-        self.event_styles = dict(self.STYLES)
         super().__init__(
             read_only=True,
             show_line_numbers=False,
@@ -78,10 +58,10 @@ class TranscriptView(TextArea):
         self._spans = []
         offset = marker_length
         if offset:
-            self._spans.append((0, offset, "truncated"))
+            self._spans.append((0, offset, self.STYLES["truncated"]))
         for entry in entries:
             end = offset + len(entry.text)
-            self._spans.append((offset, end, entry.kind))
+            self._spans.append((offset, end, self.STYLES.get(entry.kind, "#d4daea")))
             offset = end
         self._starts = [0]
         self._starts.extend(
@@ -110,9 +90,5 @@ class TranscriptView(TextArea):
         end = start + len(line)
         for first, last, style in self._spans:
             if last > start and first < end:
-                line.stylize(
-                    self.event_styles.get(style, self.event_styles["output"]),
-                    max(0, first - start),
-                    min(len(line), last - start),
-                )
+                line.stylize(style, max(0, first - start), min(len(line), last - start))
         return line

@@ -1,6 +1,6 @@
 # Terminal editor and REPL design
 
-Status: interaction design accepted on 9 October 2026. Stages 0–7 are
+Status: interaction design accepted on 9 October 2026. Stages 0–6 are
 implemented through the internal Python launch route. Stage 5 native-call
 validation in CI and the physical-terminal acceptance matrix remain pending.
 Live diagnostics and surviving overload-world inspection are implemented. Bare `vln` still uses the existing REPL.
@@ -30,9 +30,6 @@ presentation.
 | Ctrl+PageUp / Ctrl+PageDown | Previous / next document |
 | F3 / F4 | Show or hide State / REPL |
 | F6 | Cycle visible panes |
-| Shift+F6 | Focus toolbar; Tab/Shift+Tab reach controls and dividers |
-| Alt+F / Alt+E / Alt+V | File / Edit / View menus; F2 → Edit/View is the fallback |
-| Transcript Ctrl+Home / Ctrl+End | Oldest / latest retained output |
 | Ctrl+F / F7 | Find / Replace |
 | F10 / Shift+F10 | Indent / dedent; avoids terminal aliases for Ctrl+[ |
 | F9 / Shift+F9 | Next / previous recoverable error, including imported files |
@@ -85,51 +82,6 @@ without executing; `:clear`, `:reset` and `:quit` use the editor's control workf
 Physical terminal key delivery and real native-call cleanup remain validation
 gates; the headless tests are not evidence that every terminal reports the same
 modified keys.
-
-## Terminal appearance and compatibility settings
-
-View → Appearance offers Reference dark (default), High contrast, Ocean, Plum,
-Amber and Paper. Choose a role, enter `#rrggbb` or a terminal color such as
-`ansi_bright_cyan`, and use Apply role color; Save appearance commits the draft.
-Escape/Cancel leaves the editor unchanged. A role can return to its theme color;
-Restore appearance defaults clears overrides and restores Reference dark/Auto.
-Theme changes preserve buffers, undo, selection, transcript and runtime state.
-
-The settings file is `terminal-editor.json` in the existing platform configuration
-directory. `theme`, `colors` (a role-to-color object), and `color_mode` are
-validated independently. Unknown roles, invalid colors, invalid types and
-out-of-range dimensions fall back without injecting CSS. Roles cover backgrounds,
-text, panel, gutter/gutter text, tabs/active tab, divider, focus, selection, input,
-status, completion, keyword, type, name, number, string, operator, comment,
-diagnostic, warning, result, output, command and notice. Comments use the compiler
-lexer's omitted source ranges, including nested multiline comments.
-
-Auto uses full color on truecolor/256-color terminals (the renderer quantizes to
-256 colors), a sixteen-color ANSI palette on standard/Windows color systems, and
-monochrome when no colors are detected or `TERM=dumb`. `NO_COLOR` takes precedence
-over explicit modes. ANSI ignores RGB overrides and accepts ANSI overrides;
-monochrome uses terminal defaults, with bold results and underlined diagnostics.
-Focus and active tabs have shape/text markers as well as color. View also offers
-ASCII borders and a system-clipboard toggle. Disabling the latter prevents OSC 52
-forwarding while preserving in-app copy/cut/paste. External clipboard transfer
-depends on terminal/SSH policy; bracketed paste remains the terminal's facility.
-
-View → Open tabs lists full identities when the tab strip overflows. Labels use
-the shortest unique path suffix and render filenames literally. Each tab has a
-close control and supports double-click rename, with the same protected File
-menu actions for keyboard operation. View provides keyboard focus routes to pane
-dividers and transcript; arrows resize, and the inspector supports arrows,
-PageUp/PageDown and Home/End. Transcript supports native selection and scrolling.
-Pane dimensions continue to persist across launches with validated bounds
-(State 24–200 columns; REPL 8–100 rows), and temporary collapse never rewrites
-the requested size. Recent files retain 20 paths and history retains 500 commands.
-
-Target layouts remain 80×24, 120×40 and 160×50. Headless tests cover the nine
-reference views with compiler data, palette changes, keyboard operation, external
-reload during analysis/execution and restoration calls on quit/UI fault. Actual
-terminal restoration, OS clipboard/key delivery, SSH and subjective visual review
-still require the physical matrix in the feasibility report; headless checks
-cannot establish those guarantees.
 
 ## Browser design reference
 
@@ -377,20 +329,18 @@ Proposed terminal translation:
   focuses the REPL. Temporary responsive collapse preserves document/session
   state and is distinct from explicitly hiding a pane.
 
-Implemented: View focuses the keyboard resize handles; layouts below 100 columns
-or 30 rows use switchable views, and wider layouts restore requested panes/sizes.
-Dimensions persist across launches. The open-tab picker handles overflow, while
-focus/active-tab markers and named role palettes supply terminal styling.
-The target sizes are 80x24, 120x40, and 160x50 cells. Physical contrast/usability
-review remains open; the 1280x720 reference images do not establish that result.
+Open: resize shortcuts, minimum pane sizes, responsive breakpoints and behavior
+when space becomes available again, persisting
+user dimensions across launches, tab overflow, focus indicator, theme configuration,
+and exact palette/contrast. Prototype at 80x24, 120x40, and 160x50 cells, rather
+than relying on the 1280x720 reference images.
 
 Confirmed styling direction: use the screenshots' dark palette by default,
 support custom themes and independent styling of individual UI parts, and
 provide a reduced-color terminal fallback. Proposed configurable roles include
 pane backgrounds, text, gutter, active/inactive tabs, dividers, syntax categories,
 diagnostics, error dimming, REPL output, focus, status row, and completion.
-The configuration format and controls are documented under Terminal appearance
-and compatibility settings above.
+Exact configuration format, scope, and theme editing controls remain open.
 
 Confirmed customization: independently style tabs, gutter, syntax categories,
 panes, diagnostics, REPL output, and status row. Support named themes and Restore

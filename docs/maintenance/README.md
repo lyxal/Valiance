@@ -81,14 +81,6 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   inside the existing worker without execution. Errors are grouped by file;
   selected details emphasize source, minimize to a pin on cursor movement and
   dismiss on edits, including undo/redo.
-  Stage 7's [appearance palettes](../../src/valiance/terminal_editor/appearance.py)
-  supply validated role colors to CSS, native text areas, token highlights and
-  semantic transcript entries. View → Appearance provides six named themes,
-  individual role overrides, Restore defaults and terminal color modes.
-  File → View is the function-key fallback for all View controls; Shift+F6
-  focuses the toolbar. The open-tab picker handles overflow without a mouse.
-  [Shared lexical categories](../../src/valiance/source_tools/syntax.py) keep
-  source highlighting independent of the legacy frontend.
   Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
   and [compilation database tests](../../tests/test_compilation_database.py).
 - [Understanding the type system](type-system.md) gives a human-first mental

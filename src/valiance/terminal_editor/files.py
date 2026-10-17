@@ -9,7 +9,6 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .appearance import COLOR_MODES, REFERENCE, THEMES, valid_color
 from .models import Document, EditorWorkspace
 
 
@@ -227,11 +226,6 @@ class EditorPreferences:
     indent_width: int = 2
     soft_wrap: bool = True
     history: list[str] = field(default_factory=list)
-    theme: str = "reference-dark"
-    colors: dict[str, str] = field(default_factory=dict)
-    color_mode: str = "auto"
-    ascii_borders: bool = False
-    system_clipboard: bool = True
 
     @classmethod
     def load(cls, path: Path | None) -> EditorPreferences:
@@ -258,23 +252,6 @@ class EditorPreferences:
                     setattr(preferences, name, value)
             if type(data.get("soft_wrap")) is bool:
                 preferences.soft_wrap = data["soft_wrap"]
-            if isinstance(data.get("theme"), str) and data["theme"] in THEMES:
-                preferences.theme = data["theme"]
-            if (
-                isinstance(data.get("color_mode"), str)
-                and data["color_mode"] in COLOR_MODES
-            ):
-                preferences.color_mode = data["color_mode"]
-            colors = data.get("colors")
-            if isinstance(colors, dict):
-                preferences.colors = {
-                    key: value
-                    for key, value in colors.items()
-                    if key in REFERENCE and valid_color(value)
-                }
-            for name in ("ascii_borders", "system_clipboard"):
-                if type(data.get(name)) is bool:
-                    setattr(preferences, name, data[name])
             history = data.get("history", [])
             if isinstance(history, list):
                 preferences.history = [

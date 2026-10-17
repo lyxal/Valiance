@@ -2978,23 +2978,40 @@ class VirtualMachine:
                                 frame.locals,
                                 frame.globals,
                             )
-                            frame.stack.append(
-                                value
-                                if isinstance(value, _SCALAR_RUNTIME_TYPES)
+                            if isinstance(value, _BorrowedValue):
+                                # An owned load from a borrowed parameter must
+                                # explicitly duplicate its underlying value.
+                                frame.stack.append(_duplicate_occurrence(value))
+                            elif (
+                                isinstance(value, _SCALAR_RUNTIME_TYPES)
                                 or not _needs_release(value)
                                 or (
                                     isinstance(value, ObjectValue)
                                     and value.destructor_borrowed
                                 )
-                                else _duplicate_occurrence(value)
-                            )
+                            ):
+                                frame.stack.append(value)
+                            else:
+                                frame.stack.append(_duplicate_occurrence(value))
                         case OpCode.LOAD_VAR_FORWARD:
                             name = instruction.arg
-                            if name not in frame.locals:
+                            if name in frame.locals:
+                                value = frame.locals.pop(name)
+                                # At module scope STORE_VAR exposes the same
+                                # slot through globals. Forwarding transfers
+                                # it out of both maps, not just the local map.
+                                if (
+                                    frame.is_global_scope
+                                    and frame.globals.get(name) is value
+                                ):
+                                    frame.globals.pop(name)
+                            elif frame.is_global_scope and name in frame.globals:
+                                value = frame.globals.pop(name)
+                            else:
                                 raise RuntimeError(
                                     f"cannot forward non-local variable '{name}'"
                                 )
-                            frame.stack.append(frame.locals.pop(name))
+                            frame.stack.append(value)
                         case OpCode.LOAD_VAR_MATERIALIZE:
                             operation, source_name, destination_name = instruction.arg
                             value = _load_name(
@@ -3004,8 +3021,9 @@ class VirtualMachine:
                             )
                             frame.stack.append(
                                 value
-                                if isinstance(value, _SCALAR_RUNTIME_TYPES)
-                                or not _needs_release(value)
+                                if not isinstance(value, _BorrowedValue)
+                                and (isinstance(value, _SCALAR_RUNTIME_TYPES)
+                                     or not _needs_release(value))
                                 else _duplicate_occurrence(
                                     value,
                                     context=_DuplicationContext(
@@ -3386,17 +3404,21 @@ class VirtualMachine:
                                     )
                                 )
                             elif isinstance(receiver, ObjectValue):
-                                frame.stack.append(
-                                    _BorrowedValue(
-                                        _read_object_field(receiver, field)
+                                if observational:
+                                    field_value = _read_object_field(receiver, field)
+                                    # Scalar fields have no ownership to borrow.
+                                    # Leave them as ordinary values so a field
+                                    # observation can feed arithmetic and other
+                                    # stack operations without an artificial type.
+                                    frame.stack.append(
+                                        _BorrowedValue(field_value)
+                                        if _needs_release(field_value)
+                                        else field_value
                                     )
-                                    if observational
-                                    else _extract_object_field(
-                                        receiver,
-                                        field,
-                                        self,
+                                else:
+                                    frame.stack.append(
+                                        _extract_object_field(receiver, field, self)
                                     )
-                                )
                             else:
                                 frame.stack.append(
                                     _consume_receiver_result(
@@ -5715,6 +5737,11 @@ def _check_duplication_allowed(
     context: _DuplicationContext | None = None,
 ) -> None:
     """Reject a semantic duplicate before any runtime references are retained."""
+    if isinstance(value, _BorrowedValue):
+        # Materialising a borrow is a *new* owned occurrence. Ordinary values
+        # may be copied, but the underlying @nodup policy still applies.
+        _check_duplication_allowed(value.value, context)
+        return
     if isinstance(value, TaggedValue):
         _check_duplication_allowed(value.value, context)
         return
@@ -5797,6 +5824,8 @@ def _check_duplication_allowed(
 
 def _retain_runtime_reference(value: Any) -> Any:
     """Retain one runtime reference without deciding language-level duplication."""
+    if isinstance(value, _BorrowedValue):
+        return _retain_runtime_reference(value.value)
     if isinstance(value, TaggedValue):
         _retain_runtime_reference(value.value)
         return value
@@ -6147,55 +6176,69 @@ def _mark_mustcall_method(
     callee: FunctionValue,
 ) -> None:
     """Update mark mustcall method state during VM execution."""
-    if not args or not isinstance(args[0], ObjectValue):
+    if not args:
         return
-    if args[0].cleaning_up or args[0].destroyed:
+    receiver = _accessed_value(args[0])
+    if not isinstance(receiver, ObjectValue):
+        return
+    if receiver.cleaning_up or receiver.destroyed:
         # Calls made by ~Type happen after the ordinary-lifetime contract was
         # snapshotted and must never retroactively satisfy that contract.
         return
-    runtime = args[0].runtime_type
+    runtime = receiver.runtime_type
     if runtime is None or not runtime.mustcall_methods:
         return
     method_name = _function_name(callee.code).rsplit("::", 1)[-1]
     if method_name not in runtime.mustcall_methods:
         return
-    called = frozenset((*args[0].mustcall_called, method_name))
-    args[0].mustcall_called = called
+    called = frozenset((*receiver.mustcall_called, method_name))
+    receiver.mustcall_called = called
     for value in result:
-        if isinstance(value, ObjectValue) and value.type_name == args[0].type_name:
-            value.lifecycle_state = args[0].lifecycle_state
+        if isinstance(value, ObjectValue) and value.type_name == receiver.type_name:
+            value.lifecycle_state = receiver.lifecycle_state
 
 
 def _finalize_builtin_result_ownership(
     args: tuple[Any, ...],
     result: tuple[Any, ...],
+    *,
+    consumed: tuple[Any, ...] | None = None,
 ) -> None:
-    """Update finalize builtin result ownership state during VM execution."""
+    """Retain result references without treating transferred inputs as copies.
+
+    A builtin may return an input occurrence (swap, top, and so on). We must
+    keep the result alive while the consumed stack arguments are released, but
+    that internal refcount hand-off is not a language-level duplication.
+    Only output occurrences beyond the consumed input occurrences are copies.
+    """
     if not _contains_owned_value(args) and not _contains_owned_value(result):
         return
+    if consumed is None:
+        consumed = args
     counts: Counter[int] = Counter()
     values: dict[int, Any] = {}
-    arg_ids = {
-        id(value)
-        for value in args
-        if isinstance(
-            value,
-            (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict),
-        )
-    }
+    owned_types = (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict)
+    arg_ids = {id(value) for value in args if isinstance(value, owned_types)}
+    consumed_counts = Counter(
+        id(value) for value in consumed if isinstance(value, owned_types)
+    )
     for value in result:
-        if not isinstance(
-            value,
-            (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict),
-        ):
+        if not isinstance(value, owned_types):
             continue
         ident = id(value)
         counts[ident] += 1
         values[ident] = value
+    # Validate copies before retaining any internal references, so a failed
+    # @nodup check cannot leave the partial result with an inflated refcount.
+    for ident, count in counts.items():
+        first_new = 0 if ident in arg_ids else 1
+        additional = max(count - consumed_counts[ident] - first_new, 0)
+        if additional:
+            _check_duplication_allowed(values[ident])
     for ident, count in counts.items():
         retains = count if ident in arg_ids else count - 1
         for _ in range(max(retains, 0)):
-            _duplicate_occurrence(values[ident])
+            _retain_runtime_reference(values[ident])
 
     visited: set[int] = set()
     for value in result:
@@ -6882,7 +6925,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                         args,
                     ) from exc
                 result = _bind_lazy_result_owners(args, result)
-                _finalize_builtin_result_ownership(args, result)
+                _finalize_builtin_result_ownership(args, result, consumed=args[-stack_count:] if stack_count else ())
                 if stack_count:
                     _release_stack_tail(
                         frame.stack,
@@ -6916,7 +6959,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             if vectorized is None:
                 continue
             vectorized = _bind_lazy_result_owners(args, vectorized)
-            _finalize_builtin_result_ownership(args, vectorized)
+            _finalize_builtin_result_ownership(args, vectorized, consumed=args[-stack_count:] if stack_count else ())
             if stack_count:
                 _release_stack_tail(
                     frame.stack,
@@ -6950,7 +6993,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                 del frame.stack[-stack_count:]
         else:
             result = _bind_lazy_result_owners(args, result)
-            _finalize_builtin_result_ownership(args, result)
+            _finalize_builtin_result_ownership(args, result, consumed=args[-stack_count:] if stack_count else ())
             if stack_count:
                 _release_stack_tail(
                     frame.stack,
@@ -7249,7 +7292,7 @@ def _call_resolved_builtin(
                     return_tag_specs,
                     vm.tag_parents,
                 )
-            _finalize_builtin_result_ownership(ownership_args, vectorized)
+            _finalize_builtin_result_ownership(ownership_args, vectorized, consumed=(*args[-consumed_count:], *_extension_owned_values(extension)) if consumed_count else _extension_owned_values(extension))
         except _py_builtins.RuntimeError as exc:
             raise _with_call_detail(
                 exc,
@@ -7309,7 +7352,7 @@ def _call_resolved_builtin(
             del frame.stack[-consumed_count:]
     else:
         result = _bind_lazy_result_owners(args, result)
-        _finalize_builtin_result_ownership(args, result)
+        _finalize_builtin_result_ownership(args, result, consumed=args[-consumed_count:] if consumed_count else ())
         if consumed_count:
             _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
     frame.cycle_index = next_cycle_index

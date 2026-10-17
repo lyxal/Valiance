@@ -9,9 +9,6 @@ from textual.message import Message
 from textual.widgets import TextArea
 
 from valiance.parsing.lexer import TokenKind, lex_with_diagnostics
-from valiance.source_tools.syntax import KEYWORDS
-
-from .appearance import REFERENCE, rich_color
 
 
 @dataclass(frozen=True)
@@ -25,6 +22,13 @@ class SourceEmphasis:
 
 class SourceEditor(TextArea):
     """Retain native editing, undo, selection and wrapping while styling tokens."""
+
+    TOKEN_STYLES = {
+        TokenKind.IDENT: "#bfc9e0",
+        TokenKind.NUMBER: "#dcb778",
+        TokenKind.STRING: "#d5a1c8",
+        TokenKind.OP: "#8bb9df",
+    }
 
     class SourceClicked(Message):
         """Report a source click after TextArea has mapped wrapping and tab cells."""
@@ -51,7 +55,6 @@ class SourceEditor(TextArea):
         self._emphasis: tuple[SourceEmphasis, ...] = ()
         self.selected_error: tuple[int, int] | None = None
         self.notified_source = text
-        self.role_colors = dict(REFERENCE)
         super().__init__(
             text,
             soft_wrap=True,
@@ -93,35 +96,13 @@ class SourceEditor(TextArea):
         starts.extend(index + 1 for index, char in enumerate(source) if char == "\n")
         tokens, _ = lex_with_diagnostics(source)
         spans = []
-        previous_end = 0
         for token in tokens:
-            # The lexer omits comments; gaps between tokens retain their exact spans.
-            if token.offset > previous_end:
-                spans.append(
-                    SourceEmphasis(
-                        previous_end,
-                        token.offset,
-                        rich_color(self.role_colors["comment"]),
-                    )
-                )
+            style = self.TOKEN_STYLES.get(token.kind)
+            if style is None:
+                continue
             width = len(token.raw if token.raw is not None else token.value)
             if token.kind == TokenKind.STRING:
                 width += 2  # The lexer retains string contents without the quotes.
-            previous_end = token.offset + width
-            role = {
-                TokenKind.IDENT: "name",
-                TokenKind.NUMBER: "number",
-                TokenKind.STRING: "string",
-                TokenKind.OP: "operator",
-            }.get(token.kind)
-            if token.kind == TokenKind.IDENT:
-                if token.value in KEYWORDS:
-                    role = "keyword"
-                elif token.value[:1].isupper():
-                    role = "type"
-            if role is None:
-                continue
-            style = rich_color(self.role_colors[role])
             spans.append(SourceEmphasis(token.offset, token.offset + width, style))
         # Diagnostic emphasis must take precedence over lexical colors.
         spans.extend(self._emphasis)
@@ -150,8 +131,6 @@ class SourceEditor(TextArea):
         self._index_styles()
         line = super().get_line(line_index)
         for start, end, style in self._styled_lines.get(line_index, ()):
-            if style == "diagnostic":
-                style = "underline " + rich_color(self.role_colors["diagnostic"])
             line.stylize(style, start, end)
         if self.selected_error is not None:
             offset = sum(

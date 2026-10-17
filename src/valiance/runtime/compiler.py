@@ -115,6 +115,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     DispatchKind,
     VectorExtensionReference,
+    decode_stack_shuffle_spec,
 )
 from valiance.runtime.runtime_values import RuntimeNumber
 from valiance.vtypes.symbols import Symbol
@@ -183,8 +184,10 @@ class _Compiler:
         self.tag_parents: dict[str, str] = {}
         self._temporary_index = 0
         self._borrowed_assignment_nodes: set[int] = set()
+        self._borrowed_void_call_nodes: set[int] = set()
         self._observational_access_nodes: set[int] = set()
         self._assignment_materializations: dict[int, str] = {}
+        self._forwarded_rebinding_nodes: set[int] = set()
         self._literal_storage: str | None = None
 
     def prepare_runtime_type_facts(
@@ -371,8 +374,10 @@ class _Compiler:
     ) -> FunctionCode:
         """Compile a typed function body and its captured runtime metadata."""
         self._borrowed_assignment_nodes = _borrowed_assignment_receivers(body)
+        self._borrowed_void_call_nodes = _typed_void_call_borrows(body)
         self._observational_access_nodes = _observational_access_roots(body)
         self._assignment_materializations = _assignment_materialization_roots(body)
+        self._forwarded_rebinding_nodes = _forwarded_rebinding_roots(body, params)
         for index, node in enumerate(body):
             self.node(node)
             ast = _unwrap(node)
@@ -386,21 +391,47 @@ class _Compiler:
         self.emit(OpCode.RETURN)
         instructions = tuple(self.instructions)
         occurrence_effects: tuple[int | None, ...] = ()
-        if (
-            return_count == 1
-            and len(instructions) == 2
-            and instructions[0].op is OpCode.LOAD_VAR
-            and instructions[0].arg in params
-            and instructions[1].op is OpCode.RETURN
-        ):
-            param_index = params.index(instructions[0].arg)
-            occurrence_effects = (param_index,)
-            instructions = (
-                Instruction(OpCode.LOAD_VAR_FORWARD, instructions[0].arg),
-                instructions[1],
-            )
-        elif return_count is not None:
+        if return_count is not None:
             occurrence_effects = tuple(None for _ in range(return_count))
+        # Forward parameter occurrences that are direct return values rather
+        # than manufacturing duplicates. This includes the implicit "$self"
+        # appended by @self and earlier positions in a (State, Value) result.
+        # A consecutive suffix of simple stack producers is unambiguous even
+        # if earlier instructions computed other results; do not guess about
+        # values consumed or rearranged by calls or stack shuffles.
+        if instructions and instructions[-1].op is OpCode.RETURN:
+            suffix_start = len(instructions) - 1
+            while suffix_start > 0 and instructions[suffix_start - 1].op in {
+                OpCode.LOAD_VAR, OpCode.PUSH_CONST,
+            }:
+                suffix_start -= 1
+            output_slots = (
+                len(instructions) - 1 - suffix_start
+                if return_count is None
+                else min(return_count, len(instructions) - 1 - suffix_start)
+            )
+            start = len(instructions) - 1 - output_slots
+            forwarded = set()
+            updated = list(instructions)
+            for position in range(start, len(instructions) - 1):
+                instruction = instructions[position]
+                if instruction.op is not OpCode.LOAD_VAR:
+                    continue
+                parameter_name = instruction.arg
+                if parameter_name not in params or parameter_name in forwarded:
+                    continue
+                # Do not forward a parameter that is also needed by a later
+                # return output; that case still needs an explicit duplicate.
+                if any(
+                    later.op is OpCode.LOAD_VAR and later.arg == parameter_name
+                    for later in instructions[position + 1:-1]
+                ):
+                    continue
+                forwarded.add(parameter_name)
+                updated[position] = Instruction(OpCode.LOAD_VAR_FORWARD, parameter_name)
+            instructions = tuple(updated)
+            if len(instructions) == 2 and return_count == 1 and forwarded:
+                occurrence_effects = (params.index(next(iter(forwarded))),)
         return FunctionCode(
             instructions=instructions,
             params=params,
@@ -529,7 +560,9 @@ class _Compiler:
             case GetVariableNode(name):
                 source_name = _symbol_runtime_name(name)
                 destination_name = self._assignment_materializations.get(id(source_node))
-                if destination_name is not None:
+                if id(source_node) in self._forwarded_rebinding_nodes:
+                    self.emit(OpCode.LOAD_VAR_FORWARD, source_name)
+                elif destination_name is not None:
                     self.emit(
                         OpCode.LOAD_VAR_MATERIALIZE,
                         ("storage", source_name, destination_name),
@@ -543,6 +576,7 @@ class _Compiler:
                     opcode = (
                         OpCode.LOAD_VAR_BORROW
                         if id(source_node) in self._borrowed_assignment_nodes
+                        or id(source_node) in self._borrowed_void_call_nodes
                         or id(source_node) in self._observational_access_nodes
                         else OpCode.LOAD_VAR
                     )
@@ -2006,6 +2040,198 @@ def _single_element_function_arity(ast: FunctionNode) -> int | None:
     return next(iter(arities)) if len(arities) == 1 else None
 
 
+
+def _typed_void_call_borrows(
+    body: tuple[ASTNode | TypedNode, ...],
+) -> set[int]:
+    """Follow checked stack effects to identify temporary named call inputs.
+
+    Only a named, nominal value flowing unchanged into an analyser-resolved,
+    non-vectorised void call can be borrowed. The source need not be adjacent
+    to the call: shuffles and intermediate values are accounted for using the
+    selected overload's input/output stack effect. Unknown constructs invalidate
+    provenance rather than making an unverified borrowing assumption.
+
+    This is intentionally a *provenance* pass, not another type checker: every
+    call's arity and output count come from the typed overload, never from
+    source-token layout or a guessed function signature.
+    """
+    borrowed: set[int] = set()
+    # Each entry represents one stack occurrence, not necessarily an owner.
+    # None denotes a value whose source is not an unchanged named load.
+    stack: list[ASTNode | TypedNode | None] = []
+
+    def take(count: int) -> list[ASTNode | TypedNode | None]:
+        """Pop checked inputs, treating pre-existing stack values as unknown."""
+        if not count:
+            return []
+        if len(stack) < count:
+            stack[:0] = [None] * (count - len(stack))
+        result = stack[-count:]
+        del stack[-count:]
+        return result
+
+    def invalidate_binding(name: str) -> None:
+        """A borrow must not outlive the binding supplying its owner."""
+        for index, source in enumerate(stack):
+            if (source is not None
+                    and isinstance(_unwrap(source), GetVariableNode)
+                    and _symbol_runtime_name(_unwrap(source).name) == name):
+                stack[index] = None
+
+    for candidate in body:
+        ast = _unwrap(candidate)
+        if isinstance(ast, GetVariableNode):
+            stack.append(
+                candidate
+                if isinstance(candidate, TypedNode)
+                and candidate.typ is not None
+                and isinstance(normalize(candidate.typ), NominalType)
+                else None
+            )
+        elif isinstance(ast, (NumberLiteralNode, StringLiteralNode)):
+            stack.append(None)
+        elif isinstance(ast, SetVariableNode):
+            take(1)
+            invalidate_binding(_symbol_runtime_name(ast.name))
+        elif isinstance(ast, SetVariablesNode):
+            take(len(ast.targets))
+            for target in ast.targets:
+                invalidate_binding(_symbol_runtime_name(target.name))
+        elif isinstance(ast, PopNNode):
+            if isinstance(ast.count, int):
+                take(ast.count)
+            else:
+                stack.clear()
+        elif isinstance(ast, StackShuffleNode):
+            mode, prestack, poststack, _ = decode_stack_shuffle_spec(
+                (
+                    ast.mode.text,
+                    tuple(None if label is None else label.text for label in ast.prestack),
+                    tuple(label.text for label in ast.poststack),
+                ),
+                CompileError,
+            )
+            inputs = take(len(prestack))
+            sources = {
+                label: value for label, value in zip(prestack, inputs)
+                if label is not None
+            }
+            # Copying a nonduplicable occurrence must still go through the
+            # normal duplication checks; never infer a borrow from its copy.
+            stack.extend(sources.get(label) if mode == "move" else None
+                         for label in poststack)
+        elif isinstance(candidate, TypedElementNode) and isinstance(ast, ElementNode):
+            overload = candidate.overload
+            if overload is None or ast.modifier_args:
+                stack.clear()
+                continue
+            args = take(len(overload.params))
+            if not overload.vectorised and not overload.actual_returns:
+                named = [
+                    source for source in args
+                    if source is not None
+                    and isinstance(_unwrap(source), GetVariableNode)
+                ]
+                names = [
+                    _symbol_runtime_name(_unwrap(source).name)
+                    for source in named
+                ]
+                # A single call must not obtain two borrowed occurrences of
+                # one @nodup owner. The runtime also forbids borrowed values
+                # from escaping through independent owned outputs or storage.
+                if len(names) == len(set(names)):
+                    borrowed.update(id(source) for source in named)
+            # 'swap' permutes existing stack occurrences rather than producing
+            # new ones. Restrict this to the actual built-in, not an overload
+            # from another module with the same spelling.
+            if (ast.name == Symbol("swap") and len(args) == 2
+                    and _is_builtin_swap(overload.overload)):
+                stack.extend((args[1], args[0]))
+            else:
+                stack.extend(None for _ in overload.actual_returns)
+        elif isinstance(ast, (ListLiteralNode, TupleLiteralNode, RecordLiteralNode,
+                              DictLiteralNode, StringInterpolationNode, FunctionNode)):
+            # The values produced by nested expressions are not unchanged
+            # references to outer variables.
+            stack.append(None)
+        elif isinstance(ast, DefineNode):
+            pass
+        else:
+            # An unmodelled effect, branch or nested control flow can change
+            # the stack: do not carry speculative ownership provenance over it.
+            stack.clear()
+    return borrowed
+
+
+def _is_builtin_swap(overload: Overload) -> bool:
+    """Distinguish the intrinsic permutation from a user-defined 'swap'."""
+    return any(
+        element.name == Symbol("swap")
+        and any(candidate == overload for candidate in element.overloads)
+        for element in BUILTIN_ELEMENTS
+    )
+
+
+def _forwarded_rebinding_roots(
+    body: tuple[ASTNode | TypedNode, ...],
+    params: tuple[str, ...],
+) -> set[int]:
+    """Transfer a named state into a call whose result replaces that name.
+
+    In ``$state = $state transform ...``, loading the original state is a move:
+    its previous binding is discarded and the returned state becomes the new
+    binding. A temporary duplicate would incorrectly reject @nodup objects.
+    Only infer this for a statically checked, single-result call with the
+    same receiver/result type, and a simple direct argument sequence.
+    """
+    forwarded: set[int] = set()
+    locals_seen = set(params)
+    for index, item in enumerate(body):
+        ast = _unwrap(item)
+        if isinstance(ast, SetVariableNode):
+            locals_seen.add(_symbol_runtime_name(ast.name))
+            continue
+        if not isinstance(ast, GetVariableNode) or not isinstance(item, TypedNode):
+            continue
+        name = _symbol_runtime_name(ast.name)
+        if name not in locals_seen:
+            continue
+        cursor = index + 1
+        while cursor < len(body) and isinstance(
+            _unwrap(body[cursor]), (NumberLiteralNode, StringLiteralNode, GetVariableNode)
+        ):
+            cursor += 1
+        if cursor + 1 >= len(body):
+            continue
+        call = body[cursor]
+        assignment = _unwrap(body[cursor + 1])
+        if (
+            not isinstance(call, TypedElementNode)
+            or call.overload is None
+            or not isinstance(_unwrap(call), ElementNode)
+            or not isinstance(assignment, SetVariableNode)
+            or _symbol_runtime_name(assignment.name) != name
+        ):
+            continue
+        overload = call.overload
+        supplied = cursor - index
+        if (
+            not overload.vectorised
+            and len(overload.params) == supplied
+            and len(overload.returns) == 1
+            and normalize(overload.params[0]) == normalize(item.typ)
+            and normalize(overload.returns[0]) == normalize(item.typ)
+            and not any(
+                isinstance(_unwrap(entry), GetVariableNode)
+                and _symbol_runtime_name(_unwrap(entry).name) == name
+                for entry in body[index + 1:cursor]
+            )
+        ):
+            forwarded.add(id(item))
+    return forwarded
+
+
 def _assignment_materialization_roots(
     body: tuple[ASTNode | TypedNode, ...],
 ) -> dict[int, str]:
@@ -2073,6 +2299,36 @@ def _borrowed_assignment_receivers(
                     break
             if isinstance(previous_ast, SetVariableNode):
                 break
+        if not saw_container_set:
+            continue
+        # An augmented field update first observes the previous field value
+        # (e.g. $self.count := + 1). Borrow only that particular projection,
+        # rather than all field reads earlier in the method: unrelated reads
+        # may intentionally materialise independent values.
+        boundary = max(
+            (
+                position for position in range(index)
+                if isinstance(_unwrap(body[position]), SetVariableNode)
+            ),
+            default=-1,
+        )
+        updated_fields = {
+            _unwrap(body[position]).name
+            for position in range(boundary + 1, index)
+            if isinstance(_unwrap(body[position]), FieldSetNode)
+            and _unwrap(body[position]).location == target_location
+        }
+        for read_index in range(boundary + 1, index - 1):
+            read = body[read_index]
+            read_ast = _unwrap(read)
+            field_ast = _unwrap(body[read_index + 1])
+            if (
+                isinstance(read_ast, GetVariableNode)
+                and read_ast.name == target_name
+                and isinstance(field_ast, FieldAccessNode)
+                and field_ast.name in updated_fields
+            ):
+                borrowed.add(id(read))
     return borrowed
 
 

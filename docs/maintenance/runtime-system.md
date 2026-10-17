@@ -727,12 +727,27 @@ Most opcodes fall into a few families.
 
 These move values while applying retain/release rules. `LOAD_VAR_BORROW` is
 emitted for the root variable of a field or indexed assignment that stores back
-to the same binding, and for variable-rooted access chains consumed directly by
-`print` or `println`. It places a non-owning access wrapper on the stack. Field
-reads preserve that wrapper without retaining or releasing the object receiver,
-and the observational built-in unwraps it immediately before formatting. The
-wrapper cannot enter persistent storage through this lowering, while ordinary
-reads continue to use `LOAD_VAR` and materialise an additional occurrence. A
+to the same binding, for variable-rooted access chains consumed directly by
+`print` or `println`, and for named nominal inputs to a **checked, non-vectorised
+call with no outputs**. Borrow selection follows the analyser's selected overload
+and the input/output stack effects, tracking unchanged named inputs through
+stack permutations such as `swap` and move shuffles. It also recognises explicit
+call arguments already lowered to the typed stack. This lets non-duplicable
+resources be used repeatedly without making a second owned occurrence. Calls
+returning state are *not* eligible. Unknown or unmodelled stack effects clear
+provenance instead of guessing a borrow; rebinding a named owner invalidates
+older borrow candidates. A call's signature itself is never assumed unknown
+merely because the callee is indirect.
+
+`LOAD_VAR_BORROW` places a non-owning access
+wrapper on the stack. Field reads preserve that wrapper without retaining or
+releasing the object receiver, and observational built-ins unwrap it before
+formatting. If a callee explicitly materialises that borrowed parameter into
+another occurrence, duplication policy is checked on the underlying value:
+ordinary duplicable values can be retained, but `@nodup` values still raise a
+`DuplicationFault`. The borrowed wrapper itself must not escape into persistent
+storage. Ordinary reads continue to use `LOAD_VAR` and materialise an
+additional occurrence. A
 direct variable-to-variable assignment uses `LOAD_VAR_MATERIALIZE` with both
 source and destination names. Literal construction uses the same instruction
 with aggregate context for list and tuple elements, record fields, and dictionary
@@ -785,15 +800,22 @@ chains are just consecutive field operations; each operation keeps its own flag.
 `FunctionCode.occurrence_effects` records the input provenance of each selected
 return. An integer identifies the parameter whose occurrence is forwarded;
 `None` means the output is fresh or its provenance cannot yet be proven. The
-compiler currently proves the exact one-parameter, one-result forwarding form
-and lowers its terminal parameter read to `LOAD_VAR_FORWARD`. That opcode removes
-the parameter from the completed frame's locals and places the same occurrence
-on the result stack, so frame cleanup cannot release it or force a duplicate.
-Generic identity functions therefore preserve unduplicatable values without a
-special type rule. Other bodies remain conservative and continue through the
-ordinary runtime duplication boundaries when they store, capture, or multiply
-values. Occurrence effects are serialized as part of the bytecode function
-contract and are available to prepared-call optimization.
+compiler proves the exact one-parameter, one-result identity occurrence
+effect, and additionally forwards direct parameter reads in a terminal suffix
+of simple return-value producers. The latter supports `@self` methods with
+preceding work and `(State, Value)` returns where the state is below the value.
+`LOAD_VAR_FORWARD` removes its source binding and places that same occurrence
+on the result stack, avoiding a duplication or intermediate destructor call.
+Explicit named rebinding of the form `$state = $state transform ...` also
+forwards the source when a statically checked single-result call returns the
+same receiver type. At module scope the VM removes the forwarded binding from
+both its local and global maps before the new binding is installed. Forwarding
+is not an implicit update to an immutable named variable: non-rebinding calls
+are still separate operations and must observe ordinary occurrence rules.
+Other bodies remain conservative and continue through ordinary duplication
+boundaries when they store, capture, or multiply values. Occurrence effects
+are serialized as part of the bytecode function contract and remain available
+to prepared-call optimization.
 
 ### Calls
 
@@ -1022,14 +1044,25 @@ The duplication implementation maintains these invariants:
    decides whether a language occurrence may be created.
 2. `_duplicate_occurrence(...)` preflights the complete nested value before any
    reference count changes, so failure cannot partially retain an aggregate.
-3. `LOAD_VAR_BORROW` never enters persistent storage.
+3. A `LOAD_VAR_BORROW` wrapper is not an owned occurrence; promoting it to
+   independently stored state must explicitly pass the underlying value's
+   duplication policy. Borrowed `@mustcall` receivers satisfy their required
+   operation only after a normally returning call.
 4. `LOAD_VAR_MATERIALIZE` always carries an operation, source, and destination;
    obsolete unstructured payloads are not accepted by the current bytecode.
 5. `LOAD_VAR_FORWARD` removes its source parameter from frame locals before the
    result escapes the frame.
 6. Serialized occurrence effects must match the declared return count and may
    reference only valid parameter indexes.
-7. Stack-shuffle duplication is counted per labelled input and tested across
+7. Builtins retaining an input in a returned output do not thereby produce a
+   second language occurrence: `swap` and other permutations transfer consumed
+   occurrences. Extra output occurrences remain subject to `@nodup` checks,
+   and duplication checks happen before any reference-count increments.
+8. Borrowed scalar field observations need no wrapper around their already
+   ownership-trivial values. An augmented field update may borrow its input
+   object's field while computing the replacement and forward the resulting
+   `@self` receiver.
+9. Stack-shuffle duplication is counted per labelled input and tested across
    zero through multiple requested outputs for both `copy` and `move`.
 
 `ObjectRuntimeType` may describe:
