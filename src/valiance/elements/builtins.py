@@ -270,6 +270,22 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The values returned by the selected callable overload.",
         category="Functions",
     ),
+    "cArr": element_documentation(
+        "Validate dimensions and convert a nested numeric list into a contiguous C array.",
+        parameters=(
+            ("values", "A finite list, nested to the declared depth."),
+            ("shape", "Non-empty list or tuple of non-negative integer dimensions."),
+        ),
+        returns="A flat FFI buffer, `&int+` for Int or `&double+` for Real by default.",
+        notes=(
+            "`cArr[&short]` or another supported FFI scalar target selects the C "
+            "element type. Panics with ShapeFault for mismatched or ragged "
+            "dimensions, and RangeFault for an unrepresentable scalar. "
+            "The C ABI remains a flat pointer, not an int**."
+        ),
+        examples=(("[[1, 2], [3, 4]] {2, 2} cArr", "&int+ buffer [1, 2, 3, 4]"),),
+        category="Collections",
+    ),
     "dip": element_documentation(
         "Call a function beneath one temporarily held stack value.",
         parameters=(
@@ -315,22 +331,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The filtered list.",
         category="Lists",
-    ),
-    "cArr": element_documentation(
-        "Validate dimensions and convert a nested numeric list into a contiguous C array.",
-        parameters=(
-            ("values", "A finite list, nested to the declared depth."),
-            ("shape", "Non-empty list or tuple of non-negative integer dimensions."),
-        ),
-        returns="A flat FFI buffer, `&int+` for Int or `&double+` for Real by default.",
-        notes=(
-            "`cArr[&short]` or another supported FFI scalar target selects the C "
-            "element type. Panics with ShapeFault for mismatched or ragged "
-            "dimensions, and RangeFault for an unrepresentable scalar. "
-            "The C ABI remains a flat pointer, not an int**."
-        ),
-        examples=(("[[1, 2], [3, 4]] {2, 2} cArr", "&int+ buffer [1, 2, 3, 4]"),),
-        category="Collections",
     ),
     "first": element_documentation(
         "Return the first item of a non-empty list or string.",
