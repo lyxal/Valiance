@@ -271,6 +271,25 @@ class _ImportDeclarations:
             runtime_name = body[-1].name
             if not runtime_name.namespace or self.env.overloads_for(runtime_name):
                 continue
+            # Imported stdlib object methods may call a native element in their
+            # body. Restore its *actual* signature, rather than synthesizing a
+            # receiver-shaped placeholder from the friendly method's signature.
+            if len(runtime_name.namespace) == 2 and runtime_name.namespace[0] == 'std':
+                from valiance.elements.stdlib_native import _native_functions, _runtime_element
+                native = next((
+                    fn for fn in (_native_functions(runtime_name.namespace[1]) or ())
+                    if fn.name.text == runtime_name.text
+                ), None)
+                if native is not None:
+                    element = _runtime_element(runtime_name.namespace[1], native)
+                    for overload in element.overloads:
+                        if native.owner is not None and native.owner.text == owner.text:
+                            overload = replace(
+                                overload,
+                                params=(T.N(owner), *overload.params[1:]),
+                            )
+                        self.env.define_overload(element.name, overload)
+                    continue
             params = tuple(
                 param.typ or T.Any for param in definition.function.params or ()
             )
@@ -292,6 +311,18 @@ class _ImportDeclarations:
         kind = node.kind.text
         if kind == "trait":
             self._define_trait_shape(obj.name, node)
+            return
+        if kind == "enum":
+            value_type = T.V(node.generics[0].text) if node.generics else None
+            members = tuple(
+                T.EnumMemberDefinition(
+                    Symbol(member.name.text, (*obj.name.namespace, obj.name.text)),
+                    value_type,
+                    bool(member.value),
+                )
+                for member in node.enum_members
+            )
+            self.env.define_enum(obj.name, members, value_type=value_type)
             return
 
         if kind != "object" or node.target is not None:

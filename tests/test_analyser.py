@@ -5266,7 +5266,7 @@ define f(value: #left #right Number) -> Number => $value
             ),
         )
 
-    def test_multiple_constructed_like_tags_propagate_through_generic_flow(self):
+    def test_only_constructed_tags_propagate_through_generic_flow(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.add_unit_tag("km")
@@ -5282,7 +5282,7 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(len(branches), 1)
         self.assertEqual(
             next(iter(branches)).stack,
-            TypeStack((Tagged(Number, "infinite", "km"),)),
+            TypeStack((Tagged(Number, "infinite"),)),
         )
 
     def test_unit_tags_do_not_satisfy_untagged_concrete_parameters(self):

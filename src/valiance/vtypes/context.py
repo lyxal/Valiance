@@ -184,8 +184,11 @@ class Context:
         return self.data_tags.get(tag_symbol(name), TagKind.COMPUTED)
 
     def is_constructed_like_tag(self, name: str | Symbol) -> bool:
-        """Return whether a tag should stick through ordinary operations."""
-        return self.tag_kind(name) in {TagKind.CONSTRUCTED, TagKind.UNIT}
+        """Return whether a constructed tag sticks through ordinary operations.
+
+        Unit tags constrain inputs but require explicit output contracts.
+        """
+        return self.tag_kind(name) is TagKind.CONSTRUCTED
 
     def tag_parent(self, name: str | Symbol) -> Symbol | None:
         """Return the computed parent of a variant tag, if declared."""

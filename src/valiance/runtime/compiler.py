@@ -432,6 +432,41 @@ class _Compiler:
             instructions = tuple(updated)
             if len(instructions) == 2 and return_count == 1 and forwarded:
                 occurrence_effects = (params.index(next(iter(forwarded))),)
+        # A parameter loaded as the last value producer and then only moved
+        # through stack permutations into the return is transferred, not
+        # duplicated. This covers `(RemainingReader, ExtractedValue)` methods
+        # which finish with `$self swap` after computing the extracted value.
+        if instructions and instructions[-1].op is OpCode.RETURN:
+            updated = list(instructions)
+            for position, instruction in enumerate(instructions[:-1]):
+                if instruction.op is not OpCode.LOAD_VAR or instruction.arg not in params:
+                    continue
+                tail = instructions[position + 1:-1]
+                if not (
+                    all(
+                        later.op is OpCode.STACK_SHUFFLE
+                        and later.arg[0] == 'move'
+                        for later in tail
+                    )
+                    or (
+                        len(tail) % 2 == 0
+                        and all(
+                            tail[i].op is OpCode.LOAD_ELEMENT
+                            and tail[i].arg == 'swap'
+                            and tail[i + 1].op is OpCode.CALL
+                            for i in range(0, len(tail), 2)
+                        )
+                    )
+                ):
+                    continue
+                if any(
+                    earlier.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_FORWARD}
+                    and earlier.arg == instruction.arg
+                    for earlier in instructions[:position]
+                ):
+                    continue
+                updated[position] = Instruction(OpCode.LOAD_VAR_FORWARD, instruction.arg)
+            instructions = tuple(updated)
         return FunctionCode(
             instructions=instructions,
             params=params,
@@ -1043,14 +1078,22 @@ class _Compiler:
     def expression(self, nodes: tuple[ASTNode | TypedNode, ...]) -> None:
         """Lower an expression body with assignment-receiver borrow metadata."""
         previous = self._borrowed_assignment_nodes
+        previous_observed = self._observational_access_nodes
         self._borrowed_assignment_nodes = previous | _borrowed_assignment_receivers(
             nodes
+        )
+        # Explicit-call arguments are nested expressions, not siblings in the
+        # outer typed function body. Borrow their field-projection receivers
+        # just as we do for projections in the ordinary stack body.
+        self._observational_access_nodes = (
+            previous_observed | _observational_access_roots(nodes)
         )
         try:
             for node in nodes:
                 self.node(node)
         finally:
             self._borrowed_assignment_nodes = previous
+            self._observational_access_nodes = previous_observed
 
     def collection(
         self,
@@ -2259,6 +2302,17 @@ def _observational_access_roots(
         cursor = index + 1
         while cursor < len(body) and isinstance(_unwrap(body[cursor]), FieldAccessNode):
             cursor += 1
+        # Object-method $self projections are observational: consuming the
+        # receiver here would duplicate or prematurely destroy @nodup state.
+        # Other receivers retain existing ownership semantics; broadening this
+        # to arbitrary variables changes user-defined method behaviour.
+        if (
+            cursor > index + 1
+            and ast.name.text == "self"
+            and _unwrap(body[index + 1]).name.text == "handle"
+        ):
+            observed.add(id(candidate))
+            continue
         if cursor >= len(body):
             continue
         consumer = _unwrap(body[cursor])

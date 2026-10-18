@@ -2656,13 +2656,11 @@ tag #<name> as <category>
 - A constructed-tagged value can otherwise be used where the untagged base type is expected. Unit tags are the exception described below.
 
 ## 17.2. Unit Tags
-- One might think that constructed tags would be helpful for attaching units to data. For example, you might have `km` as a unit you wish to attach to a number. By all means, `km` should stick to a number if it is passed into an operation - it's not information that should be easily lost.
-- However, this can lead to situations where a unit number is used in a situation where it doesn't make semantic sense.
-- For example, indexing a list by a distance doesn't really make that much sense.
-- Unit tags are constructed tags with an extra rule: a unit-tagged value cannot be passed where that unit tag is not expected.
-- Operations that consume a plain scalar, including collection indexing, therefore reject unit-tagged values. The unit must be explicitly removed with `#-unit` or `#-unit` when discarding it is intentional.
-- A matching unit-tag overlay is an explicit permission for an otherwise plain implementation to consume that unit. Only the overlay's own unit is erased for underlying overload selection; unrelated units remain protected.
-- Once an operation is permitted to consume a unit-tagged value, the unit follows the same sticky rank/depth rules as any constructed tag unless explicitly removed.
+- Unit tags represent values that must not be silently used as ordinary scalars, such as distances, angles, and bytes.
+- A unit-tagged value cannot be passed to an operation that does not explicitly accept that unit. In particular, scalar operations and collection indexing reject unexpected units. The tag can be explicitly removed with `#-unit` when untyped use is intentional.
+- A matching unit-tag overlay permits the underlying operation to consume that unit. Only the overlay's own unit is erased for underlying overload selection; unrelated units remain protected.
+- **Unlike constructed tags, unit tags do not propagate automatically to operation outputs.** An operation or overlay must explicitly declare the unit tag in its return type to preserve or produce it; otherwise the result is untagged. This avoids incorrectly assuming that arithmetic preserves units or that byte arithmetic always produces another byte.
+- Applying a unit tag validates the value when that tag has a validator. Explicit tagged return contracts must honour that validator and the tag's normal runtime evidence requirements.
 
 ## 17.3. Computed Tags
 - Some properties of data are more fragile than constructed tags. That is, they may be dependent on the computed structure of the data. For example, the sortedness of a list is computed from whether it is ordered, rather than solely when it is constructed. Additionally, the sortedness of a list is not sticky - whereas doing most things to an infinite list doesn't make that list finite, doing most things to a sorted list has a good chance of breaking the sortedness.
@@ -2808,7 +2806,7 @@ end
 
 - Absence of a constructed tag will remove that tag.
 - Every overlay must require its attached tag positively on at least one input. An overlay can control only that tag in its return contract; it cannot add, remove, or preserve foreign tags.
-- A constructed or unit overlay that preserves its tag must obey the rank/depth rule from 17.1. Unsafe rank changes are rejected during analysis.
+- A constructed overlay that preserves its tag must obey the rank/depth rule from 17.1. Unit overlays preserve or produce units only when the return contract explicitly names them; they do not inherit automatic constructed-tag flow.
 - Overlay return contracts are reified on the actual runtime result, including user functions that suspend for nested calls and bytecode that has been serialized and restored.
 - Constructed tags already flow through ordinary operations. Constructed overlays are therefore mainly useful for explicitly removing the attached tag, documenting a specialised rank contract, or granting a unit-tagged value permission to use an otherwise untagged implementation.
 
@@ -3400,7 +3398,7 @@ and implements `Fault`:
 - General and data faults: `RuntimeFault`, `ValueFault`, `RangeFault`,
   `ParseFault`, `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`,
   `SliceFault`, and `StateFault`.
-- System and concurrency faults: `IOFault`, `NotFoundFault`,
+- System and concurrency faults: `IOFault`, `UnexpectedEOFFault`, `NotFoundFault`,
   `AlreadyExistsFault`, `PermissionFault`, `ClosedFault`, `TimeoutFault`, and
   `CancelledFault`.
 - Language runtime faults: `UnwrappedNoneFault`, `UnwrappedResultFault`,

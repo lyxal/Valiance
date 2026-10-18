@@ -612,8 +612,8 @@ def _apply_data_tag_flow(
 ) -> tuple[T.Type, ...]:
     """Apply computed and constructed data-tag flow for one chosen signature.
 
-    Computed tags survive only when the return contract names them. Constructed
-    and unit tags are sticky: every guaranteed constructed-like input tag is
+    Computed and unit tags survive only when the return contract names them.
+    Constructed tags are sticky: every guaranteed constructed input tag is
     projected onto each output whose rank is high enough. An explicit absent
     fact, an exact tag-set return, or omission from the owning tag overlay is an
     intentional removal and suppresses that automatic projection.
@@ -665,7 +665,7 @@ def _guaranteed_constructed_tag_sources(
     typ: T.Type,
     ctx: T.Context,
 ) -> dict[str, int]:
-    """Find constructed-like tags guaranteed to occur within one value type."""
+    """Find constructed tags guaranteed to occur within one value type."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         rank = _type_rank(typ.inner)

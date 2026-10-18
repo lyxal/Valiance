@@ -1,0 +1,2 @@
+#? Single-action file helpers: open, perform the operation, and close.
+public import {std.file_do.[readText, readLines, readBytes, writeText, writeLines, writeBytes, appendText, appendLines, appendBytes]}

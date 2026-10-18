@@ -1331,7 +1331,8 @@ The analyser applies data tag flow after overload application:
 - top-level tags in an explicit function return type are guarantees made by the
   function; body checking validates the underlying value shape and codegen
   applies the declared tags to the returned runtime value
-- constructed/unit tags propagate according to rank/depth rules
+- constructed tags propagate according to rank/depth rules
+- unit tags constrain argument admission but do not propagate without an explicit return contract
 - variant tags add their parent computed tag
 - disjoint tags replace incompatible existing tags
 

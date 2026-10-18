@@ -14,6 +14,7 @@ import valiance.vtypes as T
 from valiance.elements.builtins import BuiltinElement, BuiltinOverload, RuntimeContext
 from valiance.elements.documentation import ElementDocumentation
 from valiance.asts import (
+    ASTNode,
     DefineNode,
     ElementNode,
     FunctionNode,
@@ -40,6 +41,10 @@ class NativeFunction:
     param_names: tuple[Symbol, ...] = ()
     documentation: ElementDocumentation | None = None
     owner: Symbol | None = None
+    warning: str | None = None
+    exported: bool = True
+    element_tags: frozenset[T.ElementTag] = frozenset()
+    param_defaults: tuple[tuple[ASTNode, ...] | None, ...] = ()
 
 
 def native_function(
@@ -51,6 +56,10 @@ def native_function(
     param_names: tuple[str, ...] = (),
     documentation: ElementDocumentation | None = None,
     owner: str | None = None,
+    warning: str | None = None,
+    exported: bool = True,
+    element_tags: tuple[T.ElementTag, ...] = (),
+    param_defaults: tuple[tuple[ASTNode, ...] | None, ...] = (),
 ) -> NativeFunction:
     """Declare one importable Python-backed stdlib function."""
     return NativeFunction(
@@ -61,6 +70,10 @@ def native_function(
         tuple(Symbol(item) for item in param_names),
         documentation,
         None if owner is None else Symbol(owner),
+        warning,
+        exported,
+        frozenset(element_tags),
+        param_defaults,
     )
 
 
@@ -72,6 +85,10 @@ def stdlib_element(
     param_names: tuple[str, ...] = (),
     documentation: ElementDocumentation | None = None,
     owner: str | None = None,
+    warning: str | None = None,
+    exported: bool = True,
+    element_tags: tuple[T.ElementTag, ...] = (),
+    param_defaults: tuple[tuple[ASTNode, ...] | None, ...] = (),
 ) -> Callable[[NativeImpl], NativeImpl]:
     """Decorate a Python implementation as an importable stdlib function."""
 
@@ -85,6 +102,10 @@ def stdlib_element(
             param_names=param_names,
             documentation=documentation,
             owner=owner,
+            warning=warning,
+            exported=exported,
+            element_tags=element_tags,
+            param_defaults=param_defaults,
         )
         return fn
 
@@ -147,17 +168,23 @@ def _friendly_definition(
         *(GetVariableNode(name) for name in param_names),
         ElementNode(runtime_name),
     )
+    from valiance.asts import AnnotationNode, StringLiteralNode
+    annotations = (
+        (AnnotationNode(Symbol("warn"), (StringLiteralNode(function.warning),)),)
+        if function.warning is not None else ()
+    )
     return DefineNode(
         function.name,
         FunctionNode(
             params=tuple(
-                FunctionParam(name, typ)
-                for name, typ in zip(param_names, function.params, strict=True)
+                FunctionParam(name, typ, default or ())
+                for name, typ, default in zip(param_names, function.params, _defaults(function), strict=True)
             ),
             body=body,
             returns=function.returns,
         ),
         visibility=Symbol("public"),
+        annotations=annotations,
     )
 
 
@@ -170,7 +197,7 @@ def native_module_exports(module_name: str) -> object | None:
 
     return ModuleExports(
         f"std.{module_name}",
-        tuple(_module_definition(module_name, function) for function in functions),
+        tuple(_module_definition(module_name, function) for function in functions if function.exported),
     )
 
 
@@ -182,6 +209,36 @@ def install_native_stdlib(env: T.Environment, module_name: str) -> T.Environment
         for overload in element.overloads:
             env.define_overload(element.name, overload)
     return env
+
+
+def install_native_default_dependencies(env: T.Environment, definitions: tuple[object, ...]) -> None:
+    """Make imported native defaults evaluate in their defining namespace.
+
+    Qualified native elements referenced by a default are implementation
+    dependencies, not source-level imports. Register only those references;
+    unrelated native elements do not leak into the importing environment.
+    """
+    for definition in definitions:
+        for typed in getattr(definition.typed, 'overloads', ()):
+            overload = typed.overload
+            if not isinstance(overload, T.Overload):
+                continue
+            for default in overload.param_defaults or ():
+                for node in default or ():
+                    if not isinstance(node, ElementNode):
+                        continue
+                    parts = node.name.namespace
+                    if len(parts) < 2 or parts[0] != 'std':
+                        continue
+                    module_name = '.'.join(parts[1:])
+                    if env.overloads_for(node.name):
+                        continue
+                    for native in _native_functions(module_name) or ():
+                        if native.name != Symbol(node.name.text) or native.owner is not None:
+                            continue
+                        element = _runtime_element(module_name, native)
+                        for dependency in element.overloads:
+                            env.define_overload(element.name, dependency)
 
 
 def runtime_stdlib_elements() -> dict[str, BuiltinElement]:
@@ -216,7 +273,7 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
     param_names = _effective_param_names(function)
     runtime_name = Symbol(function.name.text, ("std", module_name))
     identity = _native_implementation_id(module_name, function)
-    overload = T.Overload(params, function.returns, param_names=param_names, implementation_id=identity)
+    overload = T.Overload(params, function.returns, param_names=param_names, param_defaults=_effective_defaults(function), implementation_id=identity, annotation_warning=function.warning, element_tags=function.element_tags)
     applied = T.AppliedOverload(
         overload,
         {},
@@ -237,11 +294,13 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
             identity,
         ),
     )
-    function_type = T.Fn(params, function.returns)
+    function_type = T.Fn(params, function.returns, function.element_tags)
     function_node = FunctionNode(
         params=tuple(
-            FunctionParam(name, typ)
-            for name, typ in zip(param_names, params, strict=True)
+            FunctionParam(name, typ, default or ())
+            for name, typ, default in zip(
+                param_names, params, _effective_defaults(function), strict=True
+            )
         ),
         body=tuple(node.node for node in typed_body),
         returns=function.returns,
@@ -273,12 +332,27 @@ def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinEleme
         (
             BuiltinOverload(
                 T.Overload(_effective_params(function), function.returns,
-                           implementation_id=_native_implementation_id(module_name, function)),
+                           implementation_id=_native_implementation_id(module_name, function),
+                           param_defaults=_effective_defaults(function),
+                           annotation_warning=function.warning, element_tags=function.element_tags),
                 function.implementation,
             ),
         ),
         function.documentation,
     )
+
+
+def _defaults(function: NativeFunction) -> tuple[tuple[ASTNode, ...] | None, ...]:
+    if not function.param_defaults:
+        return (None,) * len(function.params)
+    if len(function.param_defaults) != len(function.params):
+        raise ValueError(f"default count mismatch for native element {function.name}")
+    return function.param_defaults
+
+
+def _effective_defaults(function: NativeFunction) -> tuple[tuple[ASTNode, ...] | None, ...]:
+    defaults = _defaults(function)
+    return defaults if function.owner is None else (None, *defaults)
 
 
 def _effective_params(function: NativeFunction) -> tuple[T.Type, ...]:

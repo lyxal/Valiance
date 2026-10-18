@@ -760,6 +760,39 @@ end
             self.assertEqual(value.value, RuntimeNumber("3"))
             self.assertEqual({tag.name for tag in value.tags}, {"km"})
 
+    def test_unit_overlay_can_consume_unit_without_propagating_it(self):
+        source = """
+tag #km as unit
+#km: + =>
+  (#km Number, Number) -> Number
+end
+1 #km | 2 +
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "Number")
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for executable in (program, loads(dumps(program))):
+                [value] = run(executable)
+                self.assertEqual(value, RuntimeNumber("3"))
+                self.assertNotIsInstance(value, TaggedValue)
+
+    def test_unit_tag_not_carried_through_explicitly_permitted_function(self):
+        source = """
+tag #km as unit
+define measure(value: #km Number) -> Number =>
+  $value #-km
+end
+1 #km | measure
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            [value] = run(compile_program(typed, optimize=optimize))
+            self.assertEqual(value, RuntimeNumber("1"))
+            self.assertNotIsInstance(value, TaggedValue)
+
     def test_unit_overlay_does_not_launder_unrelated_units(self):
         analyser, _ = analyse_source("""
 tag #km as unit

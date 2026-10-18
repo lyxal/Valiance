@@ -11,6 +11,7 @@ from typing import Protocol
 import valiance.vtypes as T
 from valiance.asts import (
     DefineNode,
+    ElementNode,
     FunctionNode,
     FunctionOverloadTyping,
     ImportPath,
@@ -21,7 +22,12 @@ from valiance.asts import (
     TagOverlayNode,
     TypedFunctionNode,
 )
-from valiance.asts.nodes import TypedNode, TypedObjectNode
+from valiance.asts.nodes import (
+    TypedImportedFunctionNode,
+    TypedImportedObjectNode,
+    TypedNode,
+    TypedObjectNode,
+)
 from valiance.vtypes.nodes import VarType, type_var_key
 from valiance.vtypes.relations import _substitute
 from valiance.asts.object_constructors import constructor_definitions
@@ -585,7 +591,8 @@ def import_definitions(
                 selected.extend(
                     _renamed_definition(definition, definition.name)
                     for definition in public
-                    if definition.attached_tag == tag_name
+                    if (definition.attached_tag == tag_name
+                        or definition.name == Symbol(f"#{tag_name.text}"))
                 )
                 continue
             if component.kind is not None:
@@ -626,6 +633,15 @@ def import_objects(
 ) -> tuple[ModuleObject, ...]:
     """Return exported object-like declarations selected by an import spec."""
     public = exports.public_objects()
+    # Constructor signatures are re-analysed at the import site. Preserve
+    # references to enums declared beside the imported object, including
+    # enum-valued defaults, when the provider acquires an import namespace.
+    enum_names = frozenset(
+        obj.name.text for obj in public
+        if isinstance(obj.typed.node, ObjectNode)
+        and obj.typed.node.kind == Symbol("enum")
+    )
+    provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
     by_name = {obj.name: obj for obj in public}
     if spec.components:
         selected: list[ModuleObject] = []
@@ -640,6 +656,8 @@ def import_objects(
                     obj,
                     component.alias or component.name,
                     import_friendly=True,
+                    enum_names=enum_names,
+                    enum_namespace=provider,
                 )
             )
         return tuple(selected)
@@ -651,6 +669,8 @@ def import_objects(
             _namespaced_symbol(obj.name, namespace),
             friendly_prefix=namespace,
             import_friendly=True,
+            enum_names=enum_names,
+            enum_namespace=namespace,
         )
         for obj in public
     )
@@ -689,7 +709,7 @@ def _module_definitions(
     program: list,
     typed: list[TypedNode],
 ) -> tuple[ModuleDefinition, ...]:
-    """Collect the definitions for module during module loading and import resolution."""
+    """Collect local definitions; imported functions remain in the runtime prelude."""
     public_names = {
         node.name
         for node in program
@@ -697,7 +717,10 @@ def _module_definitions(
     }
     result: list[ModuleDefinition] = []
     for typed_node in typed:
-        if not isinstance(typed_node, TypedFunctionNode):
+        if (
+            not isinstance(typed_node, TypedFunctionNode)
+            or isinstance(typed_node, TypedImportedFunctionNode)
+        ):
             continue
         node = typed_node.node
         if not isinstance(node, DefineNode):
@@ -721,7 +744,7 @@ def _module_objects(
     program: list,
     typed: list[TypedNode],
 ) -> tuple[ModuleObject, ...]:
-    """Compute module objects during module loading and import resolution."""
+    """Collect local objects and foreign subjects used by local implementations."""
     local_traits = {
         node.name for node in program
         if isinstance(node, ObjectNode)
@@ -731,6 +754,8 @@ def _module_objects(
     friendly_by_owner: dict[Symbol, list[DefineNode]] = {}
     metadata_by_owner = {}
     for typed_node in typed:
+        if isinstance(typed_node, TypedImportedObjectNode):
+            continue
         node = typed_node.node
         if not isinstance(node, ObjectNode):
             continue
@@ -744,9 +769,19 @@ def _module_objects(
                 if isinstance(typed_node, TypedObjectNode):
                     metadata_by_owner.setdefault(node.name, []).append(typed_node)
 
-
+    # Foreign subjects may acquire locally defined trait implementations.
+    # Retain their declaration as a private implementation witness, but do
+    # not turn unrelated imports into local exported object declarations.
+    implemented_subjects = {
+        node.name
+        for node in program
+        if isinstance(node, ObjectNode) and node.target is not None
+    }
     result: list[ModuleObject] = []
     for typed_node in typed:
+        imported = isinstance(typed_node, TypedImportedObjectNode)
+        if imported and typed_node.node.name not in implemented_subjects:
+            continue
         node = typed_node.node
         if not isinstance(node, ObjectNode):
             continue
@@ -770,7 +805,9 @@ def _module_objects(
             ModuleObject(
                 node.name,
                 typed_node,
-                public=node.visibility == Symbol("public"),
+                public=(
+                    node.visibility == Symbol("public") and not imported
+                ),
                 friendly_definitions=(
                     node.definitions
                     + tuple(friendly_by_owner.get(node.name, ()))
@@ -1111,6 +1148,8 @@ def _renamed_object(
     *,
     friendly_prefix: Symbol | None = None,
     import_friendly: bool = False,
+    enum_names: frozenset[str] = frozenset(),
+    enum_namespace: Symbol | None = None,
 ) -> ModuleObject:
     """Compute renamed object during module loading and import resolution."""
     node = obj.typed.node
@@ -1121,7 +1160,9 @@ def _renamed_object(
         obj.friendly_definitions,
     )
     renamed_constructors = tuple(
-        _renamed_define_node(definition, name)
+        _qualify_constructor_enum_defaults(
+            _renamed_define_node(definition, name), enum_names, enum_namespace,
+        )
         for definition in explicit_constructors
     )
     friendly_definitions = tuple(
@@ -1177,6 +1218,47 @@ def _renamed_object(
     )
 
 
+def _qualify_constructor_enum_defaults(
+    definition: DefineNode,
+    enum_names: frozenset[str],
+    namespace: Symbol | None,
+) -> DefineNode:
+    """Preserve local enum types/defaults when importing an object constructor.
+
+    The source module can write ``Encoding = Encoding.UTF8``, while an
+    importing module sees ``file.Encoding = file.Encoding.UTF8``. Only known
+    sibling enum symbols are qualified; generic and builtin types are left
+    alone.
+    """
+    if namespace is None or not enum_names:
+        return definition
+    params = []
+    for param in definition.function.params or ():
+        typ = param.typ
+        if (isinstance(typ, T.NominalType) and not typ.name.namespace
+                and typ.name.text in enum_names):
+            typ = T.N(Symbol(typ.name.text, (*namespace.namespace, namespace.text)),
+                      *typ.args)
+        default = tuple(
+            replace(
+                item,
+                name=Symbol(item.name.text, (
+                    *namespace.namespace, namespace.text, *item.name.namespace,
+                )),
+            ) if (
+                isinstance(item, ElementNode)
+                and item.name.namespace
+                and item.name.namespace[0] in enum_names
+            ) else item
+            for item in param.default
+        )
+        params.append(replace(param, typ=typ, default=default))
+    return replace(
+        definition,
+        function=replace(definition.function, params=tuple(params)),
+    )
+
+
 def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
     """Compute renamed define node during module loading and import resolution."""
     return DefineNode(
@@ -1216,7 +1298,8 @@ def _renamed_friendly_definitions(
     return tuple(
         _renamed_define_node(
             definition,
-            _namespaced_symbol(definition.name, prefix),
+            (definition.name if definition.name.text.startswith('~')
+             else _namespaced_symbol(definition.name, prefix)),
         )
         for definition in definitions
     )

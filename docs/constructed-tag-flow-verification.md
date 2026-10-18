@@ -5,7 +5,7 @@ with `tag #name as constructed` participates in the same flow algorithm;
 `#infinite` is only one example.
 
 For every chosen operation overload, all argument positions are inspected. Each
-guaranteed constructed-like input tag is projected onto every output whose rank
+guaranteed constructed input tag is projected onto every output whose rank
 is at least the tagged input's effective rank. The algorithm accepts an
 arbitrary fixed argument tuple and an arbitrary fixed return tuple, so it is not
 limited to unary or binary elements.
@@ -42,8 +42,9 @@ constructed tag.
   optimized code, and deserialized bytecode use the same return contract.
 - A niladic function has no input value from which a tag can flow. It can still
   construct or explicitly declare a tagged result.
-- Unit tags are constructed-like after an operation explicitly accepts the
-  unit; their stricter parameter-admission rule still applies.
+- Unit tags require explicit permission at the input boundary and are **not**
+  automatically projected onto outputs. Explicit unit return contracts may
+  retain or produce a unit; ordinary constructed tags remain sticky.
 
 Dynamic calls also carry recursive call-site tag contracts. This matters when a
 user function shadows a built-in name or another call cannot be lowered to a
@@ -60,7 +61,7 @@ Automatic constructed flow is suppressed only by one of these explicit rules:
 - the tag's own overlay omits it from that overlay's return contract;
 - the value is explicitly untagged with `#-tag` or `#-tag`.
 
-Computed tags remain non-sticky.
+Computed and unit tags remain non-sticky.
 
 ## Coverage
 

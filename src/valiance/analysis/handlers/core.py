@@ -1191,6 +1191,25 @@ def _import_node(
         if conflict is not None:
             self._diagnose(conflict, node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+        # Native helpers used from imported stdlib object bodies are not part
+        # of ordinary source-level imports. Install their real overloads before
+        # those bodies are analysed; source wrappers can finish in `$self` and
+        # therefore cannot be discovered from their final AST node alone.
+        if len(resolved_spec.path.parts) == 2 and resolved_spec.path.parts[0] == 'std':
+            from valiance.elements.stdlib_native import _native_functions, _runtime_element
+            module_name = resolved_spec.path.parts[1]
+            for native in _native_functions(module_name) or ():
+                if native.owner is not None:
+                    continue
+                element = _runtime_element(module_name, native)
+                if not self.env.overloads_for(element.name):
+                    for overload in element.overloads:
+                        self.env.define_overload(element.name, overload)
+        # Imported native defaults retain references to private, fully
+        # qualified implementation helpers. Resolve those in their declaring
+        # module, not in the caller's lexical namespace.
+        from valiance.elements.stdlib_native import install_native_default_dependencies
+        install_native_default_dependencies(self.env, definitions)
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
         for obj in objects:

@@ -1,0 +1,4 @@
+#? Opaque paths; POSIX raw filename bytes are preserved via surrogate escape.
+public object Path =>
+  private $native: String
+end

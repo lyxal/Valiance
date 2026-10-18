@@ -15,6 +15,50 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_private_import_not_exported_as_renamed_nominal_type(self):
+        # Imported declarations belong to the provider's runtime prelude,
+        # not the importing module's own symbol surface.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared.vlnc').write_text(
+                'public object Thing =>\n  $value: Int\nend\n'
+                'public define answer(n: Int) -> Int => $n end\n',
+                encoding='utf-8',
+            )
+            (root / 'wrapper.vlnc').write_text(
+                'import {shared}\n', encoding='utf-8',
+            )
+            exports = ModuleLoader(base_directory=root).load(
+                ImportPath(('wrapper',)), current_file=root / 'main.vlnc'
+            )
+            self.assertFalse(any(obj.name.text == 'Thing' for obj in exports.objects))
+            self.assertFalse(any(definition.name.text == 'answer' for definition in exports.definitions))
+            # The dependency is still carried into runtime initialization.
+            self.assertTrue(exports.runtime_prelude)
+
+    def test_explicit_public_import_still_reexports_nominal_type(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared.vlnc').write_text(
+                'public object Thing =>\n  $value: Int\nend\n'
+                'public define answer(n: Int) -> Int => $n end\n',
+                encoding='utf-8',
+            )
+            (root / 'wrapper.vlnc').write_text(
+                'public import {shared}\n', encoding='utf-8',
+            )
+            exports = ModuleLoader(base_directory=root).load(
+                ImportPath(('wrapper',)), current_file=root / 'main.vlnc'
+            )
+            self.assertEqual(
+                [str(obj.name) for obj in exports.public_objects()],
+                ['shared.Thing'],
+            )
+            self.assertEqual(
+                [str(definition.name) for definition in exports.public_definitions()],
+                ['shared.answer'],
+            )
+
     def test_missing_module_reports_matching_directory(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

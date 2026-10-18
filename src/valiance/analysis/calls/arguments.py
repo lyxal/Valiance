@@ -97,6 +97,25 @@ from .models import (
 
 
 
+def _has_trailing_defaults(overload: T.Overload) -> bool:
+    """True for a required positional prefix followed by optional parameters.
+
+    A call to ``readText(path, encoding=UTF8)`` with one positional value
+    supplies the required path. Defaults before required parameters retain
+    ordinary ECS right-alignment.
+    """
+    defaults = overload.param_defaults or ()
+    if not defaults or defaults[0] is not None:
+        return False
+    first_default = next(
+        (index for index, value in enumerate(defaults) if value is not None),
+        None,
+    )
+    return first_default is not None and all(
+        value is not None for value in defaults[first_default:]
+    )
+
+
 class _CallArguments:
     """Own arguments operations for call planning."""
 
@@ -170,6 +189,11 @@ class _CallArguments:
                 node.call_args,
                 bool(node.modifier_args),
                 self,
+                # A required prefix followed by defaulted arguments binds
+                # positionally from the left. Other ECS calls remain right-
+                # aligned, including those whose defaults precede required
+                # parameters.
+                align_positional_right=not _has_trailing_defaults(overload),
             )
             for preparation in prepared:
                 if preparation.branch.terminal:

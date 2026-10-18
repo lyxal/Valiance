@@ -89,6 +89,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "SliceFault",
         "StateFault",
         "IOFault",
+        "UnexpectedEOFFault",
         "NotFoundFault",
         "AlreadyExistsFault",
         "PermissionFault",

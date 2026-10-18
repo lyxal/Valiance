@@ -1,0 +1,139 @@
+import {std.path}
+public import {std.file.do as do}
+#? Sequential file operations with deterministic resource release.
+
+public tag #byte as unit
+#?? Validate that a byte is an Int in the inclusive range 0 to 255.
+#??
+#?? @param value Candidate integer value.
+#?? @returns True if the value is an unsigned 8-bit byte.
+public define #byte(:Int) => inRange(0, 256)
+
+
+public enum Encoding =>
+  UTF8
+  UTF16LE
+  UTF16BE
+  Latin1
+end
+
+@nodup("File handles must not be duplicated")
+public object ReadFile =>
+  private $handle: Int = 0
+
+  define ReadFile(path: path.Path, encoding: Encoding = Encoding.UTF8) =>
+    $self.handle = std.file.nativeOpenRead($path, $encoding)
+  end
+
+  public define readLine =>
+    std.file.nativeReadLine($self.handle)
+    $self
+    swap
+  end
+
+  public define readLines =>
+    std.file.nativeReadLines($self.handle)
+    $self
+    swap
+  end
+
+  public define readText =>
+    std.file.nativeReadText($self.handle)
+    $self
+    swap
+  end
+
+  public define readBytes(count: Int) =>
+    std.file.nativeReadBytes($self.handle, $count)
+    $self
+    swap
+  end
+
+  public define readAllBytes =>
+    std.file.nativeReadAllBytes($self.handle)
+    $self
+    swap
+  end
+
+  public define close =>
+    std.file.nativeClose($self.handle)
+  end
+
+  public define ~ReadFile =>
+    std.file.nativeClose($self.handle)
+  end
+end
+
+@nodup("File handles must not be duplicated")
+public object WriteFile =>
+  private $handle: Int = 0
+
+  define WriteFile(path: path.Path, encoding: Encoding = Encoding.UTF8) =>
+    $self.handle = std.file.nativeOpenWrite($path, $encoding)
+  end
+
+  @self public define writeText(text: String) =>
+    std.file.nativeWriteText($self.handle, $text)
+  end
+
+  @self public define writeLine(line: String) =>
+    std.file.nativeWriteLine($self.handle, $line)
+  end
+
+  @self public define writeLines(lines: String+) =>
+    std.file.nativeWriteLines($self.handle, $lines)
+  end
+
+  @self public define writeBytes(bytes: #byte+ Int+) =>
+    std.file.nativeWriteBytes($self.handle, $bytes)
+  end
+
+  @self public define flush =>
+    std.file.nativeFlush($self.handle)
+  end
+
+  public define close =>
+    std.file.nativeClose($self.handle)
+  end
+
+  public define ~WriteFile =>
+    std.file.nativeClose($self.handle)
+  end
+end
+
+@nodup("File handles must not be duplicated")
+public object AppendFile =>
+  private $handle: Int = 0
+
+  define AppendFile(path: path.Path, encoding: Encoding = Encoding.UTF8) =>
+    $self.handle = std.file.nativeOpenAppend($path, $encoding)
+  end
+
+  @self public define writeText(text: String) =>
+    std.file.nativeWriteText($self.handle, $text)
+  end
+
+  @self public define writeLine(line: String) =>
+    std.file.nativeWriteLine($self.handle, $line)
+  end
+
+  @self public define writeLines(lines: String+) =>
+    std.file.nativeWriteLines($self.handle, $lines)
+  end
+
+  @self public define writeBytes(bytes: #byte+ Int+) =>
+    std.file.nativeWriteBytes($self.handle, $bytes)
+  end
+
+  @self public define flush =>
+    std.file.nativeFlush($self.handle)
+  end
+
+  public define close =>
+    std.file.nativeClose($self.handle)
+  end
+
+  public define ~AppendFile =>
+    std.file.nativeClose($self.handle)
+  end
+end
