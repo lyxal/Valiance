@@ -252,6 +252,19 @@ vln add somelib 1.2.3
 vln install
 ```
 
+`vln init` guides terminal users through template and test choices with an inline
+keyboard picker. Use Up/Down and Enter; Esc or Ctrl+C cancels before writing files.
+The completion summary points to your starting files and lists the commands to
+run, test, and build your project.
+
+For a repeatable setup without prompts, supply the options explicitly:
+
+```powershell
+vln init myproject --template application --tests
+vln init my_library --template package --no-tests
+vln init --list-templates
+```
+
 ## License
 
 Licensed under either of:

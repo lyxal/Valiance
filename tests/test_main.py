@@ -1641,35 +1641,140 @@ class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
         self.assertNotIn("unknown element 'c'\\ndid you mean", rendered)
 
 class InitTemplateChooserTests(unittest.TestCase):
-    @patch("prompt_toolkit.PromptSession")
-    def test_inline_chooser_selects_template_then_tests(self, session_type):
-        session = unittest.mock.MagicMock()
-        session.prompt.side_effect = ["package", "yes"]
-        session_type.return_value = session
-
+    @patch("valiance.main._select_project_option", side_effect=["package", "yes"])
+    def test_inline_chooser_selects_template_then_tests(self, select):
         from valiance.main import _choose_project_options_tui
 
         self.assertEqual(_choose_project_options_tui(), ("package", True))
-        self.assertEqual(session.prompt.call_count, 2)
-        style = session_type.call_args.kwargs["style"]
-        rendered = style.style_rules
-        self.assertIn(("completion-menu.completion", "bg:#20242b #f4f4f4"), rendered)
-        self.assertIn(
-            ("completion-menu.meta.completion", "bg:#20242b #c8d0d9"),
-            rendered,
-        )
-        for call in session.prompt.call_args_list:
-            self.assertEqual(call.kwargs["default"], "")
-            self.assertTrue(call.kwargs["complete_while_typing"])
-            self.assertIsNotNone(call.kwargs["pre_run"])
+        self.assertEqual(select.call_count, 2)
+        self.assertEqual(select.call_args_list[0].args[1][0][0], "application")
 
-    @patch("prompt_toolkit.PromptSession")
-    def test_empty_template_skips_test_question(self, session_type):
-        session = unittest.mock.MagicMock()
-        session.prompt.return_value = "empty"
-        session_type.return_value = session
-
+    @patch("valiance.main._select_project_option", return_value="empty")
+    def test_empty_template_skips_test_question(self, select):
         from valiance.main import _choose_project_options_tui
 
         self.assertEqual(_choose_project_options_tui(), ("empty", False))
-        self.assertEqual(session.prompt.call_count, 1)
+        self.assertEqual(select.call_count, 1)
+
+    def test_picker_handles_keyboard_selection_and_wraparound(self):
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+
+        from valiance.main import _select_project_option
+
+        for keys, expected in [("\r", "app"), ("\x1b[B\r", "lib"), ("\x1b[A\r", "lib")]:
+            with self.subTest(keys=repr(keys)), create_pipe_input() as pipe:
+                def create_application(**kwargs):
+                    return Application(**kwargs, input=pipe, output=DummyOutput())
+
+                pipe.send_text(keys)
+                with patch("prompt_toolkit.application.Application", side_effect=create_application):
+                    self.assertEqual(
+                        _select_project_option("Template", [("app", "Runnable"), ("lib", "Reusable")]),
+                        expected,
+                    )
+
+    def test_picker_cancels_on_control_c_and_escape(self):
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+
+        from valiance.main import _select_project_option
+
+        for keys in ["\x03", "\x1b", "\x04"]:
+            with self.subTest(keys=repr(keys)), create_pipe_input() as pipe:
+                def create_application(**kwargs):
+                    app = Application(**kwargs, input=pipe, output=DummyOutput())
+                    app.ttimeoutlen = 0.01
+                    return app
+
+                pipe.send_text(keys)
+                with patch("prompt_toolkit.application.Application", side_effect=create_application):
+                    with self.assertRaises(KeyboardInterrupt):
+                        _select_project_option("Template", [("app", "Runnable")])
+
+    @patch("builtins.input", side_effect=["invalid", "2", "maybe", "n"])
+    def test_plain_chooser_retries_invalid_answers(self, read_input):
+        from valiance.main import _choose_project_options_plain
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(_choose_project_options_plain(), ("package", False))
+        self.assertEqual(read_input.call_count, 4)
+
+    @patch("builtins.input", side_effect=EOFError)
+    def test_plain_chooser_eof_cancels(self, read_input):
+        from valiance.main import _choose_project_options_plain
+
+        with self.assertRaises(KeyboardInterrupt):
+            _choose_project_options_plain()
+
+    @patch("valiance.main._choose_project_options", side_effect=KeyboardInterrupt)
+    def test_cancelled_init_does_not_create_directory(self, choose):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "cancelled"
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["init", str(project)]), 130)
+            self.assertFalse(project.exists())
+            self.assertIn("cancelled", output.getvalue())
+
+    def test_ready_summary_matches_each_template(self):
+        for template in ["application", "multi-module", "package", "empty"]:
+            with self.subTest(template=template), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / "demo"
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(main(["init", str(project), "--template", template]), 0)
+                rendered = output.getvalue()
+                self.assertIn("Project ready: demo", rendered)
+                self.assertIn("README.md", rendered)
+                self.assertIn("valiance.toml", rendered)
+                if template in {"application", "multi-module"}:
+                    self.assertIn("vln run", rendered)
+                    self.assertIn("vln compile", rendered)
+                else:
+                    self.assertNotIn("vln run", rendered)
+                    self.assertNotIn("vln compile", rendered)
+                if template != "empty":
+                    self.assertIn("tests/project.vlnc", rendered)
+                    self.assertIn("vln test", rendered)
+                else:
+                    self.assertNotIn("vln test", rendered)
+                    self.assertIn("Add source", rendered)
+
+    def test_template_alias_is_reported_canonically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["init", str(Path(tmp) / "demo"), "--template", "lib", "--no-tests"]), 0)
+            self.assertIn("Template: package", output.getvalue())
+            self.assertNotIn("vln test", output.getvalue())
+
+    def test_no_tests_omits_test_instructions_from_readme_and_summary(self):
+        for template in ["application", "multi-module", "package"]:
+            with self.subTest(template=template), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp) / "demo"
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(main(["init", str(project), "--template", template, "--no-tests"]), 0)
+                self.assertFalse((project / "tests").exists())
+                self.assertNotIn("vln test", output.getvalue())
+                self.assertNotIn("vln test", (project / "README.md").read_text(encoding="utf-8"))
+
+    @patch("valiance.main._choose_project_options_tui")
+    def test_redirected_session_uses_defaults_without_prompting(self, choose):
+        from valiance.main import _choose_project_options
+
+        with patch("sys.stdin.isatty", return_value=False):
+            self.assertEqual(_choose_project_options(), ("application", True))
+        choose.assert_not_called()
+
+    @patch("valiance.main._choose_project_options_tui", side_effect=ImportError)
+    @patch("valiance.main._choose_project_options_plain", return_value=("package", False))
+    def test_unavailable_picker_uses_plain_fallback(self, plain, enhanced):
+        from valiance.main import _choose_project_options
+
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            self.assertEqual(_choose_project_options(), ("package", False))
+        plain.assert_called_once()

@@ -478,6 +478,7 @@ def _project_template_files(
     )
     files: dict[Path, str] = {}
     entries: dict[str, str] = {}
+    test_section = "## Test\n\n```text\nvln test\n```\n\n" if include_tests else ""
     test_import = ""
     group_name = project_name
 
@@ -493,7 +494,7 @@ def _project_template_files(
             f"# {project_name}\n\n"
             "A Valiance application.\n\n"
             "## Run\n\n```text\nvln run\n```\n\n"
-            "## Test\n\n```text\nvln test\n```\n\n"
+            f"{test_section}"
             "## Build\n\n```text\nvln compile\n```\n"
         )
     elif template == "multi-module":
@@ -510,7 +511,9 @@ def _project_template_files(
             "A multi-module Valiance application. The executable entry is "
             "`src/main.vlnc`; reusable functionality lives in "
             "`src/messages.vlnc`.\n\n"
-            "## Commands\n\n```text\nvln run\nvln test\nvln compile\n```\n"
+            "## Commands\n\n```text\nvln run\n"
+            + ("vln test\n" if include_tests else "")
+            + "vln compile\n```\n"
         )
     elif template == "package":
         files[Path(f"{project_name}.vlnc")] = greeting
@@ -520,7 +523,7 @@ def _project_template_files(
             "A reusable Valiance package.\n\n"
             "## Use\n\n"
             f"Consumers can import the public API from `dep.{project_name}`.\n\n"
-            "## Test\n\n```text\nvln test\n```\n\n"
+            f"{test_section}"
             "Create an exact version tag such as `v0.1.0` before sharing it.\n"
         )
     else:

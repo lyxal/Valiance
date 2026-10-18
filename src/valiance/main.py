@@ -864,94 +864,92 @@ def _choose_project_options() -> tuple[str, bool]:
     return _choose_project_options_plain()
 
 
-def _open_completion_menu() -> None:
-    """Open the current prompt completion menu before the user presses a key."""
-    from prompt_toolkit.application.current import get_app
-
-    get_app().current_buffer.start_completion(select_first=True)
-
-
-def _choose_project_options_tui() -> tuple[str, bool] | None:
-    """Prompt inline with arrow-selectable completions and one-press Enter."""
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.completion import WordCompleter
+def _select_project_option(title: str, choices: list[tuple[str, str]]) -> str:
+    """Select a described option inline without leaving the terminal screen."""
+    from prompt_toolkit.application import Application
     from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.styles import Style
 
+    selected = 0
     bindings = KeyBindings()
 
-    @bindings.add("enter")
-    def _accept_and_submit(event) -> None:
-        """Apply the highlighted completion and submit it with the same Enter."""
-        buffer = event.current_buffer
-        state = buffer.complete_state
-        if state is not None and state.current_completion is not None:
-            buffer.apply_completion(state.current_completion)
-        buffer.validate_and_handle()
+    @bindings.add("up")
+    @bindings.add("k")
+    def _previous(event) -> None:
+        """Move to the previous choice, wrapping at the beginning."""
+        nonlocal selected
+        selected = (selected - 1) % len(choices)
 
-    style = Style.from_dict(
-        {
-            # Keep the menu readable on both dark and light terminal themes by
-            # giving every completion surface an explicit high-contrast colour.
-            "prompt": "bold #5fd7ff",
-            "completion-menu": "bg:#20242b #f4f4f4",
-            "completion-menu.completion": "bg:#20242b #f4f4f4",
-            "completion-menu.completion.current": "bg:#5fd7ff #101820 bold",
-            "completion-menu.meta.completion": "bg:#20242b #c8d0d9",
-            "completion-menu.meta.completion.current": "bg:#5fd7ff #101820",
-            "scrollbar.background": "bg:#343a44",
-            "scrollbar.button": "bg:#7a8796",
-        }
+    @bindings.add("down")
+    @bindings.add("j")
+    def _next(event) -> None:
+        """Move to the next choice, wrapping at the end."""
+        nonlocal selected
+        selected = (selected + 1) % len(choices)
+
+    @bindings.add("enter")
+    def _accept(event) -> None:
+        """Commit the highlighted choice."""
+        event.app.exit(result=choices[selected][0])
+
+    @bindings.add("c-c")
+    @bindings.add("c-d")
+    @bindings.add("escape")
+    def _cancel(event) -> None:
+        """Cancel setup before any project files are written."""
+        event.app.exit(exception=KeyboardInterrupt())
+
+    def _render_choices() -> list[tuple[str, str]]:
+        """Render the selection and descriptions with a plain-text cursor too."""
+        fragments = [("class:title", title + "\n\n")]
+        for index, (name, description) in enumerate(choices):
+            active = index == selected
+            fragments.append((
+                "class:selected" if active else "",
+                f"  {'>' if active else ' '} {name}\n",
+            ))
+            fragments.append(("class:description", f"      {description}\n"))
+        fragments.append((
+            "class:description", "\n  Up/Down to choose · Enter to continue · Esc to cancel",
+        ))
+        return fragments
+
+    control = FormattedTextControl(_render_choices, focusable=True)
+    application = Application(
+        layout=Layout(HSplit([Window(control, always_hide_cursor=True)])),
+        key_bindings=bindings,
+        style=Style.from_dict({
+            "title": "bold",
+            "selected": "bold ansicyan",
+            "description": "dim",
+        } if should_color(sys.stdout) else {}),
+        full_screen=False,
+        erase_when_done=True,
     )
-    session = PromptSession(key_bindings=bindings, style=style)
-    print("Create a Valiance project")
-    print("Use Up/Down to choose, then press Enter. Ctrl+C cancels.\n")
-    template_completer = WordCompleter(
-        [item.name for item in PROJECT_TEMPLATES],
-        meta_dict={item.name: item.description for item in PROJECT_TEMPLATES},
-        ignore_case=True,
-        sentence=True,
+    answer = application.run()
+    print(f"  {title}: {answer}")
+    return answer
+
+
+def _choose_project_options_tui() -> tuple[str, bool]:
+    """Guide project creation with described, keyboard-selectable options."""
+    print("\n  Valiance / New project\n")
+    template = _select_project_option(
+        "1. Choose a template",
+        [(item.name, item.description) for item in PROJECT_TEMPLATES],
     )
-    while True:
-        template = session.prompt(
-            [("class:prompt", "Template: ")],
-            default="",
-            completer=template_completer,
-            complete_while_typing=True,
-            complete_in_thread=False,
-            pre_run=_open_completion_menu,
-        ).strip().lower()
-        try:
-            template = normalize_project_template(template)
-            break
-        except PackageError as exc:
-            print(f"Invalid template: {exc}", file=sys.stderr)
     if template == "empty":
         return template, False
-
-    tests_completer = WordCompleter(
-        ["yes", "no"],
-        meta_dict={
-            "yes": "include tests that exercise project code",
-            "no": "create source without tests",
-        },
-        ignore_case=True,
-        sentence=True,
+    tests = _select_project_option(
+        "2. Include tests?",
+        [
+            ("yes", "Recommended: a passing example that exercises your public API"),
+            ("no", "Start with source only; add tests when you need them"),
+        ],
     )
-    while True:
-        tests = session.prompt(
-            [("class:prompt", "Include tests: ")],
-            default="",
-            completer=tests_completer,
-            complete_while_typing=True,
-            complete_in_thread=False,
-            pre_run=_open_completion_menu,
-        ).strip().lower()
-        if tests in {"yes", "y"}:
-            return template, True
-        if tests in {"no", "n"}:
-            return template, False
-        print("Please choose yes or no.", file=sys.stderr)
+    return template, tests == "yes"
 
 
 def _choose_project_options_plain() -> tuple[str, bool]:
@@ -964,7 +962,7 @@ def _choose_project_options_plain() -> tuple[str, bool]:
         try:
             answer = input("Template [1]: ").strip()
         except EOFError:
-            return DEFAULT_PROJECT_TEMPLATE, True
+            raise KeyboardInterrupt from None
         if not answer:
             template_name = DEFAULT_PROJECT_TEMPLATE
             break
@@ -978,11 +976,14 @@ def _choose_project_options_plain() -> tuple[str, bool]:
         print("Please enter a template number or name.", file=sys.stderr)
     if template_name == "empty":
         return template_name, False
-    try:
-        tests_answer = input("Include tests? [Y/n]: ").strip().lower()
-    except EOFError:
-        return template_name, True
-    return template_name, tests_answer not in {"n", "no"}
+    while True:
+        try:
+            tests_answer = input("Include tests? [Y/n]: ").strip().lower()
+        except EOFError:
+            raise KeyboardInterrupt from None
+        if tests_answer in {"", "y", "yes", "n", "no"}:
+            return template_name, tests_answer not in {"n", "no"}
+        print("Please choose yes or no.", file=sys.stderr)
 
 
 def _shell_quote(value: str) -> str:
@@ -990,6 +991,44 @@ def _shell_quote(value: str) -> str:
     if not value or any(character.isspace() for character in value):
         return '"' + value.replace('"', '\\"') + '"'
     return value
+
+
+def _print_project_ready(root: Path, target: str, template: str, tests: bool) -> None:
+    """Show useful starting files and complete commands for a new project."""
+    color = should_color(sys.stdout)
+    heading = f"Project ready: {root.name}"
+    print(f"\n{_ANSI_BOLD}{_ANSI_GREEN}{heading}{_ANSI_RESET}" if color else f"\n{heading}")
+    print(f"  {root}")
+    print(f"  Template: {template} | Tests: {'included' if tests else 'not included'}")
+    print("\nStart here:")
+    manifest = load_manifest(root)
+    project_name = str(manifest.project["name"])
+    for entry_path in manifest.entries.values():
+        print(f"  {entry_path:<26} application entry point")
+    if template == "package":
+        print(f"  {project_name + '.vlnc':<26} public package API")
+    if tests:
+        print(f"  {'tests/project.vlnc':<26} example test for your public API")
+    print(f"  {'valiance.toml':<26} project settings and dependencies")
+    print(f"  {'README.md':<26} project guide")
+    print("\nNext steps:")
+    commands = []
+    if root != Path.cwd().resolve():
+        commands.append(f"cd {_shell_quote(target)}")
+    if manifest.entries:
+        commands.append("vln run")
+    if tests:
+        commands.append("vln test")
+    if manifest.entries:
+        commands.append("vln compile")
+    for index, command in enumerate(commands):
+        print(f"  {'Next: ' if index == 0 else '      '}{command}")
+    if not manifest.entries and not tests:
+        if template == "empty":
+            print("  Add source under src/ and declare an entry in valiance.toml.")
+        else:
+            print(f"  Edit {project_name}.vlnc to build your public API.")
+    print()
 
 
 class _PackageProgressUI:
@@ -1068,9 +1107,15 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
             args = getattr(parsed, "package_args", [])
             requested_path = Path(args[0]) if args else None
             if parsed.template is None and parsed.init_tests is None:
-                template, include_tests = _choose_project_options()
+                try:
+                    template, include_tests = _choose_project_options()
+                except (KeyboardInterrupt, EOFError):
+                    print("\nProject creation cancelled.")
+                    return 130
             else:
-                template = parsed.template or DEFAULT_PROJECT_TEMPLATE
+                template = normalize_project_template(
+                    parsed.template or DEFAULT_PROJECT_TEMPLATE
+                )
                 include_tests = (
                     parsed.init_tests if parsed.init_tests is not None else True
                 )
@@ -1079,17 +1124,9 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
             root = init_project(
                 requested_path, template=template, tests=include_tests
             )
-            print(f"Initialized Valiance project: {root}")
-            print(f"Template: {template}")
-            print(f"Tests: {'included' if include_tests else 'not included'}")
-            if root != Path.cwd().resolve():
-                target = args[0] if args else str(root)
-                print(f"Next: cd {_shell_quote(target)}")
-            else:
-                if include_tests:
-                    print("Next: vln test")
-                elif template in {"application", "multi-module"}:
-                    print("Next: vln run")
+            _print_project_ready(
+                root, args[0] if args else str(root), template, include_tests
+            )
             return 0
         args = parsed.package_args
         if parsed.action == "add":
