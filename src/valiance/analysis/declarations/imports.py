@@ -304,7 +304,20 @@ class _ImportDeclarations:
         runtime_name: Symbol,
         dependencies: tuple[TypedNode, ...] = (),
     ) -> None:
-        """Register imported object during static analysis."""
+        """Rebuild an imported surface without replaying its checked-body warnings."""
+        warning_count = len(self.warnings)
+        try:
+            self._register_imported_object_surface(obj, runtime_name, dependencies)
+        finally:
+            del self.warnings[warning_count:]
+
+    def _register_imported_object_surface(
+        self,
+        obj,
+        runtime_name: Symbol,
+        dependencies: tuple[TypedNode, ...] = (),
+    ) -> None:
+        """Restore imported declarations and retain their private default-argument scope."""
         if dependencies:
             # Imported bodies were written in the provider's lexical scope.
             # Its private dependencies must be available while rebuilding the
@@ -334,6 +347,11 @@ class _ImportDeclarations:
             caller.parent = dependency_env
             try:
                 self._register_imported_object(obj, runtime_name)
+                for overload in caller.overloads_for(obj.name):
+                    if any(overload.param_defaults):
+                        caller.default_argument_scopes[
+                            (overload.implementation_id, overload)
+                        ] = dependency_env
             finally:
                 caller.parent = previous_parent
             return
@@ -380,7 +398,9 @@ class _ImportDeclarations:
         if kind != "object" or node.target is not None:
             return
 
-        object_attributes = self._object_attributes(node.fields, node.generics)
+        object_attributes = self._object_attributes(
+            node.fields, node.generics, node.generic_scope_id,
+        )
         if object_attributes is None:
             return
         defaults = frozenset(field.name for field in node.fields if field.default)

@@ -343,6 +343,7 @@ def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinEleme
 
 
 def _defaults(function: NativeFunction) -> tuple[tuple[ASTNode, ...] | None, ...]:
+    """Return one default slot per declared parameter, rejecting inconsistent metadata."""
     if not function.param_defaults:
         return (None,) * len(function.params)
     if len(function.param_defaults) != len(function.params):
@@ -351,6 +352,7 @@ def _defaults(function: NativeFunction) -> tuple[tuple[ASTNode, ...] | None, ...
 
 
 def _effective_defaults(function: NativeFunction) -> tuple[tuple[ASTNode, ...] | None, ...]:
+    """Include a required receiver slot in defaults for object-owned native elements."""
     defaults = _defaults(function)
     return defaults if function.owner is None else (None, *defaults)
 

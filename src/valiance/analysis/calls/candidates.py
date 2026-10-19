@@ -515,9 +515,16 @@ def _prepare_element_call_branches(
     if plan is None:
         return ()
     current = _core.BranchSet((branch,))
-    expressions, call_arg_order = plan
-    for expression in expressions:
-        current = analyser.analyse_block(current, expression)
+    expressions, call_arg_order, default_indexes = plan
+    provider_scope = analyser.env.default_argument_scope(overload)
+    for index, expression in enumerate(expressions):
+        caller_scope = analyser.env
+        if index in default_indexes and provider_scope is not None:
+            analyser.env = provider_scope
+        try:
+            current = analyser.analyse_block(current, expression)
+        finally:
+            analyser.env = caller_scope
         if not current:
             return ()
     return tuple(
@@ -531,11 +538,11 @@ def _element_call_argument_plan(
     has_modifier_args: bool,
     *,
     align_positional_right: bool = True,
-) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...]] | None:
+) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...], frozenset[int]] | None:
     """Build the plan for element call argument during static analysis."""
     param_count = len(overload.params)
     if param_count == 0:
-        return ((), ()) if not call_args else None
+        return ((), (), frozenset()) if not call_args else None
     param_names = overload.param_names or (None,) * param_count
     param_defaults = overload.param_defaults or (None,) * param_count
     if len(param_names) < param_count:
@@ -587,6 +594,7 @@ def _element_call_argument_plan(
             assignments[index] = arg
 
     ordered: list[tuple[ASTNode, ...]] = []
+    default_indexes: set[int] = set()
     current_slots: list[int] = []
     implicit_stack_slots: list[int] = []
     placeholder_slots: list[int] = []
@@ -608,6 +616,7 @@ def _element_call_argument_plan(
             continue
         default = param_defaults[index]
         if default is not None:
+            default_indexes.add(len(ordered))
             ordered.append(cast("tuple[ASTNode, ...]", default))
             explicit_slots.append(index)
             continue
@@ -623,7 +632,10 @@ def _element_call_argument_plan(
     )
     call_arg_order = tuple(current_slots.index(index) for index in desired_slots)
     identity = tuple(range(len(call_arg_order)))
-    return tuple(ordered), (() if call_arg_order == identity else call_arg_order)
+    return (
+        tuple(ordered), (() if call_arg_order == identity else call_arg_order),
+        frozenset(default_indexes),
+    )
 
 
 def _merge_element_arguments(

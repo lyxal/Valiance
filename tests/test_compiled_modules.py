@@ -15,6 +15,103 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_selected_generic_constructor_keeps_private_nested_enum_defaults(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'provider.vlnc'
+            library.write_text('''enum Mode => First Second end
+public object[T] Holder =>
+  $value: T
+  $modes: Mode+
+  define Holder(value: T, modes: Mode+ = [Mode.First]) =>
+    $self.value = $value
+    $self.modes = $modes
+  end
+end
+''', encoding='utf-8')
+            for source_free in (False, True):
+                if source_free:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        result = main_vln([
+                            'compile-module', '--file', str(library),
+                            '--output', str(library.with_suffix('.vbcm')),
+                        ])
+                    self.assertEqual(result, 0)
+                    library.unlink()
+                with self.subTest(source_free=source_free):
+                    analyser = Analyser(source_file=root / 'main.vlnc')
+                    typed = analyser.analyse(parse('''import {provider.[Holder as Box]}
+enum Mode => Local end
+$input = 67
+$box = Box($input)
+$box.value
+$box.modes
+'''))
+                    self.assertEqual(analyser.diagnostics, [])
+                    program = compile_program(typed)
+                    for candidate in (program, loads(dumps(program))):
+                        values = run(candidate)
+                        self.assertEqual(values[0], 67)
+                        self.assertEqual(values[1][0].type_name, 'provider.Mode')
+                        self.assertEqual(values[1][0].fields['name'], 'First')
+                    invalid = Analyser(source_file=root / 'main.vlnc')
+                    invalid.analyse(parse('''import {provider.[Holder as Box]}
+enum Mode => Local end
+Box(67, [Mode.Local])
+'''))
+                    self.assertTrue(any(
+                        'no overloads' in diagnostic for diagnostic in invalid.diagnostics
+                    ), invalid.diagnostics)
+
+    def test_unqualified_imports_do_not_resolve_standard_library_modules(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loader = ModuleLoader(base_directory=root)
+            for name in ('file', 'path', 'random'):
+                with self.subTest(module=name):
+                    self.assertEqual(
+                        loader.resolve(ImportPath((name,))), root / f'{name}.vlnc',
+                    )
+                    with self.assertRaises(ModuleLoadError):
+                        loader.load(ImportPath((name,)))
+
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            analyser.analyse(parse('''import {file.WriteFile, path.Path}
+$path = Path "out.txt"
+$f = WriteFile $path
+$f writeLine "Hello"
+$f writeLine "World"
+'''))
+            messages = '\n'.join(map(str, analyser.diagnostics))
+            self.assertIn("module 'file' was not found", messages)
+            self.assertNotIn('nativeOpen', messages)
+            self.assertNotIn(str(Path(__file__).parent.parent / 'src' / 'valiance' / 'std'), messages)
+
+    def test_local_modules_can_have_standard_library_names(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'file.vlnc').write_text(
+                'public object WriteFile => $value: Int end\n', encoding='utf-8',
+            )
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse(
+                'import {file.WriteFile}\n$file = WriteFile 67\n$file.value'
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+            program = compile_program(typed)
+            self.assertEqual(run(program), [67])
+            self.assertEqual(run(loads(dumps(program))), [67])
+
+    def test_explicit_standard_library_import_still_resolves(self):
+        loader = ModuleLoader()
+        exports = loader.load(ImportPath(('std', 'path')))
+        self.assertEqual(exports.module_name, 'std.path')
+        self.assertTrue(any(obj.name.text == 'Path' for obj in exports.public_objects()))
+
     def test_imported_constructor_uses_provider_private_dependencies(self):
         from valiance.runtime import compile_program, dumps, loads, run
 

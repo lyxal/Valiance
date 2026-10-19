@@ -1,0 +1,33 @@
+name: Generate language reference
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python
+        run: uv python install 3.14
+      - name: Install project
+        run: uv sync --frozen
+      - name: Validate documentation
+        run: uv run --frozen python -m unittest tests.test_reference_docs
+      - name: Generate built-in and standard library documentation
+        run: uv run --frozen python scripts/generate_reference_docs.py
+      - name: Upload reference for this commit
+        uses: actions/upload-artifact@v4
+        with:
+          name: language-reference-${{ github.sha }}
+          path: build/reference/
+          if-no-files-found: error
+          retention-days: 30

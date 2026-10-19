@@ -2122,6 +2122,20 @@ for immediate observation or consumption does not itself duplicate the value.
 For example, `println $value` may observe the occurrence stored in `$value`
 without establishing another persistent occurrence.
 
+Named arguments to calls can also remain borrowed when a call returns access to
+the same value. For example, after storing a writer in `$f`, this leaves `$f`
+available for further operations:
+
+```valiance
+$f writeLine "Hello" | writeLine "World"
+$f writeLine "Again"
+```
+
+The returned stack values are temporary access to the existing owner. Storing
+one in another variable or collection creates an additional owning occurrence
+and still requires `dup`; `@nodup` resources reject that materialisation.
+
+
 Materialisation is the point where access to a stored occurrence becomes an
 additional independently usable occurrence. Materialisation must use the value's
 `dup` behaviour. A statically visible invalid materialisation is a compile error;
@@ -3651,7 +3665,7 @@ body ends.
 
 ```vlnc
 define format(value) => (
-  import {text.format}
+  import {std.text.format}
   format(value)       # available here
 )
 
@@ -3843,7 +3857,7 @@ The standard library ships with the compiler and is always available. Current Py
 - `std.random.randbit` and `std.random.between(minimum, maximum)`
 - `std.string.\Alphabet` and `std.string.transliterate(value, source, target)`
 
-For compatibility with small scripts, a single unqualified native standard-library module name such as `import {random}` or `import {string}` resolves to the same packaged module. The canonical path remains `std.random` or `std.string`.
+Standard-library modules require an explicit `std.` prefix, such as `import {std.random}` or `import {std.string}`. Unqualified imports resolve only local modules; there is no standard-library fallback.
 
 The `std` component is part of the standard library's canonical module path, but a whole-module import still introduces only the final component as the local namespace:
 

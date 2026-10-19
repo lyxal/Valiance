@@ -15,6 +15,27 @@ from typing import Any
 from valiance.vtypes import DataTag
 
 
+@dataclass(frozen=True, slots=True)
+class BorrowedValue:
+    """A temporary access to an owned occurrence, never a second owner."""
+
+    value: Any
+    allows_reconstruction: bool = False
+
+    def read(self) -> Any:
+        """Reject accesses whose owning occurrence has already ended."""
+        value = self.value
+        payload = value
+        while isinstance(payload, TaggedValue):
+            payload = payload.value
+        if isinstance(payload, ObjectValue):
+            if payload.destroyed or payload.ownership_transferred:
+                raise RuntimeError('borrowed value outlived its owning occurrence')
+        elif isinstance(payload, (ListValue, DictValue, LazyList)) and payload.refcount <= 0:
+            raise RuntimeError('borrowed value outlived its owning occurrence')
+        return value
+
+
 @dataclass
 class LazyList:
     """A replayable list-like value backed by a lazy or infinite iterable.
@@ -443,8 +464,10 @@ class TaggedValue:
 
 
 def unwrap_runtime_value(value: Any) -> Any:
-    """Return the payload beneath any runtime tag evidence wrapper."""
-    return value.value if isinstance(value, TaggedValue) else value
+    """Return the payload beneath runtime evidence and temporary access wrappers."""
+    while isinstance(value, (TaggedValue, BorrowedValue)):
+        value = value.read() if isinstance(value, BorrowedValue) else value.value
+    return value
 
 
 def runtime_trait_witness(
@@ -468,7 +491,7 @@ def with_runtime_trait_witnesses(
     """Attach checked evidence to this occurrence, never the shared object."""
     if not proofs:
         return value
-    payload = unwrap_runtime_value(value)
+    payload = value.value if isinstance(value, TaggedValue) else value
     previous = value.structural_witnesses if isinstance(value, TaggedValue) else ()
     tags = runtime_value_tags(value)
     merged = {(name, contract): identity for name, contract, identity in previous}

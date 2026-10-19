@@ -259,6 +259,7 @@ class _CallSelection:
             return winners
 
         def narrower(left: CallCandidate, right: CallCandidate) -> bool:
+            """Test strict declared-parameter specificity for otherwise identical candidates."""
             if (
                 left.branch != right.branch
                 or left.applied.params != right.applied.params

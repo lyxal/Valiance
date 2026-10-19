@@ -108,7 +108,10 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 - [Docstring policy](docstrings.md) explains what production docstrings should
   contain and how coverage is enforced.
 - [Reference documentation](reference-documentation.md) explains the metadata,
-  validation, and generators for built-ins and standard-library functions.
+  validation, and generators for built-ins and standard-library functions,
+  including the [bundle builder](../../scripts/generate_reference_docs.py),
+  [CI workflow](../../.github/workflows/reference-docs.yml), and
+  [reference regression tests](../../tests/test_reference_docs.py).
 
 The deeper subsystem references remain useful after this overview:
 

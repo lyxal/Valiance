@@ -117,6 +117,25 @@ class OptionalMemberParserTests(unittest.TestCase):
 
 
 class OptionalMemberRuntimeTests(unittest.TestCase):
+    def test_safe_access_to_borrowed_call_result_preserves_named_owner(self):
+        source = PERSON + '''
+define preserve(value: Person?) -> Person? => $value end
+define \\exercise -> String?, Number? =>
+  $person = Some(Person("Ada", 37))
+  $person preserve | $->name
+  $person preserve | $->age
+end
+\\exercise
+'''
+        analyser, typed = analyse(source)
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                values = run(candidate)
+                self.assertEqual(values[0].fields['value'], 'Ada')
+                self.assertEqual(values[1].fields['value'], 37)
+
     def test_reads_member_from_present_optional(self):
         result = execute(PERSON + """
 $person: Person? = Some(Person("Ada", 36))

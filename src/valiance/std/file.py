@@ -27,6 +27,7 @@ _handle_lock = RLock()
 
 
 def _encoding(value: Any) -> Encoding:
+    """Validate a language Encoding enum and return its native encoding selection."""
     if not isinstance(value, ObjectValue) or value.type_name.split('.')[-1] != 'Encoding':
         raise TypeError('expected file.Encoding')
     key = value.fields.get('name')
@@ -39,6 +40,7 @@ def _encoding(value: Any) -> Encoding:
 
 
 def _handle(value: Any) -> File:
+    """Resolve a numeric resource handle, rejecting closed or invalid handles."""
     key = int(value)
     with _handle_lock:
         handle = _handles.get(key)
@@ -48,6 +50,7 @@ def _handle(value: Any) -> File:
 
 
 def _open(args: tuple[Any, ...], mode: str) -> tuple[Any, ...]:
+    """Open a native file and register a process-local numeric handle for its owner."""
     path, encoding = args
     handle = File(native_path(path), mode, _encoding(encoding))
     with _handle_lock:
@@ -59,6 +62,7 @@ def _open(args: tuple[Any, ...], mode: str) -> tuple[Any, ...]:
 @stdlib_element('nativeOpenRead', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
                 param_names=('path', 'encoding'))
 def _open_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Open a read-only native resource using the supplied Path and Encoding."""
     del ctx
     return _open(args, 'rb')
 
@@ -66,6 +70,7 @@ def _open_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element('nativeOpenWrite', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
                 param_names=('path', 'encoding'))
 def _open_write(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create or truncate a native resource using the supplied Path and Encoding."""
     del ctx
     return _open(args, 'wb')
 
@@ -73,12 +78,14 @@ def _open_write(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element('nativeOpenAppend', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
                 param_names=('path', 'encoding'))
 def _open_append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Open a native append resource using the supplied Path and Encoding."""
     del ctx
     return _open(args, 'ab')
 
 
 @stdlib_element('nativeClose', (T.Int,), (), param_names=('handle',))
 def _close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Remove and close a registered resource if it is still open."""
     del ctx
     with _handle_lock:
         handle = _handles.pop(int(args[0]), None)
@@ -89,6 +96,7 @@ def _close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @stdlib_element('nativeFlush', (T.Int,), (), param_names=('handle',))
 def _flush(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Flush the buffer of a live writable resource without fsync."""
     del ctx
     _handle(args[0]).flush()
     return ()
@@ -96,6 +104,7 @@ def _flush(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @stdlib_element('nativeReadLine', (T.Int,), (T.optional(T.String),), param_names=('handle',))
 def _read_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the next decoded line as Some, or None at end of file."""
     del ctx
     line = _handle(args[0]).read_line()
     return (ObjectValue('None', {}) if line is None else
@@ -104,12 +113,14 @@ def _read_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @stdlib_element('nativeReadLines', (T.Int,), (T.AtLeastList(T.String),), param_names=('handle',))
 def _read_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return all remaining decoded lines as a rank-one language list."""
     del ctx
     return (ListValue(_handle(args[0]).read_lines(), runtime_rank=1),)
 
 
 @stdlib_element('nativeReadText', (T.Int,), (T.String,), param_names=('handle',))
 def _read_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return all remaining decoded text from a live resource."""
     del ctx
     return (_handle(args[0]).read_text(),)
 
@@ -117,18 +128,21 @@ def _read_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element('nativeReadBytes', (T.Int, T.Int), (_BYTE_LIST,),
                 param_names=('handle', 'count'))
 def _read_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read exactly the requested byte count and return a byte-tagged language list."""
     del ctx
     return (TaggedValue(ListValue([RuntimeNumber(b) for b in _handle(args[0]).read_bytes(int(args[1]))], runtime_rank=1), _BYTE_TAGS),)
 
 
 @stdlib_element('nativeReadAllBytes', (T.Int,), (_BYTE_LIST,), param_names=('handle',))
 def _read_all_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return all remaining raw bytes as a byte-tagged language list."""
     del ctx
     return (TaggedValue(ListValue([RuntimeNumber(b) for b in _handle(args[0]).read_all_bytes()], runtime_rank=1), _BYTE_TAGS),)
 
 
 @stdlib_element('nativeWriteText', (T.Int, T.String), (), param_names=('handle','text'))
 def _write_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Write text to a live resource using its selected encoding."""
     del ctx
     _handle(args[0]).write_text(args[1])
     return ()
@@ -136,6 +150,7 @@ def _write_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @stdlib_element('nativeWriteLine', (T.Int, T.String), (), param_names=('handle','line'))
 def _write_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Write text and one encoded LF to a live resource."""
     del ctx
     _handle(args[0]).write_line(args[1])
     return ()
@@ -144,6 +159,7 @@ def _write_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element('nativeWriteLines', (T.Int, T.AtLeastList(T.String)), (),
                 param_names=('handle','lines'))
 def _write_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Write each language-list line with one encoded LF terminator."""
     del ctx
     _handle(args[0]).write_lines(list(args[1]))
     return ()
@@ -152,6 +168,7 @@ def _write_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element('nativeWriteBytes', (T.Int, _BYTE_LIST), (),
                 param_names=('handle','bytes'))
 def _write_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Validate byte-tagged values are in range before writing their raw bytes."""
     del ctx
     values = [int(item) for item in unwrap_runtime_value(args[1])]
     if any(not 0 <= item <= 255 for item in values):

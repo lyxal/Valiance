@@ -1214,6 +1214,14 @@ def _import_node(
         install_native_default_dependencies(self.env, definitions)
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
+        from valiance.modules_system.modules import import_constructor_dependencies
+        from valiance.analysis.import_runtime import with_import_runtime_name
+        constructor_dependencies = exports.runtime_prelude
+        for dependency in import_constructor_dependencies(exports):
+            runtime_name = self._prelude.add_declaration(dependency.typed, dependency.name)
+            constructor_dependencies += (
+                with_import_runtime_name(dependency.typed, runtime_name),
+            )
         for obj in objects:
             object_node = obj.typed.node
             # Selected owned implementation evidence belongs to the imported
@@ -1260,7 +1268,7 @@ def _import_node(
                 imported_supertypes=imported_supertypes,
                 imported_guarded_supertypes=imported_guarded_supertypes,
             )
-            self._register_imported_object(obj, runtime_name, exports.runtime_prelude)
+            self._register_imported_object(obj, runtime_name, constructor_dependencies)
             module_source = _show_import_path_for_diagnostic(resolved_spec.path)
             for definition in obj.private_friendly_definitions:
                 candidate = (obj.name, module_source)

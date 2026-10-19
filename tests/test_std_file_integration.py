@@ -40,6 +40,90 @@ class FileLanguageIntegrationTests(unittest.TestCase):
         with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
             self.assertEqual(stream.read(), b'alpha\nbeta\n')
 
+    def test_selected_writer_import_preserves_private_constructor_defaults(self):
+        for imports, constructor, path_constructor in (
+            ('std.file.WriteFile, std.path.Path', 'WriteFile', 'Path'),
+            ('std.path.Path, std.file.WriteFile', 'WriteFile', 'Path'),
+            ('std.file.[WriteFile as Writer], std.path.[Path as Location]', 'Writer', 'Location'),
+        ):
+            for serialized in (False, True):
+                with self.subTest(imports=imports, serialized=serialized):
+                    analyser = Analyser()
+                    source = (
+                        f'import {{{imports}}}\n'
+                        'define \\write -> =>\n'
+                        f'$path = {path_constructor} {self._path()}\n'
+                        f'$f = {constructor} $path\n'
+                        '$f = $f writeLine "Hello"\n'
+                        '$f = $f writeLine "World"\n'
+                        'end\n\\write\n'
+                    )
+                    tree = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    self.assertEqual(analyser.warnings, [])
+                    program = compile_program(tree)
+                    run(loads(dumps(program)) if serialized else program)
+                    self.assertFalse(file_backend._handles)
+                    with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
+                        self.assertEqual(stream.read(), b'Hello\nWorld\n')
+
+    def test_selected_writer_import_does_not_expose_sibling_enum(self):
+        for expression in ('file.Encoding.UTF8', 'Encoding.UTF8'):
+            with self.subTest(expression=expression):
+                analyser = Analyser()
+                analyser.analyse(parse('import {std.file.WriteFile}\n' + expression))
+                self.assertTrue(any(
+                    f"unknown element '{expression}'" in diagnostic
+                    for diagnostic in analyser.diagnostics
+                ), analyser.diagnostics)
+
+    def test_selected_path_warns_only_when_converted_to_string(self):
+        analyser = Analyser()
+        analyser.analyse(parse('import {std.path.Path}\nPath "example" | toString'))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(len(analyser.warnings), 1)
+        self.assertIn('may lose non-Unicode filename data', analyser.warnings[0])
+
+    def test_selected_writer_reported_program_has_no_import_diagnostics(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''import {std.file.WriteFile, std.path.Path}
+$path = Path "out.txt"
+$f = WriteFile $path
+$f writeLine "Hello"
+$f writeLine "World"
+'''))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.warnings, [])
+
+    def test_named_writer_calls_borrow_and_leave_the_file_available(self):
+        for optimize in (False, True):
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    analyser = Analyser()
+                    tree = analyser.analyse(parse(
+                        'import {std.file.WriteFile, std.path.Path}\n'
+                        f'$path = Path {self._path()}\n'
+                        '$f = WriteFile $path\n'
+                        '$f writeLine "Hello" | writeLine "World"\n'
+                        '$f writeLine "Again"\n'
+                    ))
+                    self.assertEqual(analyser.diagnostics, [])
+                    self.assertEqual(analyser.warnings, [])
+                    program = compile_program(tree, optimize=optimize)
+                    try:
+                        stack = run(loads(dumps(program)) if serialized else program)
+                        self.assertEqual(len(stack), 2)
+                        owner = unwrap_runtime_value(stack[0])
+                        self.assertIs(unwrap_runtime_value(stack[1]), owner)
+                        self.assertEqual(owner.refcount, 1)
+                        self.assertFalse(owner.destroyed)
+                    finally:
+                        for handle in tuple(file_backend._handles.values()):
+                            handle.close()
+                        file_backend._handles.clear()
+                    with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
+                        self.assertEqual(stream.read(), b'Hello\nWorld\nAgain\n')
+
     def test_file_imports_do_not_depend_on_path_import_order(self):
         for imports, constructor, module in (
             ('std.file, std.path', 'path.Path', 'file'),
@@ -283,16 +367,16 @@ class FileLanguageIntegrationTests(unittest.TestCase):
         parent = component('path.parent(path.Path("dir/leaf"))')
         self.assertEqual(parent.type_name, 'Some')
         self.assertEqual(parent.fields['value'].type_name, 'path.Path')
-        self.assertEqual(native_path(parent.fields['value']).native, os.fsencode('dir'))
+        self.assertEqual(native_path(parent.fields['value']).native, ('dir' if os.name == 'nt' else b'dir'))
         self.assertEqual(component('path.name(path.Path("/"))').type_name, 'None')
         name = component('path.name(path.Path("dir/leaf/"))')
-        self.assertEqual(native_path(name.fields['value']).native, os.fsencode('leaf'))
+        self.assertEqual(native_path(name.fields['value']).native, ('leaf' if os.name == 'nt' else b'leaf'))
         self.assertEqual(component('path.extension(path.Path("no-extension"))').type_name, 'None')
         extension = component('path.extension(path.Path("dir/test.tar.gz"))')
-        self.assertEqual(native_path(extension.fields['value']).native, os.fsencode('.gz'))
+        self.assertEqual(native_path(extension.fields['value']).native, ('.gz' if os.name == 'nt' else b'.gz'))
         joined = component('path.join(path.Path("dir"), path.Path("leaf"))')
         self.assertEqual(joined.type_name, 'path.Path')
-        self.assertEqual(native_path(joined).native, os.fsencode(os.path.join('dir', 'leaf')))
+        self.assertEqual(native_path(joined).native, (os.path.join('dir', 'leaf') if os.name == 'nt' else os.fsencode(os.path.join('dir', 'leaf'))))
 
     def test_path_operations_reject_strings_at_analysis_time(self):
         for expression in (

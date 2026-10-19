@@ -25,6 +25,7 @@ class Path:
     native: bytes | str
 
     def __post_init__(self) -> None:
+        """Reject unsupported representations, Windows byte paths, and embedded NULs."""
         if not isinstance(self.native, (bytes, str)):
             raise TypeError('path must be native bytes or str')
         if os.name == 'nt' and isinstance(self.native, bytes):
@@ -33,6 +34,7 @@ class Path:
             raise ValueError('NUL is not permitted in a filesystem path')
 
     def join(self, other: 'Path') -> 'Path':
+        """Join native paths, converting the child to the representation of the parent."""
         if type(self.native) is not type(other.native):
             if isinstance(self.native, bytes):
                 return Path(os.path.join(self.native, os.fsencode(other.native)))
@@ -47,11 +49,13 @@ class Path:
         return self.native.rstrip(separators) or self.native
 
     def _is_root(self) -> bool:
+        """Recognize absolute roots without stripping significant drive separators."""
         # In particular, Windows drive roots must not become a bogus "C:"
         # filename when their trailing separator is removed for inspection.
         return bool(self.native) and os.path.isabs(self.native) and os.path.dirname(self.native) == self.native
 
     def parent(self) -> 'Path | None':
+        """Return the lexical parent in the native representation, or None at a root."""
         if self._is_root():
             return None
         spelling = self._component_spelling()
@@ -59,12 +63,14 @@ class Path:
         return Path(value) if value and value != spelling else None
 
     def name(self) -> 'Path | None':
+        """Return the final native component, ignoring trailing separators and roots."""
         if self._is_root():
             return None
         value = os.path.basename(self._component_spelling())
         return Path(value) if value else None
 
     def extension(self) -> 'Path | None':
+        """Return the final component extension as a native path, or None if absent."""
         name = self.name()
         if name is None:
             return None
@@ -72,9 +78,11 @@ class Path:
         return Path(value) if value else None
 
     def is_absolute(self) -> bool:
+        """Test whether the host OS considers this native spelling absolute."""
         return os.path.isabs(self.native)
 
     def to_string(self) -> str:
+        """Return display text, replacing filename data that UTF-8 cannot represent."""
         # Replacement is intentionally lossy; the Valiance facade must warn.
         if isinstance(self.native, bytes):
             return self.native.decode('utf-8', errors='replace')
@@ -82,10 +90,12 @@ class Path:
 
 
 def _encode(text: str, encoding: Encoding) -> bytes:
+    """Encode text strictly with the selected file encoding."""
     return text.encode(encoding.value, errors='strict')
 
 
 def _decode(data: bytes, encoding: Encoding, *, first: bool) -> str:
+    """Decode bytes strictly, consuming a matching initial UTF-16 BOM and rejecting its opposite."""
     if first and encoding is Encoding.UTF16LE:
         if data.startswith(b'\xfe\xff'):
             raise UnicodeError('contradictory UTF-16 BOM')
@@ -103,6 +113,7 @@ class File:
     The Valiance wrapper owns this instance and calls close from its destructor.
     """
     def __init__(self, path: Path, mode: str, encoding: Encoding = Encoding.UTF8):
+        """Open a sequential binary stream and initialize strict incremental text decoding."""
         if mode not in ('rb', 'wb', 'ab'):
             raise ValueError('invalid file mode')
         self._stream: BinaryIO = open(path.native, mode)
@@ -115,14 +126,17 @@ class File:
         self._closed = False
 
     def _readable(self) -> None:
+        """Reject reads from streams opened for writing or appending."""
         if self.mode != 'rb':
             raise ValueError('not a readable file')
 
     def _writable(self) -> None:
+        """Reject writes and flushes on streams opened for reading."""
         if self.mode == 'rb':
             raise ValueError('not a writable file')
 
     def read_bytes(self, count: int) -> bytes:
+        """Read exactly count raw bytes; reject negative counts, text mixing, and premature EOF."""
         self._readable()
         if count < 0:
             raise ValueError('byte count cannot be negative')
@@ -135,12 +149,14 @@ class File:
         return data
 
     def read_all_bytes(self) -> bytes:
+        """Read all remaining raw bytes, rejecting reads after text decoding begins."""
         self._readable()
         if self._pending_text or not self._first_text:
             raise ValueError('cannot switch from text reads to byte reads')
         return self._stream.read()
 
     def read_text(self) -> str:
+        """Decode the remaining stream and prepend any text buffered by line reads."""
         self._readable()
         data = self._stream.read()
         text = self._decode_chunk(data, final=True)
@@ -149,6 +165,7 @@ class File:
         return result
 
     def _decode_chunk(self, data: bytes, *, final: bool) -> str:
+        """Decode a chunk incrementally, validating and removing the initial UTF-16 BOM."""
         if self._first_text:
             if self.encoding is Encoding.UTF16LE:
                 if data.startswith(b'\xfe\xff'):
@@ -162,6 +179,7 @@ class File:
         return self._decoder.decode(data, final=final)
 
     def read_line(self) -> str | None:
+        """Read one decoded line without its CR, LF, or CRLF terminator; return None at EOF."""
         self._readable()
         while True:
             text = self._pending_text
@@ -184,36 +202,45 @@ class File:
                 self._eof = True
 
     def read_lines(self) -> list[str]:
+        """Collect all remaining decoded lines without their terminators."""
         result = []
         while (line := self.read_line()) is not None:
             result.append(line)
         return result
 
     def write_bytes(self, values: bytes | list[int]) -> None:
+        """Write raw bytes to a writable stream, validating integer byte values."""
         self._writable()
         self._stream.write(bytes(values))
 
     def write_text(self, text: str) -> None:
+        """Encode text strictly and write it without adding a terminator."""
         self.write_bytes(_encode(text, self.encoding))
 
     def write_line(self, text: str) -> None:
+        """Write text followed by one LF using the selected encoding."""
         self.write_text(text + '\n')
 
     def write_lines(self, lines: list[str]) -> None:
+        """Write each supplied line with one encoded LF terminator."""
         for line in lines:
             self.write_line(line)
 
     def flush(self) -> None:
+        """Flush a writable stream buffer without requesting an OS-level fsync."""
         self._writable()
         self._stream.flush()
 
     def close(self) -> None:
+        """Close the stream once, allowing repeated resource cleanup."""
         if not self._closed:
             self._closed = True
             self._stream.close()
 
     def __enter__(self) -> 'File':
+        """Return this file for deterministic cleanup by a context manager."""
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """Close the stream when its context exits, including during exceptions."""
         self.close()

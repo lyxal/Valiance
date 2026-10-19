@@ -16,6 +16,7 @@ from valiance.runtime.runtime_values import ObjectValue
 from valiance.std._filesystem_core import Path as NativePath
 
 def native_path(obj: ObjectValue) -> NativePath:
+    """Validate a language Path and recover its lossless OS-native spelling."""
     if not isinstance(obj, ObjectValue) or obj.type_name.split('.')[-1] != 'Path':
         raise TypeError('expected std.path.Path')
     value = obj.fields['native']
@@ -23,6 +24,7 @@ def native_path(obj: ObjectValue) -> NativePath:
 
 
 def wrap_path(path: NativePath) -> ObjectValue:
+    """Wrap an OS-native path, preserving POSIX bytes through filesystem decoding."""
     return ObjectValue('path.Path', {'native': os.fsdecode(path.native) if os.name != 'nt' else path.native})
 
 
@@ -31,6 +33,7 @@ _OPTIONAL_PATH = T.optional(_PATH)
 
 
 def _optional_path(value: NativePath | None) -> ObjectValue:
+    """Wrap a native path as Some, or return the language None value."""
     if value is None:
         return ObjectValue('None', {})
     return ObjectValue('Some', {'value': wrap_path(value)})
@@ -38,6 +41,7 @@ def _optional_path(value: NativePath | None) -> ObjectValue:
 
 @stdlib_element('isAbsolute', (), (T.Boolean,), owner='Path', exported=False)
 def _is_absolute(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Test whether the receiver Path is absolute according to the host OS."""
     del ctx
     return (native_path(args[0]).is_absolute(),)
 
@@ -47,30 +51,35 @@ def _is_absolute(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     warning='Path to String may lose non-Unicode filename data; use Path for filesystem operations',
 )
 def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return potentially lossy display text for the receiver Path."""
     del ctx
     return (native_path(args[0]).to_string(),)
 
 
 @stdlib_element('join', (_PATH, _PATH), (_PATH,), param_names=('root', 'child'))
 def _join_paths(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Join two language Paths while preserving their native filename representation."""
     del ctx
     return (wrap_path(native_path(args[0]).join(native_path(args[1]))),)
 
 
 @stdlib_element('parent', (_PATH,), (_OPTIONAL_PATH,), param_names=('path',))
 def _parent_path(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the lexical parent as an optional language Path."""
     del ctx
     return (_optional_path(native_path(args[0]).parent()),)
 
 
 @stdlib_element('name', (_PATH,), (_OPTIONAL_PATH,), param_names=('path',))
 def _name_path(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the last native component as an optional language Path."""
     del ctx
     return (_optional_path(native_path(args[0]).name()),)
 
 
 @stdlib_element('extension', (_PATH,), (_OPTIONAL_PATH,), param_names=('path',))
 def _extension_path(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the native filename extension as an optional language Path."""
     del ctx
     return (_optional_path(native_path(args[0]).extension()),)
 

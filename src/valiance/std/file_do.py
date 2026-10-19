@@ -31,6 +31,7 @@ _DEFAULT_ENCODING = (ElementNode(Symbol('nativeDefaultEncoding', ('std', 'file_d
 # std.file.do is imported directly (without importing std.file separately).
 @stdlib_element('nativeDefaultEncoding', (), (_ENCODING,), exported=False)
 def _default_encoding(args, ctx):
+    """Construct the UTF-8 language enum without requiring a separate file import."""
     del args, ctx
     from valiance.runtime.runtime_values import ObjectValue
     return (ObjectValue('file.Encoding', {'name': 'UTF8'}),)
@@ -38,12 +39,14 @@ def _default_encoding(args, ctx):
 
 
 def _unborrow(value: Any) -> Any:
+    """Unwrap borrowed call arguments before accessing native paths or encodings."""
     while type(value).__name__ == '_BorrowedValue':
         value = value.value
     return value
 
 
 def _quick_read(args: tuple[Any, ...], operation: str) -> tuple[Any, ...]:
+    """Read text, lines, or raw bytes and close the temporary resource even on failure."""
     args = tuple(_unborrow(arg) for arg in args)
     path = native_path(args[0])
     encoding = _encoding(args[1]) if len(args) > 1 else Encoding.UTF8
@@ -56,6 +59,7 @@ def _quick_read(args: tuple[Any, ...], operation: str) -> tuple[Any, ...]:
 
 
 def _quick_write(args: tuple[Any, ...], operation: str, mode: str) -> tuple[Any, ...]:
+    """Write or append text, lines, or validated bytes with deterministic resource cleanup."""
     args = tuple(_unborrow(arg) for arg in args)
     path = native_path(args[0])
     encoding = _encoding(args[2]) if len(args) > 2 else Encoding.UTF8
@@ -75,6 +79,7 @@ def _quick_write(args: tuple[Any, ...], operation: str, mode: str) -> tuple[Any,
 @stdlib_element('readText', (_PATH, _ENCODING), (T.String,), param_names=('path', 'encoding'),
                 param_defaults=(None, _DEFAULT_ENCODING))
 def _quick_read_text(args, ctx):
+    """Read an entire file as decoded text and close its temporary resource."""
     del ctx
     return _quick_read(args, 'text')
 
@@ -82,12 +87,14 @@ def _quick_read_text(args, ctx):
 @stdlib_element('readLines', (_PATH, _ENCODING), (T.AtLeastList(T.String),), param_names=('path', 'encoding'),
                 param_defaults=(None, _DEFAULT_ENCODING))
 def _quick_read_lines(args, ctx):
+    """Read an entire file into decoded lines and close its temporary resource."""
     del ctx
     return _quick_read(args, 'lines')
 
 
 @stdlib_element('readBytes', (_PATH,), (_BYTE_LIST,), param_names=('path',))
 def _quick_read_bytes(args, ctx):
+    """Read an entire file into a byte-tagged list and close its temporary resource."""
     del ctx
     return _quick_read(args, 'allBytes')
 
@@ -96,6 +103,7 @@ def _quick_read_bytes(args, ctx):
                 param_names=('path', 'text', 'encoding'),
                 param_defaults=(None, None, _DEFAULT_ENCODING))
 def _quick_write_text(args, ctx):
+    """Replace file contents with encoded text and close the temporary resource."""
     del ctx
     return _quick_write(args, 'text', 'wb')
 
@@ -104,12 +112,14 @@ def _quick_write_text(args, ctx):
                 param_names=('path', 'lines', 'encoding'),
                 param_defaults=(None, None, _DEFAULT_ENCODING))
 def _quick_write_lines(args, ctx):
+    """Replace file contents with LF-delimited lines and close the temporary resource."""
     del ctx
     return _quick_write(args, 'lines', 'wb')
 
 
 @stdlib_element('writeBytes', (_PATH, _BYTE_LIST), (), param_names=('path','bytes'))
 def _quick_write_bytes(args, ctx):
+    """Replace file contents with validated raw bytes and close the temporary resource."""
     del ctx
     return _quick_write(args, 'bytes', 'wb')
 
@@ -118,6 +128,7 @@ def _quick_write_bytes(args, ctx):
                 param_names=('path', 'text', 'encoding'),
                 param_defaults=(None, None, _DEFAULT_ENCODING))
 def _quick_append_text(args, ctx):
+    """Append encoded text and close the temporary resource."""
     del ctx
     return _quick_write(args, 'text', 'ab')
 
@@ -126,12 +137,14 @@ def _quick_append_text(args, ctx):
                 param_names=('path', 'lines', 'encoding'),
                 param_defaults=(None, None, _DEFAULT_ENCODING))
 def _quick_append_lines(args, ctx):
+    """Append LF-delimited lines and close the temporary resource."""
     del ctx
     return _quick_write(args, 'lines', 'ab')
 
 
 @stdlib_element('appendBytes', (_PATH, _BYTE_LIST), (), param_names=('path','bytes'))
 def _quick_append_bytes(args, ctx):
+    """Append validated raw bytes and close the temporary resource."""
     del ctx
     return _quick_write(args, 'bytes', 'ab')
 

@@ -496,7 +496,7 @@ end
     def test_caesar_cipher(self):
         source = r"""
 define cipher(plaintext: String, shiftAmount: Int) =>
-  import {string}
+  import {std.string}
   string.\Alphabet peek: rotate $shiftAmount
   string.transliterate($plaintext, _, _)
 end

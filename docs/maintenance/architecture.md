@@ -131,6 +131,9 @@ with a runtime implementation and human-facing documentation metadata.
 Importable standard-library elements live under `src/valiance/std` and are
 registered through `stdlib_native.py`. A native stdlib helper is not a global
 built-in merely because its implementation is written in Python.
+Standard-library imports require the explicit `std.` prefix. Unqualified paths
+such as `file.WriteFile` resolve only against local modules; they never fall
+back to standard-library source or native exports, even when names coincide.
 
 `documentation.py` defines renderer-neutral metadata for built-ins and native
 stdlib functions. `reference_docs.py` combines that metadata with `#??` blocks

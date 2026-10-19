@@ -1021,6 +1021,16 @@ This means library callers can still use `run()` without surprise printing.
 
 ### Ownership of wrapper results
 
+Named resource inputs to checked scalar calls use temporary `BorrowedValue`
+access, including when the callee returns the same access for another call.
+This runtime wrapper lives in `runtime_values.py` so tag/trait evidence and
+user-visible formatting preserve the capability. It adds no bytecode payload or
+serialized value kind. Storage materializes access through the ordinary
+duplication checks; forwarding or dropping access does not add or release an
+owner. Return cleanup transfers a frame-local owner to a returned access before
+releasing locals. Caller-owned accesses remain borrowed, and expired access
+raises a runtime error rather than using a destroyed payload.
+
 Built-ins and constructors may return a newly allocated wrapper that embeds one
 of their arguments, for example `Some(Person(...))`. Returning the wrapper must
 retain embedded object arguments before the call frame releases its argument

@@ -94,7 +94,7 @@ def collect_builtin_references(*, strict: bool = True) -> tuple[ElementReference
                     for definition in element.definitions
                 ),
                 aliases=tuple(sorted(aliases.get(element.name.text, ()), key=str.casefold)),
-                source_path="src/valiance/analysis/builtins.py",
+                source_path="src/valiance/elements/builtins.py",
             )
         )
     if strict and missing:
@@ -234,56 +234,90 @@ def render_language_reference_html(
 ) -> str:
     """Render a searchable self-contained HTML language reference."""
     grouped = _group_references(references)
-    navigation: list[str] = []
+    links = {
+        name: _element_anchor(reference.qualified_name)
+        for reference in references
+        for name in (reference.qualified_name, *reference.aliases)
+    }
+    navigation: dict[str, list[str]] = {}
     sections: list[str] = []
     for group_name, group_references in grouped:
-        anchor = _slug(group_name)
-        navigation.append(
-            f'<li><a href="#{html.escape(anchor)}">{html.escape(group_name)}</a></li>'
+        anchor = "group-" + _slug(group_name)
+        scope = group_references[0].scope
+        label = group_references[0].module or group_references[0].category
+        entries = "".join(
+            f'<li data-entry="{_element_anchor(item.qualified_name)}">'
+            f'<a href="#{_element_anchor(item.qualified_name)}" '
+            f'title="{html.escape(item.summary)}"><code>{html.escape(item.name)}</code></a></li>'
+            for item in group_references
         )
-        cards = "\n".join(_reference_card(item) for item in group_references)
+        navigation.setdefault(scope, []).append(
+            f'<li class="nav-group" data-section="{anchor}"><details>'
+            f'<summary><span>{html.escape(label)}</span>'
+            f'<span class="nav-count">{len(group_references)}</span></summary>'
+            f'<a class="nav-overview" href="#{anchor}">Overview</a>'
+            f'<ul>{entries}</ul></details></li>'
+        )
+        cards = "\n".join(_reference_card(item, links) for item in group_references)
         sections.append(
-            f'<section class="reference-group" id="{html.escape(anchor)}">\n'
-            f"  <h2>{html.escape(group_name)}</h2>\n{cards}\n</section>"
+            f'<section class="reference-group" id="{anchor}">\n'
+            f'<div class="section-heading"><h2>{html.escape(group_name)}</h2>'
+            f'<span>{len(group_references)} entries</span></div>\n{cards}\n</section>'
         )
+    assets = resources.files("valiance.elements")
+    stylesheet = assets.joinpath("reference_docs.css").read_text(encoding="utf-8")
+    script = assets.joinpath("reference_docs.js").read_text(encoding="utf-8")
     return "\n".join(
         (
             "<!doctype html>",
             '<html lang="en">',
-            "<head>",
-            '  <meta charset="utf-8">',
-            '  <meta name="viewport" content="width=device-width, initial-scale=1">',
-            f"  <title>{html.escape(title)}</title>",
-            "  <style>",
-            _LANGUAGE_REFERENCE_CSS,
-            "  </style>",
-            "</head>",
-            "<body>",
-            "  <header>",
-            f"    <h1>{html.escape(title)}</h1>",
-            "    <p>Generated from compiler and standard-library documentation metadata.</p>",
-            '    <input id="filter" type="search" placeholder="Filter names, signatures, or descriptions" aria-label="Filter reference">',
-            "  </header>",
-            '  <div class="layout">',
-            '    <nav aria-label="Reference sections"><h2>Sections</h2><ul>',
-            *(f"      {item}" for item in navigation),
-            "    </ul></nav>",
-            "    <main>",
-            *(f"      {line}" for section in sections for line in section.splitlines()),
-            "    </main>",
-            "  </div>",
-            "  <script>",
-            "    const filter = document.querySelector('#filter');",
-            "    filter.addEventListener('input', () => {",
-            "      const query = filter.value.toLowerCase();",
-            "      document.querySelectorAll('.element').forEach(card => {",
-            "        card.hidden = !card.textContent.toLowerCase().includes(query);",
-            "      });",
-            "    });",
-            "  </script>",
-            "</body>",
-            "</html>",
-            "",
+            '<head><meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            f"<title>{html.escape(title)}</title>",
+            f"<style>{stylesheet}</style></head>",
+            '<body><a class="skip-link" href="#reference">Skip to reference</a>',
+            '<div class="layout">',
+            '<aside><a class="brand" href="#top"><span class="brand-mark">V</span> Valiance</a>',
+            '<p class="nav-label">LANGUAGE REFERENCE</p>',
+            '<nav aria-label="Reference sections"><ul>',
+            *(
+                f'<li class="nav-scope" data-scope="{scope}"><details open>'
+                f'<summary>{label}</summary><ul>{"".join(navigation[scope])}</ul></details></li>'
+                for scope, label in (
+                    ("built-in", "Built-ins"),
+                    ("standard-library", "Standard library"),
+                    ("language", "Language forms"),
+                )
+                if scope in navigation
+            ),
+            '</ul></nav><p class="sidebar-note">Built from language declarations.<br>Available offline.</p></aside>',
+            '<main id="reference"><header id="top">',
+            '<p class="eyebrow">THE VALIANCE LANGUAGE</p>',
+            f'<h1>{html.escape(title)}</h1>',
+            '<p class="intro">Explore the building blocks. Find a function, inspect its stack signature, '
+            'and put it to work.</p>',
+            f'<p class="catalogue-count">{len(references)} entries · Built-ins · Standard library · Language forms</p>',
+            '</header>',
+            '<div class="search-panel" hidden>',
+            '<label for="filter">Search the reference</label>',
+            '<div class="search-row"><input id="filter" type="search" '
+            'placeholder="Name, alias, type, or description…" autocomplete="off" '
+            'aria-controls="entries"><button id="clear" type="button">Clear</button></div>',
+            '<div class="filter-row"><label for="scope">Show</label><select id="scope">'
+            '<option value="all">All entries</option><option value="built-in">Built-ins</option>'
+            '<option value="standard-library">Standard library</option>'
+            '<option value="language">Language forms</option></select>'
+            '<span class="search-hint">Press / to search · Esc to clear</span></div>',
+            f'<p id="result-count" role="status" aria-live="polite">{len(references)} entries</p>',
+            '</div><div id="entries">',
+            *sections,
+            '</div><div id="empty-state" hidden><h2>No entries found</h2>'
+            '<p>Try a shorter search or choose a different scope.</p></div>',
+            '<footer>Valiance reference · Generated from compiler and standard library metadata</footer>',
+            '</main></div>',
+            f'<script>{script}</script>',
+            '</body></html>',
+            '',
         )
     )
 
@@ -494,6 +528,8 @@ def _group_references(
     for reference in references:
         if reference.scope == "built-in":
             label = f"Built-ins — {reference.category}"
+        elif reference.scope == "language":
+            label = f"Language — {reference.category}"
         else:
             label = reference.module or "Standard library"
         grouped.setdefault(label, []).append(reference)
@@ -503,20 +539,15 @@ def _group_references(
     )
 
 
-def _reference_card(reference: ElementReference) -> str:
+def _reference_card(reference: ElementReference, links: dict[str, str]) -> str:
     """Render one HTML card for an element reference."""
-    searchable = " ".join(
-        (
-            reference.qualified_name,
-            reference.summary,
-            *reference.overloads,
-            *reference.description,
-        )
-    )
+    anchor = _element_anchor(reference.qualified_name)
     lines = [
-        f'<article class="element" id="{html.escape(_slug(reference.qualified_name))}" data-search="{html.escape(searchable)}">',
-        f"  <h3><code>{html.escape(reference.qualified_name)}</code></h3>",
-        f"  <p>{_inline_html(reference.summary)}</p>",
+        f'<article class="element" id="{anchor}" data-scope="{html.escape(reference.scope)}">',
+        '<div class="element-heading">',
+        f'<h3><a class="permalink" href="#{anchor}"><code>{html.escape(reference.qualified_name)}</code></a></h3>',
+        f'<span class="badge">{html.escape(reference.category)}</span></div>',
+        f'<p class="summary">{_inline_html(reference.summary)}</p>',
     ]
     if reference.aliases:
         lines.append(
@@ -535,6 +566,7 @@ def _reference_card(reference: ElementReference) -> str:
                 + (
                     f"<p>{_inline_html(reference.overload_documentation[index].summary)}</p>"
                     if index < len(reference.overload_documentation)
+                    and reference.overload_documentation[index].summary != reference.summary
                     else ""
                 )
                 + "</li>"
@@ -543,7 +575,11 @@ def _reference_card(reference: ElementReference) -> str:
             "  </ul>",
         )
     )
-    lines.extend(f"  <p>{_inline_html(paragraph)}</p>" for paragraph in reference.description)
+    lines.extend(
+        f"  <p>{_inline_html(paragraph)}</p>"
+        for paragraph in reference.description
+        if paragraph != reference.summary
+    )
     if reference.parameters:
         lines.extend(("  <h4>Parameters</h4>", "  <dl>"))
         for parameter in reference.parameters:
@@ -562,6 +598,13 @@ def _reference_card(reference: ElementReference) -> str:
         lines.extend(("  <h4>Notes</h4>", "  <ul>"))
         lines.extend(f"    <li>{_inline_html(note)}</li>" for note in reference.notes)
         lines.append("  </ul>")
+    if reference.see_also:
+        related = []
+        for name in reference.see_also:
+            label = f"<code>{html.escape(name)}</code>"
+            target = links.get(name) or links.get(f"{reference.module}.{name}")
+            related.append(f'<a href="#{target}">{label}</a>' if target else label)
+        lines.append('<p class="related"><strong>See also:</strong> ' + ", ".join(related) + "</p>")
     if reference.source_path:
         lines.append(f"  <p class=\"source\">Source: <code>{html.escape(reference.source_path)}</code></p>")
     lines.append("</article>")
@@ -580,40 +623,11 @@ def _inline_html(value: str) -> str:
 
 
 def _slug(value: str) -> str:
-    """Return a stable HTML identifier for a reference group or element."""
+    """Return a readable group identifier with an exact-name collision suffix."""
     slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
-    if slug:
-        return slug
-    encoded = "-".join(f"{ord(character):x}" for character in value)
-    return f"symbol-{encoded}" if encoded else "item"
+    return f"{slug or 'group'}-{value.encode('utf-8').hex()}"
 
 
-_LANGUAGE_REFERENCE_CSS = """    :root {
-      color-scheme: light dark;
-      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-      line-height: 1.55;
-    }
-    body { margin: 0; background: Canvas; color: CanvasText; }
-    header { padding: 2rem clamp(1rem, 5vw, 4rem); border-bottom: 1px solid GrayText; }
-    header h1 { margin: 0 0 .35rem; }
-    header p { margin: 0 0 1rem; color: GrayText; }
-    #filter { box-sizing: border-box; width: min(42rem, 100%); padding: .7rem .85rem; }
-    .layout { display: grid; grid-template-columns: minmax(14rem, 20rem) 1fr; gap: 2rem; padding: 2rem clamp(1rem, 5vw, 4rem); }
-    nav { position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow: auto; }
-    nav h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .08em; }
-    nav ul { list-style: none; padding: 0; }
-    nav li { margin: .45rem 0; }
-    main { min-width: 0; }
-    .reference-group { margin-bottom: 3rem; }
-    .element { border: 1px solid GrayText; border-radius: .75rem; padding: 1.15rem 1.25rem; margin: 1rem 0; }
-    .element h3 { margin-top: 0; font-size: 1.25rem; }
-    .element h4 { margin-bottom: .35rem; }
-    .overloads { padding-left: 1.4rem; }
-    pre { overflow-x: auto; padding: .8rem; background: color-mix(in srgb, CanvasText 8%, Canvas); border-radius: .4rem; }
-    dt { font-weight: 700; }
-    dd { margin-bottom: .45rem; }
-    .source { color: GrayText; font-size: .9rem; }
-    a { color: LinkText; }
-    [hidden] { display: none !important; }
-    @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } nav { position: static; } }
-"""
+def _element_anchor(qualified_name: str) -> str:
+    """Encode exact names into stable anchors, including symbolic operators."""
+    return "element-" + qualified_name.encode("utf-8").hex()

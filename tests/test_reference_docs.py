@@ -1,5 +1,11 @@
 import json
+import subprocess
+import sys
+import tempfile
 import unittest
+from dataclasses import replace
+from html.parser import HTMLParser
+from pathlib import Path
 
 import valiance.vtypes as T
 from valiance.elements.builtins import (
@@ -25,6 +31,63 @@ from valiance.elements.reference_docs import (
 
 
 class ReferenceDocumentationTests(unittest.TestCase):
+    def test_sidebar_drills_from_scope_through_group_to_every_entry(self):
+        references = collect_language_references()
+        page = _ReferenceHTML()
+        page.feed(render_language_reference_html(references))
+        self.assertEqual(len(page.entry_paths), len(references))
+        self.assertEqual({scope for scope, group, target in page.entry_paths}, {
+            "built-in", "standard-library", "language",
+        })
+        self.assertTrue(all(group in page.ids and target in page.ids
+                            for scope, group, target in page.entry_paths))
+        self.assertEqual(len({target for scope, group, target in page.entry_paths}),
+                         len(references))
+        self.assertTrue(all(depth == 2 for depth in page.entry_depths))
+
+    def test_html_has_unique_anchors_and_resolvable_internal_links(self):
+        references = collect_language_references()
+        page = _ReferenceHTML()
+        page.feed(render_language_reference_html(references))
+        self.assertEqual(len(page.ids), len(set(page.ids)))
+        self.assertTrue(page.targets)
+        self.assertFalse(set(page.targets) - set(page.ids))
+        self.assertEqual(page.articles, len(references))
+        self.assertIn("Language — Concurrency", render_language_reference_html(references))
+
+    def test_html_escapes_metadata_and_keeps_symbol_names_distinct(self):
+        template = collect_builtin_references()[0]
+        references = [
+            replace(template, name=name, qualified_name=name, aliases=(),
+                    summary='<script>alert("unsafe")</script>',
+                    category='<img src=x>', see_also=("a-b",))
+            for name in ("a-b", "a.b", "+", "++", "<>")
+        ]
+        rendered = render_language_reference_html(references, title="<unsafe title>")
+        page = _ReferenceHTML()
+        page.feed(rendered)
+        self.assertEqual(len(page.ids), len(set(page.ids)))
+        self.assertNotIn('<script>alert(', rendered)
+        self.assertIn('&lt;script&gt;', rendered)
+        self.assertIn('&lt;unsafe title&gt;', rendered)
+        self.assertFalse(set(page.targets) - set(page.ids))
+
+    def test_bundle_is_complete_and_reproducible(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "reference"
+            command = [sys.executable, str(root / "scripts/generate_reference_docs.py"),
+                       "--output", str(output)]
+            subprocess.run(command, cwd=root, check=True, capture_output=True)
+            first = {path.name: path.read_bytes() for path in output.iterdir()}
+            self.assertEqual(set(first), {
+                "index.html", "language-reference.md", "language-reference.json",
+            })
+            payload = json.loads(first["language-reference.json"])
+            self.assertEqual(len(payload["elements"]), len(collect_language_references()))
+            subprocess.run(command, cwd=root, check=True, capture_output=True)
+            self.assertEqual(first, {path.name: path.read_bytes() for path in output.iterdir()})
+
     def test_every_builtin_has_documentation_and_aliases_are_grouped(self):
         references = collect_builtin_references()
         by_name = {reference.name: reference for reference in references}
@@ -95,6 +158,42 @@ class ReferenceDocumentationTests(unittest.TestCase):
         self.assertTrue(
             any(item["qualified_name"] == "println" for item in payload["elements"])
         )
+
+
+class _ReferenceHTML(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids = []
+        self.targets = []
+        self.articles = 0
+        self.entry_paths = []
+        self.entry_depths = []
+        self.list_stack = []
+        self.disclosure_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "details":
+            self.disclosure_depth += 1
+        if tag == "li":
+            self.list_stack.append(attributes)
+        if tag == "a" and self.list_stack and "data-entry" in self.list_stack[-1]:
+            scope = next(row["data-scope"] for row in self.list_stack if "data-scope" in row)
+            group = next(row["data-section"] for row in self.list_stack if "data-section" in row)
+            self.entry_paths.append((scope, group, attributes["href"][1:]))
+            self.entry_depths.append(self.disclosure_depth)
+        if "id" in attributes:
+            self.ids.append(attributes["id"])
+        if attributes.get("href", "").startswith("#"):
+            self.targets.append(attributes["href"][1:])
+        if tag == "article":
+            self.articles += 1
+
+    def handle_endtag(self, tag):
+        if tag == "li":
+            self.list_stack.pop()
+        if tag == "details":
+            self.disclosure_depth -= 1
 
 
 if __name__ == "__main__":

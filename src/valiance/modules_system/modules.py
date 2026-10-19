@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from difflib import SequenceMatcher
 import hashlib
 from pathlib import Path
@@ -509,11 +509,6 @@ class ModuleLoader:
             else:
                 root = self.std_root
             return _source_path(root, path.parts[1:])
-        if path.root is None and len(path.parts) == 1:
-            native_exports = _native_std_exports(path)
-            if native_exports is not None:
-                root = Path(__file__).parent.parent / "std"
-                return _source_path(root, path.parts)
         if path.root == Symbol("root"):
             root = _project_root(current_file, self.base_directory)
             if root is None:
@@ -637,7 +632,7 @@ def import_objects(
     # references to enums declared beside the imported object, including
     # enum-valued defaults, when the provider acquires an import namespace.
     enum_names = frozenset(
-        obj.name.text for obj in public
+        obj.name.text for obj in exports.objects
         if isinstance(obj.typed.node, ObjectNode)
         and obj.typed.node.kind == Symbol("enum")
     )
@@ -679,6 +674,17 @@ def import_objects(
             nominal_name=_namespaced_symbol(obj.name, provider) if native_module else None,
         )
         for obj in public
+    )
+
+
+def import_constructor_dependencies(exports: ModuleExports) -> tuple[ModuleObject, ...]:
+    """Retain sibling enums privately for imported constructor types and defaults."""
+    provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
+    return tuple(
+        _renamed_object(obj, _namespaced_symbol(obj.name, provider))
+        for obj in exports.objects
+        if isinstance(obj.typed.node, ObjectNode)
+        and obj.typed.node.kind == Symbol("enum")
     )
 
 
@@ -1168,7 +1174,7 @@ def _renamed_object(
         obj.friendly_definitions,
     )
     renamed_constructors = tuple(
-        _qualify_constructor_enum_defaults(
+        _qualify_provider_enum_references(
             _renamed_define_node(definition, owner), enum_names, enum_namespace,
         )
         for definition in explicit_constructors
@@ -1201,7 +1207,7 @@ def _renamed_object(
         owner,
         node.generics,
         node.target,
-        node.fields,
+        _qualify_provider_enum_references(node.fields, enum_names, enum_namespace),
         definitions,
         node.requirements,
         node.variants,
@@ -1211,6 +1217,7 @@ def _renamed_object(
         node.generic_constraints,
         node.visibility,
         location=node.location,
+        generic_scope_id=node.generic_scope_id,
     )
     return ModuleObject(
         name,
@@ -1226,45 +1233,39 @@ def _renamed_object(
     )
 
 
-def _qualify_constructor_enum_defaults(
-    definition: DefineNode,
-    enum_names: frozenset[str],
-    namespace: Symbol | None,
-) -> DefineNode:
-    """Preserve local enum types/defaults when importing an object constructor.
-
-    The source module can write ``Encoding = Encoding.UTF8``, while an
-    importing module sees ``file.Encoding = file.Encoding.UTF8``. Only known
-    sibling enum symbols are qualified; generic and builtin types are left
-    alone.
-    """
+def _qualify_provider_enum_references(
+    value, enum_names: frozenset[str], namespace: Symbol | None,
+):
+    """Qualify sibling enum references through nested annotations and expressions."""
     if namespace is None or not enum_names:
-        return definition
-    params = []
-    for param in definition.function.params or ():
-        typ = param.typ
-        if (isinstance(typ, T.NominalType) and not typ.name.namespace
-                and typ.name.text in enum_names):
-            typ = T.N(Symbol(typ.name.text, (*namespace.namespace, namespace.text)),
-                      *typ.args)
-        default = tuple(
-            replace(
-                item,
-                name=Symbol(item.name.text, (
-                    *namespace.namespace, namespace.text, *item.name.namespace,
-                )),
-            ) if (
-                isinstance(item, ElementNode)
-                and item.name.namespace
-                and item.name.namespace[0] in enum_names
-            ) else item
-            for item in param.default
+        return value
+    prefix = (*namespace.namespace, namespace.text)
+    if (isinstance(value, T.NominalType) and not value.name.namespace
+            and value.name.text in enum_names):
+        value = replace(value, name=Symbol(value.name.text, prefix))
+    elif (isinstance(value, ElementNode) and value.name.namespace
+            and value.name.namespace[0] in enum_names):
+        value = replace(
+            value, name=Symbol(value.name.text, (*prefix, *value.name.namespace)),
         )
-        params.append(replace(param, typ=typ, default=default))
-    return replace(
-        definition,
-        function=replace(definition.function, params=tuple(params)),
-    )
+    if is_dataclass(value):
+        return replace(value, **{
+            item.name: _qualify_provider_enum_references(
+                getattr(value, item.name), enum_names, namespace,
+            )
+            for item in fields(value)
+        })
+    if isinstance(value, tuple):
+        return tuple(
+            _qualify_provider_enum_references(item, enum_names, namespace)
+            for item in value
+        )
+    if isinstance(value, frozenset):
+        return frozenset(
+            _qualify_provider_enum_references(item, enum_names, namespace)
+            for item in value
+        )
+    return value
 
 
 def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
@@ -1284,6 +1285,7 @@ def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
             companion_tags_allowed=node.function.companion_tags_allowed,
             generic_constraints=node.function.generic_constraints,
             location=node.function.location,
+            generic_scope_id=node.function.generic_scope_id,
         ),
         node.annotations,
         node.is_multi,
@@ -1528,8 +1530,6 @@ def _native_std_exports(path: ImportPath) -> ModuleExports | None:
         return None
     if len(path.parts) == 2 and path.parts[0] == "std":
         module_name = path.parts[1]
-    elif len(path.parts) == 1:
-        module_name = path.parts[0]
     else:
         return None
     from valiance.elements.stdlib_native import native_module_exports

@@ -728,26 +728,37 @@ Most opcodes fall into a few families.
 These move values while applying retain/release rules. `LOAD_VAR_BORROW` is
 emitted for the root variable of a field or indexed assignment that stores back
 to the same binding, for variable-rooted access chains consumed directly by
-`print` or `println`, and for named nominal inputs to a **checked, non-vectorised
-call with no outputs**. Borrow selection follows the analyser's selected overload
+`print` or `println`, and for resource-bearing nominal inputs to a checked,
+non-vectorised call, including tagged inputs and calls returning state.
+Borrow selection follows the analyser's selected overload
 and the input/output stack effects, tracking unchanged named inputs through
 stack permutations such as `swap` and move shuffles. It also recognises explicit
 call arguments already lowered to the typed stack. This lets non-duplicable
-resources be used repeatedly without making a second owned occurrence. Calls
-returning state are *not* eligible. Unknown or unmodelled stack effects clear
+resources be used repeatedly without making a second owned occurrence. A call
+may forward temporary access into its results; chaining or discarding that access
+does not consume the named owner. Unknown or unmodelled stack effects clear
 provenance instead of guessing a borrow; rebinding a named owner invalidates
 older borrow candidates. A call's signature itself is never assumed unknown
 merely because the callee is indirect.
 
 `LOAD_VAR_BORROW` places a non-owning access
 wrapper on the stack. Field reads preserve that wrapper without retaining or
-releasing the object receiver, and observational built-ins unwrap it before
-formatting. If a callee explicitly materialises that borrowed parameter into
+releasing the object receiver. Built-ins observe its payload and preserve
+access in passthrough results. Generic callees and runtime tag/trait views also
+preserve this capability. Reconstruction inside a callee requires ownership,
+so immutable state changes still require explicit rebinding when the input
+cannot be duplicated. If a callee explicitly materialises that borrowed parameter into
 another occurrence, duplication policy is checked on the underlying value:
 ordinary duplicable values can be retained, but `@nodup` values still raise a
 `DuplicationFault`. The borrowed wrapper itself must not escape into persistent
-storage. Ordinary reads continue to use `LOAD_VAR` and materialise an
-additional occurrence. A
+storage: assignments, collection/wrapper construction, task and channel storage
+materialise access and perform the normal duplication check. Assignment back to
+the same owning slot transfers its occurrence without a copy. A returned access
+to a frame-local owner transfers that owner before frame cleanup; access to a
+caller-owned occurrence remains borrowed. Access after its owner is released
+fails predictably, including while rendering diagnostic context. Ordinary
+untracked reads retain the existing `LOAD_VAR` behaviour; reading an already
+borrowed parameter preserves its access capability. A
 direct variable-to-variable assignment uses `LOAD_VAR_MATERIALIZE` with both
 source and destination names. Literal construction uses the same instruction
 with aggregate context for list and tuple elements, record fields, and dictionary

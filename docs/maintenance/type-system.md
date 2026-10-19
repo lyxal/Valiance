@@ -97,6 +97,16 @@ code stops looking magical.
 
 ## A map of the implementation
 
+Imported constructors retain a private provider scope for omitted argument
+defaults. Sibling enum types and nested enum expressions are qualified before
+rebuilding the constructor; their runtime declarations travel in the import
+prelude without exposing those names to the caller. Explicit argument expressions
+still use the caller's environment. `Environment.default_argument_scope` restores
+the provider environment only while analysing an omitted default, so selected
+and aliased imports work with source and persisted module interfaces alike.
+Rebuilding an already checked imported object does not replay warnings from its
+method bodies; warning annotations still apply when the importer calls a method.
+
 The type system is intentionally split by responsibility.
 
 ### `types/nodes.py`: vocabulary

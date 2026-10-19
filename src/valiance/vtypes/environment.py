@@ -268,6 +268,19 @@ class Environment:
     overload_runtime_names: dict[tuple[Symbol, Overload], Symbol] = field(
         default_factory=dict[tuple[Symbol, Overload], Symbol]
     )
+    default_argument_scopes: dict[tuple[str | None, Overload], Environment] = field(
+        default_factory=dict, compare=False, repr=False,
+    )
+
+    def default_argument_scope(self, overload: Overload) -> Environment | None:
+        """Return the provider scope retained for an imported callable's defaults."""
+        key = (overload.implementation_id, overload)
+        if key in self.default_argument_scopes:
+            return self.default_argument_scopes[key]
+        if self.parent is not None:
+            return self.parent.default_argument_scope(overload)
+        return None
+
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
         return Environment(context=self.context, parent=self)

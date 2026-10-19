@@ -184,7 +184,7 @@ class _Compiler:
         self.tag_parents: dict[str, str] = {}
         self._temporary_index = 0
         self._borrowed_assignment_nodes: set[int] = set()
-        self._borrowed_void_call_nodes: set[int] = set()
+        self._borrowed_call_nodes: set[int] = set()
         self._observational_access_nodes: set[int] = set()
         self._assignment_materializations: dict[int, str] = {}
         self._forwarded_rebinding_nodes: set[int] = set()
@@ -374,7 +374,7 @@ class _Compiler:
     ) -> FunctionCode:
         """Compile a typed function body and its captured runtime metadata."""
         self._borrowed_assignment_nodes = _borrowed_assignment_receivers(body)
-        self._borrowed_void_call_nodes = _typed_void_call_borrows(body)
+        self._borrowed_call_nodes = _typed_call_borrows(body)
         self._observational_access_nodes = _observational_access_roots(body)
         self._assignment_materializations = _assignment_materialization_roots(body)
         self._forwarded_rebinding_nodes = _forwarded_rebinding_roots(body, params)
@@ -611,7 +611,7 @@ class _Compiler:
                     opcode = (
                         OpCode.LOAD_VAR_BORROW
                         if id(source_node) in self._borrowed_assignment_nodes
-                        or id(source_node) in self._borrowed_void_call_nodes
+                        or id(source_node) in self._borrowed_call_nodes
                         or id(source_node) in self._observational_access_nodes
                         else OpCode.LOAD_VAR
                     )
@@ -2084,14 +2084,16 @@ def _single_element_function_arity(ast: FunctionNode) -> int | None:
 
 
 
-def _typed_void_call_borrows(
+def _typed_call_borrows(
     body: tuple[ASTNode | TypedNode, ...],
 ) -> set[int]:
     """Follow checked stack effects to identify temporary named call inputs.
 
-    Only a named, nominal value flowing unchanged into an analyser-resolved,
-    non-vectorised void call can be borrowed. The source need not be adjacent
-    to the call: shuffles and intermediate values are accounted for using the
+    A named, nominal input to an analyser-resolved, non-vectorised call can
+    be accessed without immediately creating another owner. The callee checks
+    materialisation, and may forward the same borrowed access into a result.
+    The source need not be adjacent to the call: shuffles and intermediate
+    values are accounted for using the
     selected overload's input/output stack effect. Unknown constructs invalidate
     provenance rather than making an unverified borrowing assumption.
 
@@ -2129,7 +2131,7 @@ def _typed_void_call_borrows(
                 candidate
                 if isinstance(candidate, TypedNode)
                 and candidate.typ is not None
-                and isinstance(normalize(candidate.typ), NominalType)
+                and _borrowable_named_type(candidate.typ)
                 else None
             )
         elif isinstance(ast, (NumberLiteralNode, StringLiteralNode)):
@@ -2170,7 +2172,7 @@ def _typed_void_call_borrows(
                 stack.clear()
                 continue
             args = take(len(overload.params))
-            if not overload.vectorised and not overload.actual_returns:
+            if not overload.vectorised:
                 named = [
                     source for source in args
                     if source is not None
@@ -2205,6 +2207,16 @@ def _typed_void_call_borrows(
             # the stack: do not carry speculative ownership provenance over it.
             stack.clear()
     return borrowed
+
+
+def _borrowable_named_type(typ: Type) -> bool:
+    """Recognize nominal resource access without slowing down scalar loads."""
+    typ = normalize(typ)
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
+        return _borrowable_named_type(typ.inner)
+    return isinstance(typ, NominalType) and typ.name not in {
+        Symbol('Int'), Symbol('Real'), Symbol('Number'), Symbol('String'),
+    }
 
 
 def _is_builtin_swap(overload: Overload) -> bool:

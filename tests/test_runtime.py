@@ -5495,8 +5495,8 @@ end
                         self.assertEqual(run(candidate), [])
                     self.assertEqual(output.getvalue(), "seen\nseen\ndestroy\n")
 
-    def test_nodup_typed_returning_call_still_rejects_through_shuffle(self):
-        """Checked output effects forbid borrowing a state-returning call."""
+    def test_nodup_typed_returning_call_borrows_through_shuffle(self):
+        """A returned access preserves the named owner through stack permutations."""
         source = r"""
 @nodup("Writer cannot be duplicated")
 object Writer =>
@@ -5518,15 +5518,16 @@ end
             if instruction.op is OpCode.MAKE_FUNCTION
             and instruction.arg.name == r"\exercise"
         )
-        self.assertIn(OpCode.LOAD_VAR, [
+        self.assertIn(OpCode.LOAD_VAR_BORROW, [
             instruction.op for instruction in exercise.instructions
             if instruction.arg == "f"
         ])
         for candidate in (program, loads(dumps(program))):
             with self.subTest(serialized=candidate is not program):
-                with self.assertRaises(RuntimeError) as caught:
-                    run(candidate)
-                self.assertIn("DuplicationFault", str(caught.exception))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), 'first\n')
 
     def test_nodup_typed_void_call_does_not_borrow_same_owner_twice(self):
         """One call cannot receive two borrowed copies of one named owner."""
@@ -5563,8 +5564,8 @@ end
             run(program)
         self.assertIn("DuplicationFault", str(caught.exception))
 
-    def test_nodup_named_returning_call_still_rejects_second_owner(self):
-        """Only void calls borrow; retaining the old and returned owner is invalid."""
+    def test_nodup_named_returning_calls_keep_owner_available(self):
+        """Chained and repeated calls return access without creating a second owner."""
         source = """
 @nodup("Writer cannot be duplicated")
 object Writer =>
@@ -5573,8 +5574,8 @@ end
 
 define \\exercise -> =>
   $f = Writer
-  $f writeLine "1"
-  $f writeLine "2"
+  $f writeLine "1" | writeLine "2"
+  $f writeLine "3"
 end
 \\exercise
 """
@@ -5584,9 +5585,143 @@ end
         program = compile_program(typed, optimize=False)
         for candidate in (program, loads(dumps(program))):
             with self.subTest(serialized=candidate is not program):
-                with self.assertRaises(RuntimeError) as caught:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), '1\n2\n3\n')
+
+    def test_nodup_returned_access_cannot_enter_independent_storage(self):
+        """Deferred borrowing must still reject storage, wrappers, and explicit copies."""
+        for expression in (
+            '$other = $f touch',
+            '[$f touch]',
+            'Some($f touch)',
+            '$f touch | dup',
+            'record{value => $f touch}',
+            '{$f touch, 67}',
+        ):
+            with self.subTest(expression=expression):
+                source = '''
+@nodup("Writer cannot be duplicated")
+object Writer => @self define touch => end end
+define \\exercise -> =>
+  $f = Writer
+''' + expression + '\nend\n\\exercise'
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                if analyser.diagnostics:
+                    self.assertTrue(any(
+                        'cannot be duplicated' in diagnostic for diagnostic in analyser.diagnostics
+                    ), analyser.diagnostics)
+                    continue
+                for optimize in (False, True):
+                    program = compile_program(typed, optimize=optimize)
+                    for candidate in (program, loads(dumps(program))):
+                        with self.assertRaises(RuntimeError) as caught:
+                            run(candidate)
+                        self.assertIn('DuplicationFault', str(caught.exception))
+
+    def test_nodup_returned_local_access_transfers_the_exiting_owner(self):
+        """A locally owned resource returned through calls survives its creating frame."""
+        source = '''
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  @self define touch => end
+  define ~Writer => println "destroy" end
+end
+define \\make -> Writer =>
+  $f = Writer
+  $f touch | touch
+end
+\\make | touch | pop
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), 'destroy\n')
+
+    def test_nodup_borrowed_calls_preserve_tagged_views_and_rebinding(self):
+        """Tagged access retains its owner and can be assigned back to the same slot."""
+        source = '''
+tag #resource as unit
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  define ~Writer => println "destroy" end
+end
+define touch(value: #resource Writer) => $value end
+define \\exercise -> =>
+  $f = Writer | #resource
+  $f = ($f touch | touch)
+  $f touch | pop
+end
+\\exercise
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), 'destroy\n')
+
+    def test_nodup_borrowed_result_detects_released_owner(self):
+        """An access cannot silently use an owner released by later rebinding."""
+        source = '''
+@nodup("Writer cannot be duplicated")
+object Writer => @self define touch => end end
+define \\exercise -> =>
+  $f = Writer
+  $f touch
+  $f = Writer
+  touch
+end
+\\exercise
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                with self.assertRaisesRegex(RuntimeError, 'outlived its owning occurrence'):
                     run(candidate)
-                self.assertIn("DuplicationFault", str(caught.exception))
+
+    def test_nodup_borrowed_calls_cross_generic_wrappers(self):
+        """Generic bodies propagate temporary access until an actual storage boundary."""
+        source = '''
+@nodup("Writer cannot be duplicated")
+object Writer =>
+  @self define touch => end
+  define ~Writer => println "destroy" end
+end
+define[T] relay(value: T) -> T => $value end
+define[T] relayTwice(value: T) -> T => $value relay | relay end
+define \\exercise -> =>
+  $f = Writer
+  relayTwice $f | touch | pop
+  $f touch | pop
+end
+\\exercise
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(run(candidate), [])
+                self.assertEqual(output.getvalue(), 'destroy\n')
 
     def test_nodup_void_calls_borrow_direct_free_function_arguments(self):
         """Borrowing is a call property, not restricted to object-friendly names."""

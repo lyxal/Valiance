@@ -44,6 +44,7 @@ from valiance.runtime.concurrency import (
 from valiance.runtime.transfer import require_task_transfer
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
+    BorrowedValue as _BorrowedValue,
     DictValue,
     LazyList,
     PlannedLazyList,
@@ -484,13 +485,6 @@ class _DuplicationContext:
     requested: int | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class _BorrowedValue:
-    """A non-owning access to an existing occurrence carried on the VM stack."""
-
-    value: Any
-
-
 @dataclass(slots=True)
 class _Frame:
     stack: list[Any]
@@ -871,6 +865,7 @@ class VirtualMachine:
         isolate_captures: bool = True,
     ) -> list[Any]:
         """Invoke one compiled function with explicit runtime arguments."""
+        args = tuple(_readonly_access(value) for value in args)
         parameter_count = len(function.code.params)
         if function.code.accepts_stack_inputs:
             if len(args) < parameter_count:
@@ -943,6 +938,7 @@ class VirtualMachine:
         multiplicity: int,
     ) -> PreparedCall:
         """Prepare and cache a fixed-shape callable for repeated higher-order use."""
+        value = _accessed_value(value)
         if arity < 0 or multiplicity < 0:
             raise RuntimeError("prepared call shape cannot be negative")
         key = (arity, multiplicity)
@@ -1850,6 +1846,7 @@ class VirtualMachine:
 
     def test_predicate(self, value: Any, argument: Any) -> bool:
         """Invoke a unary predicate through a cached extensible preparation path."""
+        value = _accessed_value(value)
         if isinstance(value, FunctionValue):
             if value.predicate_test is None:
                 specializers = (self._prepare_symbolic_predicate,)
@@ -2108,6 +2105,7 @@ class VirtualMachine:
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         """Invoke a callable through its statically established interface policy."""
+        value = _accessed_value(value)
         if isinstance(value, FunctionValue):
             ranks = value.code.param_collection_ranks
             has_collections = any(is_list_like(arg) for arg in args)
@@ -2614,7 +2612,7 @@ class VirtualMachine:
     ) -> _Activation:
         """Prepare one user-function activation for the VM frame stack."""
         function = request.callee
-        args = request.args
+        args = tuple(_readonly_access(value) for value in request.args)
         parameter_count = len(function.code.params)
         if function.code.accepts_stack_inputs:
             if len(args) < parameter_count:
@@ -2978,10 +2976,10 @@ class VirtualMachine:
                                 frame.locals,
                                 frame.globals,
                             )
-                            if isinstance(value, _BorrowedValue):
-                                # An owned load from a borrowed parameter must
-                                # explicitly duplicate its underlying value.
-                                frame.stack.append(_duplicate_occurrence(value))
+                            if _borrowed_payload(value) is not None:
+                                # Passing an existing access through a generic
+                                # body is still access; storage materializes it.
+                                frame.stack.append(_readonly_access(value))
                             elif (
                                 isinstance(value, _SCALAR_RUNTIME_TYPES)
                                 or not _needs_release(value)
@@ -3021,7 +3019,7 @@ class VirtualMachine:
                             )
                             frame.stack.append(
                                 value
-                                if not isinstance(value, _BorrowedValue)
+                                if _borrowed_payload(value) is None
                                 and (isinstance(value, _SCALAR_RUNTIME_TYPES)
                                      or not _needs_release(value))
                                 else _duplicate_occurrence(
@@ -3034,15 +3032,8 @@ class VirtualMachine:
                                 )
                             )
                         case OpCode.LOAD_VAR_BORROW:
-                            frame.stack.append(
-                                _BorrowedValue(
-                                    _load_name(
-                                        instruction.arg,
-                                        frame.locals,
-                                        frame.globals,
-                                    )
-                                )
-                            )
+                            value = _load_name(instruction.arg, frame.locals, frame.globals)
+                            frame.stack.append(_borrow_named_access(value))
                         case OpCode.STORE_VAR:
                             value = _pop(frame.stack, "store variable")
                             target = (
@@ -3052,6 +3043,15 @@ class VirtualMachine:
                                 else frame.locals
                             )
                             existing = target.get(instruction.arg)
+                            same_owner = (
+                                _borrowed_payload(value) is not None
+                                and unwrap_runtime_value(value) is unwrap_runtime_value(existing)
+                            )
+                            value = (
+                                _replace_access(value, unwrap_runtime_value(existing))
+                                if same_owner
+                                else _materialize_access(value)
+                            )
                             if isinstance(
                                 existing,
                                 (FunctionValue, OverloadedFunctionValue),
@@ -3064,6 +3064,7 @@ class VirtualMachine:
                                 stored = value
                             if (
                                 existing is not None
+                                and not same_owner
                                 and existing is not stored
                                 and _needs_release(existing)
                             ):
@@ -3270,7 +3271,9 @@ class VirtualMachine:
                                             name, identity, frame.globals,
                                         )
                                     refined = with_runtime_trait_witnesses(refined, proof)
-                                frame.stack.append(ObjectValue("Some", {"value": refined}))
+                                frame.stack.append(ObjectValue(
+                                    "Some", {"value": _materialize_access(refined)},
+                                ))
                             else:
                                 frame.stack.append(ObjectValue("None", {}))
                         case OpCode.CANONICALIZE_TAGS:
@@ -3289,6 +3292,8 @@ class VirtualMachine:
                                 raise RuntimeError("invalid minimum-rank operand")
                             value = _pop(frame.stack, "minimum rank assurance")
                             current_rank = _minimum_runtime_collection_rank(value)
+                            if current_rank < target_rank:
+                                value = _materialize_access(value)
                             while current_rank < target_rank:
                                 current_rank += 1
                                 value = ListValue([value], runtime_rank=current_rank)
@@ -3300,7 +3305,8 @@ class VirtualMachine:
                                 else (instruction.arg, None)
                             )
                             items, lifted_tags = _lift_common_collection_tags(
-                                _pop_many(frame.stack, count)
+                                [_materialize_access(value)
+                                 for value in _pop_many(frame.stack, count)]
                             )
                             value = ListValue(items, runtime_rank=rank)
                             frame.stack.append(
@@ -3314,15 +3320,22 @@ class VirtualMachine:
                             )
                         case OpCode.BUILD_TUPLE:
                             frame.stack.append(
-                                tuple(_pop_many(frame.stack, instruction.arg))
+                                tuple(_materialize_access(value)
+                                      for value in _pop_many(frame.stack, instruction.arg))
                             )
                         case OpCode.BUILD_RECORD:
-                            values = _pop_many(frame.stack, len(instruction.arg))
+                            values = [
+                                _materialize_access(value)
+                                for value in _pop_many(frame.stack, len(instruction.arg))
+                            ]
                             frame.stack.append(
                                 RecordValue(zip(instruction.arg, values, strict=True))
                             )
                         case OpCode.BUILD_DICT:
-                            values = _pop_many(frame.stack, instruction.arg * 2)
+                            values = [
+                                _materialize_access(value)
+                                for value in _pop_many(frame.stack, instruction.arg * 2)
+                            ]
                             frame.stack.append(
                                 DictValue(zip(values[::2], values[1::2], strict=True))
                             )
@@ -3392,13 +3405,14 @@ class VirtualMachine:
                             frame.cycle_index = next_cycle_index
                             frame.cycle_stack_remaining = next_cycle_stack_remaining
                             receiver = args[0]
-                            observational = isinstance(receiver, _BorrowedValue)
+                            access_receiver = receiver
+                            observational = _borrowed_payload(receiver) is not None
                             if observational:
-                                receiver = receiver.value
+                                receiver = unwrap_runtime_value(receiver)
                             if optional_safe:
                                 frame.stack.append(
                                     _optional_safe_get_field(
-                                        receiver,
+                                        access_receiver if observational else receiver,
                                         field,
                                         self,
                                     )
@@ -3422,7 +3436,7 @@ class VirtualMachine:
                             else:
                                 frame.stack.append(
                                     _consume_receiver_result(
-                                        receiver,
+                                        access_receiver if observational else receiver,
                                         _get_field(receiver, field),
                                         self,
                                     )
@@ -3436,9 +3450,15 @@ class VirtualMachine:
                                 2,
                                 "field assignment",
                             )
-                            borrowed = isinstance(receiver, _BorrowedValue)
+                            access = _borrowed_payload(receiver)
+                            borrowed = access is not None
                             if borrowed:
-                                receiver = receiver.value
+                                receiver = (
+                                    unwrap_runtime_value(receiver) if access.allows_reconstruction
+                                    else _materialize_access(receiver)
+                                )
+                                borrowed = access.allows_reconstruction
+                            value = _materialize_access(value)
                             frame.stack.append(
                                 _optional_safe_set_field(
                                     receiver,
@@ -3481,7 +3501,9 @@ class VirtualMachine:
                                     receiver = args[0]
                                 result = _consume_receiver_result(
                                     receiver,
-                                    _get_index(receiver, instruction.arg, values, self),
+                                    _get_index(
+                                        _accessed_value(receiver), instruction.arg, values, self,
+                                    ),
                                     self,
                                 )
                                 if instruction.arg.spread:
@@ -3502,10 +3524,15 @@ class VirtualMachine:
                             try:
                                 values = _pop_index_values(frame.stack, instruction.arg)
                                 receiver = _pop(frame.stack, "indexed assignment")
-                                borrowed = isinstance(receiver, _BorrowedValue)
+                                access = _borrowed_payload(receiver)
+                                borrowed = access is not None
                                 if borrowed:
-                                    receiver = receiver.value
-                                value = _pop(frame.stack, "indexed assignment")
+                                    receiver = (
+                                        unwrap_runtime_value(receiver) if access.allows_reconstruction
+                                        else _materialize_access(receiver)
+                                    )
+                                    borrowed = access.allows_reconstruction
+                                value = _materialize_access(_pop(frame.stack, "indexed assignment"))
                                 frame.stack.append(
                                     _set_index(
                                         receiver,
@@ -3595,7 +3622,7 @@ class VirtualMachine:
                             if not _truthy(_pop(frame.stack, "assert")):
                                 raise AssertionFailure("assertion failed")
                         case OpCode.WRAP_ASSERT_ERROR:
-                            value = _pop(frame.stack, "assert else")
+                            value = _materialize_access(_pop(frame.stack, "assert else"))
                             frame.stack.append(
                                 ObjectValue(
                                     "AssertError",
@@ -3639,7 +3666,7 @@ class VirtualMachine:
                             if frame.panic_handlers:
                                 frame.panic_handlers.pop()
                         case OpCode.PANIC:
-                            value = _pop(frame.stack, "panic")
+                            value = _materialize_access(_pop(frame.stack, "panic"))
                             target = self._handle_panic(frame, PanicSignal(value))
                             if target is None:
                                 raise PanicSignal(value)
@@ -3752,7 +3779,12 @@ class VirtualMachine:
                             callee = _pop(frame.stack, "spawn callable")
                             if len(frame.stack) < arity:
                                 raise RuntimeError("stack underflow while spawning call")
-                            args = tuple(frame.stack[-arity:]) if arity else ()
+                            args = (
+                                tuple(_materialize_access(value) for value in frame.stack[-arity:])
+                                if arity else ()
+                            )
+                            if arity:
+                                frame.stack[-arity:] = args
                             require_task_transfer(callee, path="function")
                             for argument_index, argument in enumerate(args):
                                 require_task_transfer(
@@ -3951,7 +3983,7 @@ class VirtualMachine:
                                 capacity = integral
                             frame.stack.append(Channel(capacity, creation_site=channel_site))
                         case OpCode.CHANNEL_SEND:
-                            value = _pop(frame.stack, "channel send value")
+                            value = _materialize_access(_pop(frame.stack, "channel send value"))
                             channel = _pop(frame.stack, "channel send")
                             if not isinstance(channel, Channel):
                                 raise RuntimeError("channel send requires a channel handle")
@@ -4072,6 +4104,21 @@ class VirtualMachine:
     ) -> list[Any]:
         """Apply the analysed return multiplicity and release the completed frame."""
         result = self._select_return_values(result, return_count)
+        for index, value in enumerate(result):
+            access = _borrowed_payload(value)
+            if access is None:
+                continue
+            owned = access.read()
+            local_name = next((
+                name for name, local in frame.locals.items()
+                if unwrap_runtime_value(local) is owned
+                and _borrowed_payload(local) is None
+                and (name in frame.retained_locals
+                     or frame.globals.get(name) is not local)
+            ), None)
+            if local_name is not None:
+                frame.locals.pop(local_name)
+                result[index] = _replace_access(value, owned)
         self._release_frame_locals(frame)
         return result
 
@@ -4136,8 +4183,9 @@ class VirtualMachine:
         return_tag_specs: tuple[object, ...] = (),
     ) -> _FunctionCallRequest | None:
         """Invoke stack top or suspend for a user-function activation."""
-        callee = _pop(frame.stack, "call")
-        release_callee = isinstance(
+        occurrence = _pop(frame.stack, "call")
+        callee = _accessed_value(occurrence)
+        release_callee = _borrowed_payload(occurrence) is None and isinstance(
             callee,
             (FunctionValue, OverloadedFunctionValue),
         )
@@ -4159,7 +4207,7 @@ class VirtualMachine:
                 if request is None:
                     return None
                 release_callee = False
-                return replace(request, release_after=callee)
+                return replace(request, release_after=occurrence)
             if isinstance(callee, ObjectConstructorValue):
                 _call_object_constructor(callee, frame, self)
                 _canonicalize_frame_return_tag_contracts(
@@ -4218,7 +4266,7 @@ class VirtualMachine:
                 if request is None:
                     return None
                 release_callee = False
-                return replace(request, release_after=callee)
+                return replace(request, release_after=occurrence)
             raise RuntimeError(f"cannot call value {_format_value(callee)}")
         finally:
             if release_callee:
@@ -4741,6 +4789,7 @@ class VirtualMachine:
         args: tuple[Any, ...],
     ) -> list[Any]:
         """Execute a proved leaf and return its raw stack result."""
+        args = tuple(_readonly_access(value) for value in args)
         self._bind_structural_parameters(function, args)
         locals_, retained_locals = _function_call_locals(function, args)
         cycle_values = tuple(args[function.code.cycle_param_offset :]) if function.code.cycle_params else ()
@@ -5062,6 +5111,8 @@ class VirtualMachine:
                 values = tuple(unwrapped.fields.values())
             else:
                 return False
+            if _borrowed_payload(value) is not None:
+                values = tuple(_readonly_access(_borrow_named_access(item)) for item in values)
             if len(values) != len(fields):
                 return False
             if not self._match_pattern_sequence(values, fields, bindings, captures):
@@ -5827,8 +5878,8 @@ def _retain_runtime_reference(value: Any) -> Any:
     if isinstance(value, _BorrowedValue):
         return _retain_runtime_reference(value.value)
     if isinstance(value, TaggedValue):
-        _retain_runtime_reference(value.value)
-        return value
+        retained = _retain_runtime_reference(value.value)
+        return replace(value, value=retained) if retained is not value.value else value
     if isinstance(value, TaskHandle):
         value.control.retain_handle()
         return value
@@ -6219,6 +6270,7 @@ def _finalize_builtin_result_ownership(
     values: dict[int, Any] = {}
     owned_types = (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict)
     arg_ids = {id(value) for value in args if isinstance(value, owned_types)}
+    arg_ids.update(_borrowed_argument_values(args))
     consumed_counts = Counter(
         id(value) for value in consumed if isinstance(value, owned_types)
     )
@@ -6879,6 +6931,7 @@ def _runtime_type_name(value: Any) -> str | None:
 
 def _dynamic_callable_arity(value: Any) -> int | None:
     """Return one unambiguous runtime arity for a callable value."""
+    value = _accessed_value(value)
     if isinstance(value, FunctionValue):
         return len(value.code.params)
     if isinstance(value, OverloadedFunctionValue):
@@ -6925,6 +6978,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                         args,
                     ) from exc
                 result = _bind_lazy_result_owners(args, result)
+                result = _borrow_builtin_results(args, result)
                 _finalize_builtin_result_ownership(args, result, consumed=args[-stack_count:] if stack_count else ())
                 if stack_count:
                     _release_stack_tail(
@@ -6949,8 +7003,6 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             continue
         runtime_args = (
             tuple(_accessed_value(value) for value in args)
-            if callee.element.name.text in {"print", "println"}
-            else args
         )
         if not overload.runtime_matches(runtime_args):
             vectorized = _call_vectorized_builtin(
@@ -6993,6 +7045,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                 del frame.stack[-stack_count:]
         else:
             result = _bind_lazy_result_owners(args, result)
+            result = _borrow_builtin_results(args, result)
             _finalize_builtin_result_ownership(args, result, consumed=args[-stack_count:] if stack_count else ())
             if stack_count:
                 _release_stack_tail(
@@ -7113,8 +7166,121 @@ def _object_constructor_initializer(
 def _accessed_value(value: Any) -> Any:
     """Return the runtime value represented by nested non-owning access wrappers."""
     while isinstance(value, _BorrowedValue):
-        value = value.value
+        value = value.read()
+    if isinstance(value, TaggedValue):
+        accessed = _accessed_value(value.value)
+        if accessed is not value.value:
+            return replace(value, value=accessed)
     return value
+
+
+def _borrow_named_access(value: Any) -> Any:
+    """Borrow an owning slot, preserving evidence and nested access restrictions."""
+    if isinstance(value, TaggedValue):
+        return replace(value, value=_borrow_named_access(value.value))
+    if isinstance(value, _BorrowedValue):
+        value.read()
+        return replace(value, allows_reconstruction=False)
+    return _BorrowedValue(value, True) if _needs_release(value) else value
+
+
+def _readonly_access(value: Any) -> Any:
+    """Prevent a callee from reconstructing an occurrence owned by its caller."""
+    access = _borrowed_payload(value)
+    return (
+        _replace_access(value, replace(access, allows_reconstruction=False))
+        if access is not None else value
+    )
+
+
+def _materialize_access(value: Any) -> Any:
+    """Create an owning occurrence only when a temporary access enters storage."""
+    if isinstance(value, _BorrowedValue):
+        return _duplicate_occurrence(value)
+    if isinstance(value, TaggedValue):
+        payload = _materialize_access(value.value)
+        return replace(value, value=payload) if payload is not value.value else value
+    return value
+
+
+def _borrowed_payload(value: Any) -> _BorrowedValue | None:
+    """Find a temporary access beneath occurrence-local tag evidence."""
+    while isinstance(value, TaggedValue):
+        value = value.value
+    return value if isinstance(value, _BorrowedValue) else None
+
+
+def _replace_access(value: Any, owned: Any) -> Any:
+    """Replace a returned access with its transferred owner, retaining tag evidence."""
+    if isinstance(value, TaggedValue):
+        return replace(value, value=_replace_access(value.value, owned))
+    return owned
+
+
+def _borrowed_argument_values(args: tuple[Any, ...]) -> dict[int, _BorrowedValue]:
+    """Find owned payloads reachable through borrowed builtin arguments."""
+    aliases: dict[int, _BorrowedValue] = {}
+
+    def collect(value: Any) -> None:
+        """Record owned payloads reachable through one borrowed input."""
+        value = unwrap_runtime_value(value)
+        if not _needs_release(value) or id(value) in aliases:
+            return
+        aliases[id(value)] = _BorrowedValue(value)
+        if isinstance(value, ObjectValue):
+            for child in value.fields.values():
+                collect(child)
+        elif isinstance(value, dict):
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                collect(child)
+
+    for argument in args:
+        if _borrowed_payload(argument) is not None:
+            collect(argument)
+    return aliases
+
+
+def _borrow_builtin_results(
+    args: tuple[Any, ...], result: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Forward builtin access results and check accesses embedded in new owners."""
+    aliases = _borrowed_argument_values(args)
+    if not aliases:
+        return result
+    owned_inputs = {id(value) for value in args if _borrowed_payload(value) is None}
+    returned: Counter[int] = Counter()
+
+    def adapt(value: Any, stored: bool = False) -> Any:
+        """Preserve top-level access while retaining independently stored children."""
+        if id(value) in aliases:
+            access = aliases[id(value)]
+            if not stored:
+                returned[id(value)] += 1
+                if returned[id(value)] == 1:
+                    return access
+            _check_duplication_allowed(value)
+            return value
+        if id(value) in owned_inputs:
+            return value
+        if isinstance(value, TaggedValue):
+            return replace(value, value=adapt(value.value, stored))
+        if isinstance(value, ObjectValue):
+            value.fields = {
+                name: adapt(child, True) for name, child in value.fields.items()
+            }
+        elif isinstance(value, list):
+            value[:] = [adapt(child, True) for child in value]
+        elif isinstance(value, tuple):
+            value = tuple(adapt(child, True) for child in value)
+        elif isinstance(value, dict):
+            for name, child in tuple(value.items()):
+                value[name] = adapt(child, True)
+        return value
+
+    return tuple(adapt(value) for value in result)
 
 
 def _call_resolved_builtin(
@@ -7309,13 +7475,11 @@ def _call_resolved_builtin(
         return
     implementation = overload.implementation
     assert implementation is not None
-    runtime_args = (
+    runtime_args = args if callee.element.name.text == 'call' else (
         tuple(
             _accessed_value(value)
             for value in args
         )
-        if callee.element.name.text in {"print", "println"}
-        else args
     )
     try:
         result = implementation(overload.runtime_arguments(runtime_args), context)
@@ -7352,6 +7516,7 @@ def _call_resolved_builtin(
             del frame.stack[-consumed_count:]
     else:
         result = _bind_lazy_result_owners(args, result)
+        result = _borrow_builtin_results(args, result)
         _finalize_builtin_result_ownership(args, result, consumed=args[-consumed_count:] if consumed_count else ())
         if consumed_count:
             _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
@@ -7459,13 +7624,18 @@ def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine)
 def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
     """Return the Boolean result of try unwrap during virtual-machine execution."""
     value = _pop(stack, "?")
-    if _is_none_result_value(value) or _is_error_result_value(value):
+    accessed = _accessed_value(value)
+    if _is_none_result_value(accessed) or _is_error_result_value(accessed):
         stack.append(value)
         return True
-    if isinstance(value, ObjectValue):
-        short_name = value.type_name.rsplit(".", 1)[-1]
-        if value.type_name == "OK" or short_name in {"OK", "Some"}:
-            retained = _duplicate_occurrence(value.fields.get("value"))
+    if isinstance(accessed, ObjectValue):
+        short_name = accessed.type_name.rsplit(".", 1)[-1]
+        if accessed.type_name == "OK" or short_name in {"OK", "Some"}:
+            payload = accessed.fields.get("value")
+            retained = (
+                _readonly_access(_borrow_named_access(payload))
+                if _borrowed_payload(value) is not None else _duplicate_occurrence(payload)
+            )
             _release_value(value, vm)
             stack.append(retained)
             return False
@@ -8506,6 +8676,11 @@ def _consume_receiver_result(
     vm: VirtualMachine,
 ) -> Any:
     """Transfer a consumed receiver's ownership to its extracted result."""
+    if _borrowed_payload(receiver) is not None:
+        outputs = _borrow_builtin_results((receiver,), (result,))
+        outputs = _bind_lazy_result_owners((receiver,), outputs)
+        _finalize_builtin_result_ownership((receiver,), outputs, consumed=())
+        return outputs[0]
     if not _needs_release(receiver):
         return result
     if isinstance(result, LazyList):
@@ -9598,6 +9773,9 @@ def _optional_safe_get_field(
     vm: VirtualMachine,
 ) -> Any:
     """Read a member through ``Some`` and propagate ``None``."""
+    if _borrowed_payload(receiver) is not None:
+        result = _observe_optional_field(unwrap_runtime_value(receiver), field)
+        return _consume_receiver_result(receiver, result, vm)
     if is_list_like(receiver):
         if is_eager_sequence(receiver):
             return [_optional_safe_get_field(item, field, vm) for item in receiver]
@@ -9618,6 +9796,21 @@ def _optional_safe_get_field(
     if _optional_runtime_kind(result) is not None:
         return result
     return ObjectValue("Some", {"value": result})
+
+
+def _observe_optional_field(receiver: Any, field: str) -> Any:
+    """Build an optional field observation without consuming its borrowed source."""
+    if is_list_like(receiver):
+        if is_eager_sequence(receiver):
+            return [_observe_optional_field(item, field) for item in receiver]
+        return LazyList(_observe_optional_field(item, field) for item in receiver)
+    kind = _optional_runtime_kind(receiver)
+    if kind == 'none':
+        return receiver
+    if kind != 'some' or not isinstance(receiver, ObjectValue):
+        raise RuntimeError('optional-safe field access requires Some or None')
+    result = _get_field(receiver.fields['value'], field)
+    return result if _optional_runtime_kind(result) is not None else ObjectValue('Some', {'value': result})
 
 
 def _optional_safe_set_field(
@@ -10240,11 +10433,24 @@ def _format_stack_types(stack: list[Any]) -> str:
     """Format stack types during VM execution."""
     if not stack:
         return "[]"
-    return "[" + ", ".join(_runtime_type_name(value) for value in stack) + "]"
+    return "[" + ", ".join(_diagnostic_type_name(value) for value in stack) + "]"
+
+
+def _diagnostic_type_name(value: Any) -> str:
+    """Render diagnostic types without replacing an expired-access error."""
+    try:
+        return _runtime_type_name(value)
+    except _py_builtins.RuntimeError:
+        return '<expired borrow>'
 
 
 def _format_value(value: Any) -> str:
     """Format one value compactly for VM diagnostics."""
+    if _borrowed_payload(value) is not None:
+        try:
+            value = _accessed_value(value)
+        except _py_builtins.RuntimeError:
+            return '<expired borrowed value>'
     if isinstance(value, FunctionValue):
         return f"<{_function_name(value.code)}/{len(value.code.params)}>"
     if isinstance(value, OverloadedFunctionValue):
@@ -10462,7 +10668,8 @@ def _canonicalize_runtime_value_tag_contract(
             declared.append(DataTag(item[0], item[1], item[2]))
         existing = tuple(runtime_value_tags(value))
         payload = _canonicalize_runtime_value_tag_contract(
-            unwrap_runtime_value(value), spec[1], tag_parents
+            value.value if isinstance(value, TaggedValue) else value,
+            spec[1], tag_parents,
         )
         additions = tuple(tag for tag in declared if not tag.absent)
         declared_keys = {(tag.name, tag.depth) for tag in additions}
@@ -10476,7 +10683,7 @@ def _canonicalize_runtime_value_tag_contract(
             return with_runtime_trait_witnesses(result, value.structural_witnesses)
         return result
 
-    payload = unwrap_runtime_value(value)
+    payload = value.value if isinstance(value, TaggedValue) else value
     if kind in {"any", "none", "nominal", "ffi"}:
         if isinstance(value, TaggedValue) and value.structural_witnesses:
             return with_runtime_trait_witnesses(payload, value.structural_witnesses)

@@ -16,10 +16,12 @@ from valiance.vtypes.symbols import Symbol
 def filesystem_operation(function: Callable[..., Any]) -> Callable[..., Any]:
     """Preserve the Fault panic protocol across the Python/native boundary."""
     def fault(kind: str, exc: Exception) -> None:
+        """Raise a Valiance fault panic retaining the native exception as its cause."""
         raise PanicSignal(ObjectValue(kind, {"message": str(exc)})) from exc
 
     @wraps(function)
     def invoke(*args: Any, **kwargs: Any) -> Any:
+        """Translate native filesystem exceptions while preserving existing Valiance panics."""
         try:
             return function(*args, **kwargs)
         except PanicSignal:

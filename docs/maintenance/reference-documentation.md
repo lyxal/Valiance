@@ -34,6 +34,58 @@ The JSON form is versioned with `schema_version`. Documentation websites,
 editor integrations, and language servers should consume that machine-readable
 form rather than scraping HTML.
 
+### Build all formats and continuous integration
+
+From the repository root, generate a complete download from one strict collection:
+
+```text
+uv run python scripts/generate_reference_docs.py
+uv run python scripts/generate_reference_docs.py --output build/reference
+```
+
+The output directory contains `index.html`, `language-reference.md`, and
+`language-reference.json`. Builds use UTF-8 and LF newlines, with no timestamps
+or absolute checkout paths, so identical input produces identical files.
+Collection and rendering finish before files are written; missing metadata fails
+the build instead of silently producing an incomplete catalogue.
+
+The [reference workflow](../../.github/workflows/reference-docs.yml) runs on every
+push, pull request, and manual dispatch using Python 3.14 and the frozen uv lock.
+It runs `tests.test_reference_docs`, generates all three formats, and attaches
+`language-reference-<commit SHA>` to the workflow run for 30 days. Download and
+extract the artifact, then open `index.html`. No Pages configuration is required.
+The workflow has read-only repository permissions and does not commit generated
+files. Build outputs remain under the ignored `build/` directory.
+
+### HTML presentation
+
+The standalone HTML includes responsive section navigation, category badges,
+stack signatures, parameter descriptions, examples, source paths, and related
+entry links. Exact qualified names determine unique permalinks, including names
+containing symbolic operators. Language forms have their own navigation group.
+The sidebar drills down from scope (Built-ins, Standard library, Language forms)
+to category or module, then to individual entries. Native disclosure controls
+support keyboard expansion and work without JavaScript. Each group also has an
+Overview link. Following a permalink expands its sidebar ancestors and marks
+the current entry.
+
+Search matches all displayed text, including aliases, parameter types, and
+notes. All search words must match; the scope selector can limit results to
+built-ins, standard library functions, or language forms. Counts and navigation
+update with the results, and an empty state explains when nothing matches.
+Filtering expands matching sidebar branches and hides nonmatching entries;
+clearing filters restores the previous expanded/collapsed state.
+Press `/` to focus search and Escape to reset filters. Following an entry link
+resets filters to reveal the target.
+
+The page follows the system light/dark preference, supports reduced motion and
+printing, and loads no fonts, scripts, or styles from the network. Without
+JavaScript, all documentation and navigation remain available and search controls
+stay hidden. The maintainable source assets are
+`src/valiance/elements/reference_docs.css` and `reference_docs.js`; the renderer
+reads them as package resources and embeds them into each HTML file. Keep these
+assets packaged when changing wheel build rules.
+
 ## Documentation metadata
 
 Shared immutable metadata types live in `src/valiance/elements/documentation.py`:
@@ -62,7 +114,7 @@ matter to callers.
 
 ## Built-ins
 
-`analysis/builtins.py` remains the single static/runtime declaration source.
+`elements/builtins.py` remains the single static/runtime declaration source.
 `BuiltinElement` now carries `documentation` and `canonical_name` fields.
 Aliases such as `len` and `reduce` are registered normally but generated as aliases
 of their canonical entries rather than duplicated as unrelated pages.
