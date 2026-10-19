@@ -167,6 +167,10 @@ def _set_variable(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `SetVariableNode` node and return the surviving branches."""
+    if node.declared_type is not None:
+        node = replace(node, declared_type=_functions._resolve_imported_type_names(
+            node.declared_type, self.env,
+        ))
     if node.declared_type is not None and not self._validate_data_tags(
         ((node.declared_type,),),
         node,
@@ -337,6 +341,12 @@ def _set_variables_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `SetVariablesNode` node and return the surviving branches."""
+    node = replace(node, targets=tuple(
+        replace(target, declared_type=_functions._resolve_imported_type_names(
+            target.declared_type, self.env,
+        )) if target.declared_type is not None else target
+        for target in node.targets
+    ))
     if not node.targets:
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 

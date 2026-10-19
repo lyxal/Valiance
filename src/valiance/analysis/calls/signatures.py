@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import field, fields, replace
+from dataclasses import field, fields, is_dataclass, replace
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
@@ -17,6 +17,44 @@ from valiance.vtypes.structural import (
 )
 
 _anonymous_trait_subject_name = anonymous_trait_subject_name
+
+
+def _resolve_imported_type_names(
+    value, environment: T.Environment, bound_names: frozenset[Symbol] = frozenset(),
+):
+    """Resolve source aliases to the nominal names of imported declarations."""
+    if (
+        isinstance(value, T.NominalType) and not isinstance(value, T.FFINamedType)
+        and value.name not in bound_names
+    ):
+        for lookup in (
+            environment.lookup_object, environment.lookup_trait,
+            environment.lookup_variant, environment.lookup_enum,
+        ):
+            declaration = lookup(value.name)
+            if declaration is not None:
+                value = replace(value, name=declaration.name)
+                break
+    if isinstance(value, tuple):
+        return tuple(_resolve_imported_type_names(item, environment, bound_names) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_resolve_imported_type_names(item, environment, bound_names) for item in value)
+    if is_dataclass(value) and (
+        not isinstance(value, (ASTNode, Symbol)) or isinstance(value, MatchPatternNode)
+    ):
+        return replace(value, **{
+            item.name: _resolve_imported_type_names(getattr(value, item.name), environment, bound_names)
+            for item in fields(value)
+        })
+    return value
+
+
+def _resolve_function_type_names(node: FunctionNode, environment: T.Environment) -> FunctionNode:
+    """Resolve imported aliases in signatures after generic binders are assigned."""
+    return replace(node, **{
+        name: _resolve_imported_type_names(getattr(node, name), environment, frozenset(node.generics))
+        for name in ("params", "returns", "overloads", "generic_constraints")
+    })
 
 
 def _binder_scope_id(function: FunctionNode) -> int:
@@ -38,6 +76,7 @@ def _generic_scope(
     return T.TypeVarScope(scope_id, tuple(generic.text for generic in generics))
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
+    MatchPatternNode,
     ASTNode,
     CallArgument,
     ElementNode,

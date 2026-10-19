@@ -6,7 +6,7 @@ import unittest
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.runtime import compile_program, run, RuntimeError as ValianceRuntimeError
+from valiance.runtime import compile_program, dumps, loads, run, RuntimeError as ValianceRuntimeError
 from valiance.runtime.runtime_values import PanicSignal
 from valiance.runtime.runtime_values import ObjectValue, TaggedValue, unwrap_runtime_value
 from valiance.std import file as file_backend
@@ -40,6 +40,79 @@ class FileLanguageIntegrationTests(unittest.TestCase):
         with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
             self.assertEqual(stream.read(), b'alpha\nbeta\n')
 
+    def test_file_imports_do_not_depend_on_path_import_order(self):
+        for imports, constructor, module in (
+            ('std.file, std.path', 'path.Path', 'file'),
+            ('std.path, std.file', 'path.Path', 'file'),
+            ('std.file, std.path.Path', 'Path', 'file'),
+            ('std.path.Path, std.file', 'Path', 'file'),
+            ('std.file, std.path.[Path as Location]', 'Location', 'file'),
+            ('std.file as io, std.path as paths', 'paths.Path', 'io'),
+        ):
+            for serialized in (False, True):
+                with self.subTest(imports=imports, serialized=serialized):
+                    filename = f'import-{serialized}.txt'
+                    analyser = Analyser()
+                    tree = analyser.analyse(parse(
+                        f'import {{{imports}}}\n'
+                        'define \\write -> =>\n'
+                        f'$res = {module}.WriteFile({constructor} {self._path(filename)})\n'
+                        f'$res = $res {module}.writeLine "67"\n'
+                        'end\n\\write'
+                    ))
+                    self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+                    program = compile_program(tree)
+                    if serialized:
+                        program = loads(dumps(program))
+                    run(program)
+                    self.assertFalse(file_backend._handles)
+                    with open(os.path.join(self._temp.name, filename), 'rb') as stream:
+                        self.assertEqual(stream.read(), b'67\n')
+                    os.remove(os.path.join(self._temp.name, filename))
+
+    def test_selected_path_alias_in_nested_signature_and_field_types(self):
+        analyser = Analyser()
+        tree = analyser.analyse(parse(
+            'import {std.path.[Path as Location]}\n'
+            'object Container => $paths: Location+ end\n'
+            'define identity(paths: Location+) -> Location+ => $paths end\n'
+            'Container(identity([Location "first", Location "second"]))'
+        ))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        values = run(compile_program(tree))
+        paths = values[0].fields['paths']
+        self.assertEqual([value.type_name for value in paths], ['path.Path', 'path.Path'])
+
+    def test_file_dependencies_are_not_visible_to_importer(self):
+        analyser = Analyser()
+        analyser.analyse(parse('import {std.file}\npath.Path "ignored"'))
+        self.assertTrue(any(
+            "unknown element 'path.Path'" in str(diagnostic)
+            for diagnostic in analyser.diagnostics
+        ), analyser.diagnostics)
+        self.assertFalse(any(
+            'undefined type' in str(diagnostic)
+            for diagnostic in analyser.diagnostics
+        ), analyser.diagnostics)
+
+    def test_selected_stdlib_aliases_in_annotations_casts_and_patterns(self):
+        analyser = Analyser()
+        tree = analyser.analyse(parse(
+            'import {std.path.[Path as Location], std.file.Encoding}\n'
+            '$p: Location = Location "first"\n'
+            '($p as[Location]) match =>\n'
+            '  as value: Location => 67\n'
+            '  _ => 0\n'
+            'end\n'
+            'Encoding.UTF8'
+        ))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        program = compile_program(tree)
+        for candidate in (program, loads(dumps(program))):
+            values = run(candidate)
+            self.assertEqual(values[0], 67)
+            self.assertEqual(values[1].type_name, 'file.Encoding')
+            self.assertEqual(values[1].fields['name'], 'UTF8')
     def test_default_encoding_constructors_accept_positional_path(self):
         # A single explicit argument binds to `path`; the trailing enum
         # default is filled, rather than treating `path` as `encoding`.

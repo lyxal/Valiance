@@ -467,7 +467,9 @@ class _ObjectDeclarations:
             else None
         )
         return tuple(
-            _functions._genericize_attribute(attribute, generics, scope)
+            _functions._resolve_imported_type_names(
+                _functions._genericize_attribute(attribute, generics, scope), self.env,
+            )
             for attribute in attributes
             if attribute is not None
         )

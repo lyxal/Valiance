@@ -182,6 +182,13 @@ class _MatchAnalysis:
         branch: AnalysisBranch,
     ) -> BranchSet:
         """Analyse a `MatchNode` node and return the surviving branches."""
+        node = replace(node, cases=tuple(
+            replace(case, patterns=tuple(
+                _functions._resolve_imported_type_names(pattern, self.env)
+                for pattern in case.patterns
+            ))
+            for case in node.cases
+        ))
         if not node.cases:
             self._diagnose("match requires at least one case", node)
             return BranchSet()

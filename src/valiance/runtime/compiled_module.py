@@ -16,7 +16,7 @@ from valiance.runtime.serialization import BytecodeFormatError, dumps, loads
 MAGIC_V1 = b"VLNCBM\x01"
 MAGIC = b"VLNCBM\x04"
 FORMAT_VERSION = 4
-COMPILER_ABI = 3
+COMPILER_ABI = 4
 INTERFACE_ABI = 3
 MAX_INTERFACE_BYTES = 64 * 1024 * 1024
 

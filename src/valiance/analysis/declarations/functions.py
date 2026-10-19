@@ -180,6 +180,7 @@ class _FunctionDeclarations:
             generic_variances=node.generic_variances,
             generic_constraints=node.generic_constraints,
         )
+        function_node = _functions._resolve_function_type_names(function_node, self.env)
         variants = self._overload_function_variants(function_node, node)
         if variants is None:
             return

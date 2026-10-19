@@ -1396,6 +1396,8 @@ def _same_returns(
 
 
 from .signatures import (
+    _resolve_function_type_names,
+    _resolve_imported_type_names,
     _genericize_overload,
     _genericize_function_node,
     _contextualize_function_empty_returns,

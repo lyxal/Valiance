@@ -50,6 +50,19 @@ This checkout extends the existing archive (including its terminal editor and
 
 ## Example (actual, tested syntax)
 
+`std.file` and `std.path` may be imported in either order. Selecting `Path`
+directly also preserves its native type identity:
+
+```valiance
+import {std.file, std.path.Path}
+file.WriteFile(Path "out.txt") | file.writeLine "67" | pop
+```
+
+With a named writer, rebind the returned handle:
+`$res = $res file.writeLine "67"`. File handles cannot be copied. A local
+writer is closed when its enclosing function releases it; the pipeline above
+releases it explicitly with `pop`.
+
 ```valiance
 import {std.path, std.file}
 file.WriteFile(path.Path("notes.txt"))

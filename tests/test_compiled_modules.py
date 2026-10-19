@@ -15,6 +15,32 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_imported_constructor_uses_provider_private_dependencies(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared.vlnc').write_text(
+                'public object Value => $value: Int end\n', encoding='utf-8',
+            )
+            (root / 'wrapper.vlnc').write_text(
+                'import {shared}\n'
+                'public object Holder =>\n'
+                '  $value: shared.Value\n'
+                '  define Holder(value: shared.Value) => $self.value = $value end\n'
+                'end\n', encoding='utf-8',
+            )
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            tree = analyser.analyse(parse(
+                'import {wrapper, shared}\n'
+                '$holder = wrapper.Holder(shared.Value(67))\n'
+                '$holder.value.value'
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+            program = compile_program(tree)
+            self.assertEqual(run(program), [67])
+            self.assertEqual(run(loads(dumps(program))), [67])
+
     def test_private_import_not_exported_as_renamed_nominal_type(self):
         # Imported declarations belong to the provider's runtime prelude,
         # not the importing module's own symbol surface.

@@ -71,7 +71,7 @@ from valiance.asts import (
     is_catch_all_match_case,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
-from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
+from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, ModuleObject, import_definitions
 from valiance.asts.object_constructors import (
     constructor_definitions,
     definitely_initialized_fields,
@@ -302,11 +302,63 @@ class _ImportDeclarations:
         self,
         obj,
         runtime_name: Symbol,
+        dependencies: tuple[TypedNode, ...] = (),
     ) -> None:
         """Register imported object during static analysis."""
+        if dependencies:
+            # Imported bodies were written in the provider's lexical scope.
+            # Its private dependencies must be available while rebuilding the
+            # callable surface, without becoming imports in the caller.
+            caller = self.env
+            dependency_env = T.Environment(
+                context=caller.context.copy(), parent=caller.parent,
+            )
+            self.env = dependency_env
+            try:
+                for dependency in dependencies:
+                    if isinstance(dependency, TypedImportedObjectNode):
+                        dependency_object = ModuleObject(
+                            dependency.node.name, dependency,
+                        )
+                        self._register_imported_object(
+                            dependency_object, dependency.runtime_name,
+                        )
+                    elif isinstance(dependency, TypedImportedFunctionNode):
+                        self._register_imported_definition(
+                            dependency.node.name, dependency,
+                            dependency.runtime_name,
+                        )
+            finally:
+                self.env = caller
+            previous_parent = caller.parent
+            caller.parent = dependency_env
+            try:
+                self._register_imported_object(obj, runtime_name)
+            finally:
+                caller.parent = previous_parent
+            return
+
         self.env.bind_runtime_name(obj.name, runtime_name)
         node = obj.typed.node
         if not isinstance(node, ObjectNode):
+            return
+        if obj.name != node.name:
+            self._register_imported_object(replace(obj, name=node.name), runtime_name)
+            # A selected native object has a source alias, but its values must
+            # keep the nominal identity used by native module signatures.
+            for registry in ("objects", "traits", "variants", "enums", "constructors"):
+                declarations = getattr(self.env, registry)
+                if node.name in declarations:
+                    declarations[obj.name] = declarations[node.name]
+            for overload in self.env.overloads_for(node.name):
+                self.env.define_overload(obj.name, overload)
+            if node.kind.text == "enum":
+                for member in node.enum_members:
+                    canonical = Symbol(member.name.text, (*node.name.namespace, node.name.text))
+                    visible = Symbol(member.name.text, (*obj.name.namespace, obj.name.text))
+                    for overload in self.env.overloads_for(canonical):
+                        self.env.define_overload(visible, overload)
+                    self.env.bind_runtime_name(visible, canonical)
             return
         kind = node.kind.text
         if kind == "trait":

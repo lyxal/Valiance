@@ -642,6 +642,7 @@ def import_objects(
         and obj.typed.node.kind == Symbol("enum")
     )
     provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
+    native_module = exports.module_name.startswith("std.")
     by_name = {obj.name: obj for obj in public}
     if spec.components:
         selected: list[ModuleObject] = []
@@ -658,6 +659,10 @@ def import_objects(
                     import_friendly=True,
                     enum_names=enum_names,
                     enum_namespace=provider,
+                    nominal_name=(
+                        _namespaced_symbol(obj.name, provider)
+                        if native_module else None
+                    ),
                 )
             )
         return tuple(selected)
@@ -670,7 +675,8 @@ def import_objects(
             friendly_prefix=namespace,
             import_friendly=True,
             enum_names=enum_names,
-            enum_namespace=namespace,
+            enum_namespace=provider if native_module else namespace,
+            nominal_name=_namespaced_symbol(obj.name, provider) if native_module else None,
         )
         for obj in public
     )
@@ -1150,18 +1156,20 @@ def _renamed_object(
     import_friendly: bool = False,
     enum_names: frozenset[str] = frozenset(),
     enum_namespace: Symbol | None = None,
+    nominal_name: Symbol | None = None,
 ) -> ModuleObject:
     """Compute renamed object during module loading and import resolution."""
     node = obj.typed.node
     if not isinstance(node, ObjectNode):
         return obj
+    owner = nominal_name or name
     explicit_constructors = constructor_definitions(
         node.name,
         obj.friendly_definitions,
     )
     renamed_constructors = tuple(
         _qualify_constructor_enum_defaults(
-            _renamed_define_node(definition, name), enum_names, enum_namespace,
+            _renamed_define_node(definition, owner), enum_names, enum_namespace,
         )
         for definition in explicit_constructors
     )
@@ -1190,7 +1198,7 @@ def _renamed_object(
         )
     renamed = ObjectNode(
         node.kind,
-        name,
+        owner,
         node.generics,
         node.target,
         node.fields,

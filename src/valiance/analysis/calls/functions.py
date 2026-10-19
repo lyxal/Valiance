@@ -309,6 +309,7 @@ class _CallableValues:
         allow_top_level_captures: bool = True,
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
         """Analyse function literal during static analysis."""
+        node = _functions._resolve_function_type_names(node, self.env)
         declared_params = _functions._declared_params(node)
         _, where_error = static_where.validate_where_clause(
             params=declared_params,

@@ -469,7 +469,9 @@ def _function_node(
 @_core.register(CastNode)
 def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranch) -> _core.BranchSet:
     """Analyse a coercing, checked, or optional cast."""
-    target = _functions._parameter_value_type(T.normalize(node.typ))
+    target = _functions._parameter_value_type(
+        _functions._resolve_imported_type_names(T.normalize(node.typ), self.env)
+    )
     self._validate_element_tags_in_types((target,), node)
     if not self._validate_data_tags(((target,),), node, allow_variants=False, require_declared=True):
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
@@ -1258,7 +1260,7 @@ def _import_node(
                 imported_supertypes=imported_supertypes,
                 imported_guarded_supertypes=imported_guarded_supertypes,
             )
-            self._register_imported_object(obj, runtime_name)
+            self._register_imported_object(obj, runtime_name, exports.runtime_prelude)
             module_source = _show_import_path_for_diagnostic(resolved_spec.path)
             for definition in obj.private_friendly_definitions:
                 candidate = (obj.name, module_source)

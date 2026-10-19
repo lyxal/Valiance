@@ -308,6 +308,16 @@ module's native hooks, then combines the Python and Valiance exports. The native
 hook names are therefore visible while analysing the stdlib module itself, but
 ordinary user code still sees them only through imported module exports.
 
+When rebuilding an imported object's constructor and friendly-call signatures,
+the analyser makes the provider's runtime-prelude declarations available in a
+temporary dependency scope. These private dependencies must not become source
+imports in the caller, and importing a dependency first must not be necessary.
+Standard-library object aliases retain the provider's nominal type name (for
+example, selecting `std.path.Path` as `Location` still creates `path.Path`
+values), so native signatures and imported constructors agree on identity.
+Signature and field annotations resolve these aliases after generic binders
+have been assigned.
+
 Editor loads use a private `ModuleLoader` over a captured source provider.
 `incremental/snapshots.py` records the root, open-buffer overlays, resolved import
 closure, relevant configuration and absent resolution candidates. Untitled roots
