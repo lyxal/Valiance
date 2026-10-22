@@ -119,7 +119,9 @@ $brainrot = "6 7"
   - `split(separator)`; an empty separator splits into individual characters.
   - `rotate(amount)`; positive amounts rotate left and negative amounts rotate right.
   - `numeric?`; tests whether the complete string is a base-ten integer.
-  - `parseInt`; returns `Int?`, using `None` when parsing fails.
+  - `to[Int]`; parses a base-ten integer from a `String`, panicking with `ConversionFault` when parsing fails.
+  - `to?[Int]`; parses the same strings and returns `Int?`, using `None` when parsing fails.
+  - `to[Real]` / `to[Number]`; parse real or complex numeric text respectively, with scientific notation supported. Their `to?` forms return `None` on conversion failure.
   - `fromCharcode` / `fromCharCode`; converts an `Int` Unicode code point to a one-character string.
 - `input(prompt)` prints the prompt and returns one line from standard input without its trailing newline. It carries the normal eager I/O effects.
 
@@ -339,7 +341,7 @@ the cast executes, and a fresh chain begins after it. For example,
 
 A cast only changes or checks the known type of an existing value. Parsing,
 reshaping, materialisation, unit conversion, and other transformations remain
-ordinary named elements such as `parseInt`, `reshape`, and `materialize`.
+ordinary named elements such as `to?`, `reshape`, and `materialize`.
 
 Use existing `match` type patterns for immediate type-directed branching;
 `as?` is intended for cases where the optional refinement is useful as data.
@@ -3494,7 +3496,7 @@ The following fault objects are built in. Each constructor takes a single
 and implements `Fault`:
 
 - General and data faults: `RuntimeFault`, `ValueFault`, `RangeFault`,
-  `ParseFault`, `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`,
+  `ParseFault`, `ConversionFault`, `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`,
   `SliceFault`, and `StateFault`.
 - System and concurrency faults: `IOFault`, `NotFoundFault`,
   `AlreadyExistsFault`, `PermissionFault`, `ClosedFault`, `TimeoutFault`, and
@@ -5694,6 +5696,22 @@ end
 - `@convert(Source -> Target)` registers a conversion under that pairing.
   The implementing function must be named `to`; the reserved name is what
   the compiler indexes on, alongside the declared pairing.
+- `to?[Type]` selects the same `@convert(Source -> Target)` implementation
+  as `to[Type]`. It returns the converted value on success and `None` if
+  that conversion panics, with static result type `Type?`. No separate
+  `to?` implementation or annotation is needed. Other effects of the
+  conversion remain, and panics while evaluating explicit arguments are
+  not caught. When the conversion vectorises, the entire call is protected:
+  the result is an optional collection, and any conversion panic yields `None`.
+- The built-in `String -> Int` conversion parses base-ten integer text.
+  `"42" to[Int]` returns `42`; invalid text panics with `ConversionFault`.
+  `"invalid" to?[Int]` returns `None`.
+- The built-in `String -> Real` and `String -> Number` conversions use
+  Valiance numeric notation, including decimal and scientific notation.
+  `Number` also accepts complex notation such as `"1i2"`; `Real` rejects
+  nonzero imaginary components. Leading and trailing whitespace is ignored.
+  Invalid text and non-finite values such as `NaN` and `Infinity` panic
+  with `ConversionFault`; `to?[Real]` and `to?[Number]` return `None` instead.
 - Each FFI primitive type has a corresponding raw, unchecked constructor
   (`FFI.&int(...)` above) that a `to` implementation is expected to bottom
   out on. This primitive performs no validation of its own; it exists

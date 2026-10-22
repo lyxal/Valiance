@@ -370,8 +370,8 @@ Record and dictionary entries use `=>`. Every field, key, and value expression i
 ### Control-chain ordering
 
 A control-flow node at the right edge of a chain must receive values computed by
-the elements to its left. For example, `parseInt match => ...` lowers as
-`parseInt` followed by `match`, not the normal all-element reversal. The special
+the elements to its left. For example, `to?[Int] match => ...` lowers as
+`to?[Int]` followed by `match`, not the normal all-element reversal. The special
 case in `_lower_chain_segment` preserves that data-flow boundary. Add parser and
 runtime tests whenever changing this rule; a parse-only snapshot can look valid
 while matching the wrong stack value.

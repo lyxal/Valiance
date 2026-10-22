@@ -28,10 +28,10 @@ rewrite family.
 | Example | Main features exercised |
 | --- | --- |
 | `ConwayGameOfLife.vlnc` | `std.grids.allNeighbors`, `std.random.randbit`, named arguments, niladic mapping, `removeAt`, `sum`, `reshape`, grouped constants |
-| `GuessingGame.vlnc` | `std.random.between`, `input`, `parseInt`, matching an optional parse result, `break` |
+| `GuessingGame.vlnc` | `std.random.between`, `input`, `to?[Int]`, matching an optional parse result, `break` |
 | `CeaserCipher.vlnc` | local imports, `string.\Alphabet`, `rotate`, `string.transliterate` |
 | `RunLengthEncoding.vlnc` | `groupConsecutive`, tuple construction, `length: Int`, `first`, `reduce`, `join` |
-| `StackCalculator.vlnc` | `split`, membership with `in`, `numeric?`, `parseInt`, function values, `drop`, `last` |
+| `StackCalculator.vlnc` | `split`, membership with `in`, `numeric?`, `to?[Int]`, function values, `drop`, `last` |
 | `SumOfSquares.vlnc` | contextual vectorisation, `square`, and `**` |
 | `TrapezodialRule.vlnc` | higher-order functions, vectorised function calls, numeric ranges, `sum` |
 | `Fibonacci.vlnc` | `unfold`, `@recursive`, tuple assignment, `while`, augmented assignment |

@@ -46,6 +46,8 @@ class BigDecimal:
     def from_string(cls, value: str):
         """Create a BigDecimal from a string representation of a decimal number."""
         d = Decimal(value)
+        if not d.is_finite():
+            raise ValueError("BigDecimal requires a finite decimal")
 
         sign, digits, exponent = d.as_tuple()
 
@@ -61,6 +63,8 @@ class BigDecimal:
     @classmethod
     def from_decimal(cls, value: Decimal):
         """Create a BigDecimal from a Decimal object."""
+        if not value.is_finite():
+            raise ValueError("BigDecimal requires a finite decimal")
         sign, digits, exponent = value.as_tuple()
 
         coefficient = 0

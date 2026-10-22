@@ -68,6 +68,7 @@ class TypedElementNode(TypedNode):
     callable_witnesses: tuple[
         tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
     ] = ()
+    optional_conversion: bool = False
 
 
 @dataclass(frozen=True, slots=True)

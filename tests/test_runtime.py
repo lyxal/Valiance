@@ -8855,7 +8855,186 @@ $point[0, 1]
     assert list(stack[-1]) == [5, 5]
 
 class ConversionProtocolRuntimeTests(unittest.TestCase):
-    """Cover user-defined target-directed conversions."""
+    """Cover built-in and user-defined target-directed conversions."""
+
+    def test_string_integer_conversions(self) -> None:
+        for operation in ("to[Int]", "to?[Int]"):
+            for text, expected in (("42", 42), (" -17 ", -17), ("+0", 0),
+                                   ("1_000", 1000), ("１２", 12)):
+                for optimize in (False, True):
+                    with self.subTest(operation=operation, text=text, optimize=optimize):
+                        analyser = Analyser()
+                        typed = analyser.analyse(parse(f'"{text}" {operation}'))
+                        self.assertEqual(analyser.diagnostics, [])
+                        program = compile_program(typed, optimize=optimize)
+                        self.assertEqual(run(loads(dumps(program))), [RuntimeNumber(expected)])
+
+    def test_invalid_string_integer_conversions(self) -> None:
+        for text in ("", " ", "abc", "1.5", "0x10", "1 2", "+"):
+            with self.subTest(text=text):
+                self.assertEqual(execute(f'"{text}" to?[Int]'), [ObjectValue("None", {})])
+                with self.assertRaisesRegex(RuntimeError, "ConversionFault"):
+                    execute(f'"{text}" to[Int]')
+
+    def test_string_real_and_number_conversions(self) -> None:
+        for target in ("Real", "Number"):
+            values = ["42", " -17.25 ", "+0.5", "1e-3", "1.3e5.2", "1i0",
+                      "0.123456789012345678901234567890123456789"]
+            if target == "Number":
+                values += ["1i2", "-1.25i-3.5", "1e2i3e4"]
+            for text in values:
+                for optional in (False, True):
+                    for optimize in (False, True):
+                        operation = f'to{"?" if optional else ""}[{target}]'
+                        with self.subTest(target=target, text=text,
+                                          optional=optional, optimize=optimize):
+                            analyser = Analyser()
+                            typed = analyser.analyse(parse(f'"{text}" {operation}'))
+                            self.assertEqual(analyser.diagnostics, [])
+                            program = compile_program(typed, optimize=optimize)
+                            self.assertEqual(run(loads(dumps(program))),
+                                             [RuntimeNumber(text.strip())])
+
+    def test_invalid_string_real_and_number_conversions(self) -> None:
+        for target in ("Real", "Number"):
+            values = ["", " ", "abc", "1.2.3", "1e", "0x10", "NaN", "sNaN",
+                      "NaN123", "Infinity", "-Infinity", "1iNaN"]
+            if target == "Real":
+                values += ["1i2", "0i-3"]
+            for text in values:
+                with self.subTest(target=target, text=text):
+                    self.assertEqual(execute(f'"{text}" to?[{target}]'),
+                                     [ObjectValue("None", {})])
+                    with self.assertRaisesRegex(RuntimeError, "ConversionFault"):
+                        execute(f'"{text}" to[{target}]')
+
+    def test_numeric_runtime_rejects_nonfinite_decimals(self) -> None:
+        from decimal import Decimal
+        for text in ("NaN", "sNaN", "Infinity", "-Infinity"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(ValueError, "finite decimal"):
+                    RuntimeNumber(Decimal(text))
+
+    def test_string_integer_panic_is_catchable(self) -> None:
+        self.assertEqual(execute('''
+try =>
+  "invalid" to[Int]
+handle ConversionFault =>
+  99
+end
+'''), [RuntimeNumber(99)])
+
+    def test_string_integer_conversions_vectorise(self) -> None:
+        for operation, text, expected in (
+            ("to[Int]", '["1", "-2"]', [RuntimeNumber(1), RuntimeNumber(-2)]),
+            ("to?[Int]", '["1", "2"]', [RuntimeNumber(1), RuntimeNumber(2)]),
+            ("to[Real]", '["1.25", "-2e-3"]',
+             [RuntimeNumber("1.25"), RuntimeNumber("-0.002")]),
+            ("to?[Number]", '["1i2", "-3.5"]',
+             [RuntimeNumber("1i2"), RuntimeNumber("-3.5")]),
+        ):
+            with self.subTest(operation=operation):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(f'{text} {operation}'))
+                self.assertEqual(analyser.diagnostics, [])
+                self.assertEqual(list(run(loads(dumps(compile_program(typed))))[0]), expected)
+
+    def test_string_integer_conversion_types_and_effects(self) -> None:
+        for operation, result, effects in (
+            ("to[Int]", "Int", {("Panic", "ConversionFault")}),
+            ("to?[Int]", "Int?", set()),
+            ("to[Real]", "Real", {("Panic", "ConversionFault")}),
+            ("to?[Real]", "Real?", set()),
+            ("to[Number]", "Number", {("Panic", "ConversionFault")}),
+            ("to?[Number]", "Number?", set()),
+        ):
+            with self.subTest(operation=operation):
+                analyser = Analyser()
+                analyser.analyse(parse(
+                    f'define convert(value: String) -> {result} => $value {operation}'
+                ))
+                self.assertEqual(analyser.diagnostics, [])
+                from valiance.vtypes.symbols import Symbol
+                overload = analyser.env.overloads_for(Symbol("convert"))[0]
+                self.assertEqual({(tag.name.text, tag.args[0].name.text)
+                                  for tag in overload.element_tags}, effects)
+
+    def test_optional_conversion_requires_declared_target(self) -> None:
+        for source in ('1 to?[Int]', '"1" to?[String]', '"1" to?', '"1" to?[Int, String]'):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
+
+    def test_optional_conversion_uses_annotated_user_implementation(self) -> None:
+        source = '''
+@convert(Int -> String)
+define to(value: Int) -> String =>
+  if ($value < 0) => ValueFault("negative") panic
+  $value toString
+end
+@convert(Int -> Real)
+define to(value: Int) -> Real => $value as[Real]
+77
+to?[String](value = -1)
+to?[String](2)
+3 to?[Real]
+'''
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(loads(dumps(program))),
+                                 [RuntimeNumber(77), ObjectValue("None", {}),
+                                  "2", RuntimeNumber(3)])
+
+    def test_optional_conversion_preserves_other_effects_and_argument_panics(self) -> None:
+        source = '''
+@convert(Int -> String)
+define to(value: Int) -> String =>
+  "converted" println
+  if ($value < 0) => ValueFault("negative") panic
+  $value toString
+end
+define convert(value: Int) -> String? => $value to?[String]
+'''
+        from valiance.vtypes.symbols import Symbol
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        overload = analyser.env.overloads_for(Symbol("convert"))[0]
+        self.assertIn(Symbol("IO"), {tag.name for tag in overload.element_tags})
+        self.assertNotIn(Symbol("Panic"), {tag.name for tag in overload.element_tags})
+        with self.assertRaisesRegex(RuntimeError, "argument failed"):
+            execute('to?[Int](ValueFault("argument failed") panic)')
+
+    def test_optional_conversion_wraps_vectorised_failure(self) -> None:
+        self.assertEqual(execute('77 ["1", "bad"] to?[Int]'),
+                         [RuntimeNumber(77), ObjectValue("None", {})])
+
+    def test_optional_conversion_transfers_nonduplicable_input(self) -> None:
+        source = '''
+@nodup("Resource cannot be duplicated")
+object Resource =>
+  define ~Resource => "released" println
+end
+@convert(Resource -> Int)
+define to(value: Resource) -> Int => 1
+@convert(Resource -> String)
+define to(value: Resource) -> String => ValueFault("failed") panic
+Resource | to?[Int]
+Resource | to?[String]
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = run(loads(dumps(compile_program(typed))))
+        self.assertEqual(result, [RuntimeNumber(1), ObjectValue("None", {})])
+        self.assertEqual(output.getvalue(), "released\nreleased\n")
 
     def test_to_selects_convert_overload_by_target(self) -> None:
         source = """

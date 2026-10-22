@@ -470,7 +470,7 @@ import {std.random}
 const $TARGET = random.between(1, 100)
 while (true) =>
   input("Enter your guess! ")
-  parseInt match =>
+  to?[Int] match =>
     as guess: Number =>
       if ($guess < $TARGET) => println("Too small!")
       else if ($guess > $TARGET) => println("Too big!")
@@ -546,7 +546,7 @@ define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
           "/" => fn => /
         reduce($stack[-1, -2])
         $stack := drop(2) | append
-      if numeric? => $stack := append (parseInt $token ?!)
+      if numeric? => $stack := append (to?[Int] $token ?!)
       _ => return ValueError("Unexpected Token")
     end
   end

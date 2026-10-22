@@ -3,7 +3,7 @@ import {std.random}
 const $TARGET = random.between(1, 100)
 while (true) =>
   input("Enter your guess! ")
-  parseInt match =>
+  to?[Int] match =>
     as guess: Int =>
       if ($guess < $TARGET) => println("Too small!")
       else if ($guess > $TARGET) => println("Too big!")

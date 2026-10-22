@@ -1019,7 +1019,7 @@ still name-convention based because `normalize(...)` does not take an
 environment.
 
 The standard environment also defines message-bearing built-in `Fault` objects:
-`RuntimeFault`, `ValueFault`, `RangeFault`, `ParseFault`,
+`RuntimeFault`, `ValueFault`, `RangeFault`, `ParseFault`, `ConversionFault`,
 `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`, `StateFault`,
 `IOFault`, `NotFoundFault`, `AlreadyExistsFault`, `PermissionFault`,
 `ClosedFault`, `TimeoutFault`, `CancelledFault`, `UnwrappedNoneFault`,

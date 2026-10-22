@@ -473,6 +473,17 @@ implementation ID. Constructors link the selected initializer by ID and attach
 This is the practical meaning of “overload resolution is static”: the VM is
 given an address inside the selected runtime definition.
 
+### Optional conversions
+
+Target-directed `to?[Type]` calls reuse the analyser-selected `@convert`
+implementation of `to[Type]`. The typed call records optional conversion and
+removes only the conversion's panic effects. Code generation invokes that call
+inside a one-input helper frame with an ordinary panic handler returning `None`.
+The frame forwards its input, so both intrinsic and user-defined conversions
+release it correctly on failure without disturbing the caller's stack. Explicit
+argument expressions run before this protected call. Existing bytecode
+instructions implement the wrapper; the serialized instruction format is unchanged.
+
 ### Dynamic `CALL` is a different operation
 
 When codegen does not have a statically resolved element reference, it emits:

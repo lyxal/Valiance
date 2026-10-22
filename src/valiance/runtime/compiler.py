@@ -636,6 +636,9 @@ class _Compiler:
                 for target in reversed(targets):
                     self.emit(OpCode.STORE_VAR, _symbol_runtime_name(target.name))
             case ElementNode(name, modifier_args):
+                if isinstance(typed_node, TypedElementNode) and typed_node.optional_conversion:
+                    self.optional_conversion(typed_node)
+                    return
                 if (
                     name == Symbol("dup")
                     and not modifier_args
@@ -1670,6 +1673,24 @@ class _Compiler:
         end = len(self.instructions)
         for jump in end_jumps:
             self.patch(jump, end)
+
+    def optional_conversion(self, node: TypedElementNode) -> None:
+        """Catch conversion panics in a frame that owns exactly its input."""
+        compiler = _Compiler()
+        begin = compiler.emit(OpCode.TRY_BEGIN, ())
+        compiler.emit(OpCode.LOAD_VAR_FORWARD, "_conversion_value")
+        compiler.node(replace(node, optional_conversion=False, call_arg_order=()))
+        compiler.emit(OpCode.TRY_END)
+        success = compiler.emit(OpCode.JUMP, None)
+        handler = len(compiler.instructions)
+        compiler.node(ElementNode(Symbol("\\None")))
+        compiler.patch(success, len(compiler.instructions))
+        compiler.instructions[begin] = Instruction(OpCode.TRY_BEGIN, ((None, handler),))
+        self.emit(OpCode.MAKE_FUNCTION, compiler.compile_function(
+            (), params=("_conversion_value",),
+            name="to?", cycle_params=True, return_count=1,
+        ))
+        self.emit(OpCode.CALL)
 
     def try_node(self, node: TryNode, typed_node: TypedNode | None) -> None:
         """Lower panic handlers and their protected instruction range."""

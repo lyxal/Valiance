@@ -11,7 +11,7 @@ define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
           "/" => fn => /
         reduce($stack[-1, -2])
         $stack := drop(2) | append
-      if numeric? => $stack := append (parseInt $token ?!)
+      if numeric? => $stack := append (to?[Int] $token ?!)
       _ => return ValueError("Unexpected Token")
     end
   end

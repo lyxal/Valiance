@@ -82,6 +82,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "DomainFault",
         "RangeFault",
         "ParseFault",
+        "ConversionFault",
         "DivisionByZeroFault",
         "IndexFault",
         "KeyFault",
@@ -458,12 +459,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="Never returns normally.",
         category="Errors and faults",
     ),
-    "parseInt": element_documentation(
-        "Parse a base-ten integer string.",
-        parameters=(("value", "String to parse."),),
-        returns="The parsed `Int`, or `None` when parsing fails.",
-        category="Strings",
-    ),
     "peek": element_documentation(
         "Call a function while preserving the values it consumes.",
         description="The callable receives its normal inputs, and those inputs remain beneath the callable's results.",
@@ -613,7 +608,12 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Conversions",
         notes=(
             "Target-directed conversion selects an overload using `to[Type]`; "
-            "available conversions depend on the source and target types."
+            "available conversions depend on the source and target types. "
+            "For Strings, `to[Int]` parses a base-ten integer and panics with "
+            "`ConversionFault` when parsing fails. `to[Real]` parses a real "
+            "number and `to[Number]` also accepts complex numeric notation; "
+            "both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the "
+            "same registered conversion and returns `None` if it panics."
         ),
     ),
     "top": element_documentation(
@@ -2445,14 +2445,51 @@ def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (list(islice(cycle(materialized), count)),)
 
 
-@builtin("parseInt", (T.String,), (T.optional(T.Int),))
-def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Parse a base-ten integer, returning `None` when parsing fails."""
+@builtin(
+    "to", (T.String,), (T.Int,), conversion_target=T.Int,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _string_to_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a base-ten integer, raising ConversionFault for invalid text."""
 
     try:
         return (RuntimeNumber(int(args[0].strip(), 10)),)
-    except ValueError:
-        return (ObjectValue("None", {}),)
+    except ValueError as error:
+        raise PanicSignal(
+            ObjectValue("ConversionFault", {"message": "cannot convert String to Int"})
+        ) from error
+
+
+def _parse_string_number(value: str, *, real_only: bool = False) -> RuntimeNumber:
+    """Parse runtime numeric notation, enforcing a real-only target when requested."""
+    target = "Real" if real_only else "Number"
+    try:
+        number = RuntimeNumber(value.strip())
+        if real_only and number.is_complex():
+            raise ValueError("nonzero imaginary component")
+        return number
+    except (ArithmeticError, TypeError, ValueError) as error:
+        raise PanicSignal(
+            ObjectValue("ConversionFault", {"message": f"cannot convert String to {target}"})
+        ) from error
+
+
+@builtin(
+    "to", (T.String,), (T.Real,), conversion_target=T.Real,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _string_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a real number, raising ConversionFault for invalid or complex text."""
+    return (_parse_string_number(args[0], real_only=True),)
+
+
+@builtin(
+    "to", (T.String,), (T.Number,), conversion_target=T.Number,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _string_to_number(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a real or complex number, raising ConversionFault for invalid text."""
+    return (_parse_string_number(args[0]),)
 
 
 @builtin(

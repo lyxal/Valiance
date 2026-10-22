@@ -118,7 +118,13 @@ class _ElementCalls:
         branch: AnalysisBranch,
     ) -> BranchSet:
         """Analyse a `ElementNode` node and return the surviving branches."""
+        optional_conversion = node.name.text == "to?"
+        if optional_conversion:
+            node = replace(node, name=Symbol("to", node.name.namespace))
         overloads = self.env.overloads_for(node.name)
+        if optional_conversion:
+            overloads = tuple(overload for overload in overloads
+                              if overload.conversion_target is not None)
         overloads = self._trait_receiver_overloads(node.name, branch, overloads)
         if node.name == Symbol("dup") and branch.stack:
             decision = _utils._duplication_requirement(branch.stack[-1], self.env)
@@ -232,8 +238,22 @@ class _ElementCalls:
 
         results: list[AnalysisBranch] = list(terminal)
         for candidate in winners:
+            if optional_conversion:
+                candidate = replace(candidate, applied=replace(
+                    candidate.applied,
+                    element_tags=frozenset(tag for tag in candidate.applied.element_tags
+                                           if tag.name != Symbol("Panic")),
+                ))
             committed = self.commit_element_candidate(node, overloads, candidate)
             if committed is not None:
+                if optional_conversion:
+                    result_type = T.optional(committed.stack[-1])
+                    typed = replace(committed.typed_body[-1],
+                                    typ=result_type, optional_conversion=True)
+                    committed = replace(
+                        committed.pop().push(result_type),
+                        typed_body=(*committed.typed_body[:-1], typed),
+                    )
                 results.append(committed)
         return BranchSet.collect(results)
 
