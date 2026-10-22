@@ -2475,24 +2475,6 @@ def _parse_string_number(value: str, *, real_only: bool = False) -> RuntimeNumbe
 
 
 @builtin(
-    "to", (T.String,), (T.Real,), conversion_target=T.Real,
-    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
-)
-def _string_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Parse a real number, raising ConversionFault for invalid or complex text."""
-    return (_parse_string_number(args[0], real_only=True),)
-
-
-@builtin(
-    "to", (T.String,), (T.Number,), conversion_target=T.Number,
-    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
-)
-def _string_to_number(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Parse a real or complex number, raising ConversionFault for invalid text."""
-    return (_parse_string_number(args[0]),)
-
-
-@builtin(
     "pop",
     (T.V("Item"),),
     (),
@@ -2534,6 +2516,24 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     except IndexError as exc:
         raise RuntimeError(f"removeAt index {index} is out of range") from exc
     return (result,)
+
+
+@builtin(
+    "to", (T.String,), (T.Real,), conversion_target=T.Real,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _string_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a real number, raising ConversionFault for invalid or complex text."""
+    return (_parse_string_number(args[0], real_only=True),)
+
+
+@builtin(
+    "to", (T.String,), (T.Number,), conversion_target=T.Number,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _string_to_number(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a real or complex number, raising ConversionFault for invalid text."""
+    return (_parse_string_number(args[0]),)
 
 
 def _rectangular_shape_fault(message: str) -> PanicSignal:
