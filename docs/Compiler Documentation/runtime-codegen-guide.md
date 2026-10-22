@@ -186,6 +186,10 @@ collection-valued stopped parameter is not automatically vectorised again.
 `src/valiance/runtime/runtime_values.py`
 
 - Defines shared runtime-value helpers used by built-ins, the VM, and the CLI.
+- `format_runtime_value(...)` prints top-level strings as raw text by default.
+  Strings nested in lists (including lazy lists), tuples, records, dictionaries,
+  and object fields use quoted, escaped representations. `quote_strings=True`
+  also quotes a top-level string for diagnostics and stack displays.
 - `LazyList` wraps an iterable that should behave like a Valiance list without
   promising a finite length.
 - `is_list_like(...)` tests for list-shaped runtime values. It

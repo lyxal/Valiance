@@ -149,17 +149,24 @@ inside the representation layer.
 
 ### Correlated minimum-rank collection results
 
-Peeling the final guaranteed rank from a minimum-rank collection gives an
-isolated item the conservative shape ``T | T*``. That union must not be wrapped
-naively as ``(T | T*)+`` when an overload reconstructs a uniform collection.
-Overload application therefore retains the correlation at the collection
-boundary: a minimum-rank argument adapted to an exact-rank parameter contributes
-one shared runtime excess rank, and exact collection returns inherit that same
-excess. For example, filtering ``Number*`` produces ``Number*``, not
-``(Number | Number*)+``. Scalar returns such as reduce still receive the
-standalone item approximation, while collection-shaped returns preserve the
-uniform rank invariant. This rule is generic and is based on parameter and
-return shapes rather than element names.
+Iterating a minimum-rank collection directly gives an isolated item the
+conservative shape ``T | T*``. Calling an exact-rank generic parameter is
+different: first preserve the whole item shape when the callback accepts it.
+If that fails, retry with exact-rank adaptation: matching ``Item+`` against
+``String*`` solves ``Item = String`` and leaves unknown outer ranks in the
+runtime vectorisation plan. Guaranteed remaining ranks are retained:
+``String*3`` solves ``Item = String+2`` in this adapted path. This lets callbacks
+consume concrete items while preserving existing collection-aware callbacks.
+
+Minimum-to-exact collection adaptation scores as ``RANK_ADAPTED``, below a
+direct ``RANK`` match and ahead of vectorisation to a scalar parameter.
+Thus ``String* map fn(row) => ... end``
+chooses list mapping over character mapping. Runtime target ranks are recorded
+independently of specificity scores. Dynamic traversal lifts collection
+results to minimum-rank collections and scalar results to scalar-or-collection
+unions. For example, filtering ``Number*`` produces ``Number*``, not
+``(Number | Number*)+``. Direct iteration and minimum-rank parameter matching
+retain their conservative item semantics.
 
 ### `types/context.py`: relationship facts
 
@@ -900,6 +907,7 @@ OPTIONAL
 INTERSECTION
 TRAIT
 RANK
+RANK_ADAPTED
 UNION
 VECTORISED
 CALL_SITE_CHECKED

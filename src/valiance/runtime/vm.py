@@ -8056,16 +8056,17 @@ def _vectorize_eager_resolved_depths(
             for arg, depth in zip(args, depths, strict=False)
         )
         item_args = _extend_vector_args(item_args, extension, context)
-        result_items.append(
-            _vectorize_resolved_depths(
-                implementation,
-                item_args,
-                context,
-                item_depths,
-                extension,
-                stop_at_zero=stop_at_zero,
-            )
+        item_result = _vectorize_resolved_depths(
+            implementation,
+            item_args,
+            context,
+            item_depths,
+            extension,
+            stop_at_zero=stop_at_zero,
         )
+        # The eager outer result does not itself retain callback arguments for
+        # deferred inner results. Bind those owners before transposing them.
+        result_items.append(_bind_lazy_result_owners(item_args, item_result))
 
     return _transpose_vectorized_items(result_items)
 
@@ -8107,7 +8108,7 @@ def _vectorize_lazy_resolved_depths(
         )
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
-        yield result[0]
+        yield _bind_lazy_result_owners(item_args, result)[0]
 
 
 def _extend_vector_args(

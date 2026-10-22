@@ -386,6 +386,37 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.vectorised_target_ranks, (0,))
         self.assertEqual(applied.actual_returns, (C(ListMinType, String),))
 
+    def test_minimum_rank_exact_generic_keeps_unknown_rank_in_call_adaptation(self):
+        item = TypeVariable('Item')
+        mapped = TypeVariable('Mapped')
+        overload = Overload(
+            (ExactList(item), Fn((item,), (mapped,))),
+            (ExactList(mapped),),
+        )
+        applied = apply_overload(
+            overload,
+            (AtLeastList(String), Fn((String,), (Int,))),
+        )
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution['Item'], String)
+        self.assertEqual(applied.params[0], ExactList(String))
+        self.assertEqual(applied.scores[0], Specificity.RANK_ADAPTED)
+        self.assertEqual(applied.vectorised_depths, (0, 0))
+        self.assertEqual(applied.vectorised_target_ranks, (1, None))
+        self.assertEqual(applied.actual_returns, (AtLeastList(Int),))
+        # An isolated item remains uncertain; only call adaptation owns the
+        # excess rank when matching an exact collection parameter.
+        self.assertEqual(collection_item_type(AtLeastList(String)),
+                         U(String, AtLeastList(String)))
+        self.assertIsNone(apply_overload(
+            overload, (AtLeastList(String), Fn((Int,), (Int,))),
+        ))
+
+    def test_exact_generic_minimum_rank_retains_guaranteed_item_ranks(self):
+        item = TypeVariable('Item')
+        solved = _solve(ExactList(item), AtLeastList(String, 3), adapt_min_rank=True)
+        self.assertEqual(solved, {'Item': [ExactList(String, 2)]})
+
     def test_union_vectorisation_records_runtime_target_rank(self):
         scalar_or_list = U(Int, C(ListMinType, Int))
 

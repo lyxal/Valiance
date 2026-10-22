@@ -739,7 +739,20 @@ value's reified uniform rank to call once at rank 2 or peel additional outer
 ranks through vectorisation. `AppliedOverload.vectorised_target_ranks` carries
 this policy alongside the minimum fixed depths. Result types retain the
 uncertainty: a dynamic excess of zero or more yields `R | R*`, while a known
-minimum positive excess yields a minimum-rank collection result.
+minimum positive excess yields a minimum-rank collection result. A uniform
+collection result retains its known rank and acquires only uncertain outer
+ranks, so returning `R+` through zero-or-more traversal yields `R*`.
+
+Generic exact collection parameters first preserve the whole item shape. If
+the callback cannot accept it, retry with only the guaranteed item shape:
+`T+` against `String*` binds `T = String`, and against `String*3` binds
+`T = String+2`. Unknown excess rank belongs to the call adaptation plan rather
+than a union in `T`. This differs from directly iterating `String*`, whose item
+type remains `String | String*`. Minimum-to-exact collection adaptation receives
+`RANK_ADAPTED` specificity, below direct `RANK` matches and ahead of scalar
+`VECTORISED` matches, while still recording
+the runtime target rank. In particular, list `map` wins over vectorised string
+`map` for a `String*` argument and a compatible callback.
 
 ### Rugged Lists
 

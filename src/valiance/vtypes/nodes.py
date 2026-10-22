@@ -19,9 +19,10 @@ class Specificity(IntEnum):
     INTERSECTION = 4
     TRAIT = 5
     RANK = 6
-    UNION = 7
-    VECTORISED = 8
-    CALL_SITE_CHECKED = 9
+    RANK_ADAPTED = 7
+    UNION = 8
+    VECTORISED = 9
+    CALL_SITE_CHECKED = 10
     NO_MATCH = 10_000
 
 

@@ -80,6 +80,24 @@ Keep the repository organized and its documentation consistent with the implemen
 - Update relevant maintenance guides or compiler documentation when architecture, semantics, invariants, or supported behaviour changes.
 - Follow existing file naming, module structure, and import conventions.
 
+### Documentation and comments
+
+Write documentation and code comments for their intended readers, describing the software as though its current design had been intentional from the beginning.
+
+Only include information that genuinely helps readers understand or use the software. Do not add commentary merely because something arose during development. Keep explanations relevant to their context, and prefer integrating changes naturally into existing documentation over appending notes about individual fixes or discoveries.
+
+### Agent notes
+
+Use `docs/AGENT_NOTES.md` to share practical knowledge that could save future agents from repeating difficult investigations or mistakes.
+
+- Focus on recurring pitfalls, non-obvious interactions, fragile assumptions, and useful investigation guidance.
+- Explain when a note is relevant and what a future agent should watch for or do. Avoid recording isolated facts without a practical purpose.
+- Be selective about what deserves preservation. Not every discovery, bug fix, or difficult investigation produces a useful lesson.
+- Keep notes organized by subject, not by development session. Consolidate related information, and revise or remove stale, redundant, or no-longer-useful notes.
+- Do not let agent notes become a substitute for documentation that genuinely belongs in the code or project docs.
+
+**Guiding principle:** Preserve information because it will help its intended reader, not simply because it was encountered during development.
+
 Do not create documentation, helper files, or abstractions without a concrete maintenance benefit.
 
 ## 6. Windows and Tooling

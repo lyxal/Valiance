@@ -908,6 +908,25 @@ exactIn \\min
         self.assertEqual(typed[-1].overload.vectorised_depths, (0,))
         self.assertEqual(typed[-1].overload.vectorised_target_ranks, (1,))
 
+    def test_minimum_rank_string_map_prefers_list_over_character_mapping(self):
+        for mapping in (
+            'map fn (row) => $row split "\\t" end',
+            'map: split("\\t")',
+        ):
+            with self.subTest(mapping=mapping):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(
+                    'define \\rows -> String* => []\n'
+                    '\\rows ' + mapping
+                ))
+                self.assertEqual(analyser.diagnostics, [])
+                applied = typed[-1].overload
+                self.assertIsInstance(applied.overload.params[0], T.ListExactType)
+                if mapping.startswith('map fn'):
+                    self.assertEqual(applied.params[0], T.ExactList(T.String))
+                    self.assertEqual(applied.vectorised_target_ranks, (1, None))
+                    self.assertEqual(applied.actual_returns, (T.AtLeastList(T.String, 2),))
+
     def test_user_err_implementation_infers_result_signatures(self):
         analyser = Analyser()
 

@@ -430,6 +430,55 @@ $f writeLine "World"
         self.assertEqual({tag.name for tag in values[0].tags}, {'byte'})
         self.assertFalse(file_backend._handles)
 
+    def test_read_lines_maps_complete_tab_separated_rows(self):
+        path = self._path()
+        readers = (
+            ('std.file.do, std.path.Path', f'do.readLines(Path {path})'),
+            ('std.file, std.path', f'file.do.readLines(path.Path({path}))'),
+            ('std.file, std.path',
+             f'$reader = file.ReadFile(path.Path({path}))\n'
+             '$reader file.readLines\n$reader file.close'),
+        )
+        fixtures = (
+            (b'AB\t10\t20\t30\t40\t50\t60\r\nCD\t11\t21\t31\t41\t51\t61',
+             [{'code': 'AB', 'raw': '40', 'factor': '60'},
+              {'code': 'CD', 'raw': '41', 'factor': '61'}]),
+            (b'', []),
+            (b'AB\t10', None),
+        )
+        for imports, reader in readers:
+            for contents, expected in fixtures:
+                with open(os.path.join(self._temp.name, 'data.txt'), 'wb') as stream:
+                    stream.write(contents)
+                analyser = Analyser()
+                tree = analyser.analyse(parse(
+                    f'import {{{imports}}}\n{reader}\n' + r'''
+map fn (row) =>
+  const $items = $row split "\t"
+  record{
+    code => $items[0],
+    raw => $items[4],
+    factor => $items[6]
+  }
+end
+'''))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    program = compile_program(tree, optimize=optimize)
+                    for serialized in (False, True):
+                        with self.subTest(reader=reader, contents=contents,
+                                          optimize=optimize, serialized=serialized):
+                            executable = loads(dumps(program)) if serialized else program
+                            if expected is None:
+                                with self.assertRaises(PanicSignal) as caught:
+                                    list(run(executable)[-1])
+                                self.assertEqual(caught.exception.value.type_name, 'IndexFault')
+                                self.assertEqual(caught.exception.value.fields['message'],
+                                                 'index 4 is out of range for length 2')
+                            else:
+                                self.assertEqual(list(run(executable)[-1]), expected)
+                            self.assertFalse(file_backend._handles)
+
     def test_open_failure_is_catchable_during_partial_construction(self):
         path = self._path('absent.txt')
         values, _ = self._run(f'''try =>

@@ -78,6 +78,27 @@ def _source_element_arguments(
         tuple[_core.ModifierArgumentAnalysis, ...],
     ]
 ]:
+    """Prefer whole-item inference before adapting unknown collection ranks."""
+    for adapt_min_rank in (False, True):
+        variants = tuple(_source_element_arguments_for_rank(
+            branch, overload, modifier_args, ctx, call_arg_order, analyser,
+            adapt_min_rank=adapt_min_rank,
+        ))
+        if variants:
+            yield from variants
+            return
+
+
+def _source_element_arguments_for_rank(
+    branch: _core.AnalysisBranch,
+    overload: T.Overload,
+    modifier_args: tuple[_core.ModifierArgumentAnalysis, ...],
+    ctx: T.Context,
+    call_arg_order: tuple[int, ...] = (),
+    analyser: _core.Analyser | None = None,
+    *, adapt_min_rank: bool = False,
+) -> Iterator[tuple[tuple[T.Type, ...], _core.AnalysisBranch,
+                    tuple[_core.ModifierArgumentAnalysis, ...]]]:
     """Source element arguments during static analysis."""
     if not modifier_args:
         params = _call_args_in_current_order(overload.params, call_arg_order)
@@ -100,6 +121,7 @@ def _source_element_arguments(
                 popped,
                 ctx,
                 analyser,
+                adapt_min_rank=adapt_min_rank,
             ):
                 yield specialized_args, specialized_popped, ()
         return
@@ -119,7 +141,9 @@ def _source_element_arguments(
         return
     current_stack_args, popped = sourced
     stack_args = _call_args_in_parameter_order(current_stack_args, call_arg_order)
-    stack_substitution = _branch_argument_substitution(stack_args, stack_params, ctx)
+    stack_substitution = _branch_argument_substitution(
+        stack_args, stack_params, ctx, adapt_min_rank=adapt_min_rank,
+    )
     if stack_substitution is None:
         return
 
@@ -166,6 +190,7 @@ def _contextual_stack_argument_variants(
     branch: _core.AnalysisBranch,
     ctx: T.Context,
     analyser: _core.Analyser | None,
+    *, adapt_min_rank: bool = False,
 ) -> Iterator[tuple[tuple[T.Type, ...], _core.AnalysisBranch]]:
     """Contextualize deferred function literals passed on the value stack."""
     inferred_literal_vars: set[str] = set()
@@ -177,7 +202,9 @@ def _contextual_stack_argument_variants(
         inferred_literal_vars.update(_type_variable_names(arg))
 
     if inferred_literal_vars:
-        inferred = _branch_argument_substitution(args, params, ctx)
+        inferred = _branch_argument_substitution(
+            args, params, ctx, adapt_min_rank=adapt_min_rank,
+        )
         if inferred is not None:
             literal_substitution = {
                 name: typ
@@ -209,7 +236,9 @@ def _contextual_stack_argument_variants(
     ordinary_params = tuple(
         param for index, param in enumerate(params) if index not in deferred_indexes
     )
-    substitution = _branch_argument_substitution(ordinary_args, ordinary_params, ctx)
+    substitution = _branch_argument_substitution(
+        ordinary_args, ordinary_params, ctx, adapt_min_rank=adapt_min_rank,
+    )
     if substitution is None:
         return
 

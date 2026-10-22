@@ -952,6 +952,7 @@ def _branch_argument_substitution(
     args: tuple[T.Type, ...],
     params: tuple[T.Type, ...],
     ctx: T.Context,
+    *, adapt_min_rank: bool = False,
 ) -> dict[T.TypeVarKey, T.Type] | None:
     """Compute a coherent substitution without committing before callables.
 
@@ -983,7 +984,9 @@ def _branch_argument_substitution(
         if constraints is None or (
             not constraints and _functions._contains_type_var(solve_param)
         ):
-            constraints = _solve_type_argument(solve_arg, solve_param, ctx)
+            constraints = _solve_type_argument(
+                solve_arg, solve_param, ctx, adapt_min_rank=adapt_min_rank,
+            )
         if constraints is None:
             if T.compatible(solve_arg, solve_param, ctx):
                 continue
@@ -1104,9 +1107,10 @@ def _solve_type_argument(
     arg: T.Type,
     param: T.Type,
     ctx: T.Context | None = None,
+    *, adapt_min_rank: bool = False,
 ) -> dict[T.TypeVarKey, T.Type] | None:
     """Compute solve type argument during static analysis."""
-    solved = T._solve(param, arg, ctx)
+    solved = T._solve(param, arg, ctx, adapt_min_rank=adapt_min_rank)
     if solved is None:
         return None
     substitution: dict[T.TypeVarKey, T.Type] = {}

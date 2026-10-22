@@ -1408,6 +1408,7 @@ def _solve(
     ctx: Context | None = None,
     *,
     allow_implementation: bool = True,
+    adapt_min_rank: bool = False,
 ) -> dict[TypeVarKey, list[Type]] | None:
     """Collect generic constraints by matching a parameter pattern to an argument."""
     ctx = ctx or Context()
@@ -1700,7 +1701,7 @@ def _solve(
                 and p.rank == a.rank
             ):
                 return rec(p.base, a.base)
-            return _solve_collection(p, a, add)
+            return _solve_collection(p, a, add, adapt_min_rank=adapt_min_rank)
         if isinstance(p, AnonymousTraitType):
             result = _solve_anonymous_trait(a, p, ctx)
             if result is None:
@@ -1799,7 +1800,8 @@ def _rugged_scalar_leaf_type(typ: Type) -> Type:
 
 
 def _solve_collection(
-    pattern: Type, actual: Type, add: Callable[[TypeVarKey, Type], None]
+    pattern: Type, actual: Type, add: Callable[[TypeVarKey, Type], None],
+    *, adapt_min_rank: bool = False,
 ) -> bool:
     """Solve a generic collection pattern against an actual collection type."""
     if not isinstance(pattern.base, VarType):
@@ -1821,6 +1823,10 @@ def _solve_collection(
         return True
 
     if pk is ListExactType and ak in {ListExactType}:
+        return bind_as(ListExactType)
+    if pk is ListExactType and ak is ListMinType and adapt_min_rank:
+        # The exact parameter owns a fixed rank. Any unknown excess belongs
+        # to call vectorisation, not to its generic item type.
         return bind_as(ListExactType)
     if pk is ListExactType and ak in {ListMinType, ListRuggedType}:
         return bind_as(ak)
@@ -3121,25 +3127,16 @@ def _wrap_returns_for_vectorisation(
     if not dynamic:
         return _wrap_returns_for_vector_depth(returns, args, depths)
 
-    vector_args = tuple(
-        arg
-        for arg, depth, target in zip(
-            args,
-            depths,
-            target_ranks,
-            strict=False,
-        )
-        if depth > 0 or target is not None
-    )
-    output_type = ListMinType
-    if minimum_rank > 0:
-        return tuple(
-            _wrap_vectorised_return(ret, output_type, minimum_rank)
-            for ret in returns
-        )
-    return tuple(
-        U(ret, _wrap_vectorised_return(ret, output_type, 1)) for ret in returns
-    )
+    def lift(returned: Type) -> Type:
+        """Preserve uniform collection rank while adding uncertain outer ranks."""
+        returned = normalize(returned)
+        if isinstance(returned, (ListExactType, ListMinType)) and isinstance(returned.rank, int):
+            return C(ListMinType, returned.base, returned.rank + minimum_rank)
+        if minimum_rank > 0:
+            return _wrap_vectorised_return(returned, ListMinType, minimum_rank)
+        return U(returned, _wrap_vectorised_return(returned, ListMinType, 1))
+
+    return tuple(lift(ret) for ret in returns)
 
 
 def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
@@ -3214,6 +3211,12 @@ def _match_specificity(
         and _collection_subtype(argument, parameter, ctx)
     ):
         return Specificity.RANK
+    if (
+        isinstance(argument, ListMinType)
+        and isinstance(parameter, ListExactType)
+        and _dynamic_vectorisation_target_rank(argument, parameter, ctx) is not None
+    ):
+        return Specificity.RANK_ADAPTED
     if _is_result_injection(argument, parameter, ctx):
         # Result accepts bare success/error values through an implicit sum-type
         # injection. Rank that like a union arm, below a direct generic match.
@@ -3236,6 +3239,33 @@ def try_apply_overload(
     *,
     disambiguation: tuple[Type | None, ...] = (),
     generic_args: tuple[Type | None, ...] = (),
+) -> OverloadAttempt:
+    """Prefer whole collection items, then try exact-rank call adaptation."""
+    attempt = _try_apply_overload(
+        overload, args, ctx, disambiguation=disambiguation, generic_args=generic_args,
+    )
+    if attempt.applied is not None or not any(
+        isinstance(_collection_view(arg), ListMinType)
+        and isinstance(_collection_view(param), ListExactType)
+        and _contains_type_var(param)
+        for arg, param in zip(args, overload.params)
+    ):
+        return attempt
+    adapted = _try_apply_overload(
+        overload, args, ctx, disambiguation=disambiguation, generic_args=generic_args,
+        adapt_min_rank=True,
+    )
+    return adapted if adapted.applied is not None else attempt
+
+
+def _try_apply_overload(
+    overload: Overload,
+    args: tuple[Type, ...],
+    ctx: Context | None = None,
+    *,
+    disambiguation: tuple[Type | None, ...] = (),
+    generic_args: tuple[Type | None, ...] = (),
+    adapt_min_rank: bool = False,
 ) -> OverloadAttempt:
     """Apply one overload to concrete argument types with mismatch evidence."""
     ctx = ctx or Context()
@@ -3367,7 +3397,7 @@ def try_apply_overload(
             # determine T before we ask whether this callable fits Function[T].
             deferred_function_args.append((param, arg))
             continue
-        result = _solve(param, arg, ctx)
+        result = _solve(param, arg, ctx, adapt_min_rank=adapt_min_rank)
         if result is None:
             if _contains_type_var(param):
                 return OverloadAttempt(
@@ -3403,7 +3433,7 @@ def try_apply_overload(
         names = () if name is None else (name,)
         if names and all(name in substitution for name in names):
             continue
-        result = _solve(param, arg, ctx)
+        result = _solve(param, arg, ctx, adapt_min_rank=adapt_min_rank)
         if result is None:
             return OverloadAttempt(
                 None,
@@ -3514,7 +3544,8 @@ def try_apply_overload(
 
     params = tuple(_substitute(param, substitution) for param in overload.params)
     returns = tuple(_substitute(ret, substitution) for ret in overload.returns)
-    returns = _correlated_min_rank_returns(returns, base_args, params)
+    if not adapt_min_rank:
+        returns = _correlated_min_rank_returns(returns, base_args, params)
     if not _generic_constraints_met(
         overload.generic_constraints,
         substitution,
@@ -3574,7 +3605,12 @@ def try_apply_overload(
         automatic_target_ranks: list[int | None] = []
         for arg, param, score in zip(base_args, params, scores, strict=False):
             union_target_rank = _union_vectorisation_target_rank(arg, param, ctx)
-            if score != Specificity.VECTORISED and union_target_rank is None:
+            dynamic_target_rank = _dynamic_vectorisation_target_rank(arg, param, ctx)
+            if (
+                score != Specificity.VECTORISED
+                and union_target_rank is None
+                and dynamic_target_rank is None
+            ):
                 automatic_depths.append(0)
                 automatic_target_ranks.append(None)
                 continue
@@ -3582,7 +3618,7 @@ def try_apply_overload(
             target_rank = (
                 union_target_rank
                 if union_target_rank is not None
-                else _dynamic_vectorisation_target_rank(arg, param, ctx)
+                else dynamic_target_rank
             )
             if excess is None or (excess <= 0 and target_rank is None):
                 return OverloadAttempt(

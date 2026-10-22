@@ -3015,7 +3015,7 @@ println($lst map: foo)
         self.assertEqual(stack, [])
         self.assertEqual(
             output.getvalue(),
-            "[2, 4, AA, BB]\n[2, 4, AA, BB]\n[2, 4, AA, BB]\n",
+            "[2, 4, 'AA', 'BB']\n[2, 4, 'AA', 'BB']\n[2, 4, 'AA', 'BB']\n",
         )
 
     def test_union_dispatch_accepts_broad_numeric_overload(self):
@@ -3035,7 +3035,7 @@ $lst map: classify | println
             stack = run(program)
 
         self.assertEqual(stack, [])
-        self.assertEqual(output.getvalue(), "[number, string]\n")
+        self.assertEqual(output.getvalue(), "['number', 'string']\n")
 
     def test_union_dispatch_uses_statically_selected_broad_branch(self):
         output = io.StringIO()
@@ -3051,7 +3051,7 @@ define choose(s: String) -> String => "string"
             stack = execute(source)
 
         self.assertEqual(stack, [])
-        self.assertEqual(output.getvalue(), "[number, string]\n")
+        self.assertEqual(output.getvalue(), "['number', 'string']\n")
 
     def test_union_dispatch_accepts_trait_and_variant_branches(self):
         output = io.StringIO()
@@ -3073,7 +3073,7 @@ define describe(x: String) -> String => $x
             stack = execute(source)
 
         self.assertEqual(stack, [])
-        self.assertEqual(output.getvalue(), "[shape, maybe, text]\n")
+        self.assertEqual(output.getvalue(), "['shape', 'maybe', 'text']\n")
 
     def test_variant_extend_dispatches_to_member_element(self):
         output = io.StringIO()
@@ -3144,7 +3144,7 @@ define describe(x: String) -> String => "string"
             stack = run(program)
 
         self.assertEqual(stack, [])
-        self.assertEqual(output.getvalue(), "[vehicle box, string]\n")
+        self.assertEqual(output.getvalue(), "['vehicle box', 'string']\n")
 
     def test_union_dispatch_uses_reified_disjoint_data_tags(self):
         output = io.StringIO()
@@ -3161,7 +3161,7 @@ define label(x: #right Int) -> String => "right"
             stack = execute(source)
 
         self.assertEqual(stack, [])
-        self.assertEqual(output.getvalue(), "[left, right]\n")
+        self.assertEqual(output.getvalue(), "['left', 'right']\n")
 
     def test_eager_map_with_println_executes_immediately(self):
         output = io.StringIO()
@@ -3459,6 +3459,44 @@ exactIn \\rank3
                 ],
             ],
         )
+
+    def test_minimum_rank_string_map_passes_whole_rows_at_every_runtime_rank(self):
+        for rank_type, rows, expected in (
+            ('String*', '["AB\\t10\\t20\\t30\\t40\\t50\\t60"]',
+             "[record{code => 'AB', raw => '40', factor => '60'}]\n"),
+            ('String*', '[["AB\\t10\\t20\\t30\\t40\\t50\\t60"], ([] as[String+])]',
+             "[[record{code => 'AB', raw => '40', factor => '60'}], []]\n"),
+            ('String*2', '[["AB\\t10\\t20\\t30\\t40\\t50\\t60"]]',
+             "[[record{code => 'AB', raw => '40', factor => '60'}]]\n"),
+            ('String*', '[["AB\\t10\\t20\\t30\\t40\\t50\\t60"]] '
+             'map fn (group) => $group end',
+             "[[record{code => 'AB', raw => '40', factor => '60'}]]\n"),
+            ('String*', '[]', '[]\n'),
+        ):
+            source = f'define \\rows -> {rank_type} => {rows}\n' + r'''
+\rows map fn (row) =>
+  const $items = $row split "\t"
+  record{
+    code => $items[0],
+    raw => $items[4],
+    factor => $items[6]
+  }
+end
+println
+'''
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(rank_type=rank_type, rows=rows,
+                                      optimize=optimize, serialized=serialized):
+                        output = io.StringIO()
+                        with contextlib.redirect_stdout(output):
+                            result = run(loads(dumps(program)) if serialized else program)
+                        self.assertEqual(result, [])
+                        self.assertEqual(output.getvalue(), expected)
 
     def test_implicit_function_input_is_refined_by_later_collection_consumer(self):
         source = """
@@ -6886,8 +6924,8 @@ end
 println
 """
         expected = (
-            "[1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, "
-            "FizzBuzz]\n"
+            "['1', '2', 'Fizz', '4', 'Buzz', 'Fizz', '7', '8', 'Fizz', 'Buzz', "
+            "'11', 'Fizz', '13', '14', 'FizzBuzz']\n"
         )
         for function in ("fn =>", "fn (n: Int) =>"):
             output = io.StringIO()
@@ -7374,6 +7412,58 @@ end
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), expected)
 
+    def test_printing_quotes_nested_strings_across_execution_modes(self):
+        source = r'''
+"AB\t40\t60" split "\t" println
+["AB\t40\t60", "CD\t41\t61"] map fn (row) =>
+  const $items = $row split "\t"
+  record{code => $items[0], raw => $items[1], factor => $items[2]}
+end
+println
+record{code => "AB", nested => ["CD", ""]} print
+"plain" println
+'''
+        expected = (
+            "['AB', '40', '60']\n"
+            "[record{code => 'AB', raw => '40', factor => '60'}, "
+            "record{code => 'CD', raw => '41', factor => '61'}]\n"
+            "record{code => 'AB', nested => ['CD', '']}plain\n"
+        )
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        stack = run(loads(dumps(program)) if serialized else program)
+                    self.assertEqual(stack, [])
+                    self.assertEqual(output.getvalue(), expected)
+
+    def test_aggregate_formatting_quotes_and_escapes_string_contents(self):
+        text = 'He said "hi"; it\'s C:\\tmp\n\t雪'
+        quoted = repr(text)
+        cases = (
+            ([text], f"[{quoted}]"),
+            ((text,), f"({quoted})"),
+            (RecordValue({"text": text}), f"record{{text => {quoted}}}"),
+            (DictValue({"text": text}), f'{{"text" => {quoted}}}'),
+            (ObjectValue("Message", {"text": text}), f"Message{{text: {quoted}}}"),
+            ([[text]], f"[[{quoted}]]"),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(format_runtime_value(value), expected)
+        self.assertEqual(format_runtime_value(text), text)
+        self.assertEqual(format_runtime_value(text, quote_strings=True), quoted)
+        lazy = LazyList(iter([text, "later"]))
+        self.assertEqual(
+            format_runtime_value(lazy, lazy_preview_limit=1), f"[{quoted}, ...]"
+        )
+        self.assertEqual(format_runtime_value(lazy), f"[{quoted}, 'later']")
+
     def test_explicit_function_params_cycle_on_runtime_underflow(self):
         output = io.StringIO()
         source = """
@@ -7419,7 +7509,7 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertEqual(stack, [])
         self.assertEqual(
             output.getvalue(),
-            '{"name" => Jeff, "age" => 20, "favColour" => Magenta}\n',
+            '{"name" => \'Jeff\', "age" => 20, "favColour" => \'Magenta\'}\n',
         )
 
     def test_indexing_lists_slices_dicts_and_spread(self):

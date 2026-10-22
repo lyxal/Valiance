@@ -1321,10 +1321,10 @@ def format_runtime_value(
     tuple_single_comma: bool = False,
     lazy_preview_limit: int | None = None,
 ) -> str:
-    """Format a runtime value for user-visible output and diagnostics."""
+    """Format output, quoting strings inside aggregates and optionally at top level."""
     value = unwrap_runtime_value(value)
     options = {
-        "quote_strings": quote_strings,
+        "quote_strings": True,
         "tuple_single_comma": tuple_single_comma,
         "lazy_preview_limit": lazy_preview_limit,
     }
@@ -1367,7 +1367,7 @@ def format_runtime_value(
             rendered_key = (
                 json.dumps(key, ensure_ascii=False)
                 if isinstance(key, str)
-                else format_runtime_value(key, **(options | {"quote_strings": True}))
+                else format_runtime_value(key, **options)
             )
             items.append(f"{rendered_key} => {format_runtime_value(item, **options)}")
         return "{" + ", ".join(items) + "}"

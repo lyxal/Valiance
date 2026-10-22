@@ -111,7 +111,7 @@ def _read_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             ObjectValue('Some', {'value': line}),)
 
 
-@stdlib_element('nativeReadLines', (T.Int,), (T.AtLeastList(T.String),), param_names=('handle',))
+@stdlib_element('nativeReadLines', (T.Int,), (T.ExactList(T.String),), param_names=('handle',))
 def _read_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return all remaining decoded lines as a rank-one language list."""
     del ctx

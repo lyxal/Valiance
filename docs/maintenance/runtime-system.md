@@ -1006,7 +1006,9 @@ Loading, copying, capturing, returning, consuming, and dropping values call
 
 Containers recursively retain or release contained values. Tagged values defer
 to their payload. Lazy results retain their input owners so deferred iteration
-does not observe destroyed captures.
+does not observe destroyed captures. Vectorisation binds owners for each item
+result before assembling eager containers or yielding lazy items; each deferred
+inner map must keep its callback alive until that map is released.
 
 Stack operations are therefore not merely Python `append` and `pop`. A semantic
 copy may increase ownership; a consumed stack tail must release its values.

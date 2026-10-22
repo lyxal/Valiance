@@ -84,7 +84,7 @@ def _quick_read_text(args, ctx):
     return _quick_read(args, 'text')
 
 
-@stdlib_element('readLines', (_PATH, _ENCODING), (T.AtLeastList(T.String),), param_names=('path', 'encoding'),
+@stdlib_element('readLines', (_PATH, _ENCODING), (T.ExactList(T.String),), param_names=('path', 'encoding'),
                 param_defaults=(None, _DEFAULT_ENCODING))
 def _quick_read_lines(args, ctx):
     """Read an entire file into decoded lines and close its temporary resource."""
