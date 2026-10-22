@@ -1632,10 +1632,14 @@ def _solve(
             solved_params = tuple(
                 _substitute(param, substitution) for param in p.params
             )
-            actual_returns = _overload_result_for_args(
-                Overload(a.params, a.returns),
-                solved_params,
-                ctx,
+            # Solve the callable's own generics before lifting its returns:
+            # collection ranks absorbed by a generic do not vectorise the call.
+            callable_overload = Overload(a.params, a.returns)
+            application = apply_overload(callable_overload, solved_params, ctx)
+            actual_returns = (
+                application.actual_returns
+                if application is not None
+                else _overload_result_for_args(callable_overload, solved_params, ctx)
             )
             if actual_returns is None:
                 return False

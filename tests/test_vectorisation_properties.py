@@ -9,6 +9,7 @@ from itertools import product
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
+from valiance.runtime import RuntimeError as ValianceRuntimeError
 from valiance.runtime.compiler import compile_program
 from valiance.runtime.runtime_values import format_runtime_value
 from valiance.runtime.serialization import dumps, loads
@@ -100,6 +101,66 @@ class VectorisationRuntimePropertyTests(unittest.TestCase):
         outcomes = _all_execution_modes(source)
         self.assertEqual(len(set(outcomes)), 1)
         self.assertEqual(outcomes[0], (expected_stack, expected_output))
+
+    def test_mapping_lengths_prefers_whole_rows_across_execution_modes(self):
+        for body in ("length", "$row length"):
+            for rows, expected in (
+                ('[["a", "bb"], ["ccc"]]', "[2, 1]"),
+                ('[[["a", "bb"]], [["ccc"], ["d"]]]', "[1, 2]"),
+            ):
+                with self.subTest(body=body, rows=rows):
+                    self.assert_all_modes(
+                        f"{rows} map fn (row) => {body}", (expected,)
+                    )
+
+    def test_callback_rank_match_beats_vectorisation_across_execution_modes(self):
+        self.assert_all_modes(
+            '''
+define measure(:Number*) -> Int => 10
+define measure(:Number) -> Int => 20
+[[1, 2], [3]] map fn (row) => measure
+''',
+            ("[10, 10]",),
+        )
+
+    def test_callback_scalar_vectorisation_remains_available(self):
+        self.assert_all_modes(
+            '[[1, 2], [3]] map fn (row) => double', ("[[2, 4], [6]]",)
+        )
+        self.assert_all_modes(
+            '[["a", "bb"], ["ccc"]] map fn (row: String) => length',
+            ("[[1, 2], [3]]",),
+        )
+
+    def test_mapping_indexed_records_consumes_whole_rows(self):
+        for mapping in (
+            'map fn (row) => record{first => $row[0], sixth => $row[5], eighth => $row[7]}',
+            'map: fn (row) => record{first => $row[0], sixth => $row[5], eighth => $row[7]}',
+        ):
+            with self.subTest(mapping=mapping):
+                self.assert_all_modes(
+                    '[["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh"], '
+                    '["ii", "jj", "kk", "ll", "mm", "nn", "oo", "pp"]] '
+                    + mapping,
+                    ("[record{first => 'aa', sixth => 'ff', eighth => 'hh'}, "
+                     "record{first => 'ii', sixth => 'nn', eighth => 'pp'}]",),
+                )
+
+    def test_indexed_callback_preserves_captured_values(self):
+        self.assert_all_modes(
+            '''
+$label = "row"
+[["a", "b"]] map fn (row) => record{label => $label, value => $row[1]}
+''',
+            ("[record{label => 'row', value => 'b'}]",),
+        )
+
+    def test_indexed_callback_still_rejects_short_rows_at_runtime(self):
+        source = '[["aa", "bb"]] map fn (row) => $row[5] end | println'
+        for optimize, serialized in product((False, True), repeat=2):
+            with self.subTest(optimize=optimize, serialized=serialized):
+                with self.assertRaisesRegex(ValianceRuntimeError, "IndexFault"):
+                    _execute_mode(source, optimize=optimize, serialized=serialized)
 
     def test_minimum_rank_scalar_pipeline_agrees_across_execution_modes(self):
         self.assert_all_modes(

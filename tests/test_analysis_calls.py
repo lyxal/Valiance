@@ -62,6 +62,56 @@ class CallPlanningBoundaryTests(unittest.TestCase):
         self.assertTrue(analyser.diagnostics)
         self.assertIn("did you mean", analyser.diagnostics[0])
 
+    def test_callback_collection_match_beats_scalar_vectorisation(self) -> None:
+        for body in ("length", "$row length"):
+            for rows in (
+                '[["a", "bb"], ["ccc"]]',
+                '[[["a", "bb"]], [["ccc"], ["d"]]]',
+            ):
+                with self.subTest(body=body, rows=rows):
+                    analyser = Analyser()
+                    typed = analyser.analyse(parse(
+                        f"{rows} map fn (row) => {body}"
+                    ))
+                    self.assertEqual(analyser.diagnostics, [])
+                    self.assertEqual(
+                        typed[-1].overload.actual_returns, (T.ExactList(T.Int),)
+                    )
+
+    def test_callback_rank_match_beats_scalar_vectorisation(self) -> None:
+        analyser = Analyser()
+        typed = analyser.analyse(parse('''
+define measure(:Number*) -> Int => 10
+define measure(:Number) -> Int => 20
+[[1, 2], [3]] map fn (row) => measure
+'''))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].overload.actual_returns, (T.ExactList(T.Int),))
+
+    def test_indexed_callback_receives_concrete_row_and_field_types(self) -> None:
+        analyser = Analyser()
+        typed = analyser.analyse(parse('''
+[["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh"]]
+map fn (row) => record{first => $row[0], sixth => $row[5], eighth => $row[7]}
+'''))
+        self.assertEqual(analyser.diagnostics, [])
+        callback = typed[-2]
+        self.assertEqual(callback.typ.params, (T.ExactList(T.String),))
+        fields = callback.typ.returns[0].fields
+        self.assertEqual(len(fields), 3)
+        self.assertTrue(all(T.same(field.typ, T.String) for field in fields))
+        self.assertEqual(callback.overloads[0].typ, callback.typ)
+
+    def test_equally_specific_callback_matches_remain_ambiguous(self) -> None:
+        analyser = Analyser()
+        analyser.analyse(parse('''
+define measure(:Int|String) -> Int => 1
+define measure(:Int|Boolean) -> String => "a"
+[1, 2] map fn (row) => measure
+'''))
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("ambiguous overloads for element 'map'", analyser.diagnostics[0])
+
 
 class CallableOverloadSelectionTests(unittest.TestCase):
     """Verify callable overload choice against an immutable mini stack."""

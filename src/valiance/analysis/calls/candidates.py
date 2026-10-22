@@ -344,12 +344,24 @@ def _type_variable_names(typ: T.Type) -> frozenset[str]:
     return frozenset(names)
 
 
+def _has_unresolved_callable_inputs(typ: T.Type) -> bool:
+    """Return whether a callable still has unconstrained whole input types."""
+    typ = T.normalize(typ)
+    return isinstance(typ, T.FunctionType) and any(
+        isinstance(T.normalize(param), T.MetaVarType) for param in typ.params or ()
+    )
+
+
 def _deferred_stack_function_argument(
     typ: T.Type,
     branch: _core.AnalysisBranch,
 ) -> _core.ModifierArgumentAnalysis | None:
     """Find the typed literal backing a deferred stack function type."""
     normalized = T.normalize(typ)
+    if _has_unresolved_callable_inputs(normalized):
+        literal = _stack_function_literal(typ, branch)
+        if literal is not None:
+            return _core.ModifierArgumentAnalysis(typ, literal, branch)
     overloads = (
         normalized.overloads if isinstance(normalized, T.OverloadSetType) else ()
     )
@@ -719,6 +731,7 @@ def _specialized_modifier_orders(
         expectations = (specialized_expected,)
         if (
             not T.same(original_expected, specialized_expected)
+            and not _has_unresolved_callable_inputs(modifiers[position].typ)
             and all(
                 not _functions._contains_type_var(value)
                 for value in current_substitution.values()
@@ -767,7 +780,7 @@ def _modifier_variants_for_expected(
     ctx: T.Context,
     analyser: _core.Analyser | None = None,
 ) -> Iterator[tuple[_core.ModifierArgumentAnalysis, dict[T.TypeVarKey, T.Type]]]:
-    """Compute modifier variants for expected during static analysis."""
+    """Specialize callback alternatives using non-dominated input matches."""
     expected = T.normalize(expected)
     if not isinstance(
         expected,
@@ -816,7 +829,12 @@ def _modifier_variants_for_expected(
 
     overloads = _contextual_modifier_overloads(modifier, expected, analyser, ctx)
     matches: list[
-        tuple[_core.ModifierArgumentAnalysis, dict[T.TypeVarKey, T.Type], bool]
+        tuple[
+            _core.ModifierArgumentAnalysis,
+            dict[T.TypeVarKey, T.Type],
+            bool,
+            tuple[T.Specificity, ...],
+        ]
     ] = []
     for overload in overloads:
         typ = T.normalize(overload.typ)
@@ -830,6 +848,11 @@ def _modifier_variants_for_expected(
             continue
         if not _function_overload_matches_type(overload, concrete_expected, ctx):
             continue
+        application = T.apply_overload(
+            T.Overload(typ.params, typ.returns, typ.element_tags),
+            concrete_expected.params,
+            ctx,
+        )
         matches.append(
             (
                 _core.ModifierArgumentAnalysis(
@@ -843,10 +866,20 @@ def _modifier_variants_for_expected(
                 ),
                 substitution,
                 T.same(typ, concrete_expected),
+                application.scores if application is not None else (),
             )
         )
+    # Keep the input-match evidence before replacing the callable's type with
+    # its expected signature: that replacement hides internal vectorisation.
+    matches = [
+        match for match in matches
+        if not any(
+            len(other[3]) == len(match[3]) and _dominates(other[3], match[3])
+            for other in matches
+        )
+    ]
     exact = tuple(match for match in matches if match[2])
-    for specialized, substitution, _ in exact or tuple(matches):
+    for specialized, substitution, _, _ in exact or tuple(matches):
         yield specialized, substitution
 
 
@@ -862,6 +895,28 @@ def _contextual_modifier_overloads(
         return modifier.typed_node.overloads
     if expected.params is None:
         return modifier.typed_node.overloads
+
+    if _has_unresolved_callable_inputs(modifier.typ):
+        # An unresolved receiver can make indexing appear to infer successfully
+        # without determining either its input rank or its result type.
+        node = modifier.typed_node.node
+        params = (
+            tuple(FunctionParam(typ=param) for param in expected.params)
+            if node.params is None else _functions._call_site_substituted_params(
+                node.params, expected.params, ctx,
+            )
+        )
+        if params is None:
+            return ()
+        probe = analyser._child_analyser(analyser.env.lexical_child_scope())
+        analysed = probe._analyse_function_literal(
+            modifier.outer or _core.AnalysisBranch(),
+            replace(node, params=params),
+        )
+        return () if analysed is None else tuple(
+            candidate for candidate in analysed[0].overloads
+            if _contextual_modifier_overload_matches(candidate, expected, ctx)
+        )
 
     # The colon modifier is an explicit request to adapt its shorthand body to
     # the higher-order parameter. Analyse that body with the parameter's input

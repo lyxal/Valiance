@@ -1554,6 +1554,12 @@ class TypeLibraryTests(unittest.TestCase):
             TypeStack((optional(Number), optional(Number))),
         )
 
+    def test_callable_generic_collection_input_preserves_scalar_returns(self):
+        expected = Fn((ExactList(String, 2),), (TypeVariable("Mapped"),))
+        callback = Fn((ExactList(TypeVariable("Item")),), (Int,))
+
+        self.assertEqual(_solve(expected, callback), {"Mapped": [Int]})
+
     def test_overload_set_can_cover_each_union_function_input_branch(self):
         overloaded = Overloads(
             Overload((Int,), (Int,)),

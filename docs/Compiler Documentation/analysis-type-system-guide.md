@@ -1181,6 +1181,20 @@ inference can create duplicate winners or change established stack syntax.
 Candidate collapsing prefers the variant with the strongest contextual evidence
 when two applications otherwise have the same substituted signature.
 
+Callback alternatives retain their input-match specificity before adaptation to
+the expected function signature. The ordinary specificity ordering applies to
+these inputs: a generic collection or rank match beats scalar vectorisation.
+Thus mapping `fn (row) => length` over a matrix counts the items in each row.
+Equally specific callback alternatives remain ambiguous.
+Callback return inference uses the resolved callable application so collection
+ranks absorbed by its generics do not add vectorisation ranks to the result.
+
+A provisional literal can retain an unconstrained input metavariable even when
+its body analysis succeeds, such as a record constructed from indexed fields.
+These literals are analysed again with the expected input row before code
+generation. This resolves both parameter ranks and indexed result types and
+preserves the literal's lexical captures.
+
 Niladic mapping is a distinct overload: `map: randbit` invokes the zero-argument
 callable once per input item and does not pass the item to it.
 
