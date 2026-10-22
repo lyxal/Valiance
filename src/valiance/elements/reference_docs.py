@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 from importlib import resources
 from typing import Sequence
 
@@ -194,6 +194,17 @@ def collect_concurrency_references() -> tuple[ElementReference, ...]:
         ("Receive.Value", "Receive.Value(T)", "A channel receive containing a transmitted value."),
         ("Receive.Closed", "Receive.Closed", "A channel receive reporting closed and fully drained."),
     )
+    examples = {
+        "concurrent": "concurrent => fn => 42 end | spawn | wait end",
+        "spawn": "$task = fn => 42 end | spawn\n$task wait",
+        "wait": "$task = fn => 42 end | spawn\n$task wait",
+        "Channel": "$channel = 1 Channel[Int]\n$channel 7 send\n$channel receive",
+        "send": "$channel = 1 Channel[Int]\n$channel 7 send\n$channel receive",
+        "receive": "$channel = 1 Channel[Int]\n$channel 7 send\n$channel receive",
+        "close": "$channel = Channel[Int]\n$channel close\n$channel receive",
+        "Receive.Value": "$channel = 1 Channel[Int]\n$channel 7 send\n$channel receive",
+        "Receive.Closed": "$channel = Channel[Int]\n$channel close\n$channel receive",
+    }
     return tuple(
         ElementReference(
             name=name,
@@ -205,10 +216,14 @@ def collect_concurrency_references() -> tuple[ElementReference, ...]:
             description=(),
             parameters=(),
             returns=None,
-            examples=(),
+            examples=(DocumentationExample(examples[name]),),
             notes=(),
             see_also=("docs/language.md#23-concurrency-runtime-contracts",),
             overloads=(signature,),
+            overload_documentation=(ElementDocumentation(
+                summary=summary, examples=(DocumentationExample(examples[name]),),
+                category="Concurrency",
+            ),),
         )
         for name, signature, summary in entries
     )
@@ -333,7 +348,6 @@ def render_language_reference_markdown(
         lines.extend((f"## {group_name}", ""))
         for reference in group_references:
             lines.extend((f"### `{reference.qualified_name}`", "", reference.summary, ""))
-            lines.extend(paragraph for item in reference.description for paragraph in (item, ""))
             if reference.aliases:
                 lines.extend((f"**Aliases:** {', '.join(f'`{item}`' for item in reference.aliases)}", ""))
             lines.append("**Overloads**")
@@ -342,28 +356,62 @@ def render_language_reference_markdown(
                 lines.append(f"- `{signature}`")
                 if index < len(reference.overload_documentation):
                     overload_doc = reference.overload_documentation[index]
-                    lines.append(f"  {overload_doc.summary}")
+                    lines.append("")
+                    if _distinct_overload_documentation(reference, overload_doc):
+                        lines.extend((f"  {overload_doc.summary}", ""))
+                    lines.extend(
+                        "  " + line if line else ""
+                        for line in _documentation_markdown(_overload_details(reference, overload_doc))
+                    )
             lines.append("")
-            if reference.parameters:
-                lines.extend(("**Parameters**", ""))
-                lines.extend(
-                    f"- `{parameter.name}` — {parameter.description}"
-                    for parameter in reference.parameters
-                )
-                lines.append("")
-            if reference.returns is not None:
-                lines.extend((f"**Returns:** {reference.returns}", ""))
-            for example in reference.examples:
-                lines.extend(("**Example**", "", "```vlnc", example.source, "```"))
-                if example.result is not None:
-                    lines.extend(("Result:", "", "```text", example.result, "```"))
-                if example.description:
-                    lines.extend((example.description, ""))
-            if reference.notes:
-                lines.extend(("**Notes**", ""))
-                lines.extend(f"- {note}" for note in reference.notes)
-                lines.append("")
+            lines.extend(_documentation_markdown(reference))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _overload_details(
+    reference: ElementReference, documentation: ElementDocumentation
+) -> ElementDocumentation:
+    """Show shared examples per signature without repeating shared parameter prose."""
+    if _distinct_overload_documentation(reference, documentation):
+        return documentation
+    return replace(documentation, description=(), parameters=(), returns=None, notes=())
+
+
+def _distinct_overload_documentation(
+    reference: ElementReference, documentation: ElementDocumentation
+) -> bool:
+    """Check whether an overload adds details beyond its element overview."""
+    return any(
+        getattr(reference, field.name) != getattr(documentation, field.name)
+        for field in fields(ElementDocumentation)
+    )
+
+
+def _documentation_markdown(documentation: ElementDocumentation | ElementReference) -> list[str]:
+    """Render detailed metadata consistently for element overviews and overloads."""
+    lines: list[str] = []
+    lines.extend(paragraph for item in documentation.description for paragraph in (item, ""))
+    if documentation.parameters:
+        lines.extend(("**Parameters**", ""))
+        lines.extend(
+            f"- `{parameter.name}` — {parameter.description}"
+            for parameter in documentation.parameters
+        )
+        lines.append("")
+    if documentation.returns is not None:
+        lines.extend((f"**Returns:** {documentation.returns}", ""))
+    for example in documentation.examples:
+        lines.extend(("**Example**", "", "```vlnc", example.source, "```"))
+        if example.result is not None:
+            lines.extend(("Result:", "", "```text", example.result, "```"))
+        if example.description:
+            lines.append(example.description)
+        lines.append("")
+    if documentation.notes:
+        lines.extend(("**Notes**", ""))
+        lines.extend(f"- {note}" for note in documentation.notes)
+        lines.append("")
+    return lines
 
 
 def render_language_reference_json(
@@ -451,7 +499,15 @@ def _source_reference(
         ),
         returns=definition.docstring.returns,
         category=module_name.replace("_", " ").title(),
-        notes=definition.docstring.extra_fields,
+        examples=tuple(
+            DocumentationExample(field.removeprefix("@example "))
+            for field in definition.docstring.extra_fields
+            if field.startswith("@example ")
+        ),
+        notes=tuple(
+            field for field in definition.docstring.extra_fields
+            if not field.startswith("@example ")
+        ),
     )
     qualified_name = f"std.{module_name}.{definition.name}"
     return ElementReference(
@@ -468,6 +524,7 @@ def _source_reference(
         notes=documentation.notes,
         see_also=documentation.see_also,
         overloads=tuple(item.signature for item in definitions),
+        overload_documentation=tuple(documentation for _ in definitions),
         source_path=definition.source_path,
     )
 
@@ -565,8 +622,8 @@ def _reference_card(reference: ElementReference, links: dict[str, str]) -> str:
                 + "</code>"
                 + (
                     f"<p>{_inline_html(reference.overload_documentation[index].summary)}</p>"
+                    + "\n".join(_documentation_html(_overload_details(reference, reference.overload_documentation[index])))
                     if index < len(reference.overload_documentation)
-                    and reference.overload_documentation[index].summary != reference.summary
                     else ""
                 )
                 + "</li>"
@@ -575,29 +632,7 @@ def _reference_card(reference: ElementReference, links: dict[str, str]) -> str:
             "  </ul>",
         )
     )
-    lines.extend(
-        f"  <p>{_inline_html(paragraph)}</p>"
-        for paragraph in reference.description
-        if paragraph != reference.summary
-    )
-    if reference.parameters:
-        lines.extend(("  <h4>Parameters</h4>", "  <dl>"))
-        for parameter in reference.parameters:
-            lines.append(f"    <dt><code>{html.escape(parameter.name)}</code></dt>")
-            lines.append(f"    <dd>{_inline_html(parameter.description)}</dd>")
-        lines.append("  </dl>")
-    if reference.returns is not None:
-        lines.append(f"  <p><strong>Returns:</strong> {_inline_html(reference.returns)}</p>")
-    for example in reference.examples:
-        lines.extend(("  <h4>Example</h4>", f"  <pre><code>{html.escape(example.source)}</code></pre>"))
-        if example.result is not None:
-            lines.append(f"  <p><strong>Result:</strong> <code>{html.escape(example.result)}</code></p>")
-        if example.description:
-            lines.append(f"  <p>{_inline_html(example.description)}</p>")
-    if reference.notes:
-        lines.extend(("  <h4>Notes</h4>", "  <ul>"))
-        lines.extend(f"    <li>{_inline_html(note)}</li>" for note in reference.notes)
-        lines.append("  </ul>")
+    lines.extend(_documentation_html(reference))
     if reference.see_also:
         related = []
         for name in reference.see_also:
@@ -609,6 +644,35 @@ def _reference_card(reference: ElementReference, links: dict[str, str]) -> str:
         lines.append(f"  <p class=\"source\">Source: <code>{html.escape(reference.source_path)}</code></p>")
     lines.append("</article>")
     return "\n".join(lines)
+
+
+def _documentation_html(documentation: ElementDocumentation | ElementReference) -> list[str]:
+    """Render the prose, inputs, results and examples belonging to one signature."""
+    lines: list[str] = []
+    lines.extend(
+        f"  <p>{_inline_html(paragraph)}</p>"
+        for paragraph in documentation.description
+        if paragraph != documentation.summary
+    )
+    if documentation.parameters:
+        lines.extend(("  <h4>Parameters</h4>", "  <dl>"))
+        for parameter in documentation.parameters:
+            lines.append(f"    <dt><code>{html.escape(parameter.name)}</code></dt>")
+            lines.append(f"    <dd>{_inline_html(parameter.description)}</dd>")
+        lines.append("  </dl>")
+    if documentation.returns is not None:
+        lines.append(f"  <p><strong>Returns:</strong> {_inline_html(documentation.returns)}</p>")
+    for example in documentation.examples:
+        lines.extend(("  <h4>Example</h4>", f"  <pre><code>{html.escape(example.source)}</code></pre>"))
+        if example.result is not None:
+            lines.append(f"  <p><strong>Result:</strong> <code>{html.escape(example.result)}</code></p>")
+        if example.description:
+            lines.append(f"  <p>{_inline_html(example.description)}</p>")
+    if documentation.notes:
+        lines.extend(("  <h4>Notes</h4>", "  <ul>"))
+        lines.extend(f"    <li>{_inline_html(note)}</li>" for note in documentation.notes)
+        lines.append("  </ul>")
+    return lines
 
 
 def _inline_html(value: str) -> str:

@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+ExampleInputs = tuple[str | tuple[str, str | None] | tuple[str, str | None, str | None], ...]
+
+
 @dataclass(frozen=True, slots=True)
 class ParameterDocumentation:
     """Human-facing documentation for one logical element input."""
@@ -24,7 +27,7 @@ class DocumentationExample:
 
 @dataclass(frozen=True, slots=True)
 class ElementDocumentation:
-    """Human-facing metadata shared by all overloads of one element."""
+    """Human-facing metadata for an element overview or an overload family."""
 
     summary: str
     description: tuple[str, ...] = ()
@@ -42,9 +45,7 @@ def element_documentation(
     description: str | tuple[str, ...] = (),
     parameters: tuple[tuple[str, str], ...] = (),
     returns: str | None = None,
-    examples: tuple[
-        str | tuple[str, str | None] | tuple[str, str | None, str | None], ...
-    ] = (),
+    examples: ExampleInputs = (),
     category: str = "General",
     notes: str | tuple[str, ...] = (),
     see_also: tuple[str, ...] = (),

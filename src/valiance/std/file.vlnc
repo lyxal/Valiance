@@ -7,6 +7,7 @@ public tag #byte as unit
 #??
 #?? @param value Candidate integer value.
 #?? @returns True if the value is an unsigned 8-bit byte.
+#?? @example import {std.file.#byte} 65 #byte
 public define #byte(:Int) => inRange(0, 256)
 
 

@@ -2,6 +2,7 @@
 #??
 #?? @param n Number to square.
 #?? @returns The square of `n`.
+#?? @example import {std.arithmetic.square} 3 square
 public define square(n: Number) -> Number =>
   $n $n *
 end
@@ -10,6 +11,7 @@ end
 #??
 #?? @param n Number to cube.
 #?? @returns The cube of `n`.
+#?? @example import {std.arithmetic.cube} 3 cube
 public define cube(n: Number) -> Number =>
   $n $n * $n *
 end

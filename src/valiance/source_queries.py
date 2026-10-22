@@ -898,6 +898,13 @@ def _element_documentation_markdown(documentation: ElementDocumentation) -> str:
         sections.append(
             "\n".join(f"- **Note:** {item}" for item in documentation.notes)
         )
+    for example in documentation.examples:
+        example_sections = ["**Example**", f"```vlnc\n{example.source}\n```"]
+        if example.result is not None:
+            example_sections.extend(("Result:", f"```text\n{example.result}\n```"))
+        if example.description:
+            example_sections.append(example.description)
+        sections.append("\n\n".join(example_sections))
     return "\n\n".join(item for item in sections if item)
 
 
@@ -917,9 +924,16 @@ def _docstring_markdown(docstring: Any) -> str:
     )
     if docstring.returns is not None:
         fields.append(f"- **Returns:** {docstring.returns}")
-    fields.extend(f"- {item}" for item in docstring.extra_fields)
+    fields.extend(
+        f"- {item}" for item in docstring.extra_fields
+        if not item.startswith("@example ")
+    )
     if fields:
         sections.append("\n".join(fields))
+    sections.extend(
+        "**Example**\n\n```vlnc\n" + item.removeprefix("@example ") + "\n```"
+        for item in docstring.extra_fields if item.startswith("@example ")
+    )
     return "\n\n".join(sections)
 
 

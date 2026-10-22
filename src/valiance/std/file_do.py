@@ -161,6 +161,44 @@ _DO_DOCS = {
     'appendLines': 'Append LF-delimited lines using the selected encoding.',
     'appendBytes': 'Append raw bytes to a file and close it.',
 }
+_EXAMPLES = {
+    'readText': """import {std.file}
+import {std.path}
+file.do.readText(path.Path("example.txt"), file.Encoding.UTF8)""",
+    'readLines': """import {std.file}
+import {std.path}
+file.do.readLines(path.Path("example.txt"), file.Encoding.UTF8)""",
+    'readBytes': """import {std.file}
+import {std.path}
+file.do.readBytes(path.Path("example.txt"))""",
+    'writeText': """import {std.file}
+import {std.path}
+file.do.writeText(path.Path("example.txt"), "hello", file.Encoding.UTF8)""",
+    'writeLines': """import {std.file}
+import {std.path}
+file.do.writeLines(path.Path("example.txt"), ["a", "b"], file.Encoding.UTF8)""",
+    'writeBytes': """import {std.file}
+import {std.path}
+import {std.file.#byte}
+file.do.writeBytes(path.Path("example.txt"), [65 #byte, 66 #byte])""",
+    'appendText': """import {std.file}
+import {std.path}
+file.do.appendText(path.Path("example.txt"), "hello", file.Encoding.UTF8)""",
+    'appendLines': """import {std.file}
+import {std.path}
+file.do.appendLines(path.Path("example.txt"), ["a", "b"], file.Encoding.UTF8)""",
+    'appendBytes': """import {std.file}
+import {std.path}
+import {std.file.#byte}
+file.do.appendBytes(path.Path("example.txt"), [65 #byte, 66 #byte])""",
+    'nativeDefaultEncoding': """import {std.file}
+import {std.path}
+file.do.readText(path.Path("example.txt"))""",
+}
+_EXAMPLE_CONTEXT = (
+    'Read examples require example.txt to exist; write and append examples modify it. The helper closes its handle automatically.'
+)
+
 for _fn in tuple(globals().values()):
     _definition = getattr(_fn, '__valiance_native_function__', None)
     if _definition is not None and _definition.name.text in _DO_DOCS:
@@ -169,5 +207,5 @@ for _fn in tuple(globals().values()):
             implementation=filesystem_operation(_definition.implementation),
             element_tags=(frozenset() if _definition.name.text == 'nativeDefaultEncoding'
                           else frozenset(filesystem_effects(_definition.name.text))),
-            documentation=element_documentation(_DO_DOCS[_definition.name.text], category='Files'),
+            documentation=element_documentation(_DO_DOCS[_definition.name.text], category='Files', examples=((_EXAMPLES[_definition.name.text], None, _EXAMPLE_CONTEXT),)),
         )

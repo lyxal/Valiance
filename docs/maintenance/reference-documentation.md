@@ -90,7 +90,7 @@ assets packaged when changing wheel build rules.
 
 Shared immutable metadata types live in `src/valiance/elements/documentation.py`:
 
-- `ElementDocumentation` describes one logical element across all overloads.
+- `ElementDocumentation` describes an element overview or one overload family.
 - `ParameterDocumentation` describes one logical input.
 - `DocumentationExample` stores source, an optional result, and optional prose.
 - `element_documentation(...)` provides concise declaration syntax and normalizes
@@ -124,6 +124,34 @@ and fault constructors receive metadata from
 `_message_type_documentation(...)`. The `@builtin(...)` decorator also accepts a
 `documentation=` argument for declarations whose metadata is best created
 locally or dynamically.
+
+Give overloads with different meanings their own `documentation=` metadata.
+Numeric division and collection reduction share `/`, but document separate
+parameter names, results, failure conditions, and examples. Overloads with reversed
+argument order need parameter descriptions in their actual stack order. Metadata
+labels do not declare named-call parameters; use `param_names` for that language
+feature.
+
+The catalogue keeps a stable element overview from `_BUILTIN_DOCUMENTATION`
+(or the first documented overload for elements without a shared entry).
+Each definition retains its own metadata, including when reached through an alias.
+HTML and Markdown show detailed overload documentation; JSON preserves it in
+`overload_documentation`. Editor and LSP hovers include examples from the selected
+overload.
+
+Examples use valid Valiance syntax and show the resulting stack. Use `map: double`
+or `fn => double end` for callables; parentheses alone evaluate an expression.
+Every overload must have at least one example, including numeric variants,
+conversions, native exports, and language forms. Use `examples=` on `@builtin`
+to specialize examples without duplicating a shared description. Generated FFI
+declarations build examples from their declared scalar, buffer, and shape types.
+HTML and Markdown display examples immediately beneath each overload.
+
+The reference tests check complete overload coverage and analyse every example.
+Deterministic examples with stack results also execute and compare runtime display.
+Interactive input, filesystem mutations, random output, and intentional failures
+use explanatory descriptions instead of fixed stack results. Native boundary
+examples are analysed locally; Windows FFI execution remains in CI.
 
 When adding a built-in:
 
@@ -175,8 +203,14 @@ from the same module.
 #??
 #?? @param n Number to square.
 #?? @returns The square of `n`.
+#?? @example import {std.arithmetic.square} 3 square
 public define square(n: Number) -> Number => $n $n *
 ```
+
+An `@example` field contains one complete Valiance source snippet, including any
+required imports. The language-reference collector turns it into structured
+example metadata; editor hovers render it as a code block. Use a separate field
+for each example.
 
 A public stdlib definition without a contiguous `#??` block is a documentation
 error. This deliberately differs from ordinary project documentation, where an

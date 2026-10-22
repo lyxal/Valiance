@@ -212,7 +212,7 @@ class LanguageServerTests(unittest.TestCase):
         hover = next(item["result"] for item in results if item.get("id") == 2)
         value = hover["contents"]["value"]
         self.assertIn("+(_1: Int, _2: Int) -> Int", value)
-        self.assertIn("Add numbers or concatenate strings.", value)
+        self.assertIn("Add two numbers.", value)
 
     def test_builtin_hover_renders_structured_documentation(self):
         source = "10 dup"
@@ -469,6 +469,16 @@ class DefinitionProviderTests(unittest.TestCase):
         self.assertEqual(location["uri"], target.as_uri())
 
 class HoverEnhancementTests(unittest.TestCase):
+    def test_builtin_hover_has_selected_overload_examples(self):
+        from pathlib import Path
+
+        hover = self.hover(Path.cwd() / "hover-example.vlnc", "7 2 /", 0, 4)
+        value = hover["contents"]["value"]
+        self.assertIn("Divide the left number by the right number.", value)
+        self.assertIn("7 2 /", value)
+        self.assertIn("3.5", value)
+        self.assertNotIn("reducer", value)
+
     def hover(self, source_file, source, line, character):
         output = io.BytesIO()
         server = LanguageServer(io.BytesIO(), output)
@@ -500,6 +510,8 @@ class HoverEnhancementTests(unittest.TestCase):
         value = hover["contents"]["value"]
         self.assertIn("text.exclaim", value)
         self.assertIn("exclamation", value.casefold())
+        self.assertIn("**Example**", value)
+        self.assertNotIn("@example", value)
 
     def test_namespaced_native_stdlib_hover_includes_documentation(self):
         import tempfile

@@ -94,10 +94,28 @@ _PATH_DOCS = {
     'name': 'Retrieve the last native path component, or None if absent.',
     'extension': 'Retrieve the native extension as Path, or None if absent.',
 }
+_EXAMPLES = {
+    'isAbsolute': """import {std.path.Path}
+Path "notes.txt" | isAbsolute""",
+    'toString': """import {std.path.Path}
+Path "notes.txt" | toString""",
+    'join': """import {std.path}
+path.join(path.Path("notes"), path.Path("report.txt"))""",
+    'parent': """import {std.path}
+path.parent(path.Path("notes/report.txt"))""",
+    'name': """import {std.path}
+path.name(path.Path("notes/report.txt"))""",
+    'extension': """import {std.path}
+path.extension(path.Path("notes/report.txt"))""",
+}
+_EXAMPLE_CONTEXT = (
+    'Path spelling and separators follow the host operating system.'
+)
+
 for _fn in tuple(globals().values()):
     _definition = getattr(_fn, '__valiance_native_function__', None)
     if _definition is not None and _definition.name.text in _PATH_DOCS:
         _fn.__valiance_native_function__ = replace(
             _definition,
-            documentation=element_documentation(_PATH_DOCS[_definition.name.text], category='Paths'),
+            documentation=element_documentation(_PATH_DOCS[_definition.name.text], category='Paths', examples=((_EXAMPLES[_definition.name.text], None, _EXAMPLE_CONTEXT),)),
         )

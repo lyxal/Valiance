@@ -30,6 +30,7 @@ from valiance.runtime.runtime_values import ListValue
         ),
         returns="A grid whose cells are ordered neighborhood lists.",
         category="Grids",
+        examples=(('import {std.grids} grids.allNeighbors([[1, 2]], false)', '[[[1, 2], [1, 2]]]'),),
     ),
 )
 def _all_neighbors(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:

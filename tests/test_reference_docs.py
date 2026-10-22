@@ -31,6 +31,73 @@ from valiance.elements.reference_docs import (
 
 
 class ReferenceDocumentationTests(unittest.TestCase):
+    def test_every_reference_overload_has_an_example(self):
+        for reference in collect_language_references():
+            self.assertEqual(len(reference.overloads), len(reference.overload_documentation))
+            for signature, documentation in zip(
+                reference.overloads, reference.overload_documentation, strict=True
+            ):
+                with self.subTest(signature=signature):
+                    self.assertTrue(documentation.examples)
+                    self.assertTrue(all(example.source.strip() for example in documentation.examples))
+
+    def test_all_reference_examples_parse_and_analyse(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+
+        sources = {
+            example.source
+            for reference in collect_language_references()
+            for documentation in reference.overload_documentation
+            for example in documentation.examples
+        }
+        for source in sorted(sources):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+
+    def test_distinct_overloads_have_specific_parameters_and_examples(self):
+        references = {item.name: item for item in collect_builtin_references()}
+        division = references["/"]
+        self.assertIn("/(left: Number, right: Number) -> Number", division.overloads)
+        for signature, documentation in zip(
+            division.overloads, division.overload_documentation, strict=True
+        ):
+            self.assertNotIn("_or_", signature)
+            self.assertTrue(documentation.examples)
+            names = tuple(parameter.name for parameter in documentation.parameters)
+            expected = ("values", "reducer") if "reducer:" in signature else ("left", "right")
+            self.assertEqual(names, expected)
+
+        self.assertTrue(any("append(item:" in signature for signature in references["append"].overloads))
+        self.assertTrue(any("drop(count: Int, values: String)" in signature for signature in references["drop"].overloads))
+        for render in (render_language_reference_html, render_language_reference_markdown):
+            rendered = render((division,))
+            self.assertIn("[10, 3, 2] /: -", rendered)
+            self.assertIn("Non-zero divisor.", rendered)
+            self.assertIn("An empty collection panics", rendered)
+
+    def test_reference_examples_with_stack_results_execute(self):
+        from tests.test_programs import execute
+        from valiance.runtime.runtime_values import format_runtime_value
+
+        examples = {
+            example
+            for reference in collect_language_references()
+            for documentation in reference.overload_documentation
+            for example in documentation.examples
+            # Native boundary examples are analysed above; Windows FFI runs in CI.
+            if example.result is not None
+            and "to[&" not in example.source
+            and "FFI." not in example.source
+            and "cArr" not in example.source
+        }
+        for example in sorted(examples, key=lambda item: item.source):
+            with self.subTest(source=example.source):
+                actual = " ".join(format_runtime_value(value) for value in execute(example.source))
+                self.assertEqual(actual, example.result)
+
     def test_sidebar_drills_from_scope_through_group_to_every_entry(self):
         references = collect_language_references()
         page = _ReferenceHTML()

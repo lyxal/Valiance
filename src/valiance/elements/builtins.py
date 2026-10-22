@@ -14,12 +14,12 @@ import hashlib
 import math
 import operator
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import chain, cycle, groupby, islice
 from typing import Any
 
 import valiance.vtypes as T
-from valiance.elements.documentation import ElementDocumentation, element_documentation
+from valiance.elements.documentation import ElementDocumentation, ExampleInputs, element_documentation
 from valiance.asts import ElementNode, GetVariableNode, SetVariableNode
 from valiance.runtime.runtime_values import (
     LazyList,
@@ -131,6 +131,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The transformed container, while empty or error values pass through unchanged.",
         category="Optionals and results",
+        examples=(('Some(3) &: double | ?!', '6'),),
     ),
     "*": element_documentation(
         "Multiply numbers or repeat a string an integer number of times.",
@@ -145,12 +146,14 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The real exponentiation result.",
         notes="Panics with DomainFault when the base is negative.",
         category="Arithmetic",
+        examples=(('9 0.5 **', '3'),),
     ),
     "**c": element_documentation(
         "Raise a number to a numeric power using complex exponentiation.",
         parameters=(("base", "Number to raise."), ("exponent", "Power to apply.")),
         returns="The exponentiated Number, including complex results.",
         category="Arithmetic",
+        examples=(('2 3 **c', '8'),),
     ),
     "+": element_documentation(
         "Add numbers or concatenate strings.",
@@ -177,10 +180,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         description=(
             "Numeric overloads perform division.",
             "The list overload, also available as `reduce`, starts with the first item and reduces the remainder.",
-        ),
-        parameters=(
-            ("left_or_values", "Dividend or non-empty list."),
-            ("right_or_reducer", "Divisor or reducer."),
         ),
         returns="The quotient or final reduced value.",
         category="Arithmetic",
@@ -234,6 +233,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The contained value.",
         notes="Panics with `UnwrappedNoneFault` or `UnwrappedResultFault` on failure.",
         category="Optionals and results",
+        examples=(('Some(3) ?!', '3'),),
     ),
     "\\None": element_documentation(
         "Push an empty optional value.",
@@ -248,6 +248,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="A combined list.",
         category="Collections",
+        examples=(('[1, 2] [3, 4] addAll', '[1, 2, 3, 4]'),),
     ),
     "append": element_documentation(
         "Return a list with one item appended.",
@@ -255,6 +256,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("values", "Input list."), ("item", "Item added to the end.")),
         returns="A new list ending with the item.",
         category="Collections",
+        examples=(('[1, 2] 3 append', '[1, 2, 3]'), ('3 [1, 2] append', '[1, 2, 3]')),
     ),
     "both": element_documentation(
         "Apply one callable to two consecutive groups of stack values.",
@@ -265,12 +267,14 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("operation", "Callable applied to each input group."),),
         returns="The first call's results followed by the second call's results.",
         category="Functions",
+        examples=(('2 3 both: double', '4 6'),),
     ),
     "call": element_documentation(
         "Invoke a callable value.",
         parameters=(("operation", "Callable to invoke."),),
         returns="The values returned by the selected callable overload.",
         category="Functions",
+        examples=(('4 call: double', '8'),),
     ),
     "cArr": element_documentation(
         "Validate dimensions and convert a nested numeric list into a contiguous C array.",
@@ -296,6 +300,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The callable results followed by the held value.",
         category="Functions",
+        examples=(('2 9 dip: double', '4 9'),),
     ),
     "double": element_documentation(
         "Multiply a number by two.",
@@ -312,6 +317,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The remaining suffix.",
         category="Collections",
+        examples=(('[1, 2, 3] 1 drop', '[2, 3]'), ('1 "abc" drop', 'bc')),
     ),
     "dup": element_documentation(
         "Duplicate the top stack value.",
@@ -333,12 +339,14 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The filtered list.",
         category="Lists",
+        examples=(('[-1, 0, 2, 3] filter: positive?', '[2, 3]'),),
     ),
     "first": element_documentation(
         "Return the first item of a non-empty list or string.",
         parameters=(("values", "Non-empty input value."),),
         returns="The first item or one-character string.",
         category="Collections",
+        examples=(('[10, 20] first', '10'),),
     ),
     "fold": element_documentation(
         "Fold a list from an explicit seed value.",
@@ -354,6 +362,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The final accumulator.",
         category="Collections",
         see_also=("reduce", "/"),
+        examples=(('[1, 2, 3] 10 fold: +', '16'), ('([] as[Int+]) 10 fold: +', '10')),
     ),
     "fork": element_documentation(
         "Apply two callables to the same available inputs.",
@@ -378,7 +387,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             ("h", "Callable that combines the results of f and g."),
         ),
         returns="The combined results of f and g.",
-        examples=(("[19, 2, 3, 4, 13] hook: (sum, /, length)", "8.2")),
+        examples=(("[19, 2, 3, 4, 13] hook: (sum, /, length)", "8.2"),),
         category="Functions",
     ),
     "in": element_documentation(
@@ -401,12 +410,14 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The joined string.",
         category="Strings",
+        examples=(('["a", "b"] ", " join', 'a, b'),),
     ),
     "last": element_documentation(
         "Return the last item of a non-empty finite list or string.",
         parameters=(("values", "Non-empty input value."),),
         returns="The final item or one-character string.",
         category="Collections",
+        examples=(('[10, 20] last', '20'),),
     ),
     "length": element_documentation(
         "Return the number of items in a finite list or string.",
@@ -414,6 +425,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The value length as an `Int`.",
         category="Collections",
         see_also=("len",),
+        examples=(('"hello" length', '5'),),
     ),
     "map": element_documentation(
         "Apply a callable to every item in a list.",
@@ -424,6 +436,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="A list of mapped values, or no value for an eager effect-only callable.",
         category="Collections",
+        examples=(('[1, 2, 3] map: double', '[2, 4, 6]'),),
     ),
     "message": element_documentation(
         "Read the message stored by an error or fault.",
@@ -431,18 +444,21 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The failure message string.",
         category="Errors and faults",
         see_also=("getMessage",),
+        examples=(('ValueError("bad value") message', 'bad value'),),
     ),
     "numeric?": element_documentation(
         "Test whether a string is a valid base-ten integer.",
         parameters=(("value", "String to inspect."),),
         returns="A Boolean result.",
         category="Strings",
+        examples=(('"123" numeric?', '1'),),
     ),
     "OK": element_documentation(
         "Wrap a successful value in a result.",
         parameters=(("value", "Successful result value."),),
         returns="An `OK` result containing the value.",
         category="Optionals and results",
+        examples=(('OK(42) ?!', '42'),),
     ),
     "or": element_documentation(
         "Choose a fallback string or optional value.",
@@ -452,6 +468,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The preferred non-empty value, otherwise the fallback.",
         category="Optionals and results",
+        examples=(('"" "fallback" or', 'fallback'),),
     ),
     "panic": element_documentation(
         "Abort normal execution by raising a fault value.",
@@ -465,18 +482,21 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("operation", "Callable to invoke."),),
         returns="The preserved inputs followed by the callable results.",
         category="Functions",
+        examples=(('4 peek: double', '4 8'),),
     ),
     "pop": element_documentation(
         "Discard a value from the stack",
         parameters=(("value", "The value to discard"),),
         returns="Nothing.",
         category="Stack",
+        examples=(('1 2 pop', '1'),),
     ),
     "positive?": element_documentation(
         "Test whether a number is greater than zero.",
         parameters=(("value", "Number to test."),),
         returns="`true` when the number is positive; otherwise `false`.",
         category="Comparison",
+        examples=(('0 positive?', '0'),),
     ),
     "print": element_documentation(
         "Write a value without a trailing newline.",
@@ -508,6 +528,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="A new list containing every other item.",
         category="Collections",
+        examples=(('[10, 20, 30] 1 removeAt', '[10, 30]'),),
     ),
     "reshape": element_documentation(
         "Reshape a finite value using a list or tuple of dimensions.",
@@ -524,6 +545,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("iterable", "The list to reverse"),),
         returns="The reversed list.",
         category="Lists",
+        examples=(('[1, 2, 3] reverse', '[3, 2, 1]'),),
     ),
     "rotate": element_documentation(
         "Rotate a finite list or string to the left.",
@@ -533,6 +555,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="The rotated value.",
         category="Collections",
+        examples=(('"abcd" 1 rotate', 'bcda'),),
     ),
     "sequence": element_documentation(
         "Apply two callables to two distinct consecutive groups of stack values.",
@@ -555,18 +578,21 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("value", "Present optional value."),),
         returns="A `Some` optional containing the value.",
         category="Optionals and results",
+        examples=(('Some(42) ?!', '42'),),
     ),
     "split": element_documentation(
         "Split a string around a separator.",
         parameters=(("value", "String to split."), ("separator", "Separator text.")),
         returns="A list of string segments.",
         category="Strings",
+        examples=(('"a,b,c" "," split', "['a', 'b', 'c']"),),
     ),
     "sqrt": element_documentation(
         "Compute the square root of a number.",
         parameters=(("value", "Number to compute square root of."),),
         returns="The square root of the input number.",
         category="Mathematics",
+        examples=(('9 sqrt', '3'),),
     ),
     "squared": element_documentation(
         "Multiply a number by itself.",
@@ -600,6 +626,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         ),
         returns="A list containing the selected prefix.",
         category="Collections",
+        examples=(('[1, 2, 3] 2 take', '[1, 2]'),),
     ),
     "to": element_documentation(
         "Convert a value to the requested target type.",
@@ -615,18 +642,21 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             "both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the "
             "same registered conversion and returns `None` if it panics."
         ),
+        examples=(('"42" to[Int]', '42'),),
     ),
     "top": element_documentation(
         "Return the top stack value unchanged.",
         parameters=(("value", "Value at the top of the stack."),),
         returns="The input value.",
         category="Stack",
+        examples=(('7 top', '7'),),
     ),
     "toString": element_documentation(
         "Format a value using Valiance runtime display syntax.",
         parameters=(("value", "Value to format."),),
         returns="The formatted string.",
         category="Strings",
+        examples=(('42 toString', '42'),),
     ),
     "true": element_documentation(
         "Push the Boolean true value.",
@@ -638,6 +668,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("list", "The list to unpair"),),
         returns="The two items of the list, pushed separately onto the stack.",
         category="Lists",
+        examples=(('[10, 20] unpair', '10 20'),),
     ),
     "update": element_documentation(
         "Return a copy of an iterable with an indexed selection replaced.",
@@ -663,6 +694,61 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Collections",
     ),
 }
+
+
+_DIVISION_DOCUMENTATION = element_documentation(
+    "Divide the left number by the right number.",
+    parameters=(("left", "Dividend."), ("right", "Non-zero divisor.")),
+    returns="The quotient; integer inputs can produce a fractional result.",
+    examples=(("7 2 /", "3.5"),),
+    notes="Division by zero panics with `DivisionByZeroFault`.",
+    category="Arithmetic",
+)
+_REDUCTION_DOCUMENTATION = element_documentation(
+    "Reduce a non-empty finite collection from left to right.",
+    description=(
+        "Use the first item as the accumulator, then call the reducer with "
+        "the accumulator followed by each remaining item. A singleton returns its item.",
+        "The `reduce` alias exposes these collection overloads.",
+    ),
+    parameters=(
+        ("values", "Non-empty finite collection."),
+        ("reducer", "Callable consuming accumulator and item, returning the next accumulator."),
+    ),
+    returns="The final accumulator.",
+    examples=(("[10, 3, 2] /: -", "5"), ("[1, 2, 3] reduce: +", "6")),
+    notes="An empty collection panics; use `fold` with a seed when it may be empty.",
+    category="Collections",
+    see_also=("fold", "sum"),
+)
+_STRING_ADDITION_DOCUMENTATION = element_documentation(
+    "Concatenate two strings.",
+    parameters=(("left", "Text placed first."), ("right", "Text placed second.")),
+    returns="The concatenated string.",
+    examples=(('"Val" "iance" +', "Valiance"),),
+    category="Strings",
+)
+_NUMERIC_ADDITION_DOCUMENTATION = element_documentation(
+    "Add two numbers.",
+    parameters=(("left", "First number."), ("right", "Second number.")),
+    returns="The numeric sum.",
+    examples=(("2 3 +", "5"),),
+    category="Arithmetic",
+)
+_NUMERIC_MULTIPLICATION_DOCUMENTATION = element_documentation(
+    "Multiply two numbers.",
+    parameters=(("left", "First factor."), ("right", "Second factor.")),
+    returns="The numeric product.",
+    examples=(("6 7 *", "42"),),
+    category="Arithmetic",
+)
+_STRING_REPETITION_DOCUMENTATION = element_documentation(
+    "Repeat a string an integer number of times.",
+    parameters=(("value", "String to repeat."), ("count", "Number of repetitions.")),
+    returns="The repeated string, or an empty string when count is non-positive.",
+    examples=(('"ha" 3 *', "hahaha"),),
+    category="Strings",
+)
 
 
 @dataclass(frozen=True)
@@ -876,6 +962,7 @@ def builtin(
     data_tags: tuple[tuple[str | Symbol, T.TagKind], ...] = (),
     param_names: tuple[str | Symbol | None, ...] = (),
     documentation: ElementDocumentation | None = None,
+    examples: ExampleInputs | None = None,
     vectorisable: bool = True,
     where_clause: tuple[object, ...] = (),
     conversion_target: T.Type | None = None,
@@ -908,6 +995,12 @@ def builtin(
         intrinsic_id = 'intrinsic:' + hashlib.sha256(
             intrinsic_key.encode('utf-8')
         ).hexdigest()
+        effective_doc = documentation or _BUILTIN_DOCUMENTATION.get(_name_key(name))
+        if examples is not None and effective_doc is not None:
+            effective_doc = replace(
+                effective_doc,
+                examples=element_documentation(effective_doc.summary, examples=examples).examples,
+            )
         overload = BuiltinOverload(
             T.Overload(
                 params,
@@ -922,7 +1015,7 @@ def builtin(
             ),
             fn,
             vectorisable,
-            documentation or _BUILTIN_DOCUMENTATION.get(_name_key(name)),
+            effective_doc,
         )
 
         aliases: tuple[str, ...] = getattr(fn, _ALIAS_ATTR, ())
@@ -934,13 +1027,10 @@ def builtin(
             _REGISTRY.setdefault(key, []).append(overload)
             _CANONICAL_NAME_REGISTRY.setdefault(key, canonical_name)
             if effective_documentation is not None:
-                # Keep element-level metadata only while every documented overload
-                # agrees. Distinct overload documentation lives on BuiltinOverload.
-                existing = _DOCUMENTATION_REGISTRY.get(key)
-                if existing is None:
-                    _DOCUMENTATION_REGISTRY[key] = effective_documentation
-                elif existing != effective_documentation:
-                    _DOCUMENTATION_REGISTRY.pop(key, None)
+                # Keep a stable overview; exact overload metadata stays on the definition.
+                _DOCUMENTATION_REGISTRY.setdefault(
+                    key, _BUILTIN_DOCUMENTATION.get(canonical_name, effective_documentation)
+                )
 
         return fn
 
@@ -1591,7 +1681,12 @@ def _dup(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0], args[0])
 
 
-@builtin("fork", (T.Fn(), T.Fn()), call_site=_fork_call_site)
+@builtin(
+    "fork",
+    (T.Fn(), T.Fn()),
+    call_site=_fork_call_site,
+    examples=(('2 fork: (double, squared)', '4 4'),),
+)
 def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `fork` built-in runtime overload."""
     *call_args, left, right = args
@@ -1655,6 +1750,7 @@ def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "sequence",
     (T.Fn(), T.Fn()),
     call_site=_sequence_call_site,
+    examples=(('2 3 sequence: (double, squared)', '4 9'),),
 )
 def _sequence(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Apply two callables to their statically sized argument groups."""
@@ -1772,41 +1868,102 @@ def _wrapping_mod(a: RuntimeNumber, b: RuntimeNumber) -> RuntimeNumber:
         returns="A Boolean number that is true when the values differ.",
         category="Comparison",
     ),
+    examples=(('2 3 !=', '1'),),
 )
-@builtin("!=", (T.String, T.String), (T.Boolean,))
+@builtin(
+    "!=",
+    (T.String, T.String),
+    (T.Boolean,),
+    examples=(('"cat" "dog" !=', '1'),),
+)
 def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the negation of ordinary value equality."""
 
     return (_truth(args[0] != args[1]),)
 
 
-@builtin("%", (T.Int, T.Int), (T.Int,))
-@builtin("%", (T.Real, T.Real), (T.Real,))
-@builtin("%", (T.Real, T.Int), (T.Real,))
-@builtin("%", (T.Int, T.Real), (T.Real,))
-@builtin("%", (T.Number, T.Number), (T.Number,))
+@builtin(
+    "%",
+    (T.Int, T.Int),
+    (T.Int,),
+    examples=(('7 2 %', '1'),),
+)
+@builtin(
+    "%",
+    (T.Real, T.Real),
+    (T.Real,),
+    examples=(('7.5 2.5 %', '0'),),
+)
+@builtin(
+    "%",
+    (T.Real, T.Int),
+    (T.Real,),
+    examples=(('7.5 2 %', '1.5'),),
+)
+@builtin(
+    "%",
+    (T.Int, T.Real),
+    (T.Real,),
+    examples=(('7 2.5 %', '2'),),
+)
+@builtin(
+    "%",
+    (T.Number, T.Number),
+    (T.Number,),
+    examples=(('7.5 2.5 %', '0'),),
+)
 def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `%`, `%`, `%`, `%`, `%` built-in runtime overloads."""
     return (_wrapping_mod(args[0], args[1]),)
 
 
-@builtin("*", (T.Int, T.Int), (T.Int,))
-@builtin("*", (T.Real, T.Real), (T.Real,))
-@builtin("*", (T.Real, T.Int), (T.Real,))
-@builtin("*", (T.Int, T.Real), (T.Real,))
-@builtin("*", (T.Number, T.Number), (T.Number,))
+@builtin(
+    "*", (T.Int, T.Int), (T.Int,),
+    documentation=_NUMERIC_MULTIPLICATION_DOCUMENTATION,
+    examples=(('7 2 *', '14'),),
+)
+@builtin(
+    "*", (T.Real, T.Real), (T.Real,),
+    documentation=_NUMERIC_MULTIPLICATION_DOCUMENTATION,
+    examples=(('7.5 2.5 *', '18.75'),),
+)
+@builtin(
+    "*", (T.Real, T.Int), (T.Real,),
+    documentation=_NUMERIC_MULTIPLICATION_DOCUMENTATION,
+    examples=(('7.5 2 *', '15'),),
+)
+@builtin(
+    "*", (T.Int, T.Real), (T.Real,),
+    documentation=_NUMERIC_MULTIPLICATION_DOCUMENTATION,
+    examples=(('7 2.5 *', '17.5'),),
+)
+@builtin(
+    "*", (T.Number, T.Number), (T.Number,),
+    documentation=_NUMERIC_MULTIPLICATION_DOCUMENTATION,
+    examples=(('7.5 2.5 *', '18.75'),),
+)
 def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `*`, `*`, `*`, `*`, `*` built-in runtime overloads."""
     return (args[0] * args[1],)
 
 
-@builtin("*", (T.Int, T.String), (T.String,))
+@builtin(
+    "*", (T.Int, T.String), (T.String,),
+    documentation=replace(
+        _STRING_REPETITION_DOCUMENTATION,
+        parameters=tuple(reversed(_STRING_REPETITION_DOCUMENTATION.parameters)),
+    ),
+    examples=(('3 "ha" *', 'hahaha'),),
+)
 def _string_repeat(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `*` built-in runtime overload."""
     return (int(args[0]) * args[1],)
 
 
-@builtin("*", (T.String, T.Int), (T.String,))
+@builtin(
+    "*", (T.String, T.Int), (T.String,),
+    documentation=_STRING_REPETITION_DOCUMENTATION,
+)
 def _string_repeat_reverse(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
@@ -1814,9 +1971,24 @@ def _string_repeat_reverse(
     return (args[0] * int(args[1]),)
 
 
-@builtin("**", (T.Int, T.Int), (T.Real,))
-@builtin("**", (T.Real, T.Int), (T.Real,))
-@builtin("**", (T.Number, T.Number), (T.Number,))
+@builtin(
+    "**",
+    (T.Int, T.Int),
+    (T.Real,),
+    examples=(('2 3 **', '8'),),
+)
+@builtin(
+    "**",
+    (T.Real, T.Int),
+    (T.Real,),
+    examples=(('2.5 2 **', '6.25'),),
+)
+@builtin(
+    "**",
+    (T.Number, T.Number),
+    (T.Number,),
+    examples=(('9 0.5 **', '3'),),
+)
 def _real_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Raise a non-negative real number to a real power."""
 
@@ -1845,32 +2017,100 @@ def _complex_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
         raise RuntimeError("invalid numeric exponentiation") from exc
 
 
-@builtin("+", (T.Int, T.Int), (T.Int,))
-@builtin("+", (T.Real, T.Real), (T.Real,))
-@builtin("+", (T.Real, T.Int), (T.Real,))
-@builtin("+", (T.Int, T.Real), (T.Real,))
-@builtin("+", (T.Number, T.Number), (T.Number,))
-@builtin("+", (T.String, T.String), (T.String,))
+@builtin(
+    "+", (T.Int, T.Int), (T.Int,),
+    documentation=_NUMERIC_ADDITION_DOCUMENTATION,
+    examples=(('7 2 +', '9'),),
+)
+@builtin(
+    "+", (T.Real, T.Real), (T.Real,),
+    documentation=_NUMERIC_ADDITION_DOCUMENTATION,
+    examples=(('7.5 2.5 +', '10'),),
+)
+@builtin(
+    "+", (T.Real, T.Int), (T.Real,),
+    documentation=_NUMERIC_ADDITION_DOCUMENTATION,
+    examples=(('7.5 2 +', '9.5'),),
+)
+@builtin(
+    "+", (T.Int, T.Real), (T.Real,),
+    documentation=_NUMERIC_ADDITION_DOCUMENTATION,
+    examples=(('7 2.5 +', '9.5'),),
+)
+@builtin(
+    "+", (T.Number, T.Number), (T.Number,),
+    documentation=_NUMERIC_ADDITION_DOCUMENTATION,
+    examples=(('7.5 2.5 +', '10'),),
+)
+@builtin(
+    "+", (T.String, T.String), (T.String,),
+    documentation=_STRING_ADDITION_DOCUMENTATION,
+)
 def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `+`, `+`, `+`, `+`, `+`, `+` built-in runtime overloads."""
     return (args[0] + args[1],)
 
 
-@builtin("-", (T.Int, T.Int), (T.Int,))
-@builtin("-", (T.Real, T.Real), (T.Real,))
-@builtin("-", (T.Real, T.Int), (T.Real,))
-@builtin("-", (T.Int, T.Real), (T.Real,))
-@builtin("-", (T.Number, T.Number), (T.Number,))
+@builtin(
+    "-",
+    (T.Int, T.Int),
+    (T.Int,),
+    examples=(('7 2 -', '5'),),
+)
+@builtin(
+    "-",
+    (T.Real, T.Real),
+    (T.Real,),
+    examples=(('7.5 2.5 -', '5'),),
+)
+@builtin(
+    "-",
+    (T.Real, T.Int),
+    (T.Real,),
+    examples=(('7.5 2 -', '5.5'),),
+)
+@builtin(
+    "-",
+    (T.Int, T.Real),
+    (T.Real,),
+    examples=(('7 2.5 -', '4.5'),),
+)
+@builtin(
+    "-",
+    (T.Number, T.Number),
+    (T.Number,),
+    examples=(('7.5 2.5 -', '5'),),
+)
 def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `-`, `-`, `-`, `-`, `-` built-in runtime overloads."""
     return (args[0] - args[1],)
 
 
-@builtin("/", (T.Int, T.Int), (T.Real,))
-@builtin("/", (T.Real, T.Real), (T.Real,))
-@builtin("/", (T.Real, T.Int), (T.Real,))
-@builtin("/", (T.Int, T.Real), (T.Real,))
-@builtin("/", (T.Number, T.Number), (T.Number,))
+@builtin(
+    "/", (T.Int, T.Int), (T.Real,),
+    documentation=_DIVISION_DOCUMENTATION,
+    examples=(('7 2 /', '3.5'),),
+)
+@builtin(
+    "/", (T.Real, T.Real), (T.Real,),
+    documentation=_DIVISION_DOCUMENTATION,
+    examples=(('7.5 2.5 /', '3'),),
+)
+@builtin(
+    "/", (T.Real, T.Int), (T.Real,),
+    documentation=_DIVISION_DOCUMENTATION,
+    examples=(('7.5 2 /', '3.75'),),
+)
+@builtin(
+    "/", (T.Int, T.Real), (T.Real,),
+    documentation=_DIVISION_DOCUMENTATION,
+    examples=(('7 2.5 /', '2.8'),),
+)
+@builtin(
+    "/", (T.Number, T.Number), (T.Number,),
+    documentation=_DIVISION_DOCUMENTATION,
+    examples=(('7.5 2.5 /', '3'),),
+)
 def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `/`, `/`, `/`, `/`, `/` built-in runtime overloads."""
     return (args[0] / args[1],)
@@ -1886,6 +2126,7 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ),
     ),
     (T.TypeVariable("Item"),),
+    documentation=_REDUCTION_DOCUMENTATION,
 )
 @builtin(
     "/",
@@ -1894,6 +2135,8 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         T.Fn((T.Int, T.String), (T.String,)),
     ),
     (T.String,),
+    documentation=_REDUCTION_DOCUMENTATION,
+    examples=(('{3, "ha"} /: *', 'hahaha'),),
 )
 @alias("reduce")
 def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -1927,39 +2170,74 @@ def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (result,)
 
 
-@builtin("<", (T.Number, T.Number), (T.Boolean,))
+@builtin(
+    "<",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    examples=(('2 3 <', '1'),),
+)
 def _less(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `<` built-in runtime overload."""
     return (_truth(args[0] < args[1]),)
 
 
-@builtin("<=", (T.Number, T.Number), (T.Boolean,))
+@builtin(
+    "<=",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    examples=(('3 3 <=', '1'),),
+)
 def _less_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `<=` built-in runtime overload."""
     return (_truth(args[0] <= args[1]),)
 
 
-@builtin("==", (T.Number, T.Number), (T.Boolean,))
-@builtin("==", (T.String, T.String), (T.Boolean,))
+@builtin(
+    "==",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    examples=(('3 3 ==', '1'),),
+)
+@builtin(
+    "==",
+    (T.String, T.String),
+    (T.Boolean,),
+    examples=(('"cat" "dog" ==', '0'),),
+)
 def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `==`, `==` built-in runtime overloads."""
     return (_truth(args[0] == args[1]),)
 
 
-@builtin("===", (T.V("T"), T.V("T")), (T.Boolean,))
+@builtin(
+    "===",
+    (T.V("T"), T.V("T")),
+    (T.Boolean,),
+    examples=(('[1, 2] [1, 2] ===', '1'),),
+)
 def _structural_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Compare two values using the runtime's structural value equality."""
 
     return (_truth(args[0] == args[1]),)
 
 
-@builtin(">", (T.Number, T.Number), (T.Boolean,))
+@builtin(
+    ">",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    examples=(('3 2 >', '1'),),
+)
 def _greater(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `>` built-in runtime overload."""
     return (_truth(args[0] > args[1]),)
 
 
-@builtin(">=", (T.Number, T.Number), (T.Boolean,))
+@builtin(
+    ">=",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    examples=(('3 3 >=', '1'),),
+)
 def _greater_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `>=` built-in runtime overload."""
     return (_truth(args[0] >= args[1]),)
@@ -1990,11 +2268,17 @@ def _add_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "append",
     (T.ExactList(T.TypeVariable("Item")), T.TypeVariable("Item")),
     (T.ExactList(T.TypeVariable("Item")),),
+    examples=(('[1, 2] 3 append', '[1, 2, 3]'),),
 )
 @builtin(
     "append",
     (T.TypeVariable("Item"), T.ExactList(T.TypeVariable("Item"))),
     (T.ExactList(T.TypeVariable("Item")),),
+    documentation=replace(
+        _BUILTIN_DOCUMENTATION["append"],
+        parameters=tuple(reversed(_BUILTIN_DOCUMENTATION["append"].parameters)),
+    ),
+    examples=(('3 [1, 2] append', '[1, 2, 3]'),),
 )
 def _append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `append`, `append` built-in runtime overloads."""
@@ -2013,14 +2297,32 @@ def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "drop",
     (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
+    examples=(('[1, 2, 3] 1 drop', '[2, 3]'),),
 )
 @builtin(
     "drop",
     (T.Int, T.ExactList(T.V("Item"))),
     (T.ExactList(T.V("Item")),),
+    documentation=replace(
+        _BUILTIN_DOCUMENTATION["drop"],
+        parameters=tuple(reversed(_BUILTIN_DOCUMENTATION["drop"].parameters)),
+    ),
+    examples=(('1 [1, 2, 3] drop', '[2, 3]'),),
 )
-@builtin("drop", (T.String, T.Int), (T.String,))
-@builtin("drop", (T.Int, T.String), (T.String,))
+@builtin(
+    "drop",
+    (T.String, T.Int),
+    (T.String,),
+    examples=(('"abcd" 1 drop', 'bcd'),),
+)
+@builtin(
+    "drop", (T.Int, T.String), (T.String,),
+    documentation=replace(
+        _BUILTIN_DOCUMENTATION["drop"],
+        parameters=tuple(reversed(_BUILTIN_DOCUMENTATION["drop"].parameters)),
+    ),
+    examples=(('1 "abcd" drop', 'bcd'),),
+)
 def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Drop a non-negative number of leading items from a list or string."""
 
@@ -2048,6 +2350,7 @@ def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         returns="All items except the final item.",
         category="Collections",
     ),
+    examples=(('[1, 2, 3] dropLast', '[1, 2]'),),
 )
 def _drop_last(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return a materialized list with its final item removed."""
@@ -2058,7 +2361,12 @@ def _drop_last(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (values[:-1],)
 
 
-@builtin("false", (), (T.Boolean,))
+@builtin(
+    "false",
+    (),
+    (T.Boolean,),
+    examples=(('false', '0'),),
+)
 def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `false` built-in runtime overload."""
     return (RuntimeNumber(0),)
@@ -2101,8 +2409,18 @@ def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     )
 
 
-@builtin("first", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
-@builtin("first", (T.String,), (T.String,))
+@builtin(
+    "first",
+    (T.ExactList(T.TypeVariable("Item")),),
+    (T.TypeVariable("Item"),),
+    examples=(('[10, 20, 30] first', '10'),),
+)
+@builtin(
+    "first",
+    (T.String,),
+    (T.String,),
+    examples=(('"abc" first', 'a'),),
+)
 def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the first item, terminating a planned pipeline immediately."""
     values = args[0]
@@ -2147,6 +2465,7 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "groupConsecutive",
     (T.ExactList(T.V("Item")),),
     (T.ExactList(T.V("Item"), 2),),
+    examples=(('[1, 1, 2, 1] groupConsecutive', '[[1, 1], [2], [1]]'),),
 )
 def _group_consecutive_list(
     args: tuple[Any, ...], ctx: RuntimeContext
@@ -2156,7 +2475,12 @@ def _group_consecutive_list(
     return ([[*items] for _key, items in groupby(args[0])],)
 
 
-@builtin("groupConsecutive", (T.String,), (T.ExactList(T.String),))
+@builtin(
+    "groupConsecutive",
+    (T.String,),
+    (T.ExactList(T.String),),
+    examples=(('"aabbc" groupConsecutive', "['aa', 'bb', 'c']"),),
+)
 def _group_consecutive_string(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
@@ -2170,11 +2494,17 @@ def _group_consecutive_string(
 # --------------------------------------------------------------------------
 
 
-@builtin("in", (T.String, T.String), (T.Boolean,))
+@builtin(
+    "in",
+    (T.String, T.String),
+    (T.Boolean,),
+    examples=(('"bc" "abcd" in', '1'),),
+)
 @builtin(
     "in",
     (T.V("Item"), T.ExactList(T.V("Item"))),
     (T.Boolean,),
+    examples=(('2 [1, 2, 3] in', '1'),),
 )
 def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Test membership in a string or finite/list-like value."""
@@ -2193,8 +2523,14 @@ def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         returns="The next integer.",
         category="Arithmetic",
     ),
+    examples=(('4 inc', '5'),),
 )
-@builtin("inc", (T.Number,), (T.Number,))
+@builtin(
+    "inc",
+    (T.Number,),
+    (T.Number,),
+    examples=(('4.5 inc', '5.5'),),
+)
 def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Increase a numeric value by one."""
     return (args[0] + RuntimeNumber(1),)
@@ -2216,6 +2552,7 @@ def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         returns="A Boolean number indicating whether start <= value < stop.",
         category="Comparison",
     ),
+    examples=(('3 1 5 inRange', '1'),),
 )
 def _in_range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return whether value is within the requested half-open interval."""
@@ -2235,8 +2572,14 @@ def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "last",
     (T.WithoutTag(T.ExactList(T.V("Item")), "infinite"),),
     (T.V("Item"),),
+    examples=(('[10, 20, 30] last', '30'),),
 )
-@builtin("last", (T.String,), (T.String,))
+@builtin(
+    "last",
+    (T.String,),
+    (T.String,),
+    examples=(('"abc" last', 'c'),),
+)
 def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the final item from a non-empty finite list or string."""
 
@@ -2251,8 +2594,15 @@ def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
     (T.Int,),
     vectorisable=False,
+    examples=(('[10, 20, 30] length', '3'),),
 )
-@builtin("length", (T.String,), (T.Int,), vectorisable=False)
+@builtin(
+    "length",
+    (T.String,),
+    (T.Int,),
+    vectorisable=False,
+    examples=(('"abc" length', '3'),),
+)
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the exact length, evaluating lazy lists until they terminate."""
@@ -2271,6 +2621,7 @@ def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         T.Fn((T.String,), (T.TypeVariable("Mapped"),)),
     ),
     (T.ExactList(T.TypeVariable("Mapped")),),
+    examples=(('"abc" map: toString', "['a', 'b', 'c']"),),
 )
 def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Map a unary function over the characters of a finite string."""
@@ -2296,6 +2647,7 @@ def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         T.Fn((T.TypeVariable("Item"),), (T.TypeVariable("Mapped"),)),
     ),
     (T.ExactList(T.TypeVariable("Mapped")),),
+    examples=(('[1, 2, 3] map: double', '[2, 4, 6]'),),
 )
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `map` built-in runtime overload."""
@@ -2367,6 +2719,7 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         T.Fn((), (T.TypeVariable("Mapped"),)),
     ),
     (T.ExactList(T.TypeVariable("Mapped")),),
+    examples=(('[1, 2, 3] map: fn => 7 end', '[7, 7, 7]'),),
 )
 def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Call a niladic mapping function once for every input-list item."""
@@ -2395,6 +2748,7 @@ def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (),
     call_site=_eager_map_call_site,
     element_tags=(EAGER_TAG,),
+    examples=(('[1, 2, 3] map: println', None, 'Prints each item on its own line and leaves no list on the stack.'),),
 )
 def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Execute an eager mapping callable through one reusable call plan."""
@@ -2431,6 +2785,7 @@ def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         returns="A list of exactly count items.",
         category="Collections",
     ),
+    examples=(('[1, 2] 5 overtake', '[1, 2, 1, 2, 1]'),),
 )
 def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Cycle a non-empty finite list and take exactly the requested count."""
@@ -2448,6 +2803,7 @@ def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "to", (T.String,), (T.Int,), conversion_target=T.Int,
     element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+    examples=(('"42" to[Int]', '42'),),
 )
 def _string_to_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a base-ten integer, raising ConversionFault for invalid text."""
@@ -2490,8 +2846,18 @@ def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(args[0] > 0),)
 
 
-@builtin("range", (T.Int, T.Int), (T.ExactList(T.Int),))
-@builtin("range", (T.Number, T.Number), (T.ExactList(T.Number),))
+@builtin(
+    "range",
+    (T.Int, T.Int),
+    (T.ExactList(T.Int),),
+    examples=(('1 3 range', '[1, 2, 3]'),),
+)
+@builtin(
+    "range",
+    (T.Number, T.Number),
+    (T.ExactList(T.Number),),
+    examples=(('1.0 3.0 range', '[1, 2, 3]'),),
+)
 def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `range` built-in runtime overload."""
     start, stop = args
@@ -2521,6 +2887,7 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "to", (T.String,), (T.Real,), conversion_target=T.Real,
     element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+    examples=(('"2.5" to[Real]', '2.5'),),
 )
 def _string_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a real number, raising ConversionFault for invalid or complex text."""
@@ -2530,6 +2897,7 @@ def _string_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
 @builtin(
     "to", (T.String,), (T.Number,), conversion_target=T.Number,
     element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+    examples=(('"2.5" to[Number]', '2.5'),),
 )
 def _string_to_number(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a real or complex number, raising ConversionFault for invalid text."""
@@ -2596,6 +2964,7 @@ _RECTANGULAR_SHAPE_SENTINEL = object()
     (T.C(T.ListMinType, T.V("Item")),),
     param_names=("values", "shape"),
     vectorisable=False,
+    examples=(('[1, 2, 3, 4] [2, 2] reshape', '[[1, 2], [3, 4]]'),),
 )
 @builtin(
     "reshape",
@@ -2608,6 +2977,7 @@ _RECTANGULAR_SHAPE_SENTINEL = object()
         ElementNode(Symbol("length")),
         SetVariableNode(Symbol("n")),
     ),
+    examples=(('[1, 2, 3, 4] {2, 2} reshape', '[[1, 2], [3, 4]]'),),
 )
 def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Reshape a finite, possibly nested value to the requested dimensions."""
@@ -2660,11 +3030,17 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (build(0),)
 
 
-@builtin("rotate", (T.String, T.Int), (T.String,))
+@builtin(
+    "rotate",
+    (T.String, T.Int),
+    (T.String,),
+    examples=(('"abc" 1 rotate', 'bca'),),
+)
 @builtin(
     "rotate",
     (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
+    examples=(('[1, 2, 3] 1 rotate', '[2, 3, 1]'),),
 )
 def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Rotate a finite sequence left by the requested signed amount."""
@@ -2732,7 +3108,12 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (lst[: int(n)],)
 
 
-@builtin("true", (), (T.Boolean,))
+@builtin(
+    "true",
+    (),
+    (T.Boolean,),
+    examples=(('true', '1'),),
+)
 def _true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `true` built-in runtime overload."""
     return (RuntimeNumber(1),)
@@ -2757,6 +3138,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.C(T.ListMinType, T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+    examples=(('update([[1, 2], [3, 4]], [\\None, 0], [8, 9])', '[[8, 2], [9, 4]]'),),
 )
 @builtin(
     "update",
@@ -2779,6 +3161,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ElementNode(Symbol(">=")),
         ElementNode(Symbol("?")),
     ),
+    examples=(('update([[1, 2], [3, 4]], {0}, [8, 9])', '[[8, 9], [3, 4]]'),),
 )
 @builtin(
     "update",
@@ -2786,6 +3169,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+    examples=(('update([1, 2, 3], 1, 9)', '[1, 9, 3]'),),
 )
 @builtin(
     "update",
@@ -2793,6 +3177,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+    examples=(('update([1, 2, 3], [0, 2], 9)', '[9, 2, 9]'),),
 )
 @builtin(
     "update",
@@ -2804,6 +3189,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+    examples=(('update([1, 2, 3], [0, 2], [8, 9])', '[8, 2, 9]'),),
 )
 @builtin(
     "update",
@@ -2811,6 +3197,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.String,),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+    examples=(('update("abc", 1, "X")', 'aXc'),),
 )
 @builtin(
     "update",
@@ -2818,6 +3205,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.String,),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+    examples=(('update("abc", [0, 2], "XY")', 'XbY'),),
 )
 def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return an indexed reconstruction without assigning it to a variable."""
@@ -2837,6 +3225,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.C(T.ListMinType, T.V("Item")),),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
+    examples=(('updateBy([[1, 2], [3, 4]], [\\None, 0], fn (xs) => $xs 1 rotate end)', '[[3, 2], [1, 4]]'),),
 )
 @builtin(
     "updateBy",
@@ -2862,6 +3251,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ElementNode(Symbol(">=")),
         ElementNode(Symbol("?")),
     ),
+    examples=(('updateBy([[1, 2], [3, 4]], {0}, fn (xs: Int+) => $xs reverse end)', '[[2, 1], [3, 4]]'),),
 )
 @builtin(
     "updateBy",
@@ -2873,6 +3263,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
+    examples=(('updateBy([1, 2, 3], 1, fn => double end)', '[1, 4, 3]'),),
 )
 @builtin(
     "updateBy",
@@ -2887,6 +3278,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
+    examples=(('updateBy([1, 2, 3], [0, 2], fn => double end)', '[[2, 2, 3], [1, 2, 6]]'),),
 )
 @builtin(
     "updateBy",
@@ -2894,6 +3286,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.String,),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
+    examples=(('updateBy("abc", 1, fn (s: String) => "X" end)', 'aXc'),),
 )
 @builtin(
     "updateBy",
@@ -2901,6 +3294,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.String,),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
+    examples=(('updateBy("abc", [0, 2], fn (s: String) => $s 1 rotate end)', 'cba'),),
 )
 def _update_by(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Apply one unary callable to an indexed value or whole selection."""
@@ -2928,6 +3322,7 @@ def _update_by(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         "Merge two anonymous records, preferring fields from the right record.",
         parameters=(("left", "Base record."), ("right", "Fields to merge.")),
         returns="A merged anonymous record.",
+        examples=(('record{x => 1} record{x => 2} record.merge', '{"x" => 2}'),),
         category="Records",
     ),
 )
@@ -2946,6 +3341,7 @@ def _record_merge(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
         "Extend an anonymous record with fields that are not already present.",
         parameters=(("record", "Base record."), ("fields", "New fields.")),
         returns="The extended anonymous record.",
+        examples=(('record{x => 1} record{y => 2} record.extend', '{"x" => 1, "y" => 2}'),),
         category="Records",
     ),
 )
@@ -3028,6 +3424,7 @@ for _message_type in (
         T.Fn((T.TypeVariable("T"),), (T.TypeVariable("U"),)),
     ),
     (T.optional(T.TypeVariable("U")),),
+    examples=(('Some(3) &: double', '6'),),
 )
 @builtin(
     "&",
@@ -3036,6 +3433,7 @@ for _message_type in (
         T.Fn((T.TypeVariable("T"),), (T.TypeVariable("U"),)),
     ),
     (T.Result(T.TypeVariable("U"), T.TypeVariable("E")),),
+    examples=(('OK(3) &: double', 'OK[Number, Never]{value: 6}'),),
 )
 @builtin(
     "&",
@@ -3045,6 +3443,7 @@ for _message_type in (
     ),
     (T.TypeVariable("E"),),
     (T.GenericConstraint("E", T.N(ERR)),),
+    examples=(('ValueError("bad") &: double', "ValueError{message: 'bad'}"),),
 )
 def _and_then(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `&`, `&`, `&` built-in runtime overloads."""
@@ -3081,11 +3480,17 @@ def _and_then(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # --------------------------------------------------------------------------
 
 
-@builtin("?", (T.optional(T.TypeVariable("T")),), (T.TypeVariable("T"),))
+@builtin(
+    "?",
+    (T.optional(T.TypeVariable("T")),),
+    (T.TypeVariable("T"),),
+    examples=(('Some(3) ?', '3'),),
+)
 @builtin(
     "?",
     (T.Result(T.TypeVariable("T"), T.TypeVariable("E")),),
     (T.TypeVariable("T"),),
+    examples=(('OK(3) ?', '3'),),
 )
 def _question(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `?`, `?` built-in runtime overloads."""
@@ -3100,11 +3505,17 @@ def _question(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (value,)
 
 
-@builtin("?!", (T.optional(T.TypeVariable("T")),), (T.TypeVariable("T"),))
+@builtin(
+    "?!",
+    (T.optional(T.TypeVariable("T")),),
+    (T.TypeVariable("T"),),
+    examples=(('Some(3) ?!', '3'),),
+)
 @builtin(
     "?!",
     (T.Result(T.TypeVariable("T"), T.TypeVariable("E")),),
     (T.TypeVariable("T"),),
+    examples=(('OK(3) ?!', '3'),),
 )
 def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `?!`, `?!` built-in runtime overloads."""
@@ -3126,7 +3537,12 @@ def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     return _question(args, ctx)
 
 
-@builtin("\\None", (), (T.NoneType(),))
+@builtin(
+    "\\None",
+    (),
+    (T.NoneType(),),
+    examples=(('\\None', 'None{}'),),
+)
 def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the niladic `\\None` built-in runtime overload."""
     return (ObjectValue("None", {}),)
@@ -3142,6 +3558,7 @@ def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         returns="The corresponding character.",
         category="Strings",
     ),
+    examples=(('65 fromCharcode', 'A'),),
 )
 @alias("fromCharCode")
 def _from_charcode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -3157,15 +3574,31 @@ def _from_charcode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
         raise RuntimeError("fromCharcode code point is out of range") from exc
 
 
-@builtin("input", (T.String,), (T.String,), element_tags=(EAGER_TAG, IO_TAG))
+@builtin(
+    "input",
+    (T.String,),
+    (T.String,),
+    element_tags=(EAGER_TAG, IO_TAG),
+    examples=(('"Name: " input', None, 'Displays Name: and waits for a line from standard input.'),),
+)
 def _input(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Read one line from standard input after displaying a prompt."""
 
     return (python_builtins.input(args[0]),)
 
 
-@builtin("message", (T.N(ERR),), (T.String,))
-@builtin("message", (T.N(FAULT),), (T.String,))
+@builtin(
+    "message",
+    (T.N(ERR),),
+    (T.String,),
+    examples=(('ValueError("bad") message', 'bad'),),
+)
+@builtin(
+    "message",
+    (T.N(FAULT),),
+    (T.String,),
+    examples=(('ValueFault("bad") message', 'bad'),),
+)
 @alias("getMessage")
 def _failure_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `message`, `message` built-in runtime overloads."""
@@ -3186,7 +3619,12 @@ def _ok(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (ObjectValue("OK", {"value": args[0]}, type_args=ctx.type_args),)
 
 
-@builtin("or", (T.String, T.String), (T.String,))
+@builtin(
+    "or",
+    (T.String, T.String),
+    (T.String,),
+    examples=(('"" "fallback" or', 'fallback'),),
+)
 def _or_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `or` built-in runtime overload."""
     return (args[0] or args[1],)
@@ -3199,6 +3637,7 @@ def _or_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         T.TypeVariable("T"),
     ),
     (T.TypeVariable("T"),),
+    examples=(('Some(3) 9 or', 'Some[Int]{value: 3}'),),
 )
 def _or_optional(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `or` built-in runtime overload."""
@@ -3211,6 +3650,7 @@ def _or_optional(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.Never(),),
     (T.GenericConstraint("F", T.N(FAULT)),),
     element_tags=(T.ElementTag(Symbol("Panic"), (T.TypeVariable("F"),)),),
+    examples=(('ValueFault("invalid value") panic', None, 'Raises ValueFault; execution does not return normally.'),),
 )
 def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `panic` built-in runtime overload."""
@@ -3222,14 +3662,26 @@ def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # --------------------------------------------------------------------------
 
 
-@builtin("print", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
+@builtin(
+    "print",
+    (T.V("T"),),
+    (),
+    element_tags=(EAGER_TAG, IO_TAG),
+    examples=(('"hello" print', None, 'Writes hello without a newline and leaves no stack values.'),),
+)
 def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `print` built-in runtime overload."""
     ctx.output(ctx.format_value(args[0]))
     return ()
 
 
-@builtin("println", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
+@builtin(
+    "println",
+    (T.V("T"),),
+    (),
+    element_tags=(EAGER_TAG, IO_TAG),
+    examples=(('"hello" println', None, 'Writes hello followed by a newline and leaves no stack values.'),),
+)
 def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `println` built-in runtime overload."""
     ctx.output(ctx.format_value(args[0]) + "\n")
@@ -3371,6 +3823,9 @@ def _register_ffi_boundary_builtins() -> None:
                 f"Construct an unchecked `{ffi_name}` value.",
                 parameters=(("value", "Raw payload; no range validation is performed."),),
                 returns=f"An `{ffi_name}` value.", category="FFI",
+                examples=((f'FFI.{ffi_name}("hello")' if ffi_name == "&CString"
+                           else f"FFI.{ffi_name}(3)", None,
+                           "Construct an unchecked native value; prefer checked `to` conversions."),),
             ),
         )(raw)
 
@@ -3391,6 +3846,9 @@ def _register_ffi_boundary_builtins() -> None:
             "to", (source_type,), (T.FFI(Symbol(ffi_name[1:])),),
             element_tags=(_UNSAFE_TAG, _RANGE_PANIC_TAG, _VALUE_PANIC_TAG),
             vectorisable=False, conversion_target=T.FFI(Symbol(ffi_name[1:])),
+            examples=((f'"hello" to[{ffi_name}]' if ffi_name == "&CString"
+                       else f"3 to[{ffi_name}]", None,
+                       "Create a checked native scalar of the selected C type."),),
         )(checked)
 
     for ffi_name in (*_FFI_INTEGER_CTYPES, *_FFI_FLOAT_CTYPES):
@@ -3407,6 +3865,7 @@ def _register_ffi_boundary_builtins() -> None:
         builtin(
             "to", (ffi_type,), (target,), element_tags=(_UNSAFE_TAG,),
             vectorisable=False, conversion_target=target,
+            examples=((f"3 to[{ffi_name}] | to[{T.show(target)}]", "3"),),
         )(back)
 
     for ffi_name in (*_FFI_INTEGER_CTYPES, *_FFI_FLOAT_CTYPES):
@@ -3423,6 +3882,8 @@ def _register_ffi_boundary_builtins() -> None:
             "to", (source_list,), (target_buffer,),
             element_tags=(_UNSAFE_TAG, _RANGE_PANIC_TAG),
             vectorisable=False, conversion_target=target_buffer,
+            examples=((f"[1, 2, 3] to[{ffi_name}+]", None,
+                       "Copy a finite numeric list into a contiguous native buffer."),),
         )(buffer_checked)
 
         def buffer_back(args, _ctx, ffi_name=ffi_name):
@@ -3440,6 +3901,7 @@ def _register_ffi_boundary_builtins() -> None:
             "to", (target_buffer,), (source_list,),
             element_tags=(_UNSAFE_TAG,), vectorisable=False,
             conversion_target=source_list,
+            examples=((f"[1, 2, 3] to[{ffi_name}+] | to[{T.show(source_list)}]", "[1, 2, 3]"),),
         )(buffer_back)
 
     # cArr validates arbitrary-rank rectangular nesting and directly yields
@@ -3460,11 +3922,15 @@ def _register_ffi_boundary_builtins() -> None:
             return (_checked_ffi_buffer(_flatten_rectangular_values(*args), ffi_name),)
 
         for shape_type in shape_types:
+            shape_example = "{2, 2}" if shape_type == shape_types[0] else "[2, 2]"
+            array_values = "[[1, 2], [3, 4]]" if scalar_type == T.Int else "[[1.5, 2.5], [3.5, 4.5]]"
+            array_example = f"{array_values} {shape_example} cArr[{ffi_name}]"
             builtin(
                 "cArr", (T.C(T.ListRuggedType, scalar_type), shape_type),
                 (buffer_target,), param_names=("values", "shape"),
                 element_tags=matrix_faults, vectorisable=False,
                 conversion_target=scalar_target,
+                examples=((array_example, None, "Validate a two-dimensional shape and copy its values into a flat native buffer."),),
             )(c_array)
 
             if ffi_name in ("&int", "&double"):
@@ -3472,6 +3938,8 @@ def _register_ffi_boundary_builtins() -> None:
                     "cArr", (T.C(T.ListRuggedType, scalar_type), shape_type),
                     (buffer_target,), param_names=("values", "shape"),
                     element_tags=matrix_faults, vectorisable=False,
+                    examples=((f"{array_values} {shape_example} cArr", None,
+                               "Infer the native scalar type from the numeric input."),),
                 )(c_array)
 
     def cstring_back(args, _ctx):
@@ -3485,6 +3953,7 @@ def _register_ffi_boundary_builtins() -> None:
         "to", (T.FFI(Symbol("CString")),), (T.String,),
         element_tags=(_UNSAFE_TAG,), vectorisable=False,
         conversion_target=T.String,
+        examples=(('"hello" to[&CString] | to[String]', "hello"),),
     )(cstring_back)
 
 

@@ -196,6 +196,79 @@ _FILE_DOCS = {
     'nativeWriteLines': 'Write lines with LF delimiters.',
     'nativeWriteBytes': 'Write bytes in the inclusive range 0 to 255.',
 }
+_EXAMPLES = {
+    'nativeOpenWrite': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeClose""",
+    'nativeOpenAppend': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenAppend(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeClose""",
+    'nativeOpenRead': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeClose""",
+    'nativeClose': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeClose""",
+    'nativeFlush': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeFlush
+$handle file.nativeClose""",
+    'nativeWriteText': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle "hello" file.nativeWriteText
+$handle file.nativeClose""",
+    'nativeWriteLine': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle "hello" file.nativeWriteLine
+$handle file.nativeClose""",
+    'nativeWriteLines': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle ["a", "b"] file.nativeWriteLines
+$handle file.nativeClose""",
+    'nativeWriteBytes': """import {std.file}
+import {std.path}
+import {std.file.#byte}
+$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.UTF8)
+$handle [65 #byte, 66 #byte] file.nativeWriteBytes
+$handle file.nativeClose""",
+    'nativeReadText': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeReadText
+$handle file.nativeClose""",
+    'nativeReadLine': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeReadLine
+$handle file.nativeClose""",
+    'nativeReadLines': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeReadLines
+$handle file.nativeClose""",
+    'nativeReadBytes': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.UTF8)
+$handle 2 file.nativeReadBytes
+$handle file.nativeClose""",
+    'nativeReadAllBytes': """import {std.file}
+import {std.path}
+$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.UTF8)
+$handle file.nativeReadAllBytes
+$handle file.nativeClose""",
+}
+_EXAMPLE_CONTEXT = (
+    'Native read examples require example.txt to exist; native write examples modify it. Close handles after use.'
+)
+
 for _fn in tuple(globals().values()):
     _definition = getattr(_fn, '__valiance_native_function__', None)
     if _definition is not None and _definition.name.text in _FILE_DOCS:
@@ -203,5 +276,5 @@ for _fn in tuple(globals().values()):
             _definition,
             implementation=filesystem_operation(_definition.implementation),
             element_tags=frozenset(filesystem_effects(_definition.name.text)),
-            documentation=element_documentation(_FILE_DOCS[_definition.name.text], category='Files'),
+            documentation=element_documentation(_FILE_DOCS[_definition.name.text], category='Files', examples=((_EXAMPLES[_definition.name.text], None, _EXAMPLE_CONTEXT),)),
         )

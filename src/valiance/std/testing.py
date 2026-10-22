@@ -24,6 +24,7 @@ _VALUE = T.V("Value")
         parameters=(("actual", "Observed value."), ("expected", "Required value.")),
         returns="No stack values when the assertion succeeds.",
         category="Testing",
+        examples=(('import {std.testing} 5 5 testing.assertEqual', ''),),
     ),
 )
 def _assert_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -48,6 +49,7 @@ def _assert_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
         parameters=(("actual", "Observed value."), ("unexpected", "Value that must not match.")),
         returns="No stack values when the assertion succeeds.",
         category="Testing",
+        examples=(('import {std.testing} 2 3 testing.assertNotEqual', ''),),
     ),
 )
 def _assert_not_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -71,6 +73,7 @@ def _assert_not_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
         parameters=(("operation", "Niladic callable expected to panic."),),
         returns="No stack values when a panic is observed.",
         category="Testing",
+        examples=(('import {std.testing} testing.assertPanics(fn => ValueFault("bad") panic end)', ''),),
     ),
 )
 def _assert_panics(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -92,6 +95,7 @@ def _assert_panics(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
         parameters=(("message", "Failure message shown by the test runner."),),
         returns="Never returns normally.",
         category="Testing",
+        examples=(('import {std.testing} "unexpected result" testing.fail', None, 'Stops the test with the supplied failure message.'),),
     ),
 )
 def _fail(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:

@@ -19,7 +19,7 @@ from valiance.elements.stdlib_native import stdlib_element
     documentation=element_documentation(
         "Return a uniformly random binary integer.",
         returns="Either zero or one, each with equal probability.",
-        examples=(("randbit", "0"),),
+        examples=(('import {std.random} random.randbit', None, 'Returns either 0 or 1; the result varies.'),),
         category="Randomness",
     ),
 )
@@ -41,6 +41,7 @@ def _randbit(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ),
         returns="A random integer between the two bounds, inclusive.",
         category="Randomness",
+        examples=(('import {std.random} 1 6 random.between', None, 'Returns an integer from 1 through 6, inclusive; the result varies.'),),
     ),
 )
 def _between(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:

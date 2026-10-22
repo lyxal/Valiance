@@ -19,7 +19,7 @@ from valiance.elements.stdlib_native import stdlib_element
         "Remove leading and trailing whitespace from a string.",
         parameters=(("value", "String to trim."),),
         returns="The trimmed string.",
-        examples=(('"  hello  " | trim', "hello"),),
+        examples=(('import {std.text} "  hello  " text.trim', 'hello'),),
         category="Text",
     ),
 )

@@ -2,6 +2,7 @@
 #??
 #?? @param value String to transform.
 #?? @returns The trimmed string followed by `!`.
+#?? @example import {std.text} text.exclaim(" hi ")
 public define exclaim(value: String) -> String =>
   $value | std.text.trim | + "!"
 end

@@ -29,7 +29,7 @@ def _truth(value: bool) -> RuntimeNumber:
             ("value", "String to test."),
         ),
         returns="A Boolean indicating whether the complete string matched.",
-        examples=((r'"[A-Z][a-z]+" "Jeff" | matches', "true"),),
+        examples=(('import {std.regex} "[A-Z][a-z]+" "Jeff" regex.matches', '1'),),
         category="Regular expressions",
     ),
 )
@@ -52,6 +52,7 @@ def _matches(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ),
         returns="A Boolean indicating whether a match was found.",
         category="Regular expressions",
+        examples=(('import {std.regex} "[0-9]+" "item 42" regex.contains', '1'),),
     ),
 )
 def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -73,6 +74,7 @@ def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ),
         returns="`Some[String]` containing the first match, or `None`.",
         category="Regular expressions",
+        examples=(('import {std.regex} "[0-9]+" "item 42" regex.first | ?!', '42'),),
     ),
 )
 def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -98,6 +100,7 @@ def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ),
         returns="The transformed string.",
         category="Regular expressions",
+        examples=(('import {std.regex} "[0-9]+" "#" "item 42" regex.replace', 'item #'),),
     ),
 )
 def _replace(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -116,6 +119,7 @@ def _replace(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("pattern", "Separator pattern."), ("value", "String to split.")),
         returns="A list of string segments.",
         category="Regular expressions",
+        examples=(('import {std.regex} ", *" "a, b,c" regex.split', "['a', 'b', 'c']"),),
     ),
 )
 def _split(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:

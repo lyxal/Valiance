@@ -18,6 +18,7 @@ from valiance.elements.stdlib_native import stdlib_element
         "Return the uppercase English alphabet.",
         returns="`ABCDEFGHIJKLMNOPQRSTUVWXYZ`.",
         category="Strings",
+        examples=(('import {std.string} string.\\Alphabet', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'),),
     ),
 )
 def _alphabet(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -40,6 +41,7 @@ def _alphabet(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         ),
         returns="The transliterated string.",
         category="Strings",
+        examples=(('import {std.string} "cab" "abc" "ABC" string.transliterate', 'CAB'),),
     ),
 )
 def _transliterate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:

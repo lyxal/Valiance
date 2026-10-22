@@ -25,6 +25,7 @@ def _number(value: float) -> RuntimeNumber:
         "Return the mathematical constant pi.",
         returns="An approximation of π as a Valiance `Number`.",
         category="Trigonometry",
+        examples=(('import {std.trig} trig.pi', '3.141592653589793'),),
     ),
 )
 def _pi(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -42,6 +43,7 @@ def _pi(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("n", "Angle in radians."),),
         returns="The sine of the angle.",
         category="Trigonometry",
+        examples=(('import {std.trig} 0 trig.sin', '0'),),
     ),
 )
 def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -59,6 +61,7 @@ def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("n", "Angle in radians."),),
         returns="The cosine of the angle.",
         category="Trigonometry",
+        examples=(('import {std.trig} 0 trig.cos', '1'),),
     ),
 )
 def _cos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -76,6 +79,7 @@ def _cos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("n", "Angle in radians."),),
         returns="The tangent of the angle.",
         category="Trigonometry",
+        examples=(('import {std.trig} 0 trig.tan', '0'),),
     ),
 )
 def _tan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -93,6 +97,7 @@ def _tan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("n", "Input ratio."),),
         returns="The corresponding angle in radians.",
         category="Trigonometry",
+        examples=(('import {std.trig} 0 trig.asin', '0'),),
     ),
 )
 def _asin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -110,6 +115,7 @@ def _asin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("n", "Input ratio."),),
         returns="The corresponding angle in radians.",
         category="Trigonometry",
+        examples=(('import {std.trig} 1 trig.acos', '0'),),
     ),
 )
 def _acos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -127,6 +133,7 @@ def _acos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         parameters=(("n", "Input ratio."),),
         returns="The corresponding angle in radians.",
         category="Trigonometry",
+        examples=(('import {std.trig} 0 trig.atan', '0'),),
     ),
 )
 def _atan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
