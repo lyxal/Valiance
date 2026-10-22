@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import unittest
+from itertools import permutations
 
 import valiance.vtypes as T
 from valiance.analysis import Analyser
@@ -113,6 +114,94 @@ define measure(:Int|Boolean) -> String => "a"
         self.assertIn("ambiguous overloads for element 'map'", analyser.diagnostics[0])
 
 
+class SourceOverloadResolutionTests(unittest.TestCase):
+    """Check source argument planning and diagnostics against competing declarations."""
+
+    def test_call_syntax_preserves_selected_signature_and_identity(self):
+        declarations = (
+            'define choose(left: Int, right: String) -> String => $right end',
+            'define choose(left: String, right: Int) -> Int => $right end',
+            'define choose(left: Number, right: String) -> Number => $left end',
+        )
+        calls = (
+            '1 "value" choose',
+            'choose(1, "value")',
+            'choose(right = "value", left = 1)',
+            '1 choose(_, "value")',
+            '1 choose("value")',
+        )
+        for order in permutations(declarations):
+            selected_id = None
+            for call in calls:
+                with self.subTest(order=order, call=call):
+                    analyser = Analyser()
+                    typed = analyser.analyse(parse("\n".join(order) + "\n" + call))
+                    self.assertEqual(analyser.diagnostics, [])
+                    applied = typed[-1].overload
+                    self.assertEqual(applied.params, (T.Int, T.String))
+                    self.assertEqual(applied.actual_returns, (T.String,))
+                    self.assertIsNotNone(applied.overload.implementation_id)
+                    if selected_id is None:
+                        selected_id = applied.overload.implementation_id
+                    self.assertEqual(applied.overload.implementation_id, selected_id)
+
+    def test_cross_specificity_remains_ambiguous_in_every_call_syntax(self):
+        declarations = (
+            'define choose(a: Int, b: Int|String) -> Int => 10 end',
+            'define choose(a: Int|String, b: Int) -> String => "right" end',
+        )
+        for order in permutations(declarations):
+            for call in ('1 2 choose', 'choose(1, 2)', 'choose(b = 2, a = 1)'):
+                with self.subTest(order=order, call=call):
+                    analyser = Analyser()
+                    analyser.analyse(parse("\n".join(order) + "\n" + call))
+                    self.assertEqual(len(analyser.diagnostics), 1)
+                    diagnostic = analyser.diagnostics[0]
+                    self.assertIn("ambiguous overloads for element 'choose'", diagnostic)
+                    self.assertIn("candidate overloads:", diagnostic)
+                    self.assertIn("-> Int", diagnostic)
+                    self.assertIn("-> String", diagnostic)
+
+    def test_nonmatching_calls_produce_no_match_diagnostics(self):
+        declarations = '''
+define choose(a: Int, b: String) -> String => $b end
+define choose(a: String, b: Int) -> Int => $b end
+'''
+        for call in ('choose(1, 2)', 'choose("a", "b")', 'choose(1, "b", 3)'):
+            with self.subTest(call=call):
+                analyser = Analyser()
+                analyser.analyse(parse(declarations + call))
+                self.assertTrue(analyser.diagnostics)
+                self.assertIn("no overloads for element 'choose'", analyser.diagnostics[0])
+
+    def test_failed_candidate_does_not_leave_diagnostics_on_valid_call(self):
+        declarations = (
+            'define[T: any Number] choose(value: T) -> Int => 1 end',
+            'define choose(value: String) -> String => $value end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                analyser = Analyser()
+                typed = analyser.analyse(parse("\n".join(order) + '\nchoose("ok")'))
+                self.assertEqual(analyser.diagnostics, [])
+                self.assertEqual(typed[-1].overload.params, (T.String,))
+                self.assertEqual(typed[-1].overload.actual_returns, (T.String,))
+
+    def test_equally_vectorised_scalar_and_row_candidates_remain_ambiguous(self):
+        declarations = (
+            'define choose(value: Int) -> String => "scalar" end',
+            'define choose(value: Int+) -> String => "row" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                analyser = Analyser()
+                analyser.analyse(parse("\n".join(order) + '\nchoose([[1, 2], [3, 4]])'))
+                self.assertEqual(len(analyser.diagnostics), 1)
+                self.assertIn("ambiguous overloads for element 'choose'", analyser.diagnostics[0])
+                self.assertIn("-> String+2", analyser.diagnostics[0])
+                self.assertIn("-> String+", analyser.diagnostics[0])
+
+
 class CallableOverloadSelectionTests(unittest.TestCase):
     """Verify callable overload choice against an immutable mini stack."""
 
@@ -191,6 +280,30 @@ class CallableOverloadSelectionTests(unittest.TestCase):
         self.assertIsNone(
             choose_best_overload(T.Number, T.TypeStack((T.Number,)))
         )
+
+    def test_each_stack_state_must_be_covered_by_the_same_candidate(self):
+        integer = T.Overload((T.Int,), (T.String,))
+        string = T.Overload((T.String,), (T.String,))
+        states = (T.TypeStack((T.Int,)), T.TypeStack((T.String,)))
+        for order in permutations((integer, string)):
+            for state_order in permutations(states):
+                with self.subTest(order=order, states=state_order):
+                    self.assertIsNone(choose_best_overload(T.Overloads(*order), state_order))
+
+    def test_common_candidate_wins_independently_of_candidate_and_state_order(self):
+        common = T.Overload((T.Number,), (T.String,))
+        integer = T.Overload((T.Int,), (T.Boolean,))
+        states = (T.TypeStack((T.String, T.Int)), T.TypeStack((T.String, T.Real)))
+        for order in permutations((integer, common)):
+            for state_order in permutations(states):
+                with self.subTest(order=order, states=state_order):
+                    chosen = choose_best_overload(T.Overloads(*order), state_order)
+                    self.assertIsNotNone(chosen)
+                    self.assertIs(chosen.overload, common)
+                    self.assertEqual(len(chosen.applications), 2)
+                    for application in chosen.applications:
+                        self.assertEqual(application.inputs, ())
+                        self.assertEqual(application.stack, T.TypeStack((T.String, T.String)))
 
 
 if __name__ == "__main__":

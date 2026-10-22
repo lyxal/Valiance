@@ -5,7 +5,7 @@ import unittest
 from dataclasses import replace, fields, is_dataclass
 from unittest.mock import patch
 from builtins import RuntimeError as PythonRuntimeError
-from itertools import count, islice
+from itertools import count, islice, permutations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -8324,6 +8324,145 @@ end
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OverloadResolutionRuntimeMatrixTests(unittest.TestCase):
+    """Keep selected implementations stable through lowering and persistence."""
+
+    def assert_execution_modes(self, source, expected):
+        """Compare each execution mode with an independently specified result."""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    executable = loads(dumps(program)) if serialized else program
+                    self.assertEqual(run(executable), expected)
+
+    def test_numeric_specialization_and_static_widening_in_every_declaration_order(self):
+        declarations = (
+            'define choose(value: Number) -> String => "number" end',
+            'define choose(value: Real) -> String => "real" end',
+            'define choose(value: Int) -> String => "integer" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+define widen(value: Number) -> Number => $value end
+define realView(value: Real) -> Real => $value end
+"sentinel" | choose(1) | choose(1.5) | choose(widen(1)) | choose(realView(1))
+''', ["sentinel", "integer", "real", "number", "real"])
+
+    def test_argument_syntax_selects_and_binds_the_same_implementation(self):
+        declarations = (
+            'define choose(a: Int, b: String) -> String => "${$a}:${$b}" end',
+            'define choose(a: String, b: Int) -> String => "wrong-order" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+"sentinel" |
+7 "ok" choose |
+choose(7, "ok") |
+choose(b = "ok", a = 7) |
+7 choose(_, "ok") |
+7 choose("ok")
+''', ["sentinel"] + ["7:ok"] * 5)
+
+    def test_defaults_are_taken_from_the_selected_candidate(self):
+        declarations = (
+            'define choose(value: Int, label: String = "integer") -> String => $label end',
+            'define choose(value: String, label: String = "string") -> String => $label end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+choose(1) | choose("x") |
+choose(label = "override", value = 1) |
+"stack" choose(1, _)
+''', ["integer", "string", "override", "stack"])
+
+    def test_generic_selection_is_fresh_for_each_call(self):
+        declarations = (
+            'define[T] choose(value: T) -> T => $value end',
+            'define choose(value: Int) -> String => "integer" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+choose("first") | choose(1) | choose(["a", "b"]) | choose("last")
+''', ["first", "integer", ["a", "b"], "last"])
+
+    def test_direct_collection_overload_beats_vectorised_scalar(self):
+        declarations = (
+            'define choose(value: Int) -> String => "scalar" end',
+            'define choose(value: Int+) -> String => "row" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+choose(1) | choose([1, 2])
+''', ["scalar", "row"])
+
+    def test_vectorised_numeric_overloads_preserve_broadcast_and_nested_shape(self):
+        declarations = (
+            'define choose(a: Number, b: Number) -> String => "number" end',
+            'define choose(a: Int, b: Int) -> String => "${$a}:${$b}" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+choose([1, 2], 9) | choose([[1, 2], [3]], 8)
+''', [["1:9", "2:9"], [["1:8", "2:8"], ["3:8"]]])
+
+    def test_union_callback_keeps_static_branch_winners(self):
+        declarations = (
+            'define choose(value: Number) -> String => "number" end',
+            'define choose(value: Int) -> String => "integer" end',
+            'define choose(value: String) -> String => "string" end',
+        )
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes("\n".join(order) + '''
+define widen(value: Number) -> Number => $value end
+[1 widen, "a", 2 widen, "b"] map: choose
+''', [["number", "string", "number", "string"]])
+
+    def test_equivalent_redeclaration_uses_latest_body_without_replacing_other_signatures(self):
+        for first, last in (("old", "new"), ("new", "old")):
+            with self.subTest(first=first, last=last):
+                self.assert_execution_modes(f'''
+define choose(value: Int) -> String => "{first}" end
+define choose(value: String) -> String => "string" end
+define choose(value: Int) -> String => "{last}" end
+choose(1) | choose("x")
+''', [last, "string"])
+
+    def test_multimethod_specializations_and_fallback_survive_round_trip(self):
+        declarations = (
+            'multi define choose(a: Circle, b: Square) -> String => "circle-square" end',
+            'multi define choose(a: Square, b: Circle) -> String => "square-circle" end',
+        )
+        prelude = '''
+trait Shape => end
+object Circle => end
+object Square => end
+object Circle as Shape => end
+object Square as Shape => end
+define widen(value: Shape) -> Shape => $value end
+define choose(a: Shape, b: Shape) -> String => "fallback" end
+'''
+        for order in permutations(declarations):
+            with self.subTest(order=order):
+                self.assert_execution_modes(prelude + "\n".join(order) + '''
+choose(Circle, Square) |
+choose(widen(Circle), widen(Square)) |
+choose(widen(Square), widen(Circle)) |
+choose(widen(Circle), widen(Circle)) |
+choose(widen(Square), widen(Square))
+''', ["circle-square", "circle-square", "square-circle", "fallback", "fallback"])
 
 
 class ImportedOverloadRuntimeTests(unittest.TestCase):

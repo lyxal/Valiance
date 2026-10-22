@@ -1,7 +1,7 @@
 import unittest
 
 import valiance.vtypes as T
-from itertools import permutations
+from itertools import permutations, product
 
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes import (
@@ -1801,6 +1801,188 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(same(forward.substitution["T"], reverse.substitution["T"]))
 
 
+
+
+class OverloadResolutionMatrixTests(unittest.TestCase):
+    """Exercise selection laws across candidate order, ranks, and type evidence."""
+
+    def test_numeric_winner_is_independent_of_order_and_vectorisation(self):
+        numeric = (T.Int, T.Real, T.Number)
+        overloads = tuple(T.Overload((typ, typ), (typ,)) for typ in numeric)
+        for left, right, rank in product(range(3), range(3), range(3)):
+            args = tuple(
+                T.ExactList(numeric[index], rank) if rank else numeric[index]
+                for index in (left, right)
+            )
+            expected = numeric[max(left, right)]
+            result_type = T.ExactList(expected, rank) if rank else expected
+            for order in permutations(overloads):
+                with self.subTest(left=left, right=right, rank=rank, order=order):
+                    resolved = T.resolve_overload_result(order, args)
+                    applied = T.apply_overloads_to_stack(
+                        order, T.TypeStack((T.String,) + args)
+                    )
+                    self.assertIsNotNone(resolved)
+                    self.assertIsNotNone(applied)
+                    self.assertIs(resolved.overload, overloads[max(left, right)])
+                    self.assertIs(applied.overload, resolved.overload)
+                    self.assertEqual(applied.stack, T.TypeStack((T.String, result_type)))
+                    self.assertEqual(applied.vectorised, rank > 0)
+
+    def test_dominated_and_inapplicable_candidates_do_not_change_winner(self):
+        winner = T.Overload((T.Int,), (T.String,))
+        candidates = (
+            winner,
+            T.Overload((T.Number,), (T.Number,)),
+            T.Overload((T.U(T.Int, T.String),), (T.Boolean,)),
+            T.Overload((T.String,), (T.Int,)),
+        )
+        for order in permutations(candidates):
+            with self.subTest(order=order):
+                result = T.resolve_overload_result(order, (T.Int,))
+                self.assertIsNotNone(result)
+                self.assertIs(result.overload, winner)
+                self.assertEqual(result.returns, (T.String,))
+
+    def test_cross_specificity_cannot_be_resolved_by_order_or_return_type(self):
+        broad = T.U(T.Int, T.String)
+        # One exact match cannot compensate for two weaker matches elsewhere.
+        for returns in ((T.String, T.String), (T.Int, T.String)):
+            candidates = (
+                T.Overload((T.Int, broad, broad), (returns[0],)),
+                T.Overload((broad, T.Int, T.Int), (returns[1],)),
+                T.Overload((broad, broad, broad), (T.Number,)),
+            )
+            for order in permutations(candidates):
+                with self.subTest(returns=returns, order=order):
+                    self.assertIsNone(T.resolve_overload_result(order, (T.Int,) * 3))
+                    self.assertIsNone(T.apply_overloads_to_stack(
+                        order, T.TypeStack((T.Int,) * 3)
+                    ))
+
+    def test_generic_solutions_do_not_leak_between_candidates_or_calls(self):
+        generic = T.Overload((T.V("T"),), (T.V("T"),))
+        constrained = T.Overload(
+            (T.V("T"),), (T.Boolean,),
+            generic_constraints=(T.GenericConstraint("T", T.Number),),
+        )
+        concrete = T.Overload((T.Int,), (T.String,))
+        for order in permutations((generic, constrained, concrete)):
+            for actual, expected, returns in (
+                (T.String, generic, (T.String,)),
+                (T.Int, concrete, (T.String,)),
+                (T.ExactList(T.String), generic, (T.ExactList(T.String),)),
+                (T.String, generic, (T.String,)),
+            ):
+                with self.subTest(order=order, actual=actual):
+                    result = T.resolve_overload_result(order, (actual,))
+                    self.assertIsNotNone(result)
+                    self.assertIs(result.overload, expected)
+                    self.assertEqual(result.returns, returns)
+                    if expected is generic:
+                        self.assertEqual(result.substitution, {"T": actual})
+        self.assertEqual(generic.params, (T.V("T"),))
+        self.assertEqual(generic.returns, (T.V("T"),))
+
+    def test_collection_match_beats_scalar_vectorisation_at_each_rank(self):
+        scalar = T.Overload((T.Int,), (T.Boolean,))
+        for rank in (1, 2, 3):
+            collection = T.ExactList(T.Int, rank)
+            direct = T.Overload((collection,), (T.String,))
+            for order in permutations((scalar, direct)):
+                with self.subTest(rank=rank, order=order):
+                    applied = T.apply_overloads_to_stack(order, T.TypeStack((collection,)))
+                    self.assertIsNotNone(applied)
+                    self.assertIs(applied.overload, direct)
+                    self.assertFalse(applied.vectorised)
+                    self.assertEqual(applied.actual_returns, (T.String,))
+
+    def test_exact_candidate_rejection_does_not_disable_another_candidates_vectorisation(self):
+        exact = T.Overload((T.Exact(T.Int),), (T.String,))
+        scalar = T.Overload((T.Int,), (T.Boolean,))
+        for order in permutations((exact, scalar)):
+            with self.subTest(order=order):
+                applied = T.apply_overloads_to_stack(
+                    order, T.TypeStack((T.ExactList(T.Int, 2),))
+                )
+                self.assertIsNotNone(applied)
+                self.assertIs(applied.overload, scalar)
+                self.assertTrue(applied.vectorised)
+                self.assertEqual(applied.actual_returns, (
+                    T.Tagged(T.ExactList(T.Int, 2), T.DataTag("boolean", depth=2)),
+                ))
+
+    def test_union_argument_requires_complete_coverage_by_selected_overload(self):
+        partial = T.Overload((T.Int,), (T.Boolean,))
+        complete = T.Overload((T.U(T.Number, T.String),), (T.String,))
+        for members in permutations((T.Int, T.String)):
+            args = (T.U(*members),)
+            self.assertIsNone(T.resolve_overload_result((partial,), args))
+            for order in permutations((partial, complete)):
+                with self.subTest(members=members, order=order):
+                    result = T.resolve_overload_result(order, args)
+                    self.assertIsNotNone(result)
+                    self.assertIs(result.overload, complete)
+
+    def test_wrong_arity_and_types_do_not_consume_or_search_lower_stack_values(self):
+        overload = T.Overload((T.Int, T.String), (T.Boolean,))
+        for items in ((), (T.String,), (T.String, T.Int), (T.Int, T.String, T.Boolean)):
+            with self.subTest(items=items):
+                stack = T.TypeStack(items)
+                self.assertIsNone(T.apply_overloads_to_stack((overload,), stack))
+                self.assertEqual(stack.items, items)
+
+    def test_trait_resolution_uses_current_context_without_retaining_old_evidence(self):
+        shape = T.N(Symbol("Shape"))
+        printable = T.N(Symbol("Printable"))
+        circle = T.N(Symbol("Circle"))
+        shape_overload = T.Overload((shape,), (T.String,))
+        printable_overload = T.Overload((printable,), (T.Int,))
+        for order in permutations((shape_overload, printable_overload)):
+            for traits, expected in (
+                ({shape.name}, shape_overload),
+                ({printable.name}, printable_overload),
+                ({shape.name, printable.name}, None),
+                (set(), None),
+                ({shape.name}, shape_overload),
+            ):
+                with self.subTest(order=order, traits=traits):
+                    ctx = T.Context(trait_impls={circle.name: traits})
+                    result = T.resolve_overload_result(order, (circle,), ctx)
+                    if expected is None:
+                        self.assertIsNone(result)
+                    else:
+                        self.assertIsNotNone(result)
+                        self.assertIs(result.overload, expected)
+
+    def test_union_callable_coverage_requires_every_argument_combination(self):
+        branches = tuple(product((T.Int, T.String), repeat=2))
+        overloads = tuple(T.Overload(params, (T.String,)) for params in branches)
+        expected = T.Fn((T.U(T.Int, T.String),) * 2, (T.String,))
+        for order in permutations(overloads):
+            with self.subTest(order=order):
+                self.assertTrue(T.compatible(T.Overloads(*order), expected))
+        for omitted in range(len(overloads)):
+            with self.subTest(omitted=branches[omitted]):
+                partial = overloads[:omitted] + overloads[omitted + 1:]
+                self.assertFalse(T.compatible(T.Overloads(*partial), expected))
+
+    def test_union_callable_checks_each_selected_return_and_branch_ambiguity(self):
+        expected = T.Fn((T.U(T.Int, T.String),), (T.String,))
+        integer = T.Overload((T.Int,), (T.String,))
+        wrong_return = T.Overload((T.String,), (T.Int,))
+        for order in permutations((integer, wrong_return)):
+            with self.subTest(order=order):
+                self.assertFalse(T.compatible(T.Overloads(*order), expected))
+        ambiguous = (
+            T.Overload((T.Int,), (T.String,)),
+            T.Overload((T.Int,), (T.Int,)),
+            T.Overload((T.String,), (T.String,)),
+        )
+        expected = T.Fn((T.U(T.Int, T.String),), (T.U(T.Int, T.String),))
+        for order in permutations(ambiguous):
+            with self.subTest(order=order):
+                self.assertFalse(T.compatible(T.Overloads(*order), expected))
 
 
 class InlineTraitElementTagConformanceTests(unittest.TestCase):
