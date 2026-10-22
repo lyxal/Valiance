@@ -1579,13 +1579,13 @@ fail \MyGraph[Int]
                         self.assertEqual(run(loads(dumps(program))), ["true"])
 
     def test_postfix_to_string_operates_on_the_integer_not_the_trait_argument(self):
-        # `$g 1 toString` applies the built-in to 1. The preceding trait-typed
+        # `$g 1 to[String]` applies the built-in to 1. The preceding trait-typed
         # `$g` is not the receiver of this unary operation.
         source = """object Box =>
-  define toString(v: Int) => "custom"
+  define render(v: Int) => "custom"
 end
-define through(g: trait => extend toString(Int) -> String end) =>
-  $g 1 toString
+define through(g: trait => extend render(Int) -> String end) =>
+  $g 1 to[String]
 end
 through Box"""
         analyser = Analyser()
@@ -7661,7 +7661,7 @@ end
 
     def test_lazy_slice_assignment_can_build_fizzbuzz_positions(self):
         [result] = execute(
-            "range(1, 100) map: toString\n"
+            "range(1, 100) map: to[String]\n"
             '$[2::3] = "Fizz"\n'
             '$[4::5] = "Buzz"\n'
             '$[14::15] = "FizzBuzz"'
@@ -8857,6 +8857,38 @@ $point[0, 1]
 class ConversionProtocolRuntimeTests(unittest.TestCase):
     """Cover built-in and user-defined target-directed conversions."""
 
+    def test_generic_string_conversion(self) -> None:
+        for source, expected in (
+            ('42 to[String]', '42'),
+            ('"hello" to[String]', 'hello'),
+            ('[1, 2] to[String]', '[1, 2]'),
+            ('{1, "two"} to[String]', "(1, 'two')"),
+            ('true | to?[String]', '1'),
+            ('define[T] render(value: T) -> String => $value to[String]\nrender(3)', '3'),
+        ):
+            for optimize in (False, True):
+                with self.subTest(source=source, optimize=optimize):
+                    analyser = Analyser()
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))),
+                                     [expected])
+
+    def test_specific_string_conversion_overrides_generic_formatter(self) -> None:
+        source = '''
+object Label => end
+@convert(Label -> String)
+define to(value: Label) -> String => "label"
+Label | to[String]
+'''
+        self.assertEqual(execute(source), ['label'])
+
+    def test_removed_to_string_is_not_available(self) -> None:
+        analyser = Analyser()
+        analyser.analyse(parse('1 toString'))
+        self.assertTrue(any("unknown element 'toString'" in str(d)
+                            for d in analyser.diagnostics))
+
     def test_string_integer_conversions(self) -> None:
         for operation in ("to[Int]", "to?[Int]"):
             for text, expected in (("42", 42), (" -17 ", -17), ("+0", 0),
@@ -8960,7 +8992,7 @@ end
                                   for tag in overload.element_tags}, effects)
 
     def test_optional_conversion_requires_declared_target(self) -> None:
-        for source in ('1 to?[Int]', '"1" to?[String]', '"1" to?', '"1" to?[Int, String]'):
+        for source in ('1 to?[Int]', '"1" to?', '"1" to?[Int, String]'):
             with self.subTest(source=source):
                 analyser = Analyser()
                 analyser.analyse(parse(source))
@@ -8971,7 +9003,7 @@ end
 @convert(Int -> String)
 define to(value: Int) -> String =>
   if ($value < 0) => ValueFault("negative") panic
-  $value toString
+  "accepted"
 end
 @convert(Int -> Real)
 define to(value: Int) -> Real => $value as[Real]
@@ -8988,7 +9020,7 @@ to?[String](2)
                 program = compile_program(typed, optimize=optimize)
                 self.assertEqual(run(loads(dumps(program))),
                                  [RuntimeNumber(77), ObjectValue("None", {}),
-                                  "2", RuntimeNumber(3)])
+                                  "accepted", RuntimeNumber(3)])
 
     def test_optional_conversion_preserves_other_effects_and_argument_panics(self) -> None:
         source = '''
@@ -8996,7 +9028,7 @@ to?[String](2)
 define to(value: Int) -> String =>
   "converted" println
   if ($value < 0) => ValueFault("negative") panic
-  $value toString
+  "accepted"
 end
 define convert(value: Int) -> String? => $value to?[String]
 '''

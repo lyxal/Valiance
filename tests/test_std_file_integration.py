@@ -79,7 +79,7 @@ class FileLanguageIntegrationTests(unittest.TestCase):
 
     def test_selected_path_warns_only_when_converted_to_string(self):
         analyser = Analyser()
-        analyser.analyse(parse('import {std.path.Path}\nPath "example" | toString'))
+        analyser.analyse(parse('import {std.path.Path, std.path.to}\nPath "example" | to[String]'))
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(len(analyser.warnings), 1)
         self.assertIn('may lose non-Unicode filename data', analyser.warnings[0])
@@ -550,7 +550,8 @@ end''')
         self.assertIn('no overloads', ' '.join(map(str, analyser.diagnostics)))
 
     def test_compiler_warns_about_lossy_string_conversion(self):
-        _, analyser = self._run('path.Path("hello") path.toString')
+        result, analyser = self._run('path.Path("hello") path.to[String]')
+        self.assertEqual(result, ['hello'])
         self.assertTrue(any('may lose' in str(warning) for warning in analyser.warnings), analyser.warnings)
 
     @unittest.skipIf(os.name == 'nt', 'POSIX filename bytes are platform-specific')

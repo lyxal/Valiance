@@ -2021,6 +2021,16 @@ runtime execution use the existing function pipeline. A conversion overload is
 not available through an unqualified `to` call because the target is part of the
 call-site contract.
 
+The built-in `@convert(T -> String)` is a generic runtime formatter exposed as
+`to[String]`. User-defined conversions follow ordinary element shadowing rules.
+Strings pass through unchanged and aggregates use runtime display syntax.
+When a conversion accepts the source contract without refinement, selection
+discards providers for the same target that require specializing that contract.
+This lets an unconstrained generic function format its argument without
+accidentally selecting a conversion requiring a concrete native source type.
+Native standard-library declarations carry the same `conversion_target`
+metadata through their typed wrappers and runtime registrations.
+
 
 ## Optional cursor-inspection provenance
 

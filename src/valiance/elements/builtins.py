@@ -636,6 +636,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         notes=(
             "Target-directed conversion selects an overload using `to[Type]`; "
             "available conversions depend on the source and target types. "
+            "`to[String]` formats any value using Valiance runtime display syntax. "
             "For Strings, `to[Int]` parses a base-ten integer and panics with "
             "`ConversionFault` when parsing fails. `to[Real]` parses a real "
             "number and `to[Number]` also accepts complex numeric notation; "
@@ -650,13 +651,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The input value.",
         category="Stack",
         examples=(('7 top', '7'),),
-    ),
-    "toString": element_documentation(
-        "Format a value using Valiance runtime display syntax.",
-        parameters=(("value", "Value to format."),),
-        returns="The formatted string.",
-        category="Strings",
-        examples=(('42 toString', '42'),),
     ),
     "true": element_documentation(
         "Push the Boolean true value.",
@@ -2621,7 +2615,7 @@ def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         T.Fn((T.String,), (T.TypeVariable("Mapped"),)),
     ),
     (T.ExactList(T.TypeVariable("Mapped")),),
-    examples=(('"abc" map: toString', "['a', 'b', 'c']"),),
+    examples=(('"abc" map: to[String]', "['a', 'b', 'c']"),),
 )
 def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Map a unary function over the characters of a finite string."""
@@ -3694,9 +3688,9 @@ def _some(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (ObjectValue("Some", {"value": args[0]}, type_args=ctx.type_args),)
 
 
-@builtin("toString", (T.V("T"),), (T.String,))
+@builtin("to", (T.V("T"),), (T.String,), conversion_target=T.String)
 def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `toString` built-in runtime overload."""
+    """Format any value through the target-directed String conversion."""
     return (ctx.format_value(args[0]),)
 
 

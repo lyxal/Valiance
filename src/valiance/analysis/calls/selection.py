@@ -111,6 +111,31 @@ class _CallSelection:
     ) -> tuple[CallCandidate, ...] | None:
         """Select the most specific viable call candidates and diagnose ambiguity."""
         candidates = tuple(candidates)
+        # A total conversion must remain usable from a generic function. Prefer
+        # providers accepting its source contract over providers that only match
+        # by specializing that contract (for example, T to &CString).
+        accepting_targets = {
+            candidate.applied.overload.conversion_target
+            for candidate in candidates
+            if candidate.applied.overload.conversion_target is not None
+            and candidate.source_arguments
+            and all(
+                T.assignable(source, parameter, self.env.context)
+                for source, parameter in zip(
+                    candidate.source_arguments, candidate.applied.params, strict=True
+                )
+            )
+        }
+        candidates = tuple(
+            candidate for candidate in candidates
+            if candidate.applied.overload.conversion_target not in accepting_targets
+            or all(
+                T.assignable(source, parameter, self.env.context)
+                for source, parameter in zip(
+                    candidate.source_arguments, candidate.applied.params, strict=True
+                )
+            )
+        )
         provider_ambiguity = self._behaviour_set_provider_ambiguity(
             candidates,
             branch,

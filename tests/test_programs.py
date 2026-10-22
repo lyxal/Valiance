@@ -342,7 +342,7 @@ $findFold([4, 7, 9], 5)
         result = execute("""
         range(1, 100) map fn (n) =>
             % [3, 5] == 0 * ["Fizz", "Buzz"]
-            join "" or toString $n
+            join "" or to[String] $n
         end
         """)
         self.assertEqual(result, [FIZZBUZZ_TO_100])
@@ -353,7 +353,7 @@ $findFold([4, 7, 9], 5)
             if % 15 == 0 => "FizzBuzz"
             if %  5 == 0 =>     "Buzz"
             if %  3 == 0 =>     "Fizz"
-                  _ => toString
+                  _ => to[String]
         end 
         """)
         self.assertEqual(result, [FIZZBUZZ_TO_100])

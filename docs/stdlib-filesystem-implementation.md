@@ -7,7 +7,7 @@ This checkout extends the existing archive (including its terminal editor and
 
 * `path.Path(String)` stores native-path spelling for filesystem use;
   on POSIX, surrogate-escaped string storage round-trips arbitrary legal
-  filename bytes through `os.fsencode`/`os.fsdecode`. `path.toString` always
+  filename bytes through `os.fsencode`/`os.fsdecode`. `path.to[String]` always
   returns String and carries an existing `@warn` compile-time annotation.
 * Path operations `path.join`, `path.parent`, `path.name`, `path.extension`,
   `path.isAbsolute` use the native path representation. `join` accepts and

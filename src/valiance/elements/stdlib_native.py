@@ -45,6 +45,7 @@ class NativeFunction:
     exported: bool = True
     element_tags: frozenset[T.ElementTag] = frozenset()
     param_defaults: tuple[tuple[ASTNode, ...] | None, ...] = ()
+    conversion_target: T.Type | None = None
 
 
 def native_function(
@@ -60,6 +61,7 @@ def native_function(
     exported: bool = True,
     element_tags: tuple[T.ElementTag, ...] = (),
     param_defaults: tuple[tuple[ASTNode, ...] | None, ...] = (),
+    conversion_target: T.Type | None = None,
 ) -> NativeFunction:
     """Declare one importable Python-backed stdlib function."""
     return NativeFunction(
@@ -74,6 +76,7 @@ def native_function(
         exported,
         frozenset(element_tags),
         param_defaults,
+        conversion_target,
     )
 
 
@@ -89,6 +92,7 @@ def stdlib_element(
     exported: bool = True,
     element_tags: tuple[T.ElementTag, ...] = (),
     param_defaults: tuple[tuple[ASTNode, ...] | None, ...] = (),
+    conversion_target: T.Type | None = None,
 ) -> Callable[[NativeImpl], NativeImpl]:
     """Decorate a Python implementation as an importable stdlib function."""
 
@@ -106,6 +110,7 @@ def stdlib_element(
             exported=exported,
             element_tags=element_tags,
             param_defaults=param_defaults,
+            conversion_target=conversion_target,
         )
         return fn
 
@@ -273,7 +278,7 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
     param_names = _effective_param_names(function)
     runtime_name = Symbol(function.name.text, ("std", module_name))
     identity = _native_implementation_id(module_name, function)
-    overload = T.Overload(params, function.returns, param_names=param_names, param_defaults=_effective_defaults(function), implementation_id=identity, annotation_warning=function.warning, element_tags=function.element_tags)
+    overload = T.Overload(params, function.returns, param_names=param_names, param_defaults=_effective_defaults(function), implementation_id=identity, annotation_warning=function.warning, element_tags=function.element_tags, conversion_target=function.conversion_target)
     applied = T.AppliedOverload(
         overload,
         {},
@@ -334,7 +339,8 @@ def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinEleme
                 T.Overload(_effective_params(function), function.returns,
                            implementation_id=_native_implementation_id(module_name, function),
                            param_defaults=_effective_defaults(function),
-                           annotation_warning=function.warning, element_tags=function.element_tags),
+                           annotation_warning=function.warning, element_tags=function.element_tags,
+                           conversion_target=function.conversion_target),
                 function.implementation,
             ),
         ),

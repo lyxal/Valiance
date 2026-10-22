@@ -1,7 +1,7 @@
 """Native path operations for the Valiance Path object.
 
 On POSIX, os.fsdecode/os.fsencode round-trip all legal filename bytes,
-including non-UTF-8 names.  Only toString exposes potentially lossy text.
+including non-UTF-8 names.  Only to[String] exposes potentially lossy text.
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def _is_absolute(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    'toString', (), (T.String,), owner='Path', exported=False,
+    'to', (_PATH,), (T.String,), conversion_target=T.String,
     warning='Path to String may lose non-Unicode filename data; use Path for filesystem operations',
 )
 def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -88,7 +88,7 @@ from valiance.elements.documentation import element_documentation
 
 _PATH_DOCS = {
     'isAbsolute': 'Test whether the native path is absolute.',
-    'toString': 'Convert the native path to a possibly lossy String.',
+    'to': 'Convert the native path to a possibly lossy String.',
     'join': 'Join native Path objects without losing filename bytes.',
     'parent': 'Retrieve the lexical parent, or None if none exists.',
     'name': 'Retrieve the last native path component, or None if absent.',
@@ -97,8 +97,8 @@ _PATH_DOCS = {
 _EXAMPLES = {
     'isAbsolute': """import {std.path.Path}
 Path "notes.txt" | isAbsolute""",
-    'toString': """import {std.path.Path}
-Path "notes.txt" | toString""",
+    'to': """import {std.path.Path, std.path.to}
+Path "notes.txt" | to[String]""",
     'join': """import {std.path}
 path.join(path.Path("notes"), path.Path("report.txt"))""",
     'parent': """import {std.path}

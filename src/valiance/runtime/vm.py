@@ -2589,7 +2589,7 @@ class VirtualMachine:
             target = function.globals.get(name)
             if isinstance(target, BuiltinValue):
                 # The object method is not the executable binding for this
-                # symbol (for example, postfix `1 toString` is the intrinsic).
+                # symbol (for example, postfix `1 to[String]` is the intrinsic).
                 continue
             proven_id = runtime_trait_witness(args[index], name, contract)
             if proven_id is None:

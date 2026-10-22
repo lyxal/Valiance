@@ -1317,7 +1317,7 @@ $text[1, 3, 5] := 1 rotate
 - For zero-based FizzBuzz over `range(1, 100)`, use offsets 2, 4, and 14:
 
 ```
-range(1, 100) map: toString
+range(1, 100) map: to[String]
 $[2::3] = "Fizz"
 $[4::5] = "Buzz"
 $[14::15] = "FizzBuzz"
@@ -5548,6 +5548,12 @@ end
 - `@convert(Source -> Target)` registers a conversion under that pairing.
   The implementing function must be named `to`; the reserved name is what
   the compiler indexes on, alongside the declared pairing.
+- The built-in generic `T -> String` conversion formats any value using
+  runtime display syntax: `42 to[String]` returns `"42"`, Strings pass
+  through unchanged, and aggregates retain their display delimiters.
+  This formatter is implemented by the runtime. User-defined `to` elements
+  follow ordinary shadowing rules. Native paths have a separate
+  `path.to[String]` conversion that retains the lossy-filename warning.
 - `to?[Type]` selects the same `@convert(Source -> Target)` implementation
   as `to[Type]`. It returns the converted value on success and `None` if
   that conversion panics, with static result type `Type?`. No separate

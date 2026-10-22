@@ -1460,8 +1460,8 @@ overload resolver. Analyser-selected implementation IDs control method calls,
 so `foo(Number)` versus `foo(Real)` is decided statically, not by declaration
 order or runtime argument types.
 
-The previously reported `toString` collision (`$g 1 toString`) was **not a
-compiler bug**: the unary `toString` is invoked on the integer `1`, not on
+The previously reported `to[String]` collision (`$g 1 to[String]`) was **not a
+compiler bug**: the unary `to[String]` is invoked on the integer `1`, not on
 `$g`, so returning `"1"` is correct. No runtime method-lookup workaround
 should be added for that example.
 
@@ -2521,7 +2521,7 @@ overload selection.
 The analyser must establish concrete method evidence when converting a
 nominal value into a structural abstraction. A value already carrying a trait
 witness forwards that evidence; a missing witness cannot be manufactured by
-the VM. Built-in postfix operations such as `1 toString` retain their existing
+the VM. Built-in postfix operations such as `1 to[String]` retain their existing
 receiver semantics.
 
 The identity migration now also covers resolved elements, constructors,
