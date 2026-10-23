@@ -3961,22 +3961,6 @@ _register_ffi_boundary_builtins()
 # from `_REGISTRY` once, at import time, after every `@builtin(...)` call above has run
 # -- it is not hand-maintained.
 @builtin(
-    "length", (T.N(Symbol("Fields"), T.V("Owner")),), (T.Int,),
-    documentation=element_documentation(
-        "Count the declared storage fields in a reflection collection.",
-        parameters=(("fields", "Declared field metadata."),),
-        returns="The number of fields, including private fields.",
-        examples=(("fields[Int] | length", "0"),),
-        category="Reflection",
-    ),
-    vectorisable=False,
-)
-def _fields_length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Count declared fields without reading an owner instance."""
-    return (RuntimeNumber(len(unwrap_runtime_value(args[0]).fields["#fields"])),)
-
-
-@builtin(
     "field?", (T.N(Symbol("Fields"), T.V("Owner")), T.String),
     (T.optional(T.N(Symbol("Field"), T.V("Owner"))),),
     param_names=("fields", "name"), vectorisable=False,
@@ -3995,6 +3979,22 @@ def _optional_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
     if selected is None:
         return (ObjectValue("None", {}),)
     return (copy_field_value(selected),)
+
+
+@builtin(
+    "length", (T.N(Symbol("Fields"), T.V("Owner")),), (T.Int,),
+    documentation=element_documentation(
+        "Count the declared storage fields in a reflection collection.",
+        parameters=(("fields", "Declared field metadata."),),
+        returns="The number of fields, including private fields.",
+        examples=(("fields[Int] | length", "0"),),
+        category="Reflection",
+    ),
+    vectorisable=False,
+)
+def _fields_length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Count declared fields without reading an owner instance."""
+    return (RuntimeNumber(len(unwrap_runtime_value(args[0]).fields["#fields"])),)
 
 
 BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
