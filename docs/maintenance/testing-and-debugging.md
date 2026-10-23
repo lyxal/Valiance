@@ -46,6 +46,12 @@ The project metadata requires Python 3.14. The canonical full-suite command is:
 uv run python -m unittest discover -s tests -v
 ```
 
+Terminal editor, REPL, and project creation tests are temporarily disabled with
+`unittest.skip` decorators in their test modules. These skips apply to local and
+CI runs, including explicitly selected tests. Remove the decorators to re-enable
+the deferred coverage. Compiler, runtime, package management, and session
+transaction tests remain enabled.
+
 Run a focused module while iterating:
 
 ```powershell

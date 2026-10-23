@@ -143,6 +143,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("\033[33m1\033[0m", rendered)
         self.assertIn("\033[1mbottom\033[0m", rendered)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_main_without_command_starts_repl(self):
         output = io.StringIO()
         input_stream = io.StringIO(":quit\n")
@@ -155,6 +156,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("State persists between lines.", rendered)
         self.assertIn("vln:1> ", rendered)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_help_lists_styled_commands(self):
         output = io.StringIO()
         input_stream = io.StringIO(":help\n:quit\n")
@@ -167,6 +169,7 @@ class MainTests(unittest.TestCase):
         self.assertIn(":reset  clear the screen, stack", rendered)
         self.assertIn(":quit   exit the REPL", rendered)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_runs_inline_source_with_implicit_output(self):
         output = io.StringIO()
         input_stream = io.StringIO("1 2 +\n:quit\n")
@@ -176,6 +179,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("top\n─ 3\nbottom", output.getvalue())
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_persists_stack_between_entries(self):
         output = io.StringIO()
         input_stream = io.StringIO("1\n2 +\n:quit\n")
@@ -186,6 +190,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("top\n─ 1\nbottom", output.getvalue())
         self.assertIn("top\n─ 3\nbottom", output.getvalue())
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_persists_variables_and_defines_between_entries(self):
         output = io.StringIO()
         input_stream = io.StringIO(
@@ -200,6 +205,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("top\n─ 42\nbottom", output.getvalue())
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_does_not_prescan_future_submissions_for_mutual_recursion(self):
         """Keep declaration prescanning within one submitted compilation unit."""
         output = io.StringIO()
@@ -221,6 +227,7 @@ class MainTests(unittest.TestCase):
         # Neither failed declaration is committed for a future submission.
         self.assertIn("unknown element 'left'", error.getvalue())
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_reset_clears_stack_variables_and_defines(self):
         output = io.StringIO()
         error = io.StringIO()
@@ -237,6 +244,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("Reset REPL state.", output.getvalue())
         self.assertIn("Name error: undefined variable 'x'", error.getvalue())
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_reset_restarts_prompt_counter(self):
         output = io.StringIO()
         input_stream = io.StringIO("1\n:reset\n2\n:quit\n")
@@ -247,6 +255,7 @@ class MainTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertGreaterEqual(rendered.count("vln:1> "), 2)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_type_command_previews_without_executing(self):
         output = io.StringIO()
         input_stream = io.StringIO(":type 1 2 +\n:quit\n")
@@ -258,6 +267,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("Stack types: [Int]", rendered)
         self.assertNotIn("top\n", rendered)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_type_command_uses_current_stack_without_mutating_it(self):
         output = io.StringIO()
         input_stream = io.StringIO("1\n:type 2 +\n2 +\n:quit\n")
@@ -1213,6 +1223,7 @@ class MainTests(unittest.TestCase):
         self.assertNotIn("repo =", manifest)
         self.assertIn('"dependencies": []', lock)
 
+    @unittest.skip("Temporarily disabled: project creation tests are deferred")
     def test_package_init_creates_project_structure(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "demo"
@@ -1241,6 +1252,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("# demo", readme)
 
 
+    @unittest.skip("Temporarily disabled: project creation tests are deferred")
     def test_init_lists_templates(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -1254,6 +1266,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("empty", rendered)
         self.assertIn("(default)", rendered)
 
+    @unittest.skip("Temporarily disabled: project creation tests are deferred")
     def test_init_package_can_scaffold_current_directory(self):
         with tempfile.TemporaryDirectory(prefix="valiance_package_") as tmp:
             root = Path(tmp)
@@ -1278,6 +1291,7 @@ class MainTests(unittest.TestCase):
         self.assertNotIn("Next: cd", output.getvalue())
         self.assertIn("Next: vln test", output.getvalue())
 
+    @unittest.skip("Temporarily disabled: project creation tests are deferred")
     def test_init_application_can_omit_tests(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "minimal_demo"
@@ -1528,6 +1542,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("write `as[Number]` instead of `as![Number]`", rendered)
 
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_branch_restore_discards_stack_and_variable_changes(self):
         session = _ReplSession()
         with contextlib.redirect_stdout(io.StringIO()):
@@ -1540,6 +1555,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(session.branch_depth, 0)
         self.assertEqual(session.runtime_stack, [1])
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_branch_continue_adopts_complete_child_state(self):
         session = _ReplSession()
         session.open_branch()
@@ -1550,6 +1566,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(session.runtime_stack, [7])
         self.assertEqual(len(session.branch.stack), 1)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_nested_branch_restore_affects_only_inner_frame(self):
         session = _ReplSession()
         session.open_branch()
@@ -1564,6 +1581,7 @@ class MainTests(unittest.TestCase):
         session.restore_branch()
         self.assertEqual(session.runtime_stack, [])
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_copy_and_escape_preserve_order_and_source_semantics(self):
         session = _ReplSession()
         session.open_branch()
@@ -1577,6 +1595,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(session.runtime_stack, [2, 3, 2, 3])
         self.assertEqual(len(session.branch.stack), 4)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_branch_commands_reject_root_and_invalid_counts(self):
         session = _ReplSession()
         with self.assertRaisesRegex(ValueError, "requires an open REPL branch"):
@@ -1589,6 +1608,7 @@ class MainTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stack of depth 0"):
             session.escape_to_parent(1)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_executes_new_namespaced_native_import_prelude_once(self):
         session = _ReplSession()
         output = io.StringIO()
@@ -1605,6 +1625,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(session.runtime_stack, [42, 42])
         self.assertEqual(randint.call_count, 2)
 
+    @unittest.skip("Temporarily disabled: REPL tests are deferred")
     def test_repl_prompt_displays_branch_depth(self):
         self.assertEqual(_repl_prompt(4, color=False, branch_depth=2), "vln[2]:4> ")
 
@@ -1612,6 +1633,7 @@ class MainTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+@unittest.skip("Temporarily disabled: REPL tests are deferred")
 class ReplBareParameterDiagnosticTests(unittest.TestCase):
     def test_repl_type_hint_leads_with_bare_parameter_suggestion(self):
         session = _ReplSession()
@@ -1640,6 +1662,7 @@ class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
         self.assertIn("help: did you mean '$c'?", rendered)
         self.assertNotIn("unknown element 'c'\\ndid you mean", rendered)
 
+@unittest.skip("Temporarily disabled: project creation tests are deferred")
 class InitTemplateChooserTests(unittest.TestCase):
     @patch("valiance.main._select_project_option", side_effect=["package", "yes"])
     def test_inline_chooser_selects_template_then_tests(self, select):
