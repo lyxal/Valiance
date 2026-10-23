@@ -42,6 +42,9 @@ from valiance.runtime.bytecode import (
     ObjectConstructorReference,
     OpCode,
     Program,
+    ReflectionFieldReference,
+    ReflectionFieldsReference,
+    ReflectionForeachReference,
     ResolvedElementReference,
     VectorExtensionReference,
 )
@@ -794,10 +797,43 @@ def _random_extension(rng: random.Random, depth: int) -> VectorExtensionReferenc
     return VectorExtensionReference(default, rules, selector)
 
 
-def _valid_concurrency_argument(
+def _random_reflection_fields(rng: random.Random) -> ReflectionFieldsReference:
+    """Build a valid, uniquely named layout for reflective storage bytecode."""
+    fields = tuple(
+        ReflectionFieldReference(
+            f"field_{index}_{_random_string(rng, 8)}",
+            rng.choice(("Int", "String", "Boolean", "Box[Int]")),
+            rng.choice(("public", "readable", "private")),
+        )
+        for index in range(rng.randint(0, 4))
+    )
+    return ReflectionFieldsReference(_random_string(rng, 12) or "Box", fields)
+
+
+def _random_reflection_foreach(rng: random.Random) -> ReflectionForeachReference:
+    """Build callback bytecode matching every field and the selected index mode."""
+    layout = _random_reflection_fields(rng)
+    has_index = rng.choice((False, True))
+    bodies = tuple(
+        FunctionCode(
+            (Instruction(OpCode.PUSH_CONST, rng.randint(-10, 10)),),
+            params=("field", "index") if has_index else ("field",),
+        )
+        for _ in layout.fields
+    )
+    return ReflectionForeachReference(
+        layout, bodies, has_index, rng.randint(1, 4)
+    )
+
+
+def _valid_bytecode_argument(
     op: OpCode, rng: random.Random, depth: int
 ) -> object:
-    """Return a serializer-valid argument for one concurrency opcode."""
+    """Return a serializer-valid argument for opcodes with constrained payloads."""
+    if op is OpCode.MAKE_FIELDS:
+        return _random_reflection_fields(rng)
+    if op is OpCode.FOREACH and rng.random() < 0.5:
+        return _random_reflection_foreach(rng)
     if op is OpCode.MAKE_CLOSED_FUNCTION:
         return _random_function(rng, max(0, depth - 1))
     if op is OpCode.VALIDATE_TAG:
@@ -827,7 +863,7 @@ def _valid_concurrency_argument(
 def _random_instruction(
     rng: random.Random, depth: int, op: OpCode | None = None
 ) -> Instruction:
-    """Build one random instruction with valid concurrency payload shapes."""
+    """Build random bytecode with valid payloads for serializer-checked opcodes."""
     selected = op or rng.choice(
         tuple(
             candidate
@@ -835,7 +871,7 @@ def _random_instruction(
             if candidate not in {OpCode.SCOPE_BEGIN, OpCode.SCOPE_END}
         )
     )
-    return Instruction(selected, _valid_concurrency_argument(selected, rng, depth))
+    return Instruction(selected, _valid_bytecode_argument(selected, rng, depth))
 
 
 def _random_function(
@@ -1213,8 +1249,9 @@ def _fuzz_runtime_bytecode(
         (
             Instruction(
                 op,
-                _valid_concurrency_argument(op, rng, 1)
+                _valid_bytecode_argument(op, rng, 1)
                 if op in {
+                    OpCode.MAKE_FIELDS,
                     OpCode.VALIDATE_TAG, OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
                     OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
                     OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.MAKE_CLOSED_FUNCTION,

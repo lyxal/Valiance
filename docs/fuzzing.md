@@ -23,9 +23,10 @@ base seed, and iteration number.
   independent `Decimal` model and requires direct bytecode execution to equal a
   serialize/deserialize execution.
 - `serialization` generates nested bytecode records, functions, function sets,
-  dispatch patterns, vector extensions, object constructors, function
-  stack-input flags, parameter ranks, and every opcode. It requires exact object
-  round trips and canonical re-encoding.
+  dispatch patterns, vector extensions, object constructors, reflection field
+  layouts and specialized reflective foreach callbacks, function stack-input
+  flags, parameter ranks, and every opcode. It requires exact object round trips
+  and canonical re-encoding.
 - `optimizer` differentially compiles generated constant expressions, cycling
   functions, constant nilads, randomized inverse stack permutations, and
   hand-built branch peepholes. It requires optimised execution and serialized

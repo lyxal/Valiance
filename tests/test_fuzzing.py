@@ -1,6 +1,7 @@
+import random
 import unittest
 
-from tools.fuzzing import FuzzConfig, TARGETS, run_target
+from tools.fuzzing import FuzzConfig, TARGETS, _random_instruction, run_target
 
 
 class DeterministicFuzzTests(unittest.TestCase):
@@ -30,6 +31,29 @@ class DeterministicFuzzTests(unittest.TestCase):
             "serialization",
             FuzzConfig(seed=91, iterations=len(OpCode), max_depth=2),
         )
+
+    def test_reflection_opcodes_have_valid_generated_metadata(self):
+        from valiance.runtime import dumps, loads
+        from valiance.runtime.bytecode import (
+            FunctionCode,
+            OpCode,
+            Program,
+            ReflectionFieldsReference,
+            ReflectionForeachReference,
+        )
+
+        reflective_foreach_cases = 0
+        for seed in range(32):
+            with self.subTest(seed=seed):
+                rng = random.Random(seed)
+                fields = _random_instruction(rng, 2, OpCode.MAKE_FIELDS)
+                self.assertIsInstance(fields.arg, ReflectionFieldsReference)
+                foreach = _random_instruction(rng, 2, OpCode.FOREACH)
+                if isinstance(foreach.arg, ReflectionForeachReference):
+                    reflective_foreach_cases += 1
+                program = Program(FunctionCode((fields, foreach)))
+                self.assertEqual(loads(dumps(program)), program)
+        self.assertGreater(reflective_foreach_cases, 0)
 
 
 if __name__ == "__main__":
