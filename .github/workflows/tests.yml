@@ -1,0 +1,23 @@
+name: Tests
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python 3.14
+        run: uv python install 3.14
+      - name: Install project dependencies
+        run: uv sync --frozen
+      - name: Run test suite
+        run: uv run --frozen python -m unittest discover -s tests -v
