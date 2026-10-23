@@ -19,6 +19,7 @@ from itertools import chain, cycle, groupby, islice
 from typing import Any
 
 import valiance.vtypes as T
+from valiance.runtime.reflection import ReflectionValue, find_field, copy_field_value
 from valiance.elements.documentation import ElementDocumentation, ExampleInputs, element_documentation
 from valiance.asts import ElementNode, GetVariableNode, SetVariableNode
 from valiance.runtime.runtime_values import (
@@ -1162,6 +1163,8 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
             return False
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
+        if typ.name in {Symbol("Type"), Symbol("Field"), Symbol("Fields"), Symbol("Visibility")}:
+            return isinstance(value, ReflectionValue) and value.type_name == typ.name.text
         if typ.name == NUMBER:
             return isinstance(value, RuntimeNumber)
         if typ.name == REAL:
@@ -3957,6 +3960,43 @@ _register_ffi_boundary_builtins()
 # `from valiance.elements.builtins import BUILTIN_ELEMENTS`). This is derived
 # from `_REGISTRY` once, at import time, after every `@builtin(...)` call above has run
 # -- it is not hand-maintained.
+@builtin(
+    "length", (T.N(Symbol("Fields"), T.V("Owner")),), (T.Int,),
+    documentation=element_documentation(
+        "Count the declared storage fields in a reflection collection.",
+        parameters=(("fields", "Declared field metadata."),),
+        returns="The number of fields, including private fields.",
+        examples=(("fields[Int] | length", "0"),),
+        category="Reflection",
+    ),
+    vectorisable=False,
+)
+def _fields_length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Count declared fields without reading an owner instance."""
+    return (RuntimeNumber(len(unwrap_runtime_value(args[0]).fields["#fields"])),)
+
+
+@builtin(
+    "field?", (T.N(Symbol("Fields"), T.V("Owner")), T.String),
+    (T.optional(T.N(Symbol("Field"), T.V("Owner"))),),
+    param_names=("fields", "name"), vectorisable=False,
+    documentation=element_documentation(
+        "Look up a stored field dynamically, returning None when absent.",
+        parameters=(("fields", "Declared field metadata."), ("name", "Field name.")),
+        returns="An optional owner-bound field descriptor.",
+        examples=(('field?(fields[Int], "missing")', "None{}"),),
+        category="Reflection",
+    ),
+)
+def _optional_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return an independent metadata occurrence, without retaining the collection."""
+    collection, name = args
+    selected = find_field(unwrap_runtime_value(collection), name)
+    if selected is None:
+        return (ObjectValue("None", {}),)
+    return (copy_field_value(selected),)
+
+
 BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
 
 
@@ -3973,6 +4013,9 @@ def default_environment() -> T.Environment:
         env.define_tag(Symbol(name), kind)
     env.define_trait(ERR)
     env.define_trait(FAULT)
+    for name in ("Type", "Field", "Fields"):
+        env.define_trait(Symbol(name), generics=(Symbol("Owner"),))
+    env.define_trait(Symbol("Visibility"))
     message_attribute = T.ObjectAttribute(Symbol("message"), T.String)
     for message_type in (*BUILTIN_ERROR_TYPES, *BUILTIN_FAULT_TYPES):
         env.define_object(message_type, (message_attribute,))

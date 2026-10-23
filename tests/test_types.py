@@ -2016,5 +2016,187 @@ class InlineTraitElementTagConformanceTests(unittest.TestCase):
         self.assertTrue(assignable(Int, exact, ctx))
 
 
+class ReflectionMetadataTests(unittest.TestCase):
+    def test_reflection_authorization_follows_private_nested_storage(self):
+        env = Environment()
+        secret = N(Symbol("Secret"))
+        env.define_object(secret.name, duplication_error="protected")
+        env.define_object(Symbol("Envelope"), (
+            T.ObjectAttribute(Symbol("secret"), ExactList(secret), Symbol("private")),
+        ))
+        self.assertTrue(env.reflection_requires_unsafe(N(Symbol("Envelope"))))
+        self.assertTrue(env.reflection_requires_unsafe(secret))
+        self.assertFalse(env.reflection_requires_unsafe(Int))
+        self.assertFalse(env.reflection_requires_unsafe(Tagged(Int, "boolean")))
+        self.assertFalse(env.reflection_requires_unsafe(T.Never()))
+
+    def test_reflection_authorization_checks_generic_arguments_and_unknown_types(self):
+        env = Environment()
+        env.define_object(Symbol("Box"), (
+            T.ObjectAttribute(Symbol("value"), V("T")),
+        ), generics=(Symbol("T"),))
+        self.assertFalse(env.reflection_requires_unsafe(N(Symbol("Box"), Int)))
+        self.assertTrue(env.reflection_requires_unsafe(N(Symbol("Box"), V("U"))))
+        env.define_object(Symbol("Phantom"), generics=(Symbol("T"),))
+        self.assertTrue(env.reflection_requires_unsafe(N(Symbol("Phantom"), V("U"))))
+        self.assertTrue(env.reflection_requires_unsafe(V("T")))
+        self.assertTrue(env.reflection_requires_unsafe(N(Symbol("UnknownTrait"))))
+        self.assertTrue(env.reflection_requires_unsafe(T.Number))
+        self.assertTrue(env.reflection_requires_unsafe(T.FFI(Symbol("handle"))))
+
+    def test_reflection_authorization_traverses_structural_types(self):
+        env = Environment()
+        resource = N(Symbol("Resource"))
+        env.define_object(resource.name, duplication_error="protected")
+        for typ in (Tup(Int, resource), U(Int, resource), ExactList(resource),
+                    Row(Int, Field(Symbol("value"), resource)),
+                    Exact(resource), Tagged(resource, "marked")):
+            with self.subTest(typ=typ):
+                self.assertTrue(env.reflection_requires_unsafe(typ))
+        for typ in (Tup(Int, String), U(Int, String), ExactList(Int)):
+            with self.subTest(typ=typ):
+                self.assertFalse(env.reflection_requires_unsafe(typ))
+        self.assertTrue(env.reflection_requires_unsafe(T.Fn((Int,), (Int,))))
+        self.assertTrue(env.reflection_requires_unsafe(T.Task((Int,))))
+
+    def test_recursive_reflection_authorization_terminates_with_expanding_generics(self):
+        env = Environment()
+        node = Symbol("Node")
+        env.define_object(node, (
+            T.ObjectAttribute(Symbol("next"), N(node, ExactList(V("T")))),
+            T.ObjectAttribute(Symbol("value"), V("T")),
+        ), generics=(Symbol("T"),))
+        self.assertFalse(env.reflection_requires_unsafe(N(node, Int)))
+        env.define_object(Symbol("Secret"), duplication_error="protected")
+        self.assertTrue(env.reflection_requires_unsafe(N(node, N(Symbol("Secret")))))
+
+    def test_recursive_reflection_authorization_checks_arguments_before_cycle_cut(self):
+        env = Environment()
+        node = Symbol("Node")
+        secret = N(Symbol("Secret"))
+        env.define_object(secret.name, duplication_error="protected")
+        env.define_object(node, (
+            T.ObjectAttribute(Symbol("next"), N(node, secret)),
+        ), generics=(Symbol("T"),))
+        self.assertTrue(env.reflection_requires_unsafe(N(node, Int)))
+
+    def test_mutually_recursive_reflection_authorization_visits_all_fields(self):
+        env = Environment()
+        left, right = Symbol("Left"), Symbol("Right")
+        env.define_object(left, (T.ObjectAttribute(Symbol("next"), N(right)),))
+        env.define_object(right, (T.ObjectAttribute(Symbol("next"), N(left)),))
+        self.assertFalse(env.reflection_requires_unsafe(N(left)))
+        env.define_object(Symbol("Secret"), duplication_error="protected")
+        env.define_object(right, (
+            T.ObjectAttribute(Symbol("next"), N(left)),
+            T.ObjectAttribute(Symbol("secret"), N(Symbol("Secret"))),
+        ))
+        self.assertTrue(env.reflection_requires_unsafe(N(left)))
+
+    def test_fields_preserve_order_visibility_and_distinct_identity(self):
+        from valiance.vtypes.reflection import Visibility
+
+        env = Environment()
+        point = N(Symbol("Point"))
+        env.define_object(point.name, (
+            T.ObjectAttribute(Symbol("x"), Int, Symbol("public")),
+            T.ObjectAttribute(Symbol("y"), Int, Symbol("private")),
+            T.ObjectAttribute(Symbol("label"), String),
+        ))
+        metadata = env.field_metadata(point)
+        self.assertEqual([field.name for field in metadata.fields], ["x", "y", "label"])
+        self.assertEqual([field.index for field in metadata.fields], [0, 1, 2])
+        self.assertEqual([field.visibility for field in metadata.fields], [
+            Visibility.PUBLIC, Visibility.PRIVATE, Visibility.READABLE,
+        ])
+        self.assertNotEqual(metadata.fields[0], metadata.fields[1])
+        self.assertTrue(all(field.owner == metadata.owner for field in metadata.fields))
+        self.assertEqual(metadata.value_type, U(Int, String))
+        self.assertEqual(metadata, env.field_metadata(point))
+
+    def test_generic_owner_and_nested_field_types_are_specialized(self):
+        env = Environment()
+        scope = TypeVarScope(42, ("T",))
+        variable = scope.variable("T")
+        box = Symbol("Box")
+        env.define_object(box, (
+            T.ObjectAttribute(Symbol("value"), variable),
+            T.ObjectAttribute(Symbol("nested"), ExactList(N(box, variable))),
+        ), generics=(Symbol("T"),))
+        integers = env.field_metadata(N(box, Int))
+        strings = env.field_metadata(N(box, String))
+        self.assertEqual(integers.owner.typ, N(box, Int))
+        self.assertEqual(integers.fields[0].type.typ, Int)
+        self.assertEqual(integers.fields[1].type.typ, ExactList(N(box, Int)))
+        self.assertEqual(strings.fields[0].type.typ, String)
+        self.assertNotEqual(integers.fields[0], strings.fields[0])
+        self.assertEqual(env.lookup_attribute(box, Symbol("value")), variable)
+
+    def test_unscoped_generic_metadata_and_unknown_fields_keep_type_evidence(self):
+        env = Environment()
+        box = Symbol("Box")
+        env.define_object(box, (T.ObjectAttribute(Symbol("value"), V("T")),),
+                          generics=(Symbol("T"),))
+        self.assertEqual(env.field_metadata(N(box, Int)).value_type, Int)
+        self.assertEqual(env.field_metadata(N(box, V("U"))).value_type, V("U"))
+
+    def test_types_without_managed_storage_have_no_fabricated_fields(self):
+        env = Environment()
+        env.define_object(Symbol("Empty"))
+        # An FFI name must never resolve through a same-spelled managed object.
+        env.define_object(Symbol("Int"), (T.ObjectAttribute(Symbol("x"), Int),))
+        for typ in (String, N(Symbol("Empty")), T.FFI(Symbol("Int")),
+                    ExactList(Int), U(Int, String), T.Never(), T.NoneType(),
+                    Tup(Int, String), T.Fn((Int,), (String,))):
+            with self.subTest(typ=typ):
+                metadata = env.field_metadata(typ)
+                self.assertEqual(metadata.fields, ())
+                self.assertEqual(metadata.value_type, T.Never())
+                self.assertIsNone(metadata.find("missing"))
+
+    def test_primitive_type_has_empty_metadata(self):
+        self.assertEqual(Environment().field_metadata(Int).fields, ())
+
+    def test_name_lookup_retains_all_possible_value_types(self):
+        env = Environment()
+        owner = N(Symbol("Person"))
+        env.define_object(owner.name, (
+            T.ObjectAttribute(Symbol("name"), String),
+            T.ObjectAttribute(Symbol("age"), Int),
+        ))
+        metadata = env.field_metadata(owner)
+        self.assertEqual(metadata.find("age"), metadata.fields[1])
+        self.assertIsNone(metadata.find("missing"))
+        self.assertEqual(metadata.value_type, U(String, Int))
+
+    def test_qualified_owner_names_and_wrappers_preserve_identity(self):
+        env = Environment()
+        left = N(Symbol("Box", ("left",)))
+        right = N(Symbol("Box", ("right",)))
+        for owner in (left, right):
+            env.define_object(owner.name, (T.ObjectAttribute(Symbol("value"), Int),))
+        self.assertNotEqual(env.field_metadata(left).fields[0],
+                            env.field_metadata(right).fields[0])
+        tagged = Tagged(left, DataTag(Symbol("validated")))
+        metadata = env.field_metadata(tagged)
+        self.assertEqual(metadata.owner.typ, tagged)
+        self.assertEqual(metadata.fields[0].owner.typ, tagged)
+        self.assertEqual(metadata.fields[0].type.typ, Int)
+        self.assertEqual(env.field_metadata(Exact(left)).owner.typ, Exact(left))
+
+    def test_descriptors_are_immutable_and_normalized(self):
+        from dataclasses import FrozenInstanceError
+        from valiance.vtypes.reflection import TypeDescriptor
+
+        self.assertEqual(TypeDescriptor(U(Int, Int)), TypeDescriptor(Int))
+        env = Environment()
+        owner = N(Symbol("Box"))
+        env.define_object(owner.name, (T.ObjectAttribute(Symbol("value"), Int),))
+        metadata = env.field_metadata(owner)
+        with self.assertRaises(FrozenInstanceError):
+            metadata.fields[0].name = "changed"
+        self.assertEqual(hash(metadata), hash(env.field_metadata(owner)))
+
+
 if __name__ == "__main__":
     unittest.main()

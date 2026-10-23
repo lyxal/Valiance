@@ -120,11 +120,13 @@ def _if_node(
                     continue
 
                 if left.break_type is not None or right.break_type is not None:
+                    typed_if = TypedIfNode(
+                        node, None, condition=condition_body,
+                        then_branch=left.typed_body[len(body_input.typed_body):],
+                        else_branch=right.typed_body[len(body_input.typed_body):],
+                    )
                     for output in (left, right):
-                        typ = output.break_type
-                        if typ is None:
-                            typ = _calls._returns_result_type(output.stack.items)
-                        outputs.append(output.emit(TypedNode(node, typ)))
+                        outputs.append(replace(output, typed_body=branch.typed_body).emit(typed_if))
                     continue
 
                 if left.return_stack is not None and right.return_stack is not None:

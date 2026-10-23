@@ -437,6 +437,18 @@ def _index_access_node(
         return _core.BranchSet()
 
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    receiver = T.normalize(receiver_type)
+    if (isinstance(receiver, T.NominalType) and receiver.name == Symbol("Fields")
+            and len(receiver.args) == 1):
+        if not self.require_reflection_permission(receiver.args[0], node):
+            return _core.BranchSet()
+        if (len(node.selectors) != 1 or node.selectors[0].is_slice or node.spread
+                or len(index_types) != 1
+                or not T.assignable(index_types[0], T.String, self.env.context)):
+            self._diagnose("field lookup requires one String name", node)
+            return _core.BranchSet()
+        typ = T.N(Symbol("Field"), receiver.args[0])
+        return _core.BranchSet((base_branch.push(typ).emit(TypedNode(node, typ)),))
     custom = _custom_index_access(
         self, node, branch, base_branch, receiver_type, index_types
     )

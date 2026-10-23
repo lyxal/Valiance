@@ -19,11 +19,14 @@ from valiance.asts import (
     TypedChannelNode,
     TypedTimeoutNode,
     TypedConcurrentNode,
+    TypedUnsafeNode,
+    TypedFieldsNode,
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
     TypedFunctionNode,
     TypedForNode,
+    TypedReflectiveForNode,
     TypedIfNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
@@ -155,6 +158,12 @@ def _refine_typed_body(
 def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
     """Refine typed node during static analysis."""
     typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
+    if isinstance(typed_node, TypedFieldsNode):
+        return replace(typed_node, typ=typ)
+    if isinstance(typed_node, TypedUnsafeNode):
+        return TypedUnsafeNode(
+            typed_node.node, typ, _refine_typed_body(typed_node.body, old, new)
+        )
     if isinstance(typed_node, TypedImportedFunctionNode):
         return TypedImportedFunctionNode(
             typed_node.node,
@@ -332,6 +341,11 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
                 _refine_typed_body(body, old, new)
                 for body in typed_node.handler_bodies
             ),
+        )
+    if isinstance(typed_node, TypedReflectiveForNode):
+        return TypedReflectiveForNode(
+            typed_node.node, typ, typed_node.metadata,
+            tuple(_refine_typed_body(body, old, new) for body in typed_node.bodies),
         )
     if isinstance(typed_node, TypedForNode):
         return TypedForNode(

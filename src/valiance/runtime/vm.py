@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins as _py_builtins
 import copy
+from valiance.runtime.reflection import ReflectionValue, make_fields_value, lookup_field
 import ctypes
 from threading import Event, Lock, get_ident
 import re
@@ -32,6 +33,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
     ResolvedElementReference,
+    ReflectionForeachReference,
     DispatchKind,
     VectorExtensionReference,
     decode_stack_shuffle_spec,
@@ -3331,6 +3333,8 @@ class VirtualMachine:
                             frame.stack.append(
                                 RecordValue(zip(instruction.arg, values, strict=True))
                             )
+                        case OpCode.MAKE_FIELDS:
+                            frame.stack.append(make_fields_value(instruction.arg))
                         case OpCode.BUILD_DICT:
                             values = [
                                 _materialize_access(value)
@@ -4590,6 +4594,9 @@ class VirtualMachine:
 
     def _foreach(self, frame: _Frame, config: object) -> None:
         """Update foreach state during VM execution."""
+        if isinstance(config, ReflectionForeachReference):
+            self._reflective_foreach(frame, config)
+            return
         body_code, has_index, completion_count = config
         iterable = _source_args(frame, 1, "foreach")[0]
         if not is_list_like(iterable):
@@ -4610,6 +4617,50 @@ class VirtualMachine:
                 raise
         _sync_captured_globals(frame, body.globals)
         frame.stack.extend(ObjectValue("None", {}) for _ in range(completion_count))
+
+    def _reflective_foreach(self, frame: _Frame, config: ReflectionForeachReference) -> None:
+        """Execute the checked body for each exact field, sharing lexical loop state."""
+        occurrence = _source_args(frame, 1, "reflective foreach")[0]
+        collection = _accessed_value(occurrence)
+        captured = dict(frame.globals)
+        captured.update(_closure_locals(frame) or {})
+        try:
+            if (not isinstance(collection, ReflectionValue) or collection.type_name != "Fields"
+                    or collection.type_args != (config.layout.owner,)):
+                raise RuntimeError("reflective foreach owner evidence does not match its compiled layout")
+            fields = collection.fields["#fields"]
+            if len(fields) != len(config.bodies):
+                raise RuntimeError("reflective foreach field count does not match its compiled layout")
+            for index, (item, expected, code) in enumerate(zip(
+                fields, config.layout.fields, config.bodies, strict=True,
+            )):
+                if (item.type_args != (config.layout.owner,)
+                        or item.fields["name"] != expected.name
+                        or item.fields["index"] != RuntimeNumber(index)
+                        or item.fields["owner"].type_args != (config.layout.owner,)
+                        or item.fields["type"].type_args != (expected.value_type,)
+                        or item.fields["visibility"].fields["name"] != expected.visibility):
+                    raise RuntimeError("reflective foreach field evidence does not match its compiled layout")
+                # This is a synchronous lexical loop body, not an escaping
+                # closure. Its shared environment borrows the active caller's
+                # bindings instead of manufacturing captured owner occurrences.
+                body = FunctionValue(code, captured)
+                args = [_BorrowedValue(item)]
+                if config.has_index:
+                    args.append(RuntimeNumber(index))
+                try:
+                    outputs = self.call(body, args, isolate_captures=False)
+                    for value in outputs:
+                        _release_value(value, self)
+                except _LoopBreak as signal:
+                    frame.stack.extend(_materialize_access(value) for value in signal.values)
+                    return
+                except _FunctionReturn as signal:
+                    raise _FunctionReturn(tuple(_materialize_access(value) for value in signal.values))
+            frame.stack.extend(ObjectValue("None", {}) for _ in range(config.completion_count))
+        finally:
+            _sync_captured_globals(frame, captured)
+            _release_value(occurrence, self)
 
     def _call_function(
         self,
@@ -6292,11 +6343,12 @@ def _finalize_builtin_result_ownership(
         for _ in range(max(retains, 0)):
             _retain_runtime_reference(values[ident])
 
+    embedded_arg_ids = arg_ids | _owned_argument_values(args).keys()
     visited: set[int] = set()
     for value in result:
         if id(value) in arg_ids:
             continue
-        _retain_embedded_builtin_args(value, arg_ids, visited)
+        _retain_embedded_builtin_args(value, embedded_arg_ids, visited)
 
 
 def _contains_owned_value(values: tuple[Any, ...]) -> bool:
@@ -7219,10 +7271,17 @@ def _replace_access(value: Any, owned: Any) -> Any:
 
 def _borrowed_argument_values(args: tuple[Any, ...]) -> dict[int, _BorrowedValue]:
     """Find owned payloads reachable through borrowed builtin arguments."""
+    return _owned_argument_values(tuple(
+        argument for argument in args if _borrowed_payload(argument) is not None
+    ))
+
+
+def _owned_argument_values(args: tuple[Any, ...]) -> dict[int, _BorrowedValue]:
+    """Find owned payloads retained by builtin arguments and their containers."""
     aliases: dict[int, _BorrowedValue] = {}
 
     def collect(value: Any) -> None:
-        """Record owned payloads reachable through one borrowed input."""
+        """Record owned payloads reachable through one input."""
         value = unwrap_runtime_value(value)
         if not _needs_release(value) or id(value) in aliases:
             return
@@ -7238,8 +7297,7 @@ def _borrowed_argument_values(args: tuple[Any, ...]) -> dict[int, _BorrowedValue
                 collect(child)
 
     for argument in args:
-        if _borrowed_payload(argument) is not None:
-            collect(argument)
+        collect(argument)
     return aliases
 
 
@@ -9301,6 +9359,8 @@ def _index_one(receiver: Any, index: Any) -> Any:
         if not tag.absent and tag.depth > 0
     )
     receiver = unwrap_runtime_value(receiver)
+    if isinstance(receiver, ReflectionValue) and receiver.type_name == "Fields":
+        return lookup_field(receiver, index)
 
     def finish(result: Any) -> Any:
         """Attach the tags projected from the indexed receiver."""
@@ -9866,6 +9926,8 @@ def _set_field(
 ) -> Any:
     """Update field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
+    if isinstance(receiver, ReflectionValue):
+        raise RuntimeError("reflection metadata is read-only")
     if isinstance(receiver, ObjectValue):
         if field not in receiver.fields:
             raise RuntimeError(f"{receiver.type_name} has no field '{field}'")

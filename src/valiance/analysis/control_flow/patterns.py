@@ -835,14 +835,38 @@ def _typed_block(
     start: int,
     source_nodes: tuple[ASTNode, ...],
 ) -> tuple[ASTNode | TypedNode, ...]:
-    """Return a stable typed block, falling back when branch metadata diverges."""
+    """Retain common checked operations when terminal branches have shorter bodies."""
     suffixes = tuple(output.typed_body[start:] for output in outputs)
+    return _stable_typed_block(suffixes, source_nodes)
+
+
+def _stable_typed_block(
+    suffixes: tuple[tuple[TypedNode, ...], ...],
+    source_nodes: tuple[ASTNode, ...],
+) -> tuple[ASTNode | TypedNode, ...]:
+    """Preserve agreed semantic decisions without selecting a divergent overload."""
+    from valiance.asts import UnsafeNode, TypedUnsafeNode
+
     if not suffixes:
         return source_nodes
     first = suffixes[0]
     if all(suffix == first for suffix in suffixes[1:]):
         return first
-    return source_nodes
+    result: list[ASTNode | TypedNode] = []
+    for source in source_nodes:
+        candidates = tuple(item for suffix in suffixes for item in suffix
+                           if item.node is source)
+        if candidates and all(item == candidates[0] for item in candidates[1:]):
+            result.append(candidates[0])
+        elif isinstance(source, UnsafeNode) and candidates and all(
+            isinstance(item, TypedUnsafeNode) for item in candidates
+        ):
+            result.append(TypedUnsafeNode(source, None, _stable_typed_block(
+                tuple(item.body for item in candidates), source.body,
+            )))
+        else:
+            result.append(source)
+    return tuple(result)
 
 
 def _match_case_output(

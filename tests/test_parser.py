@@ -222,6 +222,30 @@ class MinimumRankParserTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_fields_type_value_and_adjacent_lookup_forms(self):
+        from valiance.asts import FieldsNode, FieldAccessNode, IndexAccessNode
+        from valiance.vtypes import Int
+
+        self.assertEqual(parse("fields[Int]")[0], FieldsNode(Int))
+        nodes = parse('fields[Int]["missing"].name')
+        self.assertIsInstance(nodes[0], FieldsNode)
+        self.assertIsInstance(nodes[-2], IndexAccessNode)
+        self.assertIsInstance(nodes[-1], FieldAccessNode)
+        self.assertIsNone(parse("1 fields")[-1].owner)
+    def test_unsafe_blocks_preserve_body_nesting_and_location(self):
+        from valiance.asts import UnsafeNode, NumberLiteralNode
+
+        nodes = parse("unsafe =>\n  1\n  unsafe => 2 end\nend\n3")
+        self.assertIsInstance(nodes[0], UnsafeNode)
+        self.assertEqual(nodes[0].location.line, 1)
+        self.assertEqual(nodes[0].body[0], NumberLiteralNode("1"))
+        self.assertIsInstance(nodes[0].body[1], UnsafeNode)
+        self.assertEqual(nodes[1], NumberLiteralNode("3"))
+
+    def test_unsafe_requires_a_block_arrow(self):
+        with self.assertRaises(ParseError):
+            parse("unsafe 1 end")
+
     def test_incomplete_ellipsis_reports_parse_error_instead_of_index_error(self):
         with self.assertRaises(ParseError):
             parse("\\positive?.")

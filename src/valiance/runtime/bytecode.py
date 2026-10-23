@@ -14,6 +14,7 @@ class OpCode(Enum):
     """Bytecode operations understood by the Valiance VM."""
 
     PUSH_CONST = "push_const"
+    MAKE_FIELDS = "make_fields"
     LOAD_VAR = "load_var"
     LOAD_VAR_FORWARD = "load_var_forward"
     LOAD_VAR_MATERIALIZE = "load_var_materialize"
@@ -276,6 +277,33 @@ class ObjectConstructorReference:
     defaults: tuple[tuple[str, Any], ...]
     runtime_metadata: Any = None
     initializer: FunctionCode | FunctionSetCode | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectionFieldReference:
+    """One stored field's concrete runtime type evidence and visibility."""
+
+    name: str
+    value_type: str
+    visibility: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectionFieldsReference:
+    """Closed storage layout using the VM's canonical type-signature syntax."""
+
+    owner: str
+    fields: tuple[ReflectionFieldReference, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReflectionForeachReference:
+    """One analyser-selected callback body for each owner-bound field identity."""
+
+    layout: ReflectionFieldsReference
+    bodies: tuple[FunctionCode, ...] = ()
+    has_index: bool = False
+    completion_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)

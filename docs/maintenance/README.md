@@ -86,6 +86,13 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 - [Understanding the type system](type-system.md) gives a human-first mental
   model of type relations, generic solving, overload application, and branch
   analysis, with traced examples and an API decision table.
+- [Reflection metadata](type-system.md#reflection-metadata) describes the
+  [compiler descriptor model](../../src/valiance/vtypes/reflection.py), generic
+  storage queries, [runtime metadata](../../src/valiance/runtime/reflection.py),
+  concrete heterogeneous iteration, and the boundary with pending generic
+  iteration and owner value access.
+- [Reflection implementation status](reflection-implementation.md) maps completed
+  support and remaining work to the design specification's R0–R6 stages.
 - [Understanding the runtime and code generator](runtime-system.md) follows
   typed nodes through bytecode, frames, calls, vectorisation, ownership, panics,
   serialization, and VM debugging.

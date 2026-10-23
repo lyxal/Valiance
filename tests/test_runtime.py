@@ -251,7 +251,356 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         )
 
 
+class ReflectionRuntimeTests(unittest.TestCase):
+    def test_heterogeneous_foreach_selects_each_actual_type_and_nested_generic_call(self):
+        source = '''
+object Person =>
+  public $name: String
+  private $age: Int
+end
+define[U] forward(evidence: Type[U]) -> Type[U] => $evidence end
+define describe(evidence: Type[Int]) -> String => "integer" end
+define describe(evidence: Type[String]) -> String => "text" end
+fields[Person] foreach (field, index) =>
+  print $field.name
+  print $index
+  print describe(forward($field.type))
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(len(stack), 1)
+                self.assertEqual(stack[0].type_name, "None")
+        self.assertEqual(output.getvalue(), "name0textage1integer" * 4)
+
+    def test_primitive_foreach_skips_validation_and_execution_of_uninhabited_body(self):
+        source = 'fields[Int] foreach (field) => missingOperation $field end'
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_name, "None")
+        for stack in self.execute_variants('fields[Int] foreach (field) => break (1, 2) end'):
+            self.assertEqual(len(stack), 1)
+            self.assertEqual(stack[0].type_name, "None")
+
+    def test_collected_descriptors_survive_loop_collection_cleanup(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+$out: Field[Person]+ = []
+fields[Person] foreach (field) =>
+  $out = $out append $field
+end
+$out
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([value.fields["name"] for value in stack[0]], ["name", "age"])
+            self.assertTrue(all(not value.destroyed for value in stack[0]))
+            self.assertTrue(all(not value.fields["type"].destroyed for value in stack[0]))
+
+    def test_nested_reflective_foreach_keeps_outer_witnesses_and_order(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+fields[Person] foreach (outer) =>
+  fields[Person] foreach (inner) =>
+    print $outer.name
+    print $inner.name
+  end
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            list(self.execute_variants(source))
+        self.assertEqual(output.getvalue(), "namename nameage agename ageage".replace(" ", "") * 4)
+
+    def test_reflective_foreach_updates_shared_lexical_state_in_declaration_order(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+define countFields(seed: Int) -> Int =>
+  $seen = $seed
+  fields[Person] foreach (field) =>
+    $seen := $seen + 1
+  end
+  $seen
+end
+countFields(5)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(7)])
+
+    def test_reflective_break_materializes_surviving_type_evidence(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+fields[Person] foreach (field) =>
+  break $field.type
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_args, ("String",))
+            self.assertFalse(stack[0].destroyed)
+
+    def test_reflective_return_preserves_evidence_after_collection_cleanup(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+define choose(seed: Int) -> (Type[String] | Type[Int])? =>
+  fields[Person] foreach (field) =>
+    return $field.type
+  end
+end
+choose(0) | ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_args, ("String",))
+            self.assertFalse(stack[0].destroyed)
+
+    def test_reflective_callback_does_not_duplicate_protected_caller_bindings(self):
+        source = '''
+@nodup("Resource cannot be duplicated")
+object Resource => public $value: Int end
+define inspect(seed: Int) -> Int =>
+  $resource = Resource($seed)
+  unsafe =>
+    fields[Resource] foreach (field) => print $field.name end
+  end
+  print $resource.value
+  $seed
+end
+inspect(7)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [RuntimeNumber(7)])
+        self.assertEqual(output.getvalue(), "value7" * 4)
+
+    def test_metadata_survives_divergent_loop_control_flow(self):
+        source = '''
+[1, 2] foreach (item) =>
+  unsafe =>
+    print length fields[Int]
+    if $item == 2 => break end
+  end
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "00000000")
+
+    def test_metadata_survives_nested_conditional_breaks(self):
+        source = '''
+[1, 2] foreach (item) =>
+  print length fields[String]
+  if $item == 2 =>
+    print length fields[Int]
+    if $item == 2 => break end
+  end
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "000000000000")
+
+    def execute_variants(self, source):
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            yield run(program)
+            yield run(loads(dumps(program)))
+
+    def test_declared_metadata_and_dynamic_names(self):
+        source = '''
+object Person =>
+  public $name: String
+  private $age: Int
+end
+$metadata = fields[Person]
+$selectedName = "age"
+$field = $metadata[$selectedName]
+$field.name
+$field.index
+$field.type
+$field.owner
+$field.visibility.name
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0:2], ["age", RuntimeNumber(1)])
+            self.assertEqual(stack[2].type_name, "Type")
+            self.assertEqual(stack[2].type_args, ("Int",))
+            self.assertEqual(stack[3].type_args, ("Person",))
+            self.assertEqual(stack[4], "private")
+            self.assertFalse(stack[2].destroyed)
+
+    def test_adjacent_lookup_and_generic_owner_evidence(self):
+        source = '''
+object[T] Box =>
+  public $value: T
+end
+fields[Box[Int]]["value"].type
+fields[Box[String]]["value"].owner
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_args, ("Int",))
+            self.assertEqual(stack[1].type_args, ("Box[String]",))
+
+    def test_descriptor_identity_and_type_evidence_use_ordinary_operations(self):
+        source = '''
+object Point =>
+  public $x: Int
+  public $y: Int
+end
+fields[Point]["x"]
+fields[Point]["x"]
+fields[Point]["y"]
+fields[Point]["x"].type as![Type[Int]]
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0], stack[1])
+            self.assertNotEqual(stack[0], stack[2])
+            self.assertEqual(stack[3].type_args, ("Int",))
+
+    def test_value_enumeration_and_empty_primitive_metadata(self):
+        source = '''
+object Point => public $x: Int end
+Point(1) fields | length
+fields[Int] | length
+1 fields | length
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(1), RuntimeNumber(0), RuntimeNumber(0)])
+
+    def test_optional_lookup_returns_none_or_an_independent_descriptor(self):
+        source = '''
+object Point => public $x: Int end
+field?(fields[Int], "missing")
+field?(fields[Point], "x") | ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_name, "None")
+            field = stack[1]
+            self.assertEqual(field.type_name, "Field")
+            self.assertEqual(field.fields["name"], "x")
+            self.assertFalse(field.destroyed)
+            self.assertFalse(field.fields["owner"].destroyed)
+
+    def test_literal_missing_lookup_panics_at_runtime(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('fields[Int]["missing"]'))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed)
+        for candidate in (program, loads(dumps(program))):
+            with self.assertRaisesRegex(RuntimeError, "KeyFault"):
+                run(candidate)
+
+    def test_metadata_enumeration_does_not_capture_or_duplicate_protected_owner(self):
+        source = '''
+@nodup("Resource cannot be duplicated")
+object Resource =>
+  public $value: Int
+end
+$resource = Resource(7)
+unsafe =>
+  $resource fields | length
+end
+print $resource.value
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [RuntimeNumber(1)])
+        self.assertEqual(output.getvalue(), "7777")
+
+
 class RuntimeTests(unittest.TestCase):
+    def test_unsafe_blocks_execute_inline_and_round_trip(self):
+        source = """
+$value = 1
+unsafe =>
+  $value := 2
+  unsafe => 3 end
+end
+$value
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                self.assertEqual(run(candidate), [RuntimeNumber(1), RuntimeNumber(3), RuntimeNumber(2)])
+
+    def test_return_inside_unsafe_returns_from_enclosing_function(self):
+        self.assertEqual(execute("""
+define \\answer -> Int =>
+  unsafe =>
+    return 42
+  end
+end
+\\answer
+"""), [RuntimeNumber(42)])
+
+    def test_unsafe_does_not_disable_static_duplication_checks(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+@nodup("Resource cannot be duplicated")
+object Resource => end
+unsafe =>
+  Resource | dup
+end
+"""))
+        self.assertTrue(any("cannot be duplicated" in item for item in analyser.diagnostics))
+
+    def test_unsafe_does_not_disable_runtime_duplication_fallback(self):
+        source = """
+@nodup("Resource cannot be duplicated")
+object Resource => end
+define[T] duplicate(value: T) =>
+  copy(item -> item)
+end
+unsafe =>
+  Resource | duplicate
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed)
+        for candidate in (program, loads(dumps(program))):
+            with self.assertRaisesRegex(RuntimeError, "DuplicationFault"):
+                run(candidate)
+
+    def test_break_inside_unsafe_uses_the_enclosing_loop(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            stack = execute("""
+[1, 2, 3] foreach (item) =>
+  unsafe =>
+    if $item == 2 => break end
+    print $item
+  end
+end
+""")
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "1")
+
     def test_if_else_materializes_missing_branch_values_as_none(self):
         """Pad a shorter conditional branch to its analysed stack shape."""
         source = """99
@@ -315,6 +664,17 @@ end
             "expected: 43\nactual:   42",
         ):
             execute("import { std.testing }\n" "testing.assertEqual(20 + 22, 43)")
+
+    def test_append_retains_objects_reused_from_consumed_list(self):
+        values, = execute('''
+object Item => public $value: Int end
+$items = [Item(1)]
+$items = $items append Item(2)
+$items
+''')
+        self.assertEqual([item.fields["value"] for item in values],
+                         [RuntimeNumber(1), RuntimeNumber(2)])
+        self.assertTrue(all(not item.destroyed for item in values))
 
     def test_scalar_list_updates_preserve_fast_ownership_metadata(self):
         """Keep large scalar lists cheap across closures and indexed updates."""

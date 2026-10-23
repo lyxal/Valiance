@@ -13,6 +13,19 @@ from valiance.vtypes.symbols import Symbol
 class AnalysisStateBoundaryTests(unittest.TestCase):
     """Exercise the public transformations without constructing an analyser."""
 
+    def test_refinement_preserves_checked_unsafe_bodies(self):
+        from valiance.asts import GetVariableNode, TypedNode, TypedUnsafeNode, UnsafeNode
+        from valiance.vtypes import V
+
+        variable = V("T")
+        read = GetVariableNode(Symbol("value"))
+        scope = TypedUnsafeNode(UnsafeNode((read,)), variable, (TypedNode(read, variable),))
+        refined = AnalysisBranch(typed_body=(scope,)).refine_type(variable, Int)
+        self.assertIsInstance(refined.typed_body[0], TypedUnsafeNode)
+        self.assertEqual(refined.typed_body[0].typ, Int)
+        self.assertEqual(refined.typed_body[0].body[0].typ, Int)
+        self.assertEqual(scope.body[0].typ, variable)
+
     def test_branch_stack_transformations_are_immutable(self) -> None:
         """Pushing and popping return new branches without changing the input."""
         branch = AnalysisBranch()

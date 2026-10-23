@@ -16,6 +16,10 @@ from valiance.asts import (
     AtNode,
     CastNode,
     ConcurrentNode,
+    UnsafeNode,
+    FieldsNode,
+    TypedFieldsNode,
+    TypedUnsafeNode,
     DictLiteralNode,
     ElementTagDeclarationNode,
     FileLintSuppressionNode,
@@ -435,6 +439,82 @@ def _concurrent_node(
         selected.body,
     )
     return _core.BranchSet((remaining.push(*returns).emit(typed),))
+
+
+@_core.register(UnsafeNode)
+def _unsafe_node(
+    self: _core.Analyser,
+    node: UnsafeNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Authorize reflection lexically without changing effects or ownership."""
+    outer_unsafe = self.reflection_unsafe
+    self.reflection_unsafe = True
+    try:
+        outputs = self.analyse_from(replace(branch, typed_body=()), node.body)
+    finally:
+        self.reflection_unsafe = outer_unsafe
+    return _core.BranchSet(tuple(
+        replace(output, typed_body=branch.typed_body).emit(
+            TypedUnsafeNode(node, output.top, output.typed_body)
+        )
+        for output in outputs
+    ))
+
+
+@_core.register(FieldsNode)
+def _fields_node(
+    self: _core.Analyser, node: FieldsNode, branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Select a concrete managed storage layout without observing owner values."""
+    owner = node.owner
+    consumes = owner is None
+    if owner is None:
+        sourced = branch.source_arguments((T.V("ReflectedOwner"),))
+        if sourced is None:
+            self._diagnose("fields requires an explicit type or a value", node)
+            return _core.BranchSet()
+        (owner,), branch = sourced
+        branch = branch.with_element_tags(released_types_effects(self.env, (owner,)))
+    else:
+        owner = _functions._resolve_imported_type_names(owner, self.env)
+        before = len(self.diagnostics)
+        self.declarations._validate_function_type_names(
+            FunctionNode(returns=(owner,)), node,
+        )
+        if len(self.diagnostics) != before:
+            return _core.BranchSet()
+    if not self.require_reflection_permission(owner, node):
+        return _core.BranchSet()
+    if _functions._contains_type_var(owner):
+        self._diagnose("runtime-generic field enumeration is not implemented yet", node)
+        return _core.BranchSet()
+    from valiance.vtypes.structural import nested_types
+    for nested in nested_types(owner):
+        if isinstance(nested, T.NominalType) and not isinstance(nested, T.FFINamedType):
+            declaration = (self.env.lookup_object(nested.name)
+                           or self.env.lookup_trait(nested.name)
+                           or self.env.lookup_variant(nested.name))
+            if declaration is not None and len(nested.args) != len(declaration.generics):
+                self._diagnose(f"field enumeration requires complete generic arguments for {nested.name}", node)
+                return _core.BranchSet()
+    storage = owner
+    while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
+        storage = storage.inner
+    if consumes and (
+        isinstance(storage, (T.UnionType, T.IntersectionType, T.RowType))
+        or isinstance(storage, T.NominalType) and (
+            self.env.lookup_trait(storage.name) is not None
+            or self.env.lookup_variant(storage.name) is not None
+        )
+    ):
+        self._diagnose("value field enumeration requires concrete static type evidence; "
+                       "runtime owner selection is not implemented yet", node)
+        return _core.BranchSet()
+    typ = T.N(Symbol("Fields"), owner)
+    return _core.BranchSet((branch.push(typ).emit(
+        TypedFieldsNode(node, typ, self.env.field_metadata(owner), consumes)
+    ),))
 
 
 @_core.register(FunctionNode)

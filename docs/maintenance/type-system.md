@@ -168,6 +168,77 @@ unions. For example, filtering ``Number*`` produces ``Number*``, not
 ``(Number | Number*)+``. Direct iteration and minimum-rank parameter matching
 retain their conservative item semantics.
 
+### Reflection metadata
+
+[`vtypes/reflection.py`](../../src/valiance/vtypes/reflection.py) defines immutable
+compiler-side `TypeDescriptor`, `FieldDescriptor`, and `FieldsDescriptor` records.
+`Environment.field_metadata(owner)` builds them from checked object declarations.
+Field order and visibility come from the declaration; generic arguments substitute
+into each field type without modifying the declaration. Owner evidence retains
+qualified names, generic arguments, and tags. A field's owner and declaration
+index distinguish slots even when they share a value type.
+
+Types without managed nominal storage have an empty field collection. The
+collection's `value_type` is the union of every stored field type, or `Never` for
+empty storage. Name lookup through `find` only queries metadata; it does not
+narrow that union or decide source-language missing-field behavior.
+
+`Environment.reflection_requires_unsafe(owner)` checks whether protected ownership
+can occur transitively. It follows generic arguments, private stored fields,
+collections, tuples, rows and unions. Unknown type variables and open nominal
+categories require unsafe authority. Callable signatures and task outputs cannot
+prove the absence of protected live state. Recursive declarations are tracked
+along each traversal path; arguments are checked before cutting a recursive edge,
+including edges that expand generic arguments. This query authorizes reflection;
+it neither attempts duplication nor replaces existing duplication checks.
+
+`unsafe => ... end` is a lexical permission scope. Its typed body remains explicit
+in `TypedUnsafeNode`, and code generation executes it inline. The analyser restores
+the previous authority after each scope, including failed analysis; helper and
+callback function analysis starts without caller authority. The scope does not
+suppress effects, ordinary diagnostics, casts, or ownership rules. The FFI `Unsafe`
+element tag remains a separate concept.
+
+The compiler descriptors are not runtime values, and `field_metadata` does not
+authorize value access. `FieldsNode` represents `fields[T]` or value-based
+enumeration. Analysis emits `TypedFieldsNode` with a concrete storage layout;
+code generation passes its exact owner/field type signatures to `MAKE_FIELDS`.
+The VM allocates ordinary managed, read-only metadata values through
+[`runtime/reflection.py`](../../src/valiance/runtime/reflection.py). They retain
+type evidence, never an owner instance.
+
+Concrete metadata supports `fields[T]`, `$value fields`, `length`, dynamic String
+indexing, `field?`, and the read-only field properties `name`, `index`, `owner`,
+`type`, and `visibility`. `Visibility` values expose their category through `name`.
+Missing direct lookup raises `KeyFault`, including literal missing names; optional
+lookup uses the ordinary optional payload/None representation. A descriptor's
+`type` property has the conservative union of possible `Type[FieldType]` evidence,
+while each runtime descriptor retains its actual field type. Private metadata is
+included. Every metadata operation on `Fields[Owner]`/`Field[Owner]` checks the
+lexical transitive ownership gate; a descriptor carries no unsafe authority.
+
+`Fields[Owner]` is a distinct heterogeneous collection, not a list. For a concrete
+owner, `foreach` checks a separate callback body for every declared field in order.
+An internal structural refinement of `Field[Owner]` supplies exact `Type[T]`
+evidence for that field's `type` property, including through generic helper calls.
+Every specialization must type-check; escaping results conservatively combine
+the possible specialization results. Empty layouts neither check nor execute the
+callback. Metadata remains read-only and operations retain the lexical safety gate.
+`TypedReflectiveForNode` carries all checked bodies through interface serialization
+and code generation; runtime selection uses the checked layout and field index.
+
+Reads/writes of owner values, runtime-generic enumeration and iteration/CSTC, runtime
+selection of a value's owner shape, and incomplete construction are pending.
+Unresolved enumeration is diagnosed rather than treated as empty storage.
+Metadata regressions live in `tests/test_types.py`,
+`tests/test_analysis_declarations.py`, `tests/test_runtime.py`, and
+`tests/test_bytecode_serialization.py`.
+
+Typed block joins preserve agreed operation metadata even when a terminal branch
+has a shorter body. Break-bearing conditionals retain both typed branches rather
+than erasing resolved operations to source syntax. Code generation must honor the
+already-compiled break operands for both inline and helper-function loops.
+
 ### `types/context.py`: relationship facts
 
 `Context` contains the facts relation functions need while answering questions:

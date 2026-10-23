@@ -18,6 +18,9 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
     ResolvedElementReference,
+    ReflectionFieldReference,
+    ReflectionFieldsReference,
+    ReflectionForeachReference,
     DispatchKind,
     VectorExtensionReference,
 )
@@ -35,11 +38,12 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x35
+BYTECODE_VERSION = 0x37
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
+    OpCode.MAKE_FIELDS: 0x48,
     OpCode.LOAD_VAR: 0x02,
     OpCode.STORE_VAR: 0x03,
     OpCode.LOAD_ELEMENT: 0x04,
@@ -130,6 +134,8 @@ _FLOAT = 0x0E
 _NATIVE_CALL_REFERENCE = 0x0F
 _FFI_STRUCT = 0x10
 _FFI_BUFFER = 0x11
+_REFLECTION_FIELDS_REFERENCE = 0x12
+_REFLECTION_FOREACH_REFERENCE = 0x13
 
 
 def _validate_occurrence_effects(
@@ -222,6 +228,10 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
     for index, instruction in enumerate(code.instructions):
         op = instruction.op
         argument = instruction.arg
+        if op is OpCode.MAKE_FIELDS:
+            _validate_reflection_fields(argument)
+        if op is OpCode.FOREACH and isinstance(argument, ReflectionForeachReference):
+            _validate_reflection_foreach(argument)
         if op is OpCode.SCOPE_BEGIN:
             _validate_scope_payload(argument, "scope begin")
             scope_depth += 1
@@ -333,9 +343,40 @@ def _validate_scope_payload(value: object, operation: str) -> None:
         raise BytecodeFormatError(f"invalid {operation} payload")
 
 
+def _validate_reflection_fields(value: object) -> None:
+    """Reject malformed storage evidence before serializing or executing a file."""
+    if (not isinstance(value, ReflectionFieldsReference)
+            or not isinstance(value.owner, str) or not value.owner
+            or not isinstance(value.fields, tuple)
+            or any(not isinstance(field, ReflectionFieldReference) for field in value.fields)):
+        raise BytecodeFormatError("invalid reflection field metadata")
+    if (any(not isinstance(field.name, str) or not field.name
+                   or not isinstance(field.value_type, str) or not field.value_type
+                   or not isinstance(field.visibility, str)
+                   or field.visibility not in {"public", "readable", "private"}
+                   for field in value.fields)
+            or len({field.name for field in value.fields}) != len(value.fields)):
+        raise BytecodeFormatError("invalid reflection field metadata")
+
+
+def _validate_reflection_foreach(value: ReflectionForeachReference) -> None:
+    """Validate specialized callback contracts and their complete storage layout."""
+    _validate_reflection_fields(value.layout)
+    if (type(value.has_index) is not bool or type(value.completion_count) is not int
+            or value.completion_count < 1 or not isinstance(value.bodies, tuple)
+            or len(value.bodies) != len(value.layout.fields)
+            or any(not isinstance(body, FunctionCode)
+                   or len(body.params) != 1 + int(value.has_index) for body in value.bodies)):
+        raise BytecodeFormatError("invalid reflective foreach metadata")
+
+
 def _validate_nested_concurrency_values(value: object) -> None:
     """Validate nested function bytecode found inside instruction payloads."""
-    if isinstance(value, FunctionCode):
+    if isinstance(value, ReflectionForeachReference):
+        _validate_reflection_foreach(value)
+        for body in value.bodies:
+            _validate_concurrency_bytecode(body)
+    elif isinstance(value, FunctionCode):
         _validate_concurrency_bytecode(value)
     elif isinstance(value, FunctionSetCode):
         for overload in value.overloads:
@@ -489,6 +530,21 @@ class _Writer:
         elif isinstance(value, IndexOperationSpec):
             self.u8(_INDEX_OPERATION_SPEC)
             self.index_operation_spec(value)
+        elif isinstance(value, ReflectionFieldsReference):
+            self.u8(_REFLECTION_FIELDS_REFERENCE)
+            self.string(value.owner)
+            self.u32(len(value.fields))
+            for field in value.fields:
+                self.string(field.name)
+                self.string(field.value_type)
+                self.string(field.visibility)
+        elif isinstance(value, ReflectionForeachReference):
+            _validate_reflection_foreach(value)
+            self.u8(_REFLECTION_FOREACH_REFERENCE)
+            self.value(value.layout)
+            self.value(value.bodies)
+            self.bool(value.has_index)
+            self.u32(value.completion_count)
         else:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
 
@@ -838,6 +894,17 @@ class _Reader:
             return self.object_constructor_reference()
         if tag == _INDEX_OPERATION_SPEC:
             return self.index_operation_spec()
+        if tag == _REFLECTION_FIELDS_REFERENCE:
+            owner = self.string()
+            fields = tuple(ReflectionFieldReference(self.string(), self.string(), self.string())
+                           for _ in range(self.u32()))
+            reference = ReflectionFieldsReference(owner, fields)
+            _validate_reflection_fields(reference)
+            return reference
+        if tag == _REFLECTION_FOREACH_REFERENCE:
+            reference = ReflectionForeachReference(self.value(), self.value(), self.bool(), self.u32())
+            _validate_reflection_foreach(reference)
+            return reference
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
 
     def index_operation_spec(self) -> IndexOperationSpec:

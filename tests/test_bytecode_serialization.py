@@ -26,6 +26,102 @@ from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_reflection_semantic_metadata_survives_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse("object Point => public $x: Int end\nfields[Point]")))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(loads_interface(dumps_interface(typed)), typed)
+
+    def test_reflective_foreach_checked_bodies_survive_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse(
+            'object Point =>\npublic $x: Int\npublic $label: String\nend\n'
+            'fields[Point] foreach (field) => $field.type end'
+        )))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(loads_interface(dumps_interface(typed)), typed)
+
+    def test_reflective_foreach_payload_round_trip(self):
+        from valiance.runtime.bytecode import (
+            ReflectionFieldReference, ReflectionFieldsReference, ReflectionForeachReference,
+        )
+
+        layout = ReflectionFieldsReference("Box", (
+            ReflectionFieldReference("value", "Int", "public"),))
+        body = FunctionCode((), params=("field",), name="foreach.body")
+        reference = ReflectionForeachReference(layout, (body,))
+        program = Program(FunctionCode((Instruction(OpCode.MAKE_FIELDS, layout),
+                                        Instruction(OpCode.FOREACH, reference))))
+        restored = loads(dumps(program))
+        self.assertEqual(restored, program)
+        self.assertEqual(run(restored)[0].type_name, "None")
+
+    def test_malformed_reflective_foreach_contracts_are_rejected(self):
+        from valiance.runtime.bytecode import (
+            ReflectionFieldReference, ReflectionFieldsReference, ReflectionForeachReference,
+        )
+
+        layout = ReflectionFieldsReference("Box", (
+            ReflectionFieldReference("value", "Int", "public"),))
+        body = FunctionCode((), params=("field",), name="foreach.body")
+        for reference in (
+            ReflectionForeachReference(layout),
+            ReflectionForeachReference(layout, (FunctionCode(()),)),
+            ReflectionForeachReference(layout, (body,), has_index=True),
+            ReflectionForeachReference(layout, (body,), completion_count=0),
+            ReflectionForeachReference(layout, (body,), has_index=1),
+            ReflectionForeachReference(ReflectionFieldsReference(""), ()),
+        ):
+            with self.subTest(reference=reference), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.FOREACH, reference),))))
+
+    def test_reflection_layout_round_trip_retains_owner_types_order_and_visibility(self):
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+
+        reference = ReflectionFieldsReference("Box[Int]", (
+            ReflectionFieldReference("first", "Int", "public"),
+            ReflectionFieldReference("second", "String", "private"),
+        ))
+        program = Program(FunctionCode((Instruction(OpCode.MAKE_FIELDS, reference),), name="<main>"))
+        restored = loads(dumps(program))
+        self.assertEqual(restored, program)
+        fields = run(restored)[0]
+        self.assertEqual(fields.type_args, ("Box[Int]",))
+        self.assertEqual([item.fields["name"] for item in fields.fields["#fields"]],
+                         ["first", "second"])
+
+    def test_malformed_reflection_layouts_are_rejected(self):
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+
+        for reference in (None, ("Int", ()), ReflectionFieldsReference(""),
+                          ReflectionFieldsReference("Int", (
+                              ReflectionFieldReference("field", "Int", "hidden"),)),
+                          ReflectionFieldsReference("Int", (
+                              ReflectionFieldReference("x", "Int", "public"),
+                              ReflectionFieldReference("x", "Int", "public"),))):
+            with self.subTest(reference=reference):
+                program = Program(FunctionCode((Instruction(OpCode.MAKE_FIELDS, reference),)))
+                with self.assertRaises(BytecodeFormatError):
+                    dumps(program)
+
+    def test_corrupted_reflection_visibility_is_rejected_when_decoding(self):
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+
+        reference = ReflectionFieldsReference("Box", (
+            ReflectionFieldReference("value", "Int", "public"),))
+        program = Program(FunctionCode((Instruction(OpCode.MAKE_FIELDS, reference),)))
+        data = dumps(program).replace(b"public", b"hidden")
+        with self.assertRaises(BytecodeFormatError):
+            loads(data)
+
     def test_ffi_scalar_constants_round_trip_with_exact_type_identity(self):
         values = (
             FFIScalarValue("&i32", 42),
@@ -305,7 +401,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x35"))
+        self.assertTrue(data.startswith(b"VLNCBC\x37"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

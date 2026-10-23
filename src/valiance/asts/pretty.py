@@ -12,6 +12,11 @@ from valiance.asts.nodes import (
     ElementNode,
     FieldAccessNode,
     ConcurrentNode,
+    UnsafeNode,
+    FieldsNode,
+    TypedFieldsNode,
+    TypedReflectiveForNode,
+    TypedUnsafeNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
@@ -57,6 +62,25 @@ def pretty_ast(value: ASTNode | TypedNode | Sequence[ASTNode | TypedNode]) -> st
 
 def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> str:
     """Compute pretty for AST diagnostic output."""
+    if isinstance(value, TypedFieldsNode):
+        return (f"TypedFieldsNode(type={_type_label(value.typ)}, "
+                f"owner={value.metadata.owner.typ}, fields={len(value.metadata.fields)}, "
+                f"consumes_receiver={value.consumes_receiver})")
+    if isinstance(value, TypedReflectiveForNode):
+        lines = [f"TypedReflectiveForNode(owner={value.metadata.owner.typ}, bodies=["]
+        for body in value.bodies:
+            lines.extend(_indent(pretty_ast(body).splitlines()))
+        lines.append("])")
+        return "\n".join(lines)
+    if isinstance(value, FieldsNode):
+        return f"FieldsNode(owner={value.owner}{_location_arg(value)})"
+    if isinstance(value, (UnsafeNode, TypedUnsafeNode)):
+        label = type(value).__name__
+        lines = [f"{label}(body=["]
+        for child in value.body:
+            lines.extend(_indent(_pretty(child, level + 1).splitlines()))
+        lines.append("])")
+        return "\n".join(lines)
     if isinstance(value, TypedConcurrentNode):
         return _typed_concurrent_node(value, level)
     if isinstance(value, TypedFunctionNode):

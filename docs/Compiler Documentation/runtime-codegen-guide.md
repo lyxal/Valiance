@@ -1067,6 +1067,30 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
+Bytecode version **0x37** includes `MAKE_FIELDS` (opcode `0x48`) with a named
+`ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
+string, a `u32` field count, and name/type-signature/visibility strings for each
+field in declaration order. Type signatures use the same canonical syntax as
+runtime generic arguments. Duplicate field names, empty type evidence and unknown
+visibility categories are rejected while loading.
+
+Reflective `FOREACH` uses `ReflectionForeachReference` (value tag `0x13`): the
+owner layout, one checked `FunctionCode` per field, an index-parameter flag, and
+the completion-result count. Loading verifies callback count and parameter arity
+and validates nested bytecode. The VM verifies each descriptor's owner, index,
+name, type and visibility against the layout before invoking its selected body.
+Callbacks borrow the paused caller's lexical environment and share sequential
+binding updates. Break and return values acquire ownership before the metadata
+collection is released. An empty layout produces ordinary completion without
+executing or instantiating a callback.
+
+The VM allocates fresh metadata on each execution. `Fields`, `Field`, `Type`, and
+`Visibility` metadata uses normal managed ownership; no descriptor retains the
+reflected instance. Value-based enumeration observes named owners and releases
+temporary operands normally. Lookup and property access never read owner storage.
+Permission decisions remain lexical analyser decisions. Read-only metadata cannot
+be reconstructed through ordinary field writes.
+
 The CLI supports project-entry, direct-file, inline-source, and saved-bytecode
 workflows:
 

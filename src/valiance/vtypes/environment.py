@@ -6,6 +6,10 @@ from .identities import overload_implementation_id
 
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from valiance.vtypes.reflection import FieldsDescriptor
 
 from valiance.vtypes.symbols import Symbol, tag_symbol
 from valiance.vtypes.context import (
@@ -550,6 +554,18 @@ class Environment:
         if definition is None:
             return None
         return definition.attribute_type(attribute_name)
+
+    def field_metadata(self, owner: Type) -> FieldsDescriptor:
+        """Return exact compiler reflection metadata without authorizing access."""
+        from valiance.vtypes.reflection import fields_for_type
+
+        return fields_for_type(owner, self)
+
+    def reflection_requires_unsafe(self, owner: Type) -> bool:
+        """Return whether reflection lacks proof of transitively duplicable storage."""
+        from valiance.vtypes.reflection import reflection_requires_unsafe
+
+        return reflection_requires_unsafe(owner, self)
 
     def lookup_attribute_definition(
         self,

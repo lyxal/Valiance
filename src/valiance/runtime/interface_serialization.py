@@ -23,6 +23,7 @@ _ALLOWED_MODULES = (
     "valiance.vtypes.context",
     "valiance.vtypes.environment",
     "valiance.vtypes.nodes",
+    "valiance.vtypes.reflection",
     "valiance.vtypes.symbols",
 )
 

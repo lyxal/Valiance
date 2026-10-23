@@ -54,6 +54,16 @@ codegen, and runtime.
 
 ## Pipeline
 
+`unsafe => ... end` parses to an `UnsafeNode` with an ordinary block body and source
+location. It has no function parameter list or return signature. It establishes
+lexical reflection authority during analysis and introduces no runtime privilege
+flag. This lowercase block keyword is distinct from the FFI `Unsafe` element tag.
+
+`fields[T]` and the stack form `fields` parse to `FieldsNode`. Adjacent name lookup
+and metadata access, such as `fields[Person]["age"].name`, lower to the existing
+index and field-access nodes after the enumeration node. Field names remain
+ordinary runtime expressions; the parser does not resolve or specialize literals.
+
 The source pipeline starts here:
 
 ```text

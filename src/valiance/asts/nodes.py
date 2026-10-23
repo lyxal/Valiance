@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from valiance.vtypes.reflection import FieldsDescriptor
 
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes import (
@@ -228,6 +232,14 @@ class TypedForNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedReflectiveForNode(TypedNode):
+    """A heterogeneous foreach with one checked body per declared field."""
+
+    metadata: FieldsDescriptor | None = None
+    bodies: tuple[tuple[ASTNode | TypedNode, ...], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedUnfoldNode(TypedNode):
     """A typed unfold expression with its selected state and body typing."""
 
@@ -273,6 +285,21 @@ class TypedConcurrentNode(TypedNode):
     input_stack: tuple[Type, ...] = ()
     output_stack: tuple[Type, ...] = ()
     body: tuple[TypedNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedUnsafeNode(TypedNode):
+    """A checked lexical permission scope with ordinary inline execution."""
+
+    body: tuple[TypedNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedFieldsNode(TypedNode):
+    """Concrete reflection metadata selected by semantic analysis."""
+
+    metadata: FieldsDescriptor | None = None
+    consumes_receiver: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +492,20 @@ class ConcurrentNode(ASTNode):
     params: tuple[FunctionParam, ...] | None = None
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None
+
+
+@dataclass(frozen=True)
+class UnsafeNode(ASTNode):
+    """A lexical block authorizing explicitly unsafe reflection operations."""
+
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class FieldsNode(ASTNode):
+    """Enumerate storage for an explicit type or a stack-sourced value."""
+
+    owner: Type | None = None
 
 
 @dataclass(frozen=True)

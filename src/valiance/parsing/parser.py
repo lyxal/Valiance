@@ -17,6 +17,8 @@ from valiance.asts import (
     CallArgument,
     CastNode,
     ConcurrentNode,
+    UnsafeNode,
+    FieldsNode,
     DefineNode,
     DictLiteralNode,
     ElementExtension,
@@ -1185,6 +1187,14 @@ class Parser:
             location=_loc(start),
         )
 
+    def _unsafe(self, start: Token) -> UnsafeNode:
+        """Parse a lexical unsafe block with the ordinary block delimiters."""
+        self._expect(TokenKind.FAT_ARROW)
+        return UnsafeNode(
+            body=self._body(owner_column=self._line_start_column(start)),
+            location=_loc(start),
+        )
+
     def _function_element_tags(self) -> tuple[frozenset[ElementTag], bool]:
         """Parse function element tags from the current token stream."""
         if not self._check_op("<"):
@@ -1904,6 +1914,10 @@ class Parser:
             )
         if self._match_ident("concurrent"):
             return _ChainPiece((self._concurrent(self._previous),), True)
+        if self._check_ident("unsafe") and self._peek(1).kind is TokenKind.FAT_ARROW:
+            return _ChainPiece((self._unsafe(self._advance()),), True)
+        if self._check_ident("fields") and self._peek(1).kind is not TokenKind.DOT:
+            return self._fields(self._advance())
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
         if self._match_ident("if"):
@@ -2032,6 +2046,28 @@ class Parser:
                 breaks_chain=breaks_chain,
             )
         self._error("expected expression")
+
+    def _fields(self, start: Token) -> _ChainPiece:
+        """Parse field enumeration and adjacent descriptor lookup/access."""
+        owner = None
+        if self._match(TokenKind.LBRACKET):
+            owner = self.parse_type_expression()
+            self._expect(TokenKind.RBRACKET)
+        nodes: list[ASTNode] = [FieldsNode(owner, location=_loc(start))]
+        anchor = self._previous
+        while self._adjacent(anchor, self._current):
+            if self._match(TokenKind.LBRACKET):
+                selectors = self._index_selectors()
+                nodes.extend(self._selector_expressions(selectors))
+                nodes.append(IndexAccessNode(selectors, location=_loc(start)))
+            elif self._match(TokenKind.DOT):
+                nodes.append(FieldAccessNode(
+                    self._symbol("expected field metadata name"), location=_loc(start),
+                ))
+            else:
+                break
+            anchor = self._previous
+        return _ChainPiece(tuple(nodes), is_element=True)
 
     def _where_type_literal_ahead(self) -> bool:
         """Return whether the next static term starts a type literal."""

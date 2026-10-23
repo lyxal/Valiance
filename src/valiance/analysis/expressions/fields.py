@@ -70,6 +70,7 @@ from valiance.asts import (
     is_catch_all_match_case,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
+from valiance.asts.nodes import FieldAccessNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.asts.object_constructors import (
     constructor_definitions,
@@ -78,6 +79,7 @@ from valiance.asts.object_constructors import (
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.structural import nested_types
+from valiance.vtypes.reflection import field_type_evidence
 from valiance.vtypes.default_types import Boolean
 
 from ..calls import candidates as _calls
@@ -227,6 +229,27 @@ class _FieldExpressions:
     ) -> tuple[T.Type | None, T.Type | None]:
         """Determine the type of field during static analysis."""
         receiver_type = T.normalize(receiver_type)
+        evidence = field_type_evidence(receiver_type)
+        if evidence is not None:
+            owner, witness = evidence
+            if write or not self.require_reflection_permission(owner, FieldAccessNode(name)):
+                return None, None
+            if name == Symbol("type") and witness is None and _functions._contains_type_var(owner):
+                self._diagnose("runtime-generic field type evidence is not implemented yet",
+                               FieldAccessNode(name))
+                return None, None
+            metadata_types = {
+                "name": T.String, "index": T.Int,
+                "owner": T.N(Symbol("Type"), owner),
+                "visibility": T.N(Symbol("Visibility")),
+                "type": (T.N(Symbol("Type"), witness) if witness is not None else
+                         T.U(*(T.N(Symbol("Type"), field.type.typ)
+                               for field in self.env.field_metadata(owner).fields))),
+            }
+            return metadata_types.get(name.dotted()), None
+        if (isinstance(receiver_type, T.NominalType)
+                and receiver_type.name == Symbol("Visibility") and name == Symbol("name")):
+            return (None if write else T.String), None
         if isinstance(receiver_type, T.RowType):
             existing = _utils._row_field_type(receiver_type, name)
             if write:

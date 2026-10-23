@@ -375,6 +375,7 @@ class Analyser:
         self._public_import_trait_implementations = []
         self._imported_trait_impl_sources: dict[tuple[Symbol, Symbol], str] = {}
         self._scope_depth = 0
+        self.reflection_unsafe = False
         self._failed_imports: dict[tuple[str, ...], str] = {}
         self._ffi_libraries: dict[Symbol, str] = {}
         self._ffi_structs: dict[str, T.FFIStructSpec] = {}
@@ -921,6 +922,16 @@ class Analyser:
         """Infer the stack-effect type of a function literal."""
         result = self.analyse_function_details(node)
         return None if result is None else result.typ
+
+    def require_reflection_permission(self, owner: T.Type, node: ASTNode) -> bool:
+        """Enforce the transitive ownership gate at a lexical reflection site."""
+        if not self.reflection_unsafe and self.env.reflection_requires_unsafe(owner):
+            self._diagnose(
+                f"reflection on {T.show(owner)} requires lexical unsafe because "
+                "transitive @nodup involvement cannot be ruled out", node,
+            )
+            return False
+        return True
 
     def analyse_function_details(self, node: FunctionNode) -> FunctionAnalysis | None:
         """Infer a function literal outside an existing branch."""

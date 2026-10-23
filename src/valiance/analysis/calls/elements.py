@@ -182,6 +182,22 @@ class _ElementCalls:
         if not sources and len(self.diagnostics) > diagnostics_before:
             return BranchSet()
         candidates = self.element_call_candidates(node, overloads, sources)
+        if node.name in (Symbol("field?"), Symbol("length")) and not self.reflection_unsafe:
+            permitted = []
+            denied = []
+            for candidate in candidates:
+                protected = next((param.args[0] for param in candidate.applied.params
+                                  if isinstance(param, T.NominalType)
+                                  and param.name == Symbol("Fields")
+                                  and self.env.reflection_requires_unsafe(param.args[0])), None)
+                if protected is None:
+                    permitted.append(candidate)
+                else:
+                    denied.append(protected)
+            if not permitted and denied:
+                self.require_reflection_permission(denied[0], node)
+                return BranchSet()
+            candidates = permitted
 
         stack_before = branch.stack
         modifier_signature_message = self._modifier_signature_message(modifier_args)

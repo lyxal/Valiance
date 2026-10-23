@@ -5519,7 +5519,8 @@ define f(value: #left #right Number) -> Number => $value
                 "1:25: no overloads for element 'length' match stack [#infinite "
                 "Int+]\navailable overloads:\n"
                 "  - length(String) -> Int\n"
-                "  - length(#-infinite Item+) -> Int"
+                "  - length(#-infinite Item+) -> Int\n"
+                "  - length(Fields[Owner]) -> Int"
             ],
         )
 

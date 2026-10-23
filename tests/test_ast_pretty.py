@@ -15,6 +15,16 @@ FOO = Symbol("foo")
 
 
 class AstPrettyTests(unittest.TestCase):
+    def test_pretty_unsafe_nodes_include_their_checked_body(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+
+        source = parse("unsafe => 1 end")
+        self.assertIn("UnsafeNode(body=[", pretty_ast(source))
+        rendered = pretty_ast(Analyser().analyse(source))
+        self.assertIn("TypedUnsafeNode(body=[", rendered)
+        self.assertIn("NumberLiteralNode", rendered)
+
     def test_pretty_ast_formats_program_over_multiple_lines(self):
         program = [
             FunctionNode(

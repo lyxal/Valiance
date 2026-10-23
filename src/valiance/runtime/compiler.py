@@ -69,6 +69,10 @@ from valiance.asts import (
     TypedChannelNode,
     TypedTimeoutNode,
     TypedConcurrentNode,
+    TypedUnsafeNode,
+    TypedFieldsNode,
+    FieldsNode,
+    UnsafeNode,
     TypedSpawnNode,
     TypedWaitNode,
     TypedAtNode,
@@ -77,6 +81,7 @@ from valiance.asts import (
     TypedSetVariableNode,
     TypedElementNode,
     TypedForNode,
+    TypedReflectiveForNode,
     TypedFunctionNode,
     TypedIfNode,
     TypedImportedFunctionNode,
@@ -102,6 +107,9 @@ from valiance.asts.object_constructors import (
     prepare_constructor_body,
 )
 from valiance.runtime.bytecode import (
+    ReflectionFieldsReference,
+    ReflectionForeachReference,
+    ReflectionFieldReference,
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
@@ -495,6 +503,14 @@ class _Compiler:
         """Lower one typed AST node into bytecode instructions."""
         source_node = node
         typed_node = node if isinstance(node, TypedNode) else None
+        if isinstance(typed_node, TypedFieldsNode):
+            if typed_node.consumes_receiver:
+                self.emit(OpCode.POP)
+            self.emit(OpCode.MAKE_FIELDS, _reflection_fields_reference(typed_node.metadata))
+            return
+        if isinstance(typed_node, TypedUnsafeNode):
+            self.expression(typed_node.body)
+            return
         if isinstance(typed_node, TypedChannelNode):
             operations = {
                 "new": OpCode.CHANNEL_NEW,
@@ -586,6 +602,8 @@ class _Compiler:
             return
         node = _unwrap(node)
         match node:
+            case UnsafeNode(body=body):
+                self.expression(body)
             case NumberLiteralNode(value):
                 self.emit(OpCode.PUSH_CONST, _number(value, node))
             case StringLiteralNode(value):
@@ -1564,6 +1582,19 @@ class _Compiler:
         params = (FunctionParam(node.variable),)
         if node.index_variable is not None:
             params += (FunctionParam(node.index_variable),)
+        if isinstance(typed_node, TypedReflectiveForNode):
+            bodies = tuple(_Compiler(
+                break_as_signal=True, return_as_signal=True, break_result_count=None,
+            ).compile_function(
+                body,
+                params=tuple(param.name.text for param in params),
+                name="foreach.body", cycle_params=True,
+            ) for body in typed_node.bodies)
+            self.emit(OpCode.FOREACH, ReflectionForeachReference(
+                _reflection_fields_reference(typed_node.metadata), bodies, node.index_variable is not None,
+                max(1, _max_break_values(node.body)) if bodies else 1,
+            ))
+            return
         body = FunctionNode(
             params=params,
             body=node.body,
@@ -1838,8 +1869,9 @@ class _Compiler:
             return
         if not self.loops:
             self.unsupported(node, "break outside a loop")
-        for value in node.values:
-            self.node(value)
+        if not values_already_compiled:
+            for value in node.values:
+                self.node(value)
         self.loops[-1].break_jumps.append(self.emit(OpCode.JUMP, None))
 
     def emit(self, op: OpCode, arg: object = None) -> int:
@@ -2326,7 +2358,7 @@ def _assignment_materialization_roots(
 def _observational_access_roots(
     body: tuple[ASTNode | TypedNode, ...],
 ) -> set[int]:
-    """Find variable-rooted accesses consumed directly by print operations."""
+    """Find named observations consumed by printing or metadata enumeration."""
     observed: set[int] = set()
     for index, candidate in enumerate(body):
         ast = _unwrap(candidate)
@@ -2349,6 +2381,9 @@ def _observational_access_roots(
         if cursor >= len(body):
             continue
         consumer = _unwrap(body[cursor])
+        if isinstance(consumer, FieldsNode) and consumer.owner is None:
+            observed.add(id(candidate))
+            continue
         if (
             isinstance(consumer, ElementNode)
             and consumer.name.text in {"print", "println"}
@@ -2871,6 +2906,14 @@ def _object_runtime_metadata(
         mustcall_mode,
         mustcall_methods,
     )
+
+
+def _reflection_fields_reference(metadata) -> ReflectionFieldsReference:
+    """Lower one checked storage layout to canonical runtime signature evidence."""
+    return ReflectionFieldsReference(str(metadata.owner.typ), tuple(
+        ReflectionFieldReference(field.name, str(field.type.typ), field.visibility.value)
+        for field in metadata.fields
+    ))
 
 
 def _source_site(node: ASTNode) -> str | None:

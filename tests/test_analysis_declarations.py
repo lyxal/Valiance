@@ -14,6 +14,96 @@ from valiance.parsing import parse
 class DeclarationBoundaryTests(unittest.TestCase):
     """Verify declaration services remain coordinated by the façade."""
 
+    def test_fields_uses_concrete_owner_and_preserves_all_descriptor_type_alternatives(self):
+        import valiance.vtypes as T
+        from valiance.vtypes.symbols import Symbol
+
+        analyser = Analyser()
+        branches = analyser.analyse_program_branches(parse('''
+object Person =>
+  public $name: String
+  private $age: Int
+end
+fields[Person]["age"].type
+'''))
+        self.assertEqual(analyser.diagnostics, [])
+        expected = T.U(T.N(Symbol("Type"), T.String), T.N(Symbol("Type"), T.Int))
+        self.assertTrue(all(branch.top == expected for branch in branches))
+
+    def test_fields_rejects_invalid_types_names_and_immutable_metadata_writes(self):
+        for source, message in (
+            ("fields[Missing]", "undefined type 'Missing'"),
+            ("object[T] Box => public $value: T end\nunsafe => fields[Box] end", "complete generic arguments"),
+            ('fields[Int][0]', "String name"),
+            ('fields[Int]["x", "y"]', "String name"),
+            ('fields[Int][0:1]', "String name"),
+            ('object Point => public $x: Int end\n'
+             '$field = fields[Point]["x"]\n$field.name = "changed"', "field"),
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(any(message in item for item in analyser.diagnostics),
+                                analyser.diagnostics)
+
+    def test_fields_requires_lexical_unsafe_for_transitive_protected_storage(self):
+        declaration = '''
+@nodup("Resource cannot be duplicated")
+object Resource => end
+object Box => private $resource: Resource end
+'''
+        for expression in ("fields[Resource]", "fields[Box]"):
+            analyser = Analyser()
+            analyser.analyse(parse(declaration + expression))
+            self.assertTrue(any("requires lexical unsafe" in item for item in analyser.diagnostics))
+        analyser = Analyser()
+        analyser.analyse(parse(declaration + "unsafe => fields[Box] end"))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_descriptor_does_not_carry_unsafe_authority(self):
+        source = '''
+@nodup("Resource cannot be duplicated")
+object Resource => end
+unsafe => fields[Resource] end
+length
+'''
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(any("requires lexical unsafe" in item for item in analyser.diagnostics))
+
+    def test_runtime_generic_enumeration_is_explicitly_diagnosed(self):
+        for body, message in (("$value fields", "requires lexical unsafe"),
+                              ("unsafe => $value fields end", "runtime-generic")):
+            analyser = Analyser()
+            analyser.analyse(parse(f"define[T] metadata(value: T) => {body} end"))
+            self.assertTrue(any(message in item for item in analyser.diagnostics), analyser.diagnostics)
+        analyser = Analyser()
+        analyser.analyse(parse("define[T] evidence(field: Field[T]) => "
+                               "unsafe => $field.type end end"))
+        self.assertTrue(any("runtime-generic field type evidence" in item
+                            for item in analyser.diagnostics), analyser.diagnostics)
+
+    def test_reflection_metadata_uses_checked_generic_storage_declarations(self):
+        """Metadata includes private storage and excludes object methods."""
+        import valiance.vtypes as T
+        from valiance.vtypes.reflection import Visibility
+        from valiance.vtypes.symbols import Symbol
+
+        analyser = Analyser()
+        analyser.analyse(parse(
+            "object[T] Box =>\n"
+            "  public $value: T\n"
+            "  private $label: String\n"
+            "  define answer -> Int => 42 end\n"
+            "end\n"
+        ))
+        self.assertEqual(analyser.diagnostics, [])
+        metadata = analyser.env.field_metadata(T.N(Symbol("Box"), T.Int))
+        self.assertEqual([field.name for field in metadata.fields], ["value", "label"])
+        self.assertEqual(metadata.fields[0].type.typ, T.Int)
+        self.assertEqual(metadata.fields[1].type.typ, T.String)
+        self.assertEqual(metadata.fields[1].visibility, Visibility.PRIVATE)
+
     def test_analyser_constructs_a_declaration_service(self) -> None:
         """The analyser exposes a dedicated declaration subsystem."""
         analyser = Analyser()
