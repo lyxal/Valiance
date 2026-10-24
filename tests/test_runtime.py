@@ -252,6 +252,124 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_generic_union_dispatch_specializes_scalar_named_and_vector_calls(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+define[T] nameOf(field: Field[T]) => $field.name end
+define[T] layoutOf(field: Field[T]) => fields[T] end
+$ma = pick(1) fields
+$mb = pick(0) fields
+$fa = $ma["number"]
+$fb = $mb["label"]
+nameOf($fa)
+nameOf(field=$fb)
+nameOf([$fa, $fb])
+$layout = layoutOf($fb)
+$layout length
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['number', 'label', ['number', 'label'], RuntimeNumber(1)])
+
+    def test_generic_union_dispatch_function_values_and_transitive_helpers(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+$fa: Field[A] | Field[B] = fields[A]["number"]
+$fb: Field[A] | Field[B] = fields[B]["label"]
+$name = fn[T](field: Field[T]) => $field.name end
+define invoke(operation: Function, field: Field[A] | Field[B]) => $operation($field) end
+$name($fa)
+$name call($fb)
+$fa $name call
+$name([$fa, $fb])
+[$fa, $fb] $name call
+invoke($name, $fb)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['number', 'label', 'number', ['number', 'label'], ['number', 'label'], 'label'])
+
+    def test_generic_union_dispatch_preserves_definition_closures(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define factory(seed: Int) =>
+  $prefix = "definition"
+  fn[T](field: Field[T]) => print $prefix $field.name end
+end
+$name = factory(0)
+$prefix = "caller"
+$fa: Field[A] | Field[B] = fields[A]["number"]
+$fb: Field[A] | Field[B] = fields[B]["label"]
+$name($fa)
+$name($fb)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, ['number', 'label'])
+        self.assertEqual(output.getvalue(), 'definitiondefinition' * 4)
+
+    def test_generic_union_dispatch_preserves_static_inputs_and_specific_overloads(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define[T] nameOf(field: Field[T]) -> String => $field.name end
+define nameOf(field: Field[B]) -> String => "special" end
+define[T] staticOf(field: Field[T]) where ($n = 2) => print $field.name $n end
+$fa: Field[A] | Field[B] = fields[A]["number"]
+$fb: Field[A] | Field[B] = fields[B]["label"]
+nameOf($fa)
+nameOf($fb)
+nameOf([$fa, $fb])
+staticOf($fb)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, ['number', 'special', ['number', 'special'], RuntimeNumber(2)])
+        self.assertEqual(output.getvalue(), 'label' * 4)
+
+    def test_generic_union_dispatch_lazy_results_retain_captured_storage(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+object Prefix => public $text: String end
+define factory(seed: Int) =>
+  $prefix = Prefix("definition")
+  fn[T](field: Field[T]) => print $prefix.text $field.name end
+end
+$name = factory(0)
+$fa: Field[A] | Field[B] = fields[A]["number"]
+$fb: Field[A] | Field[B] = fields[B]["label"]
+$lazy = [$fa, $fb] map: fn(field: Field[A] | Field[B]) => $field end
+$name($lazy)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(list(stack[0]), ['number', 'label'])
+        self.assertEqual(output.getvalue(), 'definitiondefinition' * 4)
+
+    def test_generic_union_dispatch_returns_exact_type_evidence_for_conversion(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define[T] typeOf(field: Field[T]) => $field.type end
+$fa: Field[A] | Field[B] = fields[A]["number"]
+$fb: Field[A] | Field[B] = fields[B]["label"]
+$ta = typeOf($fa)
+$tb = typeOf($fb)
+$ta
+$tb
+"7" to[$ta]
+7 to[$tb]
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([value.type_args for value in stack[:2]], [('Int',), ('String',)])
+            self.assertEqual(stack[2:], [RuntimeNumber(7), '7'])
+
     def test_runtime_union_returned_descriptor_retains_exact_conversion_target(self):
         source = '''
 object A => public $number: Int end

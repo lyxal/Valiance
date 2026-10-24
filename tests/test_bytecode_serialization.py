@@ -231,6 +231,46 @@ $box.value
         with self.assertRaises(BytecodeFormatError):
             dumps(Program(FunctionCode((), requires_specialization=1)))
 
+    def test_union_specialization_rejects_unlinked_and_unchecked_bodies(self):
+        from valiance.runtime.bytecode import FunctionSpecializationReference
+        from valiance.vtypes import UnionDispatchBranch, RuntimeTypePattern
+
+        branch = UnionDispatchBranch((RuntimeTypePattern('nominal', name='Int', accepted_names=('Int',)),), 'checked')
+        checked = FunctionCode((), params=('x',), implementation_id='checked')
+        valid = FunctionSpecializationReference((('original', 'checked', checked, ()),), (branch,))
+        self.assertEqual(loads(dumps(Program(FunctionCode((Instruction(OpCode.SPECIALIZE_FUNCTION, valid),))))).main.instructions[0].arg,
+                         valid)
+        for payload in (
+            FunctionSpecializationReference((), (branch,)),
+            FunctionSpecializationReference(valid.overloads, ()),
+            FunctionSpecializationReference(valid.overloads * 2, (branch,)),
+            FunctionSpecializationReference((('original', 'other', checked, ()),), (branch,)),
+            FunctionSpecializationReference((('original', 'checked', FunctionCode((), implementation_id='checked', requires_specialization=True), ()),), (branch,)),
+            FunctionSpecializationReference((('original', 'checked', checked, (1, 2)),), (branch,)),
+        ):
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.SPECIALIZE_FUNCTION, payload),))))
+
+    def test_generic_union_specializations_survive_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse('''
+object A => public $number: Int end
+object B => public $label: String end
+define[T] nameOf(field: Field[T]) => $field.name end
+$field: Field[A] | Field[B] = fields[B]["label"]
+nameOf($field)
+''')))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            self.assertEqual(run(loads(dumps(compile_program(restored, optimize=optimize)))), ['label'])
+
     def test_uninstantiated_reflection_templates_cannot_execute(self):
         code = FunctionCode((), requires_specialization=True)
         program = Program(FunctionCode((Instruction(OpCode.MAKE_FUNCTION, code), Instruction(OpCode.CALL))))
@@ -635,7 +675,7 @@ $box.value
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x3E"))
+        self.assertTrue(data.startswith(b"VLNCBC\x3F"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

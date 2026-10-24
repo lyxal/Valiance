@@ -34,6 +34,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
     ReflectionForeachReference,
+    FunctionSpecializationReference,
     DispatchKind,
     VectorExtensionReference,
     decode_stack_shuffle_spec,
@@ -3116,12 +3117,8 @@ class VirtualMachine:
                         case OpCode.SPECIALIZE_FUNCTION:
                             template = _pop(frame.stack, "function specialization")
                             try:
-                                original = _selected_function_implementation(
-                                    _accessed_value(template), instruction.arg.implementation_id,
-                                )
-                                frame.stack.append(_make_function_value(
-                                    instruction.arg, original.globals,
-                                    {name: original.globals[name] for name in original.owned_names},
+                                frame.stack.append(_specialize_function_value(
+                                    _accessed_value(template), instruction.arg, self,
                                 ))
                             finally:
                                 _release_value(template, self)
@@ -3155,7 +3152,10 @@ class VirtualMachine:
                             frame.stack.append(planned)
                         case OpCode.CALL:
                             try:
-                                if instruction.arg is None:
+                                call_reference = (
+                                    instruction.arg if isinstance(instruction.arg, ResolvedElementReference) else None
+                                )
+                                if instruction.arg is None or call_reference is not None:
                                     return_tag_specs = ()
                                 elif isinstance(instruction.arg, tuple):
                                     return_tag_specs = instruction.arg
@@ -3166,6 +3166,7 @@ class VirtualMachine:
                                 request = self._call_stack_top(
                                     frame,
                                     return_tag_specs=return_tag_specs,
+                                    reference=call_reference,
                                 )
                                 if request is not None:
                                     activation.pending_call = request
@@ -4310,6 +4311,7 @@ class VirtualMachine:
         frame: _Frame,
         *,
         return_tag_specs: tuple[object, ...] = (),
+        reference: ResolvedElementReference | None = None,
     ) -> _FunctionCallRequest | None:
         """Invoke stack top or suspend for a user-function activation."""
         occurrence = _pop(frame.stack, "call")
@@ -4319,6 +4321,14 @@ class VirtualMachine:
             (FunctionValue, OverloadedFunctionValue),
         )
         try:
+            if reference is not None:
+                if not isinstance(callee, OverloadedFunctionValue):
+                    raise RuntimeError("checked union call requires specialized implementations")
+                request = self._call_resolved_overloaded_function(callee, frame, reference)
+                if request is None:
+                    return None
+                release_callee = False
+                return replace(request, release_after=occurrence)
             if isinstance(callee, BuiltinValue):
                 _call_builtin(callee, frame)
                 _canonicalize_frame_return_tag_contracts(
@@ -4588,10 +4598,28 @@ class VirtualMachine:
             dispatch_value = OverloadedFunctionValue(
                 value.overloads,
                 reference.union_dispatch_plan,
+                implementation_lookup=dict(value.implementation_lookup),
             )
             if reference.vectorised:
                 args = _source_args(frame, arity, "union-dispatched vector call")
-                results = _vectorize_declared_callable(self, dispatch_value, args)
+                extension = _materialize_vector_extension(self, reference.extension, frame)
+                dispatch_value = OverloadedFunctionValue(
+                    tuple(_retain_runtime_reference(item) for item in value.overloads),
+                    reference.union_dispatch_plan,
+                    implementation_lookup=dict(value.implementation_lookup),
+                )
+                try:
+                    results = _vectorize_declared_callable(
+                        self, dispatch_value, args, reference.vectorised_depths,
+                        reference.vectorised_target_ranks, extension,
+                    )
+                finally:
+                    _release_runtime_vector_extension(extension, self)
+                    _release_value(dispatch_value, self)
+                if reference.return_tag_specs:
+                    results = _canonicalize_runtime_tag_contracts(
+                        results, reference.return_tag_specs, self.tag_parents,
+                    )
                 frame.stack.extend(results)
                 return None
             try:
@@ -5388,6 +5416,47 @@ def _selected_function_implementation(
 def _closure_locals(frame: _Frame) -> dict[str, Any] | None:
     """Return lexical locals that a newly created closure must own."""
     return None if frame.is_global_scope else frame.locals
+
+
+def _specialize_function_value(
+    template: FunctionValue | OverloadedFunctionValue,
+    reference: FunctionCode | FunctionSpecializationReference,
+    runtime: VirtualMachine,
+) -> FunctionValue | OverloadedFunctionValue:
+    """Bind checked bodies and static inputs to their declaration closures."""
+    entries = (
+        reference.overloads if isinstance(reference, FunctionSpecializationReference)
+        else ((reference.implementation_id, reference.implementation_id, reference, ()),)
+    )
+    functions = []
+    try:
+        for original_id, identity, code, static_values in entries:
+            original = _selected_function_implementation(template, original_id)
+            code = code if code is not None else original.code
+            captures = {name: original.globals[name] for name in original.owned_names}
+            if static_values:
+                count = len(static_values)
+                captures.update(zip(code.params[-count:], static_values, strict=True))
+                code = replace(
+                    code, params=code.params[:-count],
+                    param_collection_ranks=code.param_collection_ranks[:-count],
+                    occurrence_effects=tuple(
+                        index if index is None or index < len(code.params) - count else None
+                        for index in code.occurrence_effects
+                    ),
+                )
+            functions.append(_make_function_value(code, original.globals, captures))
+        if isinstance(reference, FunctionSpecializationReference):
+            return OverloadedFunctionValue(
+                tuple(functions), reference.dispatch_plan,
+                implementation_lookup={entry[1]: function
+                                       for entry, function in zip(entries, functions, strict=True)},
+            )
+        return functions[0]
+    except BaseException:
+        for function in functions:
+            _release_value(function, runtime)
+        raise
 
 
 def _make_function_value(
@@ -8114,10 +8183,13 @@ def _vectorize_declared_callable(
     vm: VirtualMachine,
     callee: OverloadedFunctionValue,
     args: tuple[Any, ...],
+    depths: tuple[int, ...] = (),
+    target_ranks: tuple[int | None, ...] = (),
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     """Vectorize an overload set, applying compiled dispatch at scalar leaves."""
     ranks = callee.overloads[0].code.param_collection_ranks
-    depths = _resolve_vectorisation_depths(args, (), ranks)
+    depths = _resolve_vectorisation_depths(args, depths, target_ranks or ranks)
     context = RuntimeContext(
         vm.output,
         vm.call_value,
@@ -8132,14 +8204,15 @@ def _vectorize_declared_callable(
         """Dispatch one scalar leaf without trying candidate bodies."""
         return tuple(vm.call_value(callee, list(item_args)))
 
-    return _vectorize_resolved_depths(
+    result = _vectorize_resolved_depths(
         implementation,
         args,
         context,
         depths,
-        None,
+        extension,
         stop_at_zero=True,
     )
+    return _bind_lazy_result_owners((*args, callee, *_extension_owned_values(extension)), result)
 
 
 def _vectorize_function(

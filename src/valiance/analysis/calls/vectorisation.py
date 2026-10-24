@@ -17,6 +17,7 @@ from valiance.asts import (
     GetVariableNode,
     FunctionOverloadTyping,
     TypedFunctionNode,
+    TypedFunctionDispatchNode,
     TypedNode,
 )
 from valiance.vtypes.symbols import Symbol
@@ -61,7 +62,7 @@ def _call_site_checked_overload_signature(
     type_values: dict[T.TypeVarKey, T.Type] | None = None,
     where_evaluated: bool = False,
     static_values: dict[str, int] | None = None,
-    checked_bodies: list[TypedFunctionNode] | None = None,
+    checked_bodies: list[TypedFunctionNode | TypedFunctionDispatchNode] | None = None,
 ) -> T.Overload | None:
     """Build the signature for call site checked overload during static analysis."""
     if callable(overload.call_site_body):
@@ -173,6 +174,19 @@ def _call_site_checked_overload_signature(
                     applied.actual_returns,
                     call_site_body=arity,
                     runtime_static_values=(),
+                )
+            candidates = _functions._callable_overloads(function_type)
+            covered = analyser._union_coverage_candidate(
+                ElementNode(Symbol("call")), candidates,
+                tuple(_core.ElementArguments(candidate, candidate.implementation_id,
+                                             stack, _core.AnalysisBranch()) for candidate in candidates),
+            )
+            if covered is not None and covered.specialization is not None:
+                if checked_bodies is not None:
+                    checked_bodies.append(covered.specialization)
+                return T.Overload(
+                    (*stack, function_type), covered.applied.actual_returns,
+                    call_site_body=len(stack),
                 )
             return None
         return overload.call_site_body(call_params)

@@ -15,6 +15,38 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_generic_union_dispatch_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public define[T] nameOf(field: Field[T]) => $field.name end
+public define[T] layoutOf(field: Field[T]) => fields[T] end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector.nameOf, reflector.layoutOf}
+object A => public $number: Int end
+object B => public $label: String end
+$fa: Field[A] | Field[B] = fields[A]["number"]
+$fb: Field[A] | Field[B] = fields[B]["label"]
+nameOf($fa)
+nameOf($fb)
+nameOf([$fa, $fb])
+$layout = layoutOf($fb)
+$layout["label"].name
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))),
+                                 ['number', 'label', ['number', 'label'], 'label'])
+
     def test_runtime_union_layout_selection_distinguishes_qualified_owner_names(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
@@ -973,7 +1005,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x08"))
+        self.assertTrue(first.startswith(b"VLNI\x09"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -990,10 +1022,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x08{"schema":8,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x09{"schema":9,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x08{"schema":8,"value":null}trailing'
+                b'VLNI\x09{"schema":9,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -1001,7 +1033,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x08{"schema":8,"value":')
+            loads_interface(b'VLNI\x09{"schema":9,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

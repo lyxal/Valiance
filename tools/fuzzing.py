@@ -38,6 +38,7 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    FunctionSpecializationReference,
     Instruction,
     ObjectConstructorReference,
     OpCode,
@@ -851,6 +852,11 @@ def _valid_bytecode_argument(
             access = ("choices", (access, (other, access[1], ("nominal", other.owner, ()), *access[3:])))
         return (writing, access, False, (), (), None) if op is OpCode.REFLECT_CALL else access
     if op is OpCode.SPECIALIZE_FUNCTION:
+        if rng.choice((False, True)):
+            identity = 'checked'
+            branch = UnionDispatchBranch((RuntimeTypePattern('nominal', name='Int', accepted_names=('Int',)),), identity)
+            code = FunctionCode((Instruction(OpCode.RETURN),), params=('value',), implementation_id=identity)
+            return FunctionSpecializationReference((('original', identity, code, ()),), (branch,))
         return FunctionCode((Instruction(OpCode.RETURN),))
     if op is OpCode.TYPE_DISPATCH:
         return ((), 0)

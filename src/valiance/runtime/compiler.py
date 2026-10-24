@@ -11,6 +11,7 @@ import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.vtypes.identities import constructor_implementation_id, overload_implementation_id
 from valiance.asts import (
+    TypedFunctionDispatchNode,
     TypedConstructionNode,
     AnnotationNode,
     AssertNode,
@@ -117,6 +118,7 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    FunctionSpecializationReference,
     IndexOperationSpec,
     IndexSelectorSpec,
     Instruction,
@@ -815,15 +817,44 @@ class _Compiler:
                         )
                     return
                 if isinstance(typed_node, TypedElementNode) and typed_node.specialization is not None:
+                    specialization = typed_node.specialization
                     if name.text != "call":
                         for value in typed_node.overload.runtime_static_values:
                             self.emit(OpCode.PUSH_CONST, value)
                     if name.text != "call":
                         self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(runtime_name))
-                    self.emit(OpCode.SPECIALIZE_FUNCTION, _compile_function_value(
-                        typed_node.specialization, str(runtime_name),
-                    ))
-                    self.emit(OpCode.CALL)
+                    if isinstance(specialization, TypedFunctionDispatchNode):
+                        entries = []
+                        for (original, body, static_values), dispatch in zip(
+                            specialization.specializations, specialization.dispatch_plan.branches, strict=True,
+                        ):
+                            code = _compile_function_value(body, str(runtime_name)) if body is not None else None
+                            if code is not None:
+                                if not isinstance(code, FunctionCode):
+                                    raise CompileError("union specialization must have one checked body per branch")
+                                original_id = code.implementation_id
+                                code = replace(code, implementation_id=dispatch.implementation_id)
+                                if original_id is not None:
+                                    code = _link_recursive_identity(code, original_id, dispatch.implementation_id)
+                            entries.append((original, dispatch.implementation_id, code, static_values))
+                        self.emit(OpCode.SPECIALIZE_FUNCTION, FunctionSpecializationReference(
+                            tuple(entries), specialization.dispatch_plan.branches,
+                        ))
+                        reference = _resolved_element_reference(typed_node)
+                        self.emit(OpCode.CALL, replace(
+                            reference, implementation_id=specialization.dispatch_plan.branches[0].implementation_id,
+                            vectorised=specialization.vectorised,
+                            vectorised_depths=specialization.vectorised_depths,
+                            vectorised_target_ranks=specialization.vectorised_target_ranks,
+                            dispatch_kind=DispatchKind.UNION,
+                            union_dispatch_plan=specialization.dispatch_plan.branches,
+                            static_values=(),
+                        ))
+                    else:
+                        self.emit(OpCode.SPECIALIZE_FUNCTION, _compile_function_value(
+                            specialization, str(runtime_name),
+                        ))
+                        self.emit(OpCode.CALL)
                     return
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:

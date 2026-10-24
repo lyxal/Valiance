@@ -277,6 +277,15 @@ class FunctionSetCode:
 
 
 @dataclass(frozen=True, slots=True)
+class FunctionSpecializationReference:
+    """Union implementations and the declaration closures they specialize."""
+
+    # Original identity, branch identity, checked code (None reuses the original), static inputs.
+    overloads: tuple[tuple[str | None, str, FunctionCode | None, tuple[Any, ...]], ...]
+    dispatch_plan: tuple[UnionDispatchBranch, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectConstructorReference:
     """Named payload for ``MAKE_OBJECT_CONSTRUCTOR`` bytecode."""
 

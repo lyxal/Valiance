@@ -35,13 +35,14 @@ private fields. Direct reads and writes enforce ordinary visibility unless
 the lexical operation has owner-scope authority or lexical `unsafe`; descriptors grant none.
 Readable fields permit external reads but require that authority for writes.
 
-Ordinary union overload dispatch does not yet retain multiple checked generic
-reflection bodies. Such calls are diagnosed rather than executing an unresolved
-template. In particular, passing `Field[A] | Field[B]` to a helper requiring one
-invariant `Field[T]` may require separate instantiations; invoking that helper
-inside reflective `foreach` supplies the concrete owner evidence. Generic helpers
-whose ordinary argument solving accepts the union use the implemented shared
-specialization path.
+Union overload dispatch retains a checked specialization for each possible input
+combination. A helper accepting invariant `Field[T]` can receive
+`Field[A] | Field[B]` without erasing owner evidence. Every selected body must
+check; runtime predicates select its executable specialization. Named calls,
+function values, nested helpers and vectorized calls preserve definition closures,
+lexical permissions and branch-specific static inputs. Lazy results retain their
+specialized closures until traversal completes. Helpers whose ordinary argument
+solving accepts the union use the shared specialization path.
 
 ## Implementation map
 
@@ -54,7 +55,7 @@ specialization path.
   [compiler](../../src/valiance/runtime/compiler.py), and
   [VM](../../src/valiance/runtime/vm.py): managed metadata and execution.
 - [Bytecode guide](../Compiler%20Documentation/runtime-codegen-guide.md#bytecode-files):
-  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x3E**;
+  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x3F**;
   older compiled artifacts require recompilation.
 
 ## Managed construction

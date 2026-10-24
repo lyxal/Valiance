@@ -12,7 +12,7 @@ from dataclasses import (
 )
 from enum import Enum, auto
 from hashlib import sha1
-from itertools import count
+from itertools import count, product
 from pathlib import Path
 from typing import cast
 
@@ -60,6 +60,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedExtensionPatternRule,
     TypedFunctionNode,
+    TypedFunctionDispatchNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
     TypedMatchNode,
@@ -464,10 +465,13 @@ class _CallSelection:
             for item in sources
         ):
             return None
-        # A dispatch identity alone cannot instantiate a deferred executable body.
-        overloads = tuple(overload for overload in overloads if not overload.specialize_body)
-        if not overloads:
-            return None
+        declared_overloads = overloads
+        specialization = None
+        if any(overload.specialize_body for overload in overloads):
+            checked = self._checked_union_dispatch(node, overloads, scalar_args, source)
+            if checked is None:
+                return None
+            overloads, specialization = checked
         return_counts = {len(overload.returns) for overload in overloads}
         if len(return_counts) != 1:
             return None
@@ -494,6 +498,10 @@ class _CallSelection:
             return None
         representative = next(overload for overload in overloads
                               if overload.implementation_id == plan.branches[0].implementation_id)
+        if specialization is not None:
+            original_id = specialization.specializations[0][0]
+            representative = next(overload for overload in declared_overloads
+                                  if overload.implementation_id == original_id)
         actual_returns = plan.returns
         vectorised = bool(vector_sources)
         vectorised_depths: tuple[int, ...] = ()
@@ -525,7 +533,59 @@ class _CallSelection:
             applied=applied,
             branch=source.branch,
             call_arg_order=source.call_arg_order,
-            implementation_id=plan.branches[0].implementation_id,
+            implementation_id=(representative.implementation_id if specialization is not None
+                               else plan.branches[0].implementation_id),
+            specialization=(replace(specialization, dispatch_plan=plan, vectorised=vectorised,
+                                    vectorised_depths=vectorised_depths,
+                                    vectorised_target_ranks=vectorised_target_ranks)
+                            if specialization is not None else None),
+        )
+
+    def _checked_union_dispatch(
+        self,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+        args: tuple[T.Type, ...],
+        source: ElementArguments,
+    ) -> tuple[tuple[T.Overload, ...], TypedFunctionDispatchNode] | None:
+        """Resolve and check every scalar input combination before dispatch."""
+        alternatives = tuple(
+            tuple(sorted(typ.items, key=T.show)) if isinstance(typ := T.normalize(arg), T.UnionType)
+            else (arg,)
+            for arg in args
+        )
+        concrete = []
+        specializations = []
+        for index, branch_args in enumerate(product(*alternatives)):
+            candidates = self.element_call_candidates(node, overloads, tuple(
+                replace(source, overload=overload,
+                        implementation_id=overload.implementation_id,
+                        arguments=branch_args)
+                for overload in overloads
+            ))
+            winners = _functions._collapse_equivalent_call_winners(
+                _functions._collapse_equivalent_friendly_multidispatch_winners(
+                    _functions._best_candidates(tuple(candidates), source.branch)
+                )
+            )
+            winners = self._prefer_latest_equal_winners(self._prefer_strict_declared_subtype(winners))
+            if len(winners) != 1:
+                return None
+            winner = winners[0]
+            applied = winner.applied
+            # Each checked body needs its own link, even when the same generic
+            # declaration serves several branches.
+            identity = f"{winner.implementation_id}:union:{index}"
+            concrete.append(replace(
+                applied.overload, params=branch_args, returns=applied.actual_returns,
+                generic_constraints=(), generic_params=(), where_clause=(),
+                call_site_body=None, specialize_body=False, runtime_static_values=(),
+                element_tags=applied.element_tags,
+                implementation_id=identity,
+            ))
+            specializations.append((winner.implementation_id, winner.specialization, applied.runtime_static_values))
+        return tuple(concrete), TypedFunctionDispatchNode(
+            node, specializations=tuple(specializations),
         )
 
     @staticmethod

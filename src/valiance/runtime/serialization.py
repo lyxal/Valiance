@@ -10,6 +10,7 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    FunctionSpecializationReference,
     IndexOperationSpec,
     IndexSelectorSpec,
     Instruction,
@@ -38,7 +39,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x3E
+BYTECODE_VERSION = 0x3F
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -144,6 +145,7 @@ _FFI_STRUCT = 0x10
 _FFI_BUFFER = 0x11
 _REFLECTION_FIELDS_REFERENCE = 0x12
 _REFLECTION_FOREACH_REFERENCE = 0x13
+_FUNCTION_SPECIALIZATION_REFERENCE = 0x14
 
 
 def _validate_occurrence_effects(
@@ -282,9 +284,11 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
             argument = argument[1]
         if op in {OpCode.REFLECT_READ, OpCode.REFLECT_WRITE}:
             _validate_reflection_access(argument, op is OpCode.REFLECT_WRITE)
-        if op is OpCode.SPECIALIZE_FUNCTION and (
-                not isinstance(argument, FunctionCode) or argument.requires_specialization):
-            raise BytecodeFormatError("specialization requires checked function bytecode")
+        if op is OpCode.SPECIALIZE_FUNCTION:
+            if isinstance(argument, FunctionSpecializationReference):
+                _validate_function_specialization(argument)
+            elif not isinstance(argument, FunctionCode) or argument.requires_specialization:
+                raise BytecodeFormatError("specialization requires checked function bytecode")
         if op is OpCode.MAKE_FIELDS:
             if isinstance(argument, tuple):
                 if (len(argument) != 2 or argument[0] != "choices"
@@ -475,9 +479,41 @@ def _validate_reflection_foreach(value: ReflectionForeachReference) -> None:
         raise BytecodeFormatError("invalid reflective foreach metadata")
 
 
+def _validate_function_specialization(reference: FunctionSpecializationReference) -> None:
+    """Require complete, uniquely linked executable union specializations."""
+    if (not isinstance(reference.overloads, tuple) or not reference.overloads
+            or not isinstance(reference.dispatch_plan, tuple) or not reference.dispatch_plan
+            or any(not isinstance(branch, UnionDispatchBranch) for branch in reference.dispatch_plan)):
+        raise BytecodeFormatError("empty function specialization dispatch")
+    identities = set()
+    for entry in reference.overloads:
+        if not isinstance(entry, tuple) or len(entry) != 4:
+            raise BytecodeFormatError("invalid function specialization entry")
+        original, identity, code, static_values = entry
+        if ((original is not None and (not isinstance(original, str) or not original)) or not isinstance(identity, str)
+                or not identity or identity in identities or not isinstance(static_values, tuple)
+                or (code is not None and (not isinstance(code, FunctionCode)
+                    or code.requires_specialization or code.implementation_id != identity
+                    or len(static_values) > len(code.params)))):
+            raise BytecodeFormatError("invalid checked function specialization")
+        identities.add(identity)
+    if {branch.implementation_id for branch in reference.dispatch_plan} != identities:
+        raise BytecodeFormatError("unlinked function specialization dispatch")
+    codes = {identity: (code, static_values) for _, identity, code, static_values in reference.overloads}
+    for branch in reference.dispatch_plan:
+        code, static_values = codes[branch.implementation_id]
+        if code is not None and len(branch.params) != len(code.params) - len(static_values):
+            raise BytecodeFormatError("function specialization dispatch arity mismatch")
+
+
 def _validate_nested_concurrency_values(value: object) -> None:
     """Validate nested function bytecode found inside instruction payloads."""
-    if isinstance(value, ReflectionForeachReference):
+    if isinstance(value, FunctionSpecializationReference):
+        _validate_function_specialization(value)
+        for _, _, code, _ in value.overloads:
+            if code is not None:
+                _validate_concurrency_bytecode(code)
+    elif isinstance(value, ReflectionForeachReference):
         _validate_reflection_foreach(value)
         for body in value.bodies:
             _validate_concurrency_bytecode(body)
@@ -590,6 +626,12 @@ class _Writer:
         elif isinstance(value, FunctionCode):
             self.u8(_FUNCTION)
             self.function(value)
+        elif isinstance(value, FunctionSpecializationReference):
+            self.u8(_FUNCTION_SPECIALIZATION_REFERENCE)
+            self.value(value.overloads)
+            self.u32(len(value.dispatch_plan))
+            for branch in value.dispatch_plan:
+                self.union_dispatch_branch(branch)
         elif isinstance(value, FunctionSetCode):
             self.u8(_FUNCTION_SET)
             self.function_set(value)
@@ -929,6 +971,12 @@ class _Reader:
             return tuple(self.value() for _ in range(self.u32()))
         if tag == _FUNCTION:
             return self.function()
+        if tag == _FUNCTION_SPECIALIZATION_REFERENCE:
+            reference = FunctionSpecializationReference(
+                self.value(), tuple(self.union_dispatch_branch() for _ in range(self.u32())),
+            )
+            _validate_function_specialization(reference)
+            return reference
         if tag == _FUNCTION_SET:
             return self.function_set()
         if tag == _RESOLVED_ELEMENT_REFERENCE:

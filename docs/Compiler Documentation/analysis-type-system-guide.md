@@ -1274,9 +1274,11 @@ Important invariants:
 - Value-based finite-union reflection preserves separate field layouts and
   returns a union of owner-specific collection types. Per-layout callbacks retain
   exact field witnesses. Direct and fallible access select a checked plan by
-  descriptor owner identity. Ordinary union overload coverage excludes deferred
-  templates unless a checked body has already been retained; a runtime overload
-  identity alone cannot instantiate a reflective function.
+  descriptor owner identity. Union overload coverage checks each cartesian input
+  combination independently when deferred templates need separate instantiations.
+  `TypedFunctionDispatchNode` retains selected bodies, original declaration
+  identities, static inputs and vectorization plans. Every branch must check;
+  a runtime overload identity alone cannot instantiate a reflective function.
 
 - The analyser detects CSTC structurally from overload parameter types. Do not
   add element-name checks for built-ins such as `peek`, `dip`, `fork`, `both`,

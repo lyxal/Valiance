@@ -18,6 +18,7 @@ from valiance.asts import (
     GetVariableNode,
     FunctionOverloadTyping,
     TypedFunctionNode,
+    TypedFunctionDispatchNode,
     TypedNode,
 )
 from valiance.vtypes.symbols import Symbol
@@ -536,6 +537,28 @@ def _call_element_candidates(
                 callable_implementation_id=callable_overload.implementation_id,
             )
         )
+    if not candidates and analyser is not None:
+        callable_overloads = _functions._callable_overloads(function_type)
+        covered = analyser._union_coverage_candidate(
+            ElementNode(Symbol("call"), disambiguation=disambiguation),
+            callable_overloads,
+            tuple(_core.ElementArguments(
+                overload, overload.implementation_id, explicit_args, application_branch,
+            ) for overload in callable_overloads),
+        )
+        if covered is not None and covered.specialization is not None:
+            applied = covered.applied
+            candidates.append(_core.CallCandidate(
+                applied=replace(
+                    applied, overload=call_overload,
+                    params=(*explicit_args, function_type),
+                    runtime_consumed_count=len(explicit_args) + 1,
+                ),
+                branch=covered.branch,
+                call_arg_order=call_arg_order,
+                specialization=covered.specialization,
+                callable_implementation_id=covered.specialization.specializations[0][0],
+            ))
     return candidates
 
 
@@ -1764,7 +1787,7 @@ def _apply_call_site_checked_overload(
                     continue
                 stack_args, _ = preview
             call_params = stack_args + args
-            checked_bodies: list[TypedFunctionNode] = []
+            checked_bodies: list[TypedFunctionNode | TypedFunctionDispatchNode] = []
             concrete = _call_site_checked_overload_signature(
                 deferred,
                 call_params,

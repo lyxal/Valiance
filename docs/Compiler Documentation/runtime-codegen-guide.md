@@ -1072,7 +1072,7 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
-Bytecode version **0x3E** includes `MAKE_FIELDS` (opcode `0x48`) with a named
+Bytecode version **0x3F** includes `MAKE_FIELDS` (opcode `0x48`) with a named
 `ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
 string, a `u32` field count, and name/type-signature/visibility strings for each
 field in declaration order. Type signatures use the same canonical syntax as
@@ -1108,9 +1108,22 @@ also selects the correct member of an overload set. Captures retain their ordina
 ownership rules; caller locals are never substituted for definition captures.
 `FunctionCode.requires_specialization` is a Boolean serialized after parameter
 collection ranks. It marks a generic closure template, which the VM refuses to
-execute without a checked specialization. The opcode payload must be executable
-function code, never another template. Analysed interfaces use schema **8** to
-retain deferred capture contexts, checked call-site bodies, fallible access plans and descriptor conversion branches.
+execute without a checked specialization. A scalar payload must be executable
+function code, never another template.
+
+For checked generic union dispatch, `FunctionSpecializationReference` (value tag
+`0x14`) stores original declaration identities, unique branch identities, optional
+checked bodies, branch-specific static inputs, and the runtime dispatch plan. A
+missing body reuses an already executable declaration. Loading validates complete
+links, unique identities, executable bodies and branch arities. The VM binds each
+body to its declaration closure and binds hidden static inputs there before
+dispatch. `CALL` accepts a checked `ResolvedElementReference` for these stack
+callables, reusing ordinary union dispatch and vectorization. Lazy vectorized
+results retain the specialized closures they invoke.
+
+Analysed interfaces use schema **9** to retain deferred capture contexts, checked
+call-site bodies and union specializations, fallible access plans and descriptor
+conversion branches.
 
 `REFLECT_WRITE` (opcode `0x4B`) consumes a replacement, owner occurrence and field
 descriptor, in that stack order, and produces the reconstructed owner. Its tuple

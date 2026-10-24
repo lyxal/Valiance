@@ -15,9 +15,9 @@ from valiance.parsing import parse
 class ExpressionBoundaryTests(unittest.TestCase):
     """Verify value expressions are owned outside the analyser façade."""
 
-    def test_union_dispatch_does_not_publish_unchecked_generic_reflection_templates(self):
+    def test_union_dispatch_retains_checked_generic_reflection_bodies(self):
         analyser = Analyser()
-        analyser.analyse(parse('''
+        typed = analyser.analyse(parse('''
 object A => public $number: Int end
 object B => public $label: String end
 define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
@@ -26,8 +26,44 @@ $owner = pick(0)
 $metadata = $owner fields
 nameOf($metadata["label"])
 '''))
+        from valiance.asts import TypedElementNode, TypedFunctionDispatchNode
+
+        self.assertEqual(analyser.diagnostics, [])
+        call = typed[-1]
+        self.assertIsInstance(call, TypedElementNode)
+        self.assertIsInstance(call.specialization, TypedFunctionDispatchNode)
+        self.assertEqual(len(call.specialization.specializations), 2)
+        self.assertTrue(all(body is not None for _, body, _ in call.specialization.specializations))
+
+    def test_union_specialization_rejects_an_invalid_body_for_any_owner(self):
+        declaration = '''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+$metadata = pick(0) fields
+'''
+        for definition in (
+            'define[T] inspect(field: Field[T]) => fields[T] foreach(f) => 1 + $f.name end end',
+            'define[T] inspect(field: Field[T]) => fields[T] foreach(f) => "7" to[$f.type] | length end end',
+        ):
+            with self.subTest(definition=definition):
+                analyser = Analyser()
+                analyser.analyse(parse(declaration + definition + '\ninspect($metadata["label"])'))
+                self.assertTrue(analyser.diagnostics)
+
+    def test_union_specialization_does_not_inherit_callers_unsafe_authority(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+@nodup("protected")
+object A => public $number: Int end
+object B => public $label: String end
+define[T] inspect(field: Field[T]) => $field.name end
+unsafe =>
+  $field: Field[A] | Field[B] = fields[B]["label"]
+  inspect($field)
+end
+'''))
         self.assertTrue(analyser.diagnostics)
-        self.assertTrue(any('nameOf' in message for message in analyser.diagnostics))
 
     def test_runtime_union_reflection_rejects_invalid_callback_in_any_layout(self):
         analyser = Analyser()

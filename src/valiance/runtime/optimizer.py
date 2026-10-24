@@ -12,6 +12,7 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    FunctionSpecializationReference,
     Instruction,
     ObjectConstructorReference,
     OpCode,
@@ -659,6 +660,11 @@ def _map_nested_functions(
     """Apply ``transform`` to every function-code payload inside ``value``."""
     if isinstance(value, FunctionCode):
         return transform(value)
+    if isinstance(value, FunctionSpecializationReference):
+        return replace(value, overloads=tuple(
+            (original, identity, transform(code) if code is not None else None, static_values)
+            for original, identity, code, static_values in value.overloads
+        ))
     if isinstance(value, FunctionSetCode):
         return replace(
             value,
@@ -703,7 +709,11 @@ def _collect_bound_names(function: FunctionCode) -> set[str]:
 
 def _collect_bound_names_from_value(value: object, names: set[str]) -> None:
     """Add bound names from nested bytecode payloads to ``names``."""
-    if isinstance(value, FunctionCode):
+    if isinstance(value, FunctionSpecializationReference):
+        for _, _, code, _ in value.overloads:
+            if code is not None:
+                names.update(_collect_bound_names(code))
+    elif isinstance(value, FunctionCode):
         names.update(_collect_bound_names(value))
     elif isinstance(value, FunctionSetCode):
         for overload in value.overloads:

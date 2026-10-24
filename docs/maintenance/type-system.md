@@ -259,6 +259,12 @@ it does not capture caller locals or grant caller permissions. Generic closures
 whose reflection depends on enclosing owner evidence cause that enclosing
 function to specialize. Uninstantiated templates cannot execute. Recursive
 functions still require explicit signatures and cannot infer generic reflection.
+When a union argument needs distinct generic instantiations, call selection checks
+every cartesian input branch with ordinary overload resolution. A
+`TypedFunctionDispatchNode` retains the checked bodies, original closure identities,
+static inputs and vectorization plan. Runtime branch identities are unique even
+when several branches specialize the same declaration. Every possible branch
+must succeed; owner evidence remains invariant rather than being erased.
 `owner[field] = replacement` retains the receiver's type and uses ordinary indexed
 assignment/rebinding. `TypedReflectiveWriteNode` records the concrete layout,
 lexical authority and one static compatibility proof per field. Code generation

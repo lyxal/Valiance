@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import valiance.vtypes as T
-from valiance.asts import FunctionOverloadTyping, TypedFunctionNode, TypedNode
+from valiance.asts import FunctionOverloadTyping, TypedFunctionNode, TypedFunctionDispatchNode, TypedNode
 
 from ..state import AnalysisBranch
 
@@ -56,7 +56,7 @@ class ElementArguments:
 class OverloadApplication:
     applied: T.AppliedOverload
     branch: AnalysisBranch
-    specialization: TypedFunctionNode | None = None
+    specialization: TypedFunctionNode | TypedFunctionDispatchNode | None = None
 
 @dataclass(frozen=True)
 class CallCandidate:
@@ -70,7 +70,7 @@ class CallCandidate:
     # Concrete argument types, retained for compile-time trait evidence.
     source_arguments: tuple[T.Type, ...] = ()
     state_arity: int | None = None
-    specialization: TypedFunctionNode | None = None
+    specialization: TypedFunctionNode | TypedFunctionDispatchNode | None = None
 
 @dataclass(frozen=True)
 class ElementCallPreparation:

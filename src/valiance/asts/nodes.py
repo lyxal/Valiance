@@ -73,7 +73,7 @@ class TypedElementNode(TypedNode):
         tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
     ] = ()
     optional_conversion: bool = False
-    specialization: TypedFunctionNode | None = None
+    specialization: TypedFunctionNode | TypedFunctionDispatchNode | None = None
     reflection_access: TypedReflectiveReadNode | TypedConstructionNode | None = None
 
 
@@ -277,6 +277,17 @@ class TypedReturnNode(TypedNode):
 class TypedFunctionNode(TypedNode):
     overloads: tuple[FunctionOverloadTyping, ...] = ()
     dispatch_plan: UnionDispatchPlan | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedFunctionDispatchNode(TypedNode):
+    """Checked union branches bound to their original declaration closures."""
+
+    specializations: tuple[tuple[str | None, TypedFunctionNode | None, tuple[object, ...]], ...] = ()
+    dispatch_plan: UnionDispatchPlan | None = None
+    vectorised: bool = False
+    vectorised_depths: tuple[int, ...] = ()
+    vectorised_target_ranks: tuple[int | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

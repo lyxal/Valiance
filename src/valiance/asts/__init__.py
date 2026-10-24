@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from valiance.asts.nodes import (
+    TypedFunctionDispatchNode,
     AnnotationNode,
     AssertNode,
     ASTNode,
@@ -128,6 +129,7 @@ from valiance.source_tools.source import typed_source
 from valiance.vtypes.symbols import Symbol
 
 __all__ = [
+    "TypedFunctionDispatchNode",
     "TypeArgumentExpression",
     "TypedDescriptorConversionNode",
     "ASTNode",
