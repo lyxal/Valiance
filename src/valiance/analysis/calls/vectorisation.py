@@ -112,6 +112,7 @@ def _call_site_checked_overload_signature(
                         node,
                         stack,
                         friendly_owners=candidate.reflection_friendly_owners,
+                        dependencies=analyser.env.call_site_dependency_scope(candidate),
                     )
                     if analysis is None:
                         continue
@@ -186,6 +187,7 @@ def _call_site_checked_overload_signature(
             where_evaluated=where_evaluated,
             static_values=static_values,
             friendly_owners=overload.reflection_friendly_owners,
+            dependencies=analyser.env.call_site_dependency_scope(overload),
         )
         if analysis is None:
             return None

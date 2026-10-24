@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
-from valiance.runtime.runtime_values import ObjectValue, PanicSignal, RuntimeNumber
+from valiance.runtime.runtime_values import ObjectRuntimeType, ObjectValue, PanicSignal, RuntimeNumber
+from valiance.runtime.transfer import IsolatedResource
+
+
+@dataclass
+class UninitValue(ObjectValue, IsolatedResource):
+    """Managed partial storage whose own cleanup never runs the owner's destructor."""
+
+    layout: ReflectionFieldsReference | None = None
+    owner_runtime: ObjectRuntimeType | None = None
+    owner_name: str = ""
+    consumed: bool = False
+
+    def missing_fields(self) -> tuple[str, ...]:
+        """Return unset declared slots in declaration order."""
+        return tuple(field.name for field in self.layout.fields if field.name not in self.fields)
 
 
 class ReflectionValue(ObjectValue):

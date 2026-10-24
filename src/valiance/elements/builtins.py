@@ -92,6 +92,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "ReflectionAccessFault",
         "ReflectionFieldFault",
         "ReflectionTypeFault",
+        "IncompleteConstructionFault",
         "ShapeFault",
         "SliceFault",
         "StateFault",
@@ -116,6 +117,7 @@ TRAIT_IMPLS = (
     (REAL, NUMBER),
     *((error_type, ERR) for error_type in BUILTIN_ERROR_TYPES),
     *((error_type, ERR) for error_type in REFLECTION_ERROR_TYPES),
+    (Symbol("ConstructionError"), ERR),
     *((fault_type, FAULT) for fault_type in BUILTIN_FAULT_TYPES),
     (Symbol("AssertError"), ERR),
     (Symbol("PanicError"), ERR),
@@ -4038,6 +4040,30 @@ for _operation, _error in zip(("read?", "write?"), REFLECTION_ERROR_TYPES, stric
         ),
     )(None)
 
+for _operation in ("uninit", "finished?", "finish", "finish?"):
+    _owner = T.V("Owner")
+    _builder = T.N(Symbol("Uninit"), _owner)
+    _returns = {"uninit": _builder, "finished?": T.Boolean, "finish": _owner,
+                "finish?": T.N(RESULT, _owner, T.N(Symbol("ConstructionError")))}
+    builtin(
+        _operation, () if _operation == "uninit" else (_builder,), (_returns[_operation],),
+        param_names=() if _operation == "uninit" else ("builder",),
+        reflection_operation=_operation, vectorisable=False,
+        documentation=element_documentation(
+            {"uninit": "Allocate empty managed storage under lexical unsafe.",
+             "finished?": "Check stored-field completeness without consuming the builder.",
+             "finish": "Consume a complete builder, panicking when fields are missing.",
+             "finish?": "Consume a builder, returning a Result on missing fields."}[_operation],
+            parameters=() if _operation == "uninit" else (("builder", "Managed incomplete storage."),),
+            returns={"uninit": "An empty Uninit owner.", "finished?": "Whether all stored fields are initialized.",
+                     "finish": "The completed owner.", "finish?": "The completed owner or ConstructionError."}[_operation],
+            category="Reflection",
+            examples=((f'object Empty => end\nunsafe => uninit[Empty]'
+                       + ('' if _operation == 'uninit' else f' | {_operation}') + ' end',
+                       None, 'Managed construction requires lexical unsafe.'),),
+        ),
+    )(None)
+
 for _error in REFLECTION_ERROR_TYPES:
     def _construct_reflection_error(args, ctx, *, _type_name=_error):
         """Construct a recoverable reflection error with an explicit reason."""
@@ -4069,7 +4095,7 @@ def default_environment() -> T.Environment:
         env.define_tag(Symbol(name), kind)
     env.define_trait(ERR)
     env.define_trait(FAULT)
-    for name in ("Type", "Field", "Fields"):
+    for name in ("Type", "Field", "Fields", "Uninit"):
         env.define_trait(Symbol(name), generics=(Symbol("Owner"),))
     env.define_trait(Symbol("Visibility"))
     message_attribute = T.ObjectAttribute(Symbol("message"), T.String)
@@ -4077,6 +4103,10 @@ def default_environment() -> T.Environment:
         env.define_object(message_type, (message_attribute,))
     for error_type in REFLECTION_ERROR_TYPES:
         env.define_object(error_type, (T.ObjectAttribute(Symbol("reason"), T.String), message_attribute))
+    env.define_object(Symbol("ConstructionError"), (
+        T.ObjectAttribute(Symbol("reason"), T.String), message_attribute,
+        T.ObjectAttribute(Symbol("missing"), T.ExactList(T.String)),
+    ))
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))
     env.context.set_generic_variance(
         RESULT,

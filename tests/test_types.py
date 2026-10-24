@@ -2026,6 +2026,39 @@ class InlineTraitElementTagConformanceTests(unittest.TestCase):
 
 
 class ReflectionMetadataTests(unittest.TestCase):
+    def test_value_union_layouts_preserve_owners_without_fabricating_static_storage(self):
+        from valiance.vtypes.reflection import fields_for_value, field_type_evidence, fields_type_owners
+
+        env = Environment()
+        a, b = N(Symbol('A')), N(Symbol('B'))
+        env.define_object(a.name, (T.ObjectAttribute(Symbol('number'), Int),))
+        env.define_object(b.name, (T.ObjectAttribute(Symbol('label'), String),))
+        owner = U(a, b)
+        self.assertEqual(env.field_metadata(owner).fields, ())
+        metadata = fields_for_value(owner, env)
+        self.assertEqual({layout.owner.typ for layout in metadata.alternatives}, {a, b})
+        self.assertEqual(metadata.value_type, U(Int, String))
+        self.assertEqual({field.owner.typ for field in metadata.fields}, {a, b})
+        self.assertEqual(field_type_evidence(U(N(Symbol('Field'), a), N(Symbol('Field'), b))), (owner, None))
+        self.assertEqual(set(fields_type_owners(U(N(Symbol('Fields'), a), N(Symbol('Fields'), b)))), {a, b})
+
+    def test_partial_storage_release_effects_exclude_owner_destructor(self):
+        env = Environment()
+        child = N(Symbol("Child"))
+        owner = N(Symbol("Owner"))
+        child_effects = frozenset((ElementTag(Symbol("IO")),))
+        owner_effects = frozenset((ElementTag(Symbol("Random")),))
+        env.define_object(child.name)
+        env.set_object_destructor_effects(child.name, child_effects)
+        env.define_object(owner.name, (T.ObjectAttribute(Symbol("child"), child),))
+        env.set_object_destructor_effects(owner.name, owner_effects)
+        self.assertEqual(env.destructor_effects(N(Symbol("Uninit"), owner)), child_effects)
+        self.assertEqual(env.destructor_effects(owner), owner_effects)
+        env.define_object(Symbol("Recursive"), (
+            T.ObjectAttribute(Symbol("next"), N(Symbol("Uninit"), N(Symbol("Recursive")))),
+        ))
+        self.assertEqual(env.destructor_effects(N(Symbol("Uninit"), N(Symbol("Recursive")))), frozenset())
+
     def test_reflection_authorization_follows_private_nested_storage(self):
         env = Environment()
         secret = N(Symbol("Secret"))

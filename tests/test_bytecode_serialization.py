@@ -26,6 +26,94 @@ from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_runtime_union_reflection_survives_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse('''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+$owner = pick(0)
+$metadata = $owner fields
+$field = $metadata["label"]
+$owner[$field]
+write?($owner, $field, "updated") ?!
+$owner fields foreach(field) => $field.name end
+''')))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            stack = run(loads(dumps(compile_program(restored, optimize=optimize))))
+            self.assertEqual(stack[0], 'hello')
+            self.assertEqual(stack[1].fields['label'], 'updated')
+
+    def test_malformed_runtime_union_reflection_choices_are_rejected(self):
+        from valiance.runtime.bytecode import ReflectionFieldsReference, ReflectionForeachReference
+
+        layout = ReflectionFieldsReference('Owner')
+        access = (layout, False, ('nominal', 'Owner', ()))
+        choice = (('nominal', 'Owner', ()), layout)
+        iteration = ReflectionForeachReference(layout)
+        cases = [(OpCode.MAKE_FIELDS, ('choices', ())),
+                 (OpCode.MAKE_FIELDS, ('choices', (choice, choice))),
+                 (OpCode.MAKE_FIELDS, ('choices', ((1, layout),))),
+                 (OpCode.REFLECT_READ, ('choices', ())),
+                 (OpCode.REFLECT_READ, ('choices', (access, access))),
+                 (OpCode.REFLECT_READ, ('choices', (None,))),
+                 (OpCode.REFLECT_WRITE, ('choices', (access,))),
+                 (OpCode.FOREACH, ('reflection_choices', ())),
+                 (OpCode.FOREACH, ('reflection_choices', (iteration, iteration))),
+                 (OpCode.FOREACH, ('reflection_choices', (None,)))]
+        for operation, payload in cases:
+            with self.subTest(operation=operation, payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(operation, payload), Instruction(OpCode.RETURN)))))
+
+    def test_managed_construction_plan_survives_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse('''
+object[T] Box => public $value: T end
+define[T] build(value: T) =>
+  unsafe =>
+    $builder = uninit[Box[T]]
+    $builder[fields[Box[T]]["value"]] = $value
+    finish $builder
+  end
+end
+$box = build(42)
+$box.value
+''')))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            self.assertEqual(run(loads(dumps(compile_program(restored, optimize=optimize)))), [42])
+
+    def test_malformed_managed_construction_plans_are_rejected(self):
+        from valiance.runtime.bytecode import ReflectionFieldsReference
+
+        layout = ReflectionFieldsReference('Box')
+        valid = ('uninit', layout, 'Box', ('nominal', 'Box', ()))
+        payloads = [None, (), ([], layout, 'Box', valid[3]),
+                    ('unknown', layout, 'Box', valid[3]),
+                    ('uninit', None, 'Box', valid[3]),
+                    ('uninit', layout, 1, valid[3]),
+                    ('uninit', layout, 'Box', ('var', 'T')),
+                    ('uninit', layout, 'Box', ('nominal', 'Box', (1,)))]
+        for payload in payloads:
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.CONSTRUCT, payload),
+                                            Instruction(OpCode.RETURN)), name='<main>')))
+
     def test_descriptor_conversion_plan_survives_interface_round_trip(self):
         from valiance.analysis import Analyser
         from valiance.parsing import parse
@@ -547,7 +635,7 @@ $box.value
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x3C"))
+        self.assertTrue(data.startswith(b"VLNCBC\x3E"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

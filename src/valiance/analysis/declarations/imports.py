@@ -248,10 +248,13 @@ class _ImportDeclarations:
         name: Symbol,
         typed_node: TypedFunctionNode,
         runtime_name: Symbol,
+        dependencies: tuple[TypedNode, ...] = (),
     ) -> None:
         """Register imported definition during static analysis."""
         for overload in self._selected_import_overloads(typed_node):
             self.env.define_overload(name, overload)
+            if dependencies and overload.call_site_body is not None and overload.implementation_id is not None:
+                self.env.call_site_dependencies[overload.implementation_id] = dependencies
             self.env.bind_runtime_name(
                 name,
                 runtime_name,

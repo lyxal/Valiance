@@ -981,6 +981,7 @@ def _contextual_modifier_overloads(
         for params in _modifier_call_param_variants(expected.params):
             analysis = analyser._analyse_function_at_call_site(
                 outer, node, params, friendly_owners=overload.reflection_friendly_owners,
+                dependencies=analyser.env.call_site_dependency_scope(overload),
             )
             if analysis is None:
                 continue
@@ -1275,7 +1276,7 @@ def _apply_overload_to_branch(
     generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply overload to branch during static analysis."""
-    if overload.reflection_operation is not None and not generic_args:
+    if overload.reflection_operation in {"read?", "write?"} and not generic_args:
         from valiance.vtypes.reflection import field_type_evidence
 
         descriptor = T.normalize(args[1])
@@ -1286,7 +1287,13 @@ def _apply_overload_to_branch(
             return None
         # The descriptor fixes the owner before ordinary vectorisation solves
         # the call; a collection receiver must not widen the descriptor's owner.
-        concrete = replace(overload, params=(evidence[0], descriptor, *args[2:]))
+        receiver = T.normalize(args[0])
+        owner = evidence[0]
+        if (isinstance(receiver, T.UnionType)
+                and not any(isinstance(item, T.CollectionType) for item in receiver.items)
+                and _utils._types_overlap(receiver, owner, ctx)):
+            owner = receiver
+        concrete = replace(overload, params=(owner, descriptor, *args[2:]))
         applied = T.try_apply_overload(concrete, args, ctx, disambiguation=disambiguation).applied
         if applied is None:
             return None

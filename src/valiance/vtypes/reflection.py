@@ -6,7 +6,7 @@ granting permission to access their values. They are not language runtime values
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -54,6 +54,7 @@ class FieldsDescriptor:
 
     owner: TypeDescriptor
     fields: tuple[FieldDescriptor, ...] = ()
+    alternatives: tuple[FieldsDescriptor, ...] = ()
 
     @property
     def value_type(self) -> T.Type:
@@ -68,6 +69,13 @@ class FieldsDescriptor:
 def field_type_evidence(typ: T.Type) -> tuple[T.Type, T.Type | None] | None:
     """Recover an owner and an optional opened field witness from a descriptor view."""
     typ = T.normalize(typ)
+    if isinstance(typ, T.UnionType):
+        evidence = tuple(field_type_evidence(item) for item in typ.items)
+        if evidence and all(item is not None for item in evidence):
+            return T.U(*(item[0] for item in evidence)), (
+                T.U(*(item[1] for item in evidence)) if all(item[1] is not None for item in evidence) else None
+            )
+        return None
     if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return field_type_evidence(typ.inner)
     if isinstance(typ, T.RowType):
@@ -132,6 +140,34 @@ def fields_for_type(owner: T.Type, env: Environment) -> FieldsDescriptor:
             visibility=Visibility(attribute.access.text),
         ))
     return FieldsDescriptor(descriptor, tuple(fields))
+
+
+def fields_for_value(owner: T.Type, env: Environment) -> FieldsDescriptor:
+    """Retain each statically known storage possibility of a runtime union."""
+    owner = T.normalize(owner)
+    possibilities = owner.items if isinstance(owner, T.UnionType) else ()
+    if isinstance(owner, (T.TaggedType, T.NoVecType, T.ExactType)):
+        inner = fields_for_value(owner.inner, env)
+        possibilities = tuple(replace(owner, inner=layout.owner.typ) for layout in inner.alternatives)
+    if possibilities:
+        alternatives = tuple(fields_for_type(item, env) for item in possibilities)
+        return FieldsDescriptor(TypeDescriptor(owner),
+                                tuple(field for layout in alternatives for field in layout.fields),
+                                alternatives)
+    return fields_for_type(owner, env)
+
+
+def fields_type_owners(typ: T.Type) -> tuple[T.Type, ...] | None:
+    """Recover the owners of a collection or a finite union of collections."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.UnionType):
+        items = tuple(fields_type_owners(item) for item in typ.items)
+        if items and all(item is not None for item in items):
+            return tuple(owner for item in items for owner in item)
+        return None
+    if isinstance(typ, T.NominalType) and typ.name == Symbol("Fields") and len(typ.args) == 1:
+        return (typ.args[0],)
+    return None
 
 
 def reflection_requires_unsafe(owner: T.Type, env: Environment) -> bool:

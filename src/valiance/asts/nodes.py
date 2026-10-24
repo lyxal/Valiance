@@ -74,7 +74,7 @@ class TypedElementNode(TypedNode):
     ] = ()
     optional_conversion: bool = False
     specialization: TypedFunctionNode | None = None
-    reflection_access: TypedReflectiveReadNode | None = None
+    reflection_access: TypedReflectiveReadNode | TypedConstructionNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +302,7 @@ class TypedReflectiveReadNode(TypedNode):
 
     metadata: FieldsDescriptor | None = None
     allow_private: bool = False
+    private_owners: tuple[Type, ...] = field(default=(), kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +318,14 @@ class TypedFieldsNode(TypedNode):
 
     metadata: FieldsDescriptor | None = None
     consumes_receiver: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TypedConstructionNode(TypedFieldsNode):
+    """A checked managed construction operation with concrete owner evidence."""
+
+    operation: str = "uninit"
+    runtime_name: Symbol | None = None
 
 
 @dataclass(frozen=True, slots=True)

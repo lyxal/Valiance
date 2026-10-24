@@ -15,6 +15,7 @@ class OpCode(Enum):
 
     PUSH_CONST = "push_const"
     MAKE_FIELDS = "make_fields"
+    CONSTRUCT = "construct"
     REFLECT_READ = "reflect_read"
     REFLECT_WRITE = "reflect_write"
     REFLECT_CALL = "reflect_call"

@@ -1032,6 +1032,18 @@ readable `reason: String` and `message: String` fields. Their native constructor
 accept `(reason, message)`. Fallible reflection computes its Result success type
 from checked owner/field evidence rather than exposing an erased field value type.
 
+`Uninit[T]` is distinct from `T` and supports managed construction only under
+lexical `unsafe`. `uninit[T]` requires a concrete managed object declaration;
+generic bodies specialize at their call sites. Descriptor assignments preserve
+the builder type and reuse checked field-write contracts. `finished?` returns
+`#boolean Int`; `finish` returns `T` and `finish?` returns
+`Result[T, ConstructionError]`. Both finalizers consume the construction state.
+`ConstructionError` implements `Err` and exposes `reason`, `message`, and
+`missing: String*`. Direct incompleteness raises `IncompleteConstructionFault`,
+which implements `Fault`. Partial-storage release effects include possible field
+cleanup without running the owner's destructor. Imported deferred functions
+retain private provider declarations for body checking in a separate child scope.
+
 Descriptor-directed conversions accept a value expression in a type argument:
 `value to[$field.type]` or `to?[$evidence](value)`. The expression must produce
 one `Type[T]` value. Analysis preserves a checked ordinary call body for each
@@ -1258,6 +1270,13 @@ Important invariants:
   Definition-time friendly-owner permissions are retained independently of the
   caller. Deferred capture contexts omit execution stacks, prior typed bodies
   and diagnostics, retaining the variable facts needed to check the closure.
+
+- Value-based finite-union reflection preserves separate field layouts and
+  returns a union of owner-specific collection types. Per-layout callbacks retain
+  exact field witnesses. Direct and fallible access select a checked plan by
+  descriptor owner identity. Ordinary union overload coverage excludes deferred
+  templates unless a checked body has already been retained; a runtime overload
+  identity alone cannot instantiate a reflective function.
 
 - The analyser detects CSTC structurally from overload parameter types. Do not
   add element-name checks for built-ins such as `peek`, `dip`, `fork`, `both`,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import builtins as _py_builtins
 import copy
-from valiance.runtime.reflection import ReflectionValue, make_fields_value, lookup_field, validate_field
+from valiance.runtime.reflection import UninitValue, ReflectionValue, make_fields_value, lookup_field, validate_field
 import ctypes
 from threading import Event, Lock, get_ident
 import re
@@ -3362,7 +3362,26 @@ class VirtualMachine:
                                 RecordValue(zip(instruction.arg, values, strict=True))
                             )
                         case OpCode.MAKE_FIELDS:
-                            frame.stack.append(make_fields_value(instruction.arg))
+                            try:
+                                if isinstance(instruction.arg, tuple):
+                                    frame.stack.append(_fields_from_value(frame, instruction.arg[1], self))
+                                else:
+                                    frame.stack.append(make_fields_value(instruction.arg))
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.CONSTRUCT:
+                            try:
+                                frame.stack.append(_construct_managed(frame, instruction.arg, self))
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
                         case OpCode.BUILD_DICT:
                             values = [
                                 _materialize_access(value)
@@ -4700,6 +4719,16 @@ class VirtualMachine:
 
     def _foreach(self, frame: _Frame, config: object) -> None:
         """Update foreach state during VM execution."""
+        if isinstance(config, tuple) and config and config[0] == "reflection_choices":
+            occurrence = _source_args(frame, 1, "reflective foreach")[0]
+            collection = _accessed_value(occurrence)
+            owner = collection.type_args[0] if isinstance(collection, ReflectionValue) else None
+            selected = next((plan for plan in config[1] if plan.layout.owner == owner), None)
+            if selected is None:
+                _release_value(occurrence, self)
+                raise RuntimeError("reflective foreach has no checked layout for this collection")
+            frame.stack.append(occurrence)
+            config = selected
         if isinstance(config, ReflectionForeachReference):
             self._reflective_foreach(frame, config)
             return
@@ -5976,6 +6005,9 @@ def _check_duplication_allowed(
                 f"cannot retain borrowed destructor receiver "
                 f"{object_type_name(value)}"
             )
+        if isinstance(value, UninitValue):
+            for item in value.fields.values():
+                _check_duplication_allowed(item, context)
         if (
             value.runtime_type is not None
             and value.runtime_type.dup_error is not None
@@ -10053,11 +10085,93 @@ def _get_field(receiver: Any, field: str) -> Any:
         raise RuntimeError(f"value has no field '{field}'") from exc
 
 
+def _fields_from_value(frame: _Frame, choices: tuple, vm: VirtualMachine) -> ReflectionValue:
+    """Select checked metadata from a runtime value without retaining its owner."""
+    (occurrence,) = _source_args(frame, 1, "value fields", borrow_cycle=True)
+    result = None
+    error = None
+    try:
+        value = _accessed_value(occurrence)
+        layout = (choices[0][1] if len(choices) == 1 else
+                  next((layout for spec, layout in choices if _matches_cast_type(value, spec)), None))
+        if layout is None:
+            raise PanicSignal(_fault_object("ReflectionFieldFault", "value does not match a checked storage layout"))
+        result = make_fields_value(layout)
+    except BaseException as failure:
+        error = failure
+    error = _release_runtime_occurrences((occurrence,), vm, error)
+    if error is not None:
+        error = _release_runtime_occurrences((result,), vm, error)
+        raise error
+    return result
+
+
+def _construct_managed(frame: _Frame, config: tuple, vm: VirtualMachine) -> Any:
+    """Allocate partial storage or consume it without invoking owner initialization."""
+    operation, layout, runtime_name, owner_spec = config
+    if operation == "uninit":
+        constructor = _load_name(runtime_name, frame.locals, frame.globals) if runtime_name is not None else None
+        return UninitValue(
+            "Uninit", {}, (layout.owner,),
+            runtime_type=ObjectRuntimeType(field_order=tuple(field.name for field in layout.fields)),
+            layout=layout, owner_runtime=None if constructor is None else constructor.runtime_type,
+            owner_name=owner_spec[1] if constructor is None else constructor.type_name,
+        )
+    (occurrence,) = _source_args(frame, 1, operation, borrow_cycle=True)
+    result = None
+    error = None
+    try:
+        builder = _accessed_value(occurrence)
+        if not isinstance(builder, UninitValue) or builder.layout != layout:
+            raise RuntimeError(f"{operation} requires a builder with the checked owner layout")
+        if builder.consumed:
+            raise PanicSignal(_fault_object("StateFault", "construction builder has been consumed"))
+        missing = builder.missing_fields()
+        if operation == "finished?":
+            result = RuntimeNumber(0 if missing else 1)
+        else:
+            # Finalization moves the structural lifetime out of the shared builder
+            # state. Remaining references cannot repair or finalize that state.
+            fields, builder.fields = builder.fields, {}
+            builder.consumed = True
+            if missing:
+                message = "missing initialized fields: " + ", ".join(missing)
+                result = (ObjectValue("ConstructionError", {
+                    "reason": "MissingFields", "message": message, "missing": list(missing),
+                }) if operation == "finish?" else None)
+                if operation == "finish":
+                    error = PanicSignal(_fault_object("IncompleteConstructionFault", message))
+                initialized = tuple(fields[field.name] for field in reversed(layout.fields)
+                                    if field.name in fields)
+                error = _release_runtime_occurrences(initialized, vm, error)
+            else:
+                result = ObjectValue(builder.owner_name, fields, owner_spec[2], runtime_type=builder.owner_runtime)
+                if operation == "finish?":
+                    result = ObjectValue("OK", {"value": result})
+    except BaseException as failure:
+        error = failure
+    error = _release_runtime_occurrences((occurrence,), vm, error)
+    if error is not None:
+        error = _release_runtime_occurrences((result,), vm, error)
+        raise error
+    return result
+
+
 def _validate_reflected_access(receiver: Any, descriptor: Any, config: tuple, value: Any = None):
     """Validate identity, lexical visibility and replacement compatibility in order."""
+    if config[0] == "choices":
+        actual = _accessed_value(descriptor)
+        owner = actual.type_args[0] if isinstance(actual, ReflectionValue) and actual.type_args else None
+        config = next((choice for choice in config[1] if choice[0].owner == owner), None)
+        if config is None:
+            raise PanicSignal(_fault_object("ReflectionFieldFault", "field has no checked owner layout"))
     layout, allow_private, owner_spec, *contracts = config
     field = validate_field(_accessed_value(descriptor), layout)
-    if not _matches_cast_type(_accessed_value(receiver), owner_spec):
+    actual_receiver = _accessed_value(receiver)
+    builder = isinstance(actual_receiver, UninitValue)
+    if builder and actual_receiver.consumed:
+        raise PanicSignal(_fault_object("StateFault", "construction builder has been consumed"))
+    if not (builder and actual_receiver.layout == layout) and not _matches_cast_type(actual_receiver, owner_spec):
         raise PanicSignal(_fault_object("ReflectionFieldFault", "field descriptor owner does not match the receiver"))
     writing = bool(contracts)
     if not allow_private and (field.visibility != "public" if writing else field.visibility == "private"):
@@ -10067,6 +10181,8 @@ def _validate_reflected_access(receiver: Any, descriptor: Any, config: tuple, va
         if spec is not None and not _matches_cast_type(value, spec, allow_lazy_rank=False):
             raise PanicSignal(_fault_object("ReflectionTypeFault",
                 f"replacement does not satisfy {field.value_type} for field '{field.name}'"))
+    elif builder:
+        raise PanicSignal(_fault_object("ReflectionAccessFault", "incomplete storage cannot be read as an owner"))
     return field
 
 
@@ -10203,7 +10319,8 @@ def _set_field(
     if isinstance(receiver, ReflectionValue):
         raise RuntimeError("reflection metadata is read-only")
     if isinstance(receiver, ObjectValue):
-        if field not in receiver.fields:
+        builder = isinstance(receiver, UninitValue)
+        if field not in receiver.fields and not (builder and any(slot.name == field for slot in receiver.layout.fields)):
             raise RuntimeError(f"{receiver.type_name} has no field '{field}'")
 
         fields = dict(receiver.fields)
@@ -10232,7 +10349,7 @@ def _set_field(
             # A consumed uniquely owned version can hand its structural lifetime
             # to the replacement. Retiring the old wrapper avoids an observable
             # destructor call for an intermediate immutable reconstruction.
-            replaced = receiver.fields[field]
+            replaced = receiver.fields.get(field)
             if _needs_release(replaced):
                 if vm is None:
                     raise RuntimeError(
@@ -10243,6 +10360,11 @@ def _set_field(
             receiver.ownership_transferred = True
             lifecycle_state = receiver.lifecycle_state
 
+        if builder:
+            return UninitValue("Uninit", fields, receiver.type_args,
+                               runtime_type=receiver.runtime_type,
+                               layout=receiver.layout, owner_runtime=receiver.owner_runtime,
+                               owner_name=receiver.owner_name)
         return ObjectValue(
             receiver.type_name,
             fields,

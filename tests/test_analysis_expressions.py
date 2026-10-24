@@ -15,6 +15,84 @@ from valiance.parsing import parse
 class ExpressionBoundaryTests(unittest.TestCase):
     """Verify value expressions are owned outside the analyser façade."""
 
+    def test_union_dispatch_does_not_publish_unchecked_generic_reflection_templates(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+define[T] nameOf(field: Field[T]) => $field.name end
+$owner = pick(0)
+$metadata = $owner fields
+nameOf($metadata["label"])
+'''))
+        self.assertTrue(analyser.diagnostics)
+        self.assertTrue(any('nameOf' in message for message in analyser.diagnostics))
+
+    def test_runtime_union_reflection_rejects_invalid_callback_in_any_layout(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello") end
+end
+$owner = pick(0)
+$owner fields foreach(field) => $owner[$field] | length end
+'''))
+        self.assertTrue(analyser.diagnostics)
+        self.assertTrue(any('length' in message for message in analyser.diagnostics))
+
+    def test_runtime_union_metadata_keeps_transitive_permission_gate_after_escape(self):
+        declaration = '''
+@nodup("protected")
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello") end
+end
+unsafe =>
+  $owner = pick(0)
+  $metadata = $owner fields
+  $field = $metadata["label"]
+end
+'''
+        for operation in ('$metadata | length', 'field?($metadata, "label")', '$field.name',
+                          '$metadata foreach(field) => $field.name end'):
+            analyser = Analyser()
+            analyser.analyse(parse(declaration + operation))
+            self.assertTrue(analyser.diagnostics, operation)
+            self.assertTrue(any('lexical unsafe' in message for message in analyser.diagnostics))
+
+    def test_managed_construction_requires_lexical_unsafe_at_every_operation(self):
+        declaration = 'object Owner => public $value: Int end\n'
+        for source in (
+            'uninit[Owner]',
+            'define inspect(builder: Uninit[Owner]) => finished? $builder end',
+            'define complete(builder: Uninit[Owner]) => finish $builder end',
+            'define complete(builder: Uninit[Owner]) => finish? $builder end',
+            'unsafe => $builder = uninit[Owner] end\n$builder[fields[Owner]["value"]] = 1',
+        ):
+            analyser = Analyser()
+            analyser.analyse(parse(declaration + source))
+            self.assertTrue(analyser.diagnostics)
+            self.assertTrue(any('lexical unsafe' in item for item in analyser.diagnostics))
+
+    def test_managed_construction_rejects_non_storage_types_and_invalid_access(self):
+        for source in (
+            'uninit[Int]', 'uninit[String]', 'uninit[Fields[Owner]]',
+            'uninit[Owner | Int]', 'uninit[Owner*]',
+            '$builder = uninit[Owner]\n$builder[fields[Owner]["value"]]',
+            '$builder = uninit[Owner]\n$builder.value',
+            '$builder = uninit[Owner]\n$builder as![Owner]',
+            '$builder = uninit[Owner]\n$builder[fields[Other]["value"]] = 1',
+            '$builder = uninit[Owner]\n$builder[fields[Owner]["value"]] = "wrong"',
+        ):
+            analyser = Analyser()
+            analyser.analyse(parse('object Owner => public $value: Int end\n'
+                                   'object Other => public $value: Int end\nunsafe =>\n' + source + '\nend'))
+            self.assertTrue(analyser.diagnostics, source)
+
     def test_fallible_access_rejects_provable_owner_and_replacement_mismatches(self):
         declarations = '''
 object Owner => public $value: Int end

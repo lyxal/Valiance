@@ -831,9 +831,42 @@ def _valid_bytecode_argument(
 ) -> object:
     """Return a serializer-valid argument for opcodes with constrained payloads."""
     if op is OpCode.MAKE_FIELDS:
-        return _random_reflection_fields(rng)
+        layout = _random_reflection_fields(rng)
+        if rng.random() < 0.5:
+            other = ReflectionFieldsReference("Other" + layout.owner, layout.fields)
+            return ("choices", tuple((("nominal", item.owner, ()), item) for item in (layout, other)))
+        return layout
+    if op is OpCode.CONSTRUCT:
+        layout = _random_reflection_fields(rng)
+        return (rng.choice(("uninit", "finished?", "finish", "finish?")),
+                layout, layout.owner, ("nominal", layout.owner, ()))
+    if op in {OpCode.REFLECT_READ, OpCode.REFLECT_WRITE, OpCode.REFLECT_CALL}:
+        layout = _random_reflection_fields(rng)
+        writing = op is OpCode.REFLECT_WRITE or op is OpCode.REFLECT_CALL and rng.choice((False, True))
+        access = (layout, rng.choice((False, True)), ("nominal", layout.owner, ()))
+        if writing:
+            access += (tuple(None for _ in layout.fields),)
+        if rng.random() < 0.5:
+            other = ReflectionFieldsReference("Other" + layout.owner, layout.fields)
+            access = ("choices", (access, (other, access[1], ("nominal", other.owner, ()), *access[3:])))
+        return (writing, access, False, (), (), None) if op is OpCode.REFLECT_CALL else access
+    if op is OpCode.SPECIALIZE_FUNCTION:
+        return FunctionCode((Instruction(OpCode.RETURN),))
+    if op is OpCode.TYPE_DISPATCH:
+        return ((), 0)
+    if op is OpCode.CONVERSION_MISSING:
+        return rng.choice((False, True))
+    if op is OpCode.SOURCE_ARGS_BORROW:
+        return rng.randint(0, 4)
     if op is OpCode.FOREACH and rng.random() < 0.5:
-        return _random_reflection_foreach(rng)
+        plan = _random_reflection_foreach(rng)
+        if rng.random() < 0.5:
+            other = ReflectionForeachReference(
+                ReflectionFieldsReference("Other" + plan.layout.owner, plan.layout.fields),
+                plan.bodies, plan.has_index, plan.completion_count,
+            )
+            return ("reflection_choices", (plan, other))
+        return plan
     if op is OpCode.MAKE_CLOSED_FUNCTION:
         return _random_function(rng, max(0, depth - 1))
     if op is OpCode.VALIDATE_TAG:
@@ -1249,9 +1282,13 @@ def _fuzz_runtime_bytecode(
         (
             Instruction(
                 op,
+                ((), len(instructions) + 1) if op is OpCode.TYPE_DISPATCH else
                 _valid_bytecode_argument(op, rng, 1)
                 if op in {
                     OpCode.MAKE_FIELDS,
+                    OpCode.CONSTRUCT, OpCode.REFLECT_READ, OpCode.REFLECT_WRITE,
+                    OpCode.REFLECT_CALL, OpCode.SPECIALIZE_FUNCTION,
+                    OpCode.CONVERSION_MISSING, OpCode.SOURCE_ARGS_BORROW,
                     OpCode.VALIDATE_TAG, OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
                     OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
                     OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.MAKE_CLOSED_FUNCTION,

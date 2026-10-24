@@ -229,8 +229,12 @@ class _FieldExpressions:
     ) -> tuple[T.Type | None, T.Type | None]:
         """Determine the type of field during static analysis."""
         receiver_type = T.normalize(receiver_type)
+        if isinstance(receiver_type, T.UnionType) and field_type_evidence(receiver_type) is not None:
+            properties = tuple(self._field_type(item, name, branch, write=write)[0] for item in receiver_type.items)
+            return (T.U(*properties), None) if all(item is not None for item in properties) else (None, None)
         evidence = field_type_evidence(receiver_type)
         if evidence is not None:
+            from valiance.vtypes.reflection import fields_for_value
             owner, witness = evidence
             if write or not self.require_reflection_permission(owner, FieldAccessNode(name)):
                 return None, None
@@ -240,11 +244,12 @@ class _FieldExpressions:
                 return None, None
             metadata_types = {
                 "name": T.String, "index": T.Int,
-                "owner": T.N(Symbol("Type"), owner),
+                "owner": T.U(*(T.N(Symbol("Type"), item) for item in
+                               (owner.items if isinstance(owner, T.UnionType) else (owner,)))),
                 "visibility": T.N(Symbol("Visibility")),
                 "type": (T.N(Symbol("Type"), witness) if witness is not None else
                          T.U(*(T.N(Symbol("Type"), field.type.typ)
-                               for field in self.env.field_metadata(owner).fields))),
+                               for field in fields_for_value(owner, self.env).fields))),
             }
             return metadata_types.get(name.dotted()), None
         if (isinstance(receiver_type, T.NominalType)

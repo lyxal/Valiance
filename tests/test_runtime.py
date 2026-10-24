@@ -252,6 +252,383 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_runtime_union_returned_descriptor_retains_exact_conversion_target(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+define firstField(value: A | B) =>
+  $value fields foreach(field) => return $field end
+end
+$field = firstField(pick(0))
+$field.type
+42 to[$field.type]
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_args, ('String',))
+            self.assertEqual(stack[1], '42')
+
+    def test_runtime_union_foreach_preserves_break_return_and_nested_state(self):
+        source = '''
+object A =>
+  public $first: Int
+  public $second: Int
+end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7, 8) else => B("hello") end end
+define first(value: A | B) =>
+  $value fields foreach(field) => return $value[$field] end
+end
+define firstName(value: A | B) =>
+  $value fields foreach(field) => break $field.name end
+end
+define pairs(value: A | B) -> Int =>
+  $seen = 0
+  $value fields foreach(outer) =>
+    $value fields foreach(inner) => $seen := $seen + 1 end
+  end
+  $seen
+end
+first(pick(1))
+first(pick(0))
+firstName(pick(1))
+firstName(pick(0))
+pairs(pick(1))
+pairs(pick(0))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [7, 'hello', 'first', 'label', 4, 1])
+
+    def test_value_metadata_cleanup_panics_reach_ordinary_handlers(self):
+        source = '''
+object A => define ~A => RuntimeFault("cleanup") panic end end
+object B => end
+define pick(flag: Int) -> A | B => if $flag == 1 => A else => B end end
+define concrete(flag: Int) -> A => pick($flag) as![A] end
+try =>
+  pick(1) fields | length
+handle RuntimeFault => "union cleanup" end
+try =>
+  concrete(1) fields | length
+handle RuntimeFault => "concrete cleanup" end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['union cleanup', 'concrete cleanup'])
+
+    def test_runtime_union_metadata_borrows_protected_owners_and_releases_temporaries(self):
+        source = '''
+@nodup("protected")
+object A =>
+  public $number: Int
+  define ~A => "destroy A" println end
+end
+object B => public $label: String end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello") end
+end
+define inspect(value: A | B) -> Int =>
+  unsafe => fields | length end
+end
+define \\exercise -> =>
+  unsafe =>
+    $owner = pick(1)
+    inspect $owner | println
+    $owner fields | length | println
+    pick(1) fields | length | println
+  end
+end
+\\exercise
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), '1\n1\ndestroy A\n1\ndestroy A\n' * 4)
+
+    def test_runtime_union_access_checks_visibility_per_selected_owner(self):
+        source = '''
+object A => private $number: Int end
+object B => readable $label: String end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello") end
+end
+$secret = pick(1)
+$secretFields = $secret fields
+$number = $secretFields["number"]
+read?($secret, $number)
+write?($secret, $number, "wrong")
+$readable = pick(0)
+$readableFields = $readable fields
+$label = $readableFields["label"]
+read?($readable, $label) ?!
+write?($readable, $label, "new")
+unsafe => $secret[$number] end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].fields['reason'], 'AccessDenied')
+            self.assertEqual(stack[1].fields['reason'], 'AccessDenied')
+            self.assertEqual(stack[2], 'hello')
+            self.assertEqual(stack[3].fields['reason'], 'AccessDenied')
+            self.assertEqual(stack[4], 7)
+
+    def test_runtime_union_fields_select_layout_and_preserve_type_evidence(self):
+        source = '''
+object A => public $number: Int end
+object B =>
+  public $label: String
+  public $count: Int
+end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello", 2) end
+end
+$one = pick(1) fields
+$two = pick(0) fields
+$one length
+$two length
+$one["number"].owner
+$two["label"].type
+$two["count"].index
+field?($one, "label")
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:2], [1, 2])
+            self.assertEqual(stack[2].type_args, ('A',))
+            self.assertEqual(stack[3].type_args, ('String',))
+            self.assertEqual(stack[4], 1)
+            self.assertEqual(stack[5].type_name, 'None')
+
+    def test_runtime_union_descriptor_reads_writes_and_fallible_access(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello") end
+end
+$owner = pick(0)
+$metadata = $owner fields
+$field = field?($metadata, "label") ?!
+$owner[$field]
+read?($owner, $field) ?!
+$updated = write?($owner, $field, "changed") ?!
+$updated[$field]
+$owner[$field]
+$owner[$field] = "direct"
+$owner[$field]
+$numeric = pick(1)
+$numberFields = $numeric fields
+$numberField = $numberFields["number"]
+write?($numeric, $numberField, "wrong")
+read?($numeric, $field)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:5], ['hello', 'hello', 'changed', 'hello', 'direct'])
+            self.assertEqual(stack[5].fields['reason'], 'TypeMismatch')
+            self.assertEqual(stack[6].fields['reason'], 'InvalidField')
+
+    def test_runtime_union_foreach_specializes_every_layout_and_shares_state(self):
+        source = '''
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B =>
+  if $flag == 1 => A(7) else => B("hello") end
+end
+define describe(value: Int) -> String => "number" end
+define describe(value: String) -> String => "text" end
+define[T] forward(value: T) => $value end
+define inspect(value: A | B) -> String =>
+  $seen = ""
+  $value fields foreach(field, index) =>
+    $seen := describe(forward($value[$field]))
+  end
+  $seen
+end
+inspect(pick(1))
+inspect(pick(0))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['number', 'text'])
+
+    def test_runtime_union_fields_empty_alternative_and_static_union_metadata(self):
+        source = '''
+object Owner => public $label: String end
+define pick(flag: Int) -> Owner | Int =>
+  if $flag == 1 => Owner("hello") else => 42 end
+end
+define count(value: Owner | Int) -> Int =>
+  $seen = 0
+  $value fields foreach(field) => $seen := $seen + 1 end
+  $seen
+end
+count(pick(1))
+count(pick(0))
+fields[Owner | Int] foreach(field) => missingElement end
+fields[Owner | Int] | length
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:2], [1, 0])
+            self.assertEqual(stack[-1], 0)
+
+    def test_managed_construction_checks_dynamic_writes_before_changing_readiness(self):
+        source = '''
+object Pair =>
+  private $number: Int
+  public $label: String
+end
+unsafe =>
+  $builder = uninit[Pair]
+  try =>
+    $builder[fields[Pair]["number"]] = "wrong"
+  handle ReflectionTypeFault => "rejected" end
+  finished? $builder
+  $builder[fields[Pair]["number"]] = 7
+  $builder[fields[Pair]["label"]] = "ready"
+  finished? $builder
+  $pair = finish $builder
+  $pair[fields[Pair]["number"]]
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['rejected', 0, 1, 7])
+
+    def test_managed_construction_bypasses_initializer_and_defaults(self):
+        source = '''
+object Owner =>
+  public $value: Int = 1
+  define Owner(value: Int) =>
+    "initializer" println
+    $self.value = $value
+  end
+end
+unsafe =>
+  $builder = uninit[Owner]
+  finished? $builder
+  $builder[fields[Owner]["value"]] = 7
+  $owner = finish $builder
+  $owner.value
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [0, 7])
+        self.assertEqual(output.getvalue(), '')
+
+    def test_managed_construction_implicit_readiness_borrows_cycle_inputs(self):
+        source = '''
+object Empty => end
+define ready(builder: Uninit[Empty]) => unsafe => finished? end end
+define complete(builder: Uninit[Empty]) => unsafe => finish end end
+unsafe =>
+  $builder = uninit[Empty]
+  ready $builder
+  ready $builder
+  complete $builder
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:2], [1, 1])
+            self.assertEqual(stack[2].type_name, 'Empty')
+
+    def test_managed_construction_readiness_replacement_and_generic_helpers(self):
+        source = '''
+object[T] Box =>
+  private $value: T
+  public $label: String = "default"
+end
+define[T] build(value: T) =>
+  unsafe =>
+    $builder = uninit[Box[T]]
+    finished? $builder
+    $builder[fields[Box[T]]["value"]] = $value
+    $builder[fields[Box[T]]["label"]] = "first"
+    $builder[fields[Box[T]]["label"]] = "second"
+    finished? $builder
+    finish? $builder
+  end
+end
+unsafe =>
+  $box = build(7) ?!
+  $box[fields[Box[Int]]["value"]]
+  $box.label
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [7, 'second'])
+
+    def test_managed_construction_missing_fields_and_empty_owner(self):
+        source = '''
+object Pair =>
+  public $first: Int
+  public $second: String
+end
+object Empty => end
+unsafe =>
+  $builder = uninit[Pair]
+  finished? $builder
+  $builder[fields[Pair]["first"]] = 7
+  $failure = finish? $builder
+  $failure
+  uninit[Empty] | finished?
+  uninit[Empty] | finish
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0], 0)
+            self.assertEqual(stack[1].type_name, 'ConstructionError')
+            self.assertEqual(stack[1].fields['reason'], 'MissingFields')
+            self.assertEqual(stack[1].fields['missing'], ['second'])
+            self.assertEqual(stack[2], 1)
+            self.assertEqual(stack[3].type_name, 'Empty')
+
+    def test_managed_construction_finalizers_consume_shared_builder_state(self):
+        for finalizer in ('finish', 'finish?'):
+            source = f'''
+object Empty => end
+unsafe =>
+  $builder = uninit[Empty]
+  {finalizer} $builder
+  try => finished? $builder
+  handle StateFault => "consumed" end
+end
+'''
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[-1], 'consumed')
+
+    def test_managed_construction_partial_cleanup_and_successful_owner_lifetime(self):
+        for action, expected in (
+            ('', 'child\n'),
+            ('finish? $builder | pop', 'child\n'),
+            ('try =>\n  finish $builder\nhandle IncompleteConstructionFault => 0 pop end', 'child\n'),
+            ('$builder[fields[Owner]["number"]] = 1\nfinish $builder | pop', 'owner\nchild\n'),
+        ):
+            source = '''
+@nodup("child cannot be copied")
+object Child => define ~Child => "child" println end end
+object Owner =>
+  public $child: Child
+  public $number: Int
+  define ~Owner => "owner" println end
+end
+define \\exercise -> =>
+  unsafe =>
+    $builder = uninit[Owner]
+    $builder[fields[Owner]["child"]] = Child
+''' + '\n'.join('    ' + line for line in action.splitlines()) + '''
+  end
+end
+\\exercise
+'''
+            for optimize in (False, True):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                program = compile_program(typed, optimize=optimize)
+                for candidate in (program, loads(dumps(program))):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(run(candidate), [])
+                    self.assertEqual(output.getvalue(), expected)
+
     def test_fallible_access_returns_owned_results_and_preserves_original(self):
         source = '''
 object Owner => public $value: Int end

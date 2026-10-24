@@ -47,9 +47,12 @@ class DeterministicFuzzTests(unittest.TestCase):
             with self.subTest(seed=seed):
                 rng = random.Random(seed)
                 fields = _random_instruction(rng, 2, OpCode.MAKE_FIELDS)
-                self.assertIsInstance(fields.arg, ReflectionFieldsReference)
+                layouts = tuple(choice[1] for choice in fields.arg[1]) if isinstance(fields.arg, tuple) else (fields.arg,)
+                for layout in layouts:
+                    self.assertIsInstance(layout, ReflectionFieldsReference)
                 foreach = _random_instruction(rng, 2, OpCode.FOREACH)
-                if isinstance(foreach.arg, ReflectionForeachReference):
+                if (isinstance(foreach.arg, ReflectionForeachReference)
+                        or isinstance(foreach.arg, tuple) and foreach.arg and foreach.arg[0] == "reflection_choices"):
                     reflective_foreach_cases += 1
                 program = Program(FunctionCode((fields, foreach)))
                 self.assertEqual(loads(dumps(program)), program)

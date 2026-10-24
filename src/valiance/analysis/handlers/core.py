@@ -501,19 +501,52 @@ def _fields_node(
     storage = owner
     while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
         storage = storage.inner
-    if consumes and (
-        isinstance(storage, (T.UnionType, T.IntersectionType, T.RowType))
-        or isinstance(storage, T.NominalType) and (
-            self.env.lookup_trait(storage.name) is not None
-            or self.env.lookup_variant(storage.name) is not None
-        )
+    from valiance.vtypes.reflection import fields_for_value
+    metadata = fields_for_value(owner, self.env) if consumes else self.env.field_metadata(owner)
+    possibilities = (tuple(layout.owner.typ for layout in metadata.alternatives)
+                     if metadata.alternatives else (storage,))
+    def storage_type(typ):
+        """Consult a layout's nominal representation beneath occurrence wrappers."""
+        while isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
+            typ = typ.inner
+        return typ
+    possibilities = tuple(storage_type(item) for item in possibilities)
+    if consumes and any(
+        isinstance(item, (T.IntersectionType, T.RowType))
+        or isinstance(item, T.NominalType) and (
+            self.env.lookup_trait(item.name) is not None
+            or self.env.lookup_variant(item.name) is not None
+        ) for item in possibilities
     ):
         self._diagnose("value field enumeration requires concrete static type evidence; "
                        "runtime owner selection is not implemented yet", node)
         return _core.BranchSet()
-    typ = T.N(Symbol("Fields"), owner)
+    if metadata.alternatives:
+        for layout in metadata.alternatives:
+            invalid = _patterns._uncheckable_runtime_type(layout.owner.typ)
+            if invalid is not None:
+                self._diagnose(f"runtime field selection cannot discriminate {T.show(invalid)}", node)
+                return _core.BranchSet()
+        layouts = metadata.alternatives
+        for index, left in enumerate(layouts):
+            for right in layouts[index + 1:]:
+                a, b = left.owner.typ, right.owner.typ
+                if (_utils._types_overlap(a, b, self.env.context)
+                        and not T.assignable(a, b, self.env.context)
+                        and not T.assignable(b, a, self.env.context)):
+                    self._diagnose("runtime field selection requires distinguishable owner alternatives", node)
+                    return _core.BranchSet()
+        layouts = tuple(sorted(layouts, key=lambda layout: sum(
+            T.assignable(other.owner.typ, layout.owner.typ, self.env.context)
+            and not T.assignable(layout.owner.typ, other.owner.typ, self.env.context)
+            for other in layouts
+        )))
+        metadata = replace(metadata, alternatives=layouts,
+                           fields=tuple(field for layout in layouts for field in layout.fields))
+    typ = (T.U(*(T.N(Symbol("Fields"), layout.owner.typ) for layout in metadata.alternatives))
+           if metadata.alternatives else T.N(Symbol("Fields"), owner))
     return _core.BranchSet((branch.push(typ).emit(
-        TypedFieldsNode(node, typ, self.env.field_metadata(owner), consumes)
+        TypedFieldsNode(node, typ, metadata, consumes)
     ),))
 
 
@@ -1361,6 +1394,14 @@ def _import_node(
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
         definitions_by_name: dict[Symbol, list] = {}
+        call_site_dependencies = ()
+        if any(overload.overload.call_site_body is not None
+               for definition in definitions for overload in definition.typed.overloads):
+            dependencies = list(exports.runtime_prelude)
+            for declaration in (*exports.objects, *exports.definitions):
+                runtime_name = self._prelude.add_declaration(declaration.typed, declaration.name)
+                dependencies.append(with_import_runtime_name(declaration.typed, runtime_name))
+            call_site_dependencies = tuple(dependencies)
         for definition in definitions:
             definitions_by_name.setdefault(definition.name, []).append(definition)
         for definition_name, definition_group in definitions_by_name.items():
@@ -1385,6 +1426,7 @@ def _import_node(
                         definition.name,
                         definition.typed,
                         runtime_name,
+                        call_site_dependencies,
                     )
                 except ValueError as exc:
                     self._diagnose(

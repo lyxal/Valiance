@@ -126,6 +126,36 @@ def _for_node(
         iterable_type = branch.stack[-1]
 
     normalized = T.normalize(iterable_type)
+    from valiance.vtypes.reflection import fields_type_owners
+    collection_owners = fields_type_owners(normalized)
+    if collection_owners is not None and len(collection_owners) > 1:
+        checked = []
+        layouts = []
+        bodies = []
+        for owner in collection_owners:
+            alternative = branch.with_stack(T.TypeStack((*branch.stack.items[:-1], T.N(Symbol("Fields"), owner))))
+            outputs = _reflective_for_node(self, node, alternative, owner, consumes_stack_iterable)
+            if not outputs:
+                return _core.BranchSet()
+            plan = outputs.branches[0].typed_body[-1]
+            layouts.append(plan.metadata)
+            bodies.extend(plan.bodies)
+            checked.extend(outputs)
+        from valiance.vtypes.reflection import FieldsDescriptor, TypeDescriptor
+        owner = T.U(*collection_owners)
+        metadata = FieldsDescriptor(TypeDescriptor(owner),
+                                    tuple(field for layout in layouts for field in layout.fields), tuple(layouts))
+        completed = tuple(output for output in checked if output.return_stack is None)
+        result_type = T.U(*(output.top for output in completed)) if completed else T.NoneType()
+        typed = TypedReflectiveForNode(node, result_type, metadata, tuple(bodies))
+        baseline = branch.pop() if consumes_stack_iterable else branch
+        variables = _utils._merge_loop_variables(baseline.variables, _core.BranchSet(completed), (), self.env.context)
+        result = baseline.with_variables(variables).push(result_type).emit(typed)
+        result = result.with_element_tags(frozenset(tag for output in checked for tag in output.element_tags))
+        result = result.with_data_element_uses(frozenset(use for output in checked for use in output.data_element_uses))
+        returned = _reflective_returns(self, branch, typed,
+                                      tuple(output for output in checked if output.return_stack is not None))
+        return _core.BranchSet.collect((*((result,) if completed else ()), *returned))
     if (isinstance(normalized, T.NominalType) and normalized.name == Symbol("Fields")
             and len(normalized.args) == 1):
         return _reflective_for_node(self, node, branch, normalized.args[0], consumes_stack_iterable)
@@ -160,6 +190,7 @@ def _for_node(
 def _analyse_for_item(
     self: _core.Analyser, node: ForNode, branch: _core.AnalysisBranch,
     iterable_type: T.Type, item_type: T.Type, consumes_stack_iterable: bool,
+    *, nonempty: bool = False,
 ) -> _core.BranchSet:
     """Check one iteration contract using the ordinary loop stack and variable rules."""
     body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
@@ -265,7 +296,24 @@ def _analyse_for_item(
         for output in body_outputs
         if output.return_stack is not None
     )
-    return _core.BranchSet.collect((completed, *returned))
+    completes = not nonempty or any(output.return_stack is None for output in body_outputs)
+    return _core.BranchSet.collect((*((completed,) if completes else ()), *returned))
+
+
+def _reflective_returns(self, branch, typed, outputs):
+    """Join escaping field-specialized returns without manufacturing overloads."""
+    groups = {}
+    for output in outputs:
+        groups.setdefault((len(output.return_stack), output.return_exact), []).append(output)
+    returned = []
+    for (count, exact), group in groups.items():
+        stack = T.TypeStack(tuple(T.U(*(output.return_stack[index] for output in group)) for index in range(count)))
+        variables = _utils._merge_loop_variables(branch.variables, _core.BranchSet(tuple(group)), (), self.env.context)
+        returned.append(replace(group[0], typed_body=branch.typed_body).with_variables(variables)
+                        .with_return(stack, exact=exact).emit(typed)
+                        .with_element_tags(frozenset(tag for output in group for tag in output.element_tags))
+                        .with_data_element_uses(frozenset(use for output in group for use in output.data_element_uses)))
+    return tuple(returned)
 
 
 def _reflective_for_node(
@@ -289,6 +337,7 @@ def _reflective_for_node(
         checked = _analyse_for_item(
             self, node, branch.with_variables(variables), T.N(Symbol("Fields"), owner),
             opened_field_type(field), consumes_stack_iterable,
+            nonempty=True,
         )
         if not checked or len(self.diagnostics) != diagnostics_before:
             return _core.BranchSet()
@@ -310,9 +359,9 @@ def _reflective_for_node(
     uses = frozenset(use for output in outputs for use in output.data_element_uses)
     result = baseline.with_variables(variables).push(result_type).emit(typed)
     result = result.with_element_tags(tags).with_data_element_uses(uses)
-    returned = tuple(replace(output, typed_body=branch.typed_body).emit(typed)
-                     for output in outputs if output.return_stack is not None)
-    return _core.BranchSet.collect((result, *returned))
+    returned = _reflective_returns(self, branch, typed,
+                                  tuple(output for output in outputs if output.return_stack is not None))
+    return _core.BranchSet.collect((*((result,) if completed or not metadata.fields else ()), *returned))
 
 @_core.register(UnfoldNode)
 def _unfold_node(

@@ -658,8 +658,28 @@ class _CallableValues:
         where_evaluated: bool = False,
         static_values: dict[str, int] | None = None,
         friendly_owners: frozenset[Symbol] = frozenset(),
+        dependencies: tuple[object, ...] = (),
     ) -> FunctionAnalysis | None:
         """Analyse a deferred function using call-site static bindings."""
+        if dependencies:
+            from valiance.asts import TypedImportedFunctionNode, TypedImportedObjectNode
+            from valiance.modules_system.modules import ModuleObject
+
+            provider = self._child_analyser(self.env.lexical_child_scope())
+            for dependency in dependencies:
+                if isinstance(dependency, TypedImportedObjectNode):
+                    provider._register_imported_object(
+                        ModuleObject(dependency.node.name, dependency), dependency.runtime_name,
+                    )
+                elif isinstance(dependency, TypedImportedFunctionNode):
+                    provider._register_imported_definition(
+                        dependency.node.name, dependency, dependency.runtime_name, dependencies,
+                    )
+            return provider._analyse_function_at_call_site(
+                outer, node, call_params, rank_values=rank_values, type_values=type_values,
+                where_evaluated=where_evaluated, static_values=static_values,
+                friendly_owners=friendly_owners,
+            )
         typed_node = cast(
             FunctionNode,
             _functions._substitute_rank_variables_in_ast(

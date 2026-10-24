@@ -38,12 +38,13 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x3C
+BYTECODE_VERSION = 0x3E
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
     OpCode.MAKE_FIELDS: 0x48,
+    OpCode.CONSTRUCT: 0x50,
     OpCode.REFLECT_READ: 0x49,
     OpCode.SPECIALIZE_FUNCTION: 0x4A,
     OpCode.REFLECT_WRITE: 0x4B,
@@ -239,6 +240,18 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
         argument = instruction.arg
         if op is OpCode.SOURCE_ARGS_BORROW and (type(argument) is not int or argument < 0):
             raise BytecodeFormatError("invalid borrowed argument source count")
+        if op is OpCode.CONSTRUCT:
+            if (not isinstance(argument, tuple) or len(argument) != 4
+                    or not isinstance(argument[0], str)
+                    or argument[0] not in {"uninit", "finished?", "finish", "finish?"}
+                    or (argument[2] is not None and (not isinstance(argument[2], str) or not argument[2]))
+                    or not isinstance(argument[3], tuple) or len(argument[3]) != 3
+                    or argument[3][0] != "nominal"
+                    or not isinstance(argument[3][1], str) or not argument[3][1]
+                    or not isinstance(argument[3][2], tuple)
+                    or any(not isinstance(item, str) or not item for item in argument[3][2])):
+                raise BytecodeFormatError("invalid managed construction payload")
+            _validate_reflection_fields(argument[1])
         if op is OpCode.TYPE_DISPATCH:
             if (not isinstance(argument, tuple) or len(argument) != 2
                     or not isinstance(argument[0], tuple)
@@ -267,29 +280,40 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                 raise BytecodeFormatError("invalid fallible reflection vectorisation plan")
             op = OpCode.REFLECT_WRITE if argument[0] else OpCode.REFLECT_READ
             argument = argument[1]
-        if op is OpCode.REFLECT_READ:
-            if (not isinstance(argument, tuple) or len(argument) != 3
-                    or type(argument[1]) is not bool
-                    or not isinstance(argument[2], tuple)):
-                raise BytecodeFormatError("invalid reflective read payload")
-            _validate_reflection_fields(argument[0])
-        if op is OpCode.REFLECT_WRITE:
-            if (not isinstance(argument, tuple) or len(argument) != 4
-                    or type(argument[1]) is not bool
-                    or not isinstance(argument[2], tuple)
-                    or not isinstance(argument[3], tuple)):
-                raise BytecodeFormatError("invalid reflective write payload")
-            _validate_reflection_fields(argument[0])
-            if (len(argument[3]) != len(argument[0].fields)
-                    or any(spec is not None and not isinstance(spec, tuple) for spec in argument[3])):
-                raise BytecodeFormatError("invalid reflective write field contracts")
+        if op in {OpCode.REFLECT_READ, OpCode.REFLECT_WRITE}:
+            _validate_reflection_access(argument, op is OpCode.REFLECT_WRITE)
         if op is OpCode.SPECIALIZE_FUNCTION and (
                 not isinstance(argument, FunctionCode) or argument.requires_specialization):
             raise BytecodeFormatError("specialization requires checked function bytecode")
         if op is OpCode.MAKE_FIELDS:
-            _validate_reflection_fields(argument)
+            if isinstance(argument, tuple):
+                if (len(argument) != 2 or argument[0] != "choices"
+                        or not isinstance(argument[1], tuple) or not argument[1]):
+                    raise BytecodeFormatError("invalid value reflection layout choices")
+                owners = []
+                for choice in argument[1]:
+                    if (not isinstance(choice, tuple) or len(choice) != 2
+                            or not isinstance(choice[0], tuple) or not choice[0]):
+                        raise BytecodeFormatError("invalid value reflection layout choice")
+                    _validate_reflection_fields(choice[1])
+                    owners.append(choice[1].owner)
+                if len(set(owners)) != len(owners):
+                    raise BytecodeFormatError("duplicate value reflection owner")
+            else:
+                _validate_reflection_fields(argument)
         if op is OpCode.FOREACH and isinstance(argument, ReflectionForeachReference):
             _validate_reflection_foreach(argument)
+        if op is OpCode.FOREACH and isinstance(argument, tuple) and argument and argument[0] == "reflection_choices":
+            if len(argument) != 2 or not isinstance(argument[1], tuple) or not argument[1]:
+                raise BytecodeFormatError("invalid reflective iteration choices")
+            owners = []
+            for plan in argument[1]:
+                if not isinstance(plan, ReflectionForeachReference):
+                    raise BytecodeFormatError("invalid reflective iteration choice")
+                _validate_reflection_foreach(plan)
+                owners.append(plan.layout.owner)
+            if len(set(owners)) != len(owners):
+                raise BytecodeFormatError("duplicate reflective iteration owner")
         if op is OpCode.SCOPE_BEGIN:
             _validate_scope_payload(argument, "scope begin")
             scope_depth += 1
@@ -399,6 +423,29 @@ def _validate_scope_payload(value: object, operation: str) -> None:
         or (len(value) == 3 and value[2] is not None and not isinstance(value[2], str))
     ):
         raise BytecodeFormatError(f"invalid {operation} payload")
+
+
+def _validate_reflection_access(value: object, writing: bool) -> None:
+    """Validate scalar access contracts or a finite owner dispatch table."""
+    if isinstance(value, tuple) and value and value[0] == "choices":
+        if len(value) != 2 or not isinstance(value[1], tuple) or not value[1]:
+            raise BytecodeFormatError("invalid reflective access choices")
+        owners = []
+        for choice in value[1]:
+            if not isinstance(choice, tuple) or not choice or not isinstance(choice[0], ReflectionFieldsReference):
+                raise BytecodeFormatError("invalid reflective access choice")
+            _validate_reflection_access(choice, writing)
+            owners.append(choice[0].owner)
+        if len(set(owners)) != len(owners):
+            raise BytecodeFormatError("duplicate reflective access owner")
+        return
+    if (not isinstance(value, tuple) or len(value) != (4 if writing else 3)
+            or type(value[1]) is not bool or not isinstance(value[2], tuple)):
+        raise BytecodeFormatError("invalid reflective write payload" if writing else "invalid reflective read payload")
+    _validate_reflection_fields(value[0])
+    if writing and (not isinstance(value[3], tuple) or len(value[3]) != len(value[0].fields)
+                    or any(spec is not None and not isinstance(spec, tuple) for spec in value[3])):
+        raise BytecodeFormatError("invalid reflective write field contracts")
 
 
 def _validate_reflection_fields(value: object) -> None:

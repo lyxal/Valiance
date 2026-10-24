@@ -191,13 +191,13 @@ class _ElementCalls:
         if _allow_no_match and not candidates:
             return BranchSet.collect(terminal)
         if node.name in (Symbol("field?"), Symbol("length")) and not self.reflection_unsafe:
+            from valiance.vtypes.reflection import fields_type_owners
             permitted = []
             denied = []
             for candidate in candidates:
-                protected = next((param.args[0] for param in candidate.applied.params
-                                  if isinstance(param, T.NominalType)
-                                  and param.name == Symbol("Fields")
-                                  and self.env.reflection_requires_unsafe(param.args[0])), None)
+                protected = next((owner for param in candidate.applied.params
+                                  for owner in (fields_type_owners(param) or ())
+                                  if self.env.reflection_requires_unsafe(owner)), None)
                 if protected is None:
                     permitted.append(candidate)
                 else:

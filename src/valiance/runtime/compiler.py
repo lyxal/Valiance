@@ -11,6 +11,7 @@ import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.vtypes.identities import constructor_implementation_id, overload_implementation_id
 from valiance.asts import (
+    TypedConstructionNode,
     AnnotationNode,
     AssertNode,
     ASTNode,
@@ -527,24 +528,18 @@ class _Compiler:
                 self.patch(jump, len(self.instructions))
             return
         if isinstance(typed_node, TypedReflectiveWriteNode):
-            self.emit(OpCode.REFLECT_WRITE, (
-                _reflection_fields_reference(typed_node.metadata), typed_node.allow_private,
-                _cast_type_spec(typed_node.metadata.owner.typ),
-                tuple(None if safe
-                      else _cast_type_spec(field.type.typ)
-                      for field, safe in zip(typed_node.metadata.fields,
-                                             typed_node.statically_safe_fields, strict=True)),
-            ))
+            self.emit(OpCode.REFLECT_WRITE, _reflection_access_config(typed_node))
             return
         if isinstance(typed_node, TypedReflectiveReadNode):
-            self.emit(OpCode.REFLECT_READ, (
-                _reflection_fields_reference(typed_node.metadata), typed_node.allow_private,
-                _cast_type_spec(typed_node.metadata.owner.typ),
-            ))
+            self.emit(OpCode.REFLECT_READ, _reflection_access_config(typed_node))
             return
         if isinstance(typed_node, TypedFieldsNode):
             if typed_node.consumes_receiver:
-                self.emit(OpCode.POP)
+                self.emit(OpCode.MAKE_FIELDS, ("choices", tuple(
+                    (_cast_type_spec(layout.owner.typ), _reflection_fields_reference(layout))
+                    for layout in (typed_node.metadata.alternatives or (typed_node.metadata,))
+                )))
+                return
             self.emit(OpCode.MAKE_FIELDS, _reflection_fields_reference(typed_node.metadata))
             return
         if isinstance(typed_node, TypedUnsafeNode):
@@ -745,15 +740,17 @@ class _Compiler:
                     self.node(arg)
                 if isinstance(typed_node, TypedElementNode) and typed_node.reflection_access is not None:
                     access = typed_node.reflection_access
-                    config = (
-                        _reflection_fields_reference(access.metadata), access.allow_private,
-                        _cast_type_spec(access.metadata.owner.typ),
-                    )
+                    if isinstance(access, TypedConstructionNode):
+                        self.emit(OpCode.CONSTRUCT, (
+                            access.operation, _reflection_fields_reference(access.metadata),
+                            _symbol_runtime_name(access.runtime_name) if access.runtime_name is not None else None,
+                            _cast_type_spec(access.metadata.owner.typ),
+                        ))
+                        if any(annotation.name.text == "@@tupled" for annotation in node.annotations):
+                            self.emit(OpCode.BUILD_TUPLE, 1)
+                        return
+                    config = _reflection_access_config(access)
                     writing = isinstance(access, TypedReflectiveWriteNode)
-                    if writing:
-                        config += (tuple(None if safe else _cast_type_spec(field.type.typ)
-                                         for field, safe in zip(access.metadata.fields,
-                                                                access.statically_safe_fields, strict=True)),)
                     self.emit(OpCode.REFLECT_CALL, (
                         writing, config, typed_node.overload.vectorised,
                         typed_node.overload.vectorised_depths,
@@ -1469,9 +1466,7 @@ class _Compiler:
                 for param in definition.function.params or ()
             ),
         )
-        if runtime_definition_name not in {
-            item.name.text for item in BUILTIN_ELEMENTS
-        }:
+        if runtime_definition_name not in runtime_elements():
             self.emit(
                 OpCode.MAKE_FUNCTION,
                 _compile_function_node(
@@ -1663,10 +1658,18 @@ class _Compiler:
                 params=tuple(param.name.text for param in params),
                 name="foreach.body", cycle_params=True,
             ) for body in typed_node.bodies)
-            self.emit(OpCode.FOREACH, ReflectionForeachReference(
-                _reflection_fields_reference(typed_node.metadata), bodies, node.index_variable is not None,
-                max(1, _max_break_values(node.body)) if bodies else 1,
-            ))
+            layouts = typed_node.metadata.alternatives or (typed_node.metadata,)
+            plans = []
+            offset = 0
+            for layout in layouts:
+                count = len(layout.fields)
+                plans.append(ReflectionForeachReference(
+                    _reflection_fields_reference(layout), bodies[offset:offset + count], node.index_variable is not None,
+                    max(1, _max_break_values(node.body)) if count else 1,
+                ))
+                offset += count
+            self.emit(OpCode.FOREACH, ("reflection_choices", tuple(plans))
+                      if typed_node.metadata.alternatives else plans[0])
             return
         body = FunctionNode(
             params=params,
@@ -2304,7 +2307,9 @@ def _typed_call_borrows(
                          for label in poststack)
         elif isinstance(candidate, TypedFieldsNode):
             if candidate.consumes_receiver:
-                take(1)
+                source = take(1)[0]
+                if source is not None and isinstance(_unwrap(source), GetVariableNode):
+                    borrowed.add(id(source))
             stack.append(None)
         elif isinstance(candidate, TypedDescriptorConversionNode):
             implicit = (not ast.call_args and not ast.modifier_args) or any(
@@ -2376,6 +2381,8 @@ def _typed_call_borrows(
 def _borrowable_named_type(typ: Type) -> bool:
     """Recognize nominal resource access without slowing down scalar loads."""
     typ = normalize(typ)
+    if isinstance(typ, UnionType):
+        return any(_borrowable_named_type(item) for item in typ.items)
     if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _borrowable_named_type(typ.inner)
     return isinstance(typ, NominalType) and typ.name not in {
@@ -3019,6 +3026,29 @@ def _object_runtime_metadata(
     )
 
 
+def _reflection_access_config(access: TypedReflectiveReadNode) -> tuple:
+    """Lower each possible descriptor owner with its checked permission and casts."""
+    metadata = access.metadata
+    if metadata.alternatives:
+        choices = []
+        offset = 0
+        for layout in metadata.alternatives:
+            count = len(layout.fields)
+            plan = replace(access, metadata=layout,
+                           allow_private=access.allow_private or layout.owner.typ in access.private_owners)
+            if isinstance(access, TypedReflectiveWriteNode):
+                plan = replace(plan, statically_safe_fields=access.statically_safe_fields[offset:offset + count])
+            choices.append(_reflection_access_config(plan))
+            offset += count
+        return ("choices", tuple(choices))
+    config = (_reflection_fields_reference(metadata), access.allow_private,
+              _cast_type_spec(metadata.owner.typ))
+    if isinstance(access, TypedReflectiveWriteNode):
+        config += (tuple(None if safe else _cast_type_spec(field.type.typ)
+                         for field, safe in zip(metadata.fields, access.statically_safe_fields, strict=True)),)
+    return config
+
+
 def _reflection_fields_reference(metadata) -> ReflectionFieldsReference:
     """Lower one checked storage layout to canonical runtime signature evidence."""
     return ReflectionFieldsReference(str(metadata.owner.typ), tuple(
@@ -3534,7 +3564,7 @@ def _cast_type_spec(typ: Type) -> object:
     if isinstance(typ, NominalType):
         return (
             "nominal",
-            typ.name.text,
+            _symbol_runtime_name(typ.name),
             tuple(show(arg) for arg in typ.args),
         )
     if isinstance(typ, UnionType):

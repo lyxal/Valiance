@@ -464,6 +464,10 @@ class _CallSelection:
             for item in sources
         ):
             return None
+        # A dispatch identity alone cannot instantiate a deferred executable body.
+        overloads = tuple(overload for overload in overloads if not overload.specialize_body)
+        if not overloads:
+            return None
         return_counts = {len(overload.returns) for overload in overloads}
         if len(return_counts) != 1:
             return None
@@ -558,7 +562,40 @@ class _CallSelection:
             self._warn(overload.annotation_warning, node)
 
         reflection_access = None
-        if overload.reflection_operation is not None:
+        if overload.reflection_operation in {"uninit", "finished?", "finish", "finish?"}:
+            from valiance.asts import TypedConstructionNode
+            operation = overload.reflection_operation
+            if not self.reflection_unsafe:
+                self._diagnose(f"{operation} requires lexical unsafe", node)
+                return None
+            builder = (candidate.applied.actual_returns[0] if operation == "uninit"
+                       else candidate.source_arguments[0])
+            owner = T.normalize(builder).args[0]
+            owner = _functions._resolve_imported_type_names(owner, self.env)
+            if operation == "uninit":
+                result = T.N(Symbol("Uninit"), owner)
+                candidate = replace(candidate, applied=replace(
+                    candidate.applied, returns=(result,), actual_returns=(result,),
+                ))
+            if not self.require_reflection_permission(owner, node):
+                return None
+            storage = T.normalize(owner)
+            definition = self.env.lookup_object(storage.name) if isinstance(storage, T.NominalType) else None
+            if (definition is None or isinstance(storage, T.FFINamedType)
+                    or len(storage.args) != len(definition.generics)):
+                self._diagnose("managed construction requires a concrete managed object type", node)
+                return None
+            reflection_access = TypedConstructionNode(
+                node, candidate.applied.actual_returns[0], self.env.field_metadata(owner),
+                operation in {"finish", "finish?"}, operation,
+                ((self.env.runtime_name_for(storage.name) or storage.name)
+                 if self.env.lookup_constructor(storage.name) is not None else None),
+            )
+            if operation in {"finish", "finish?"}:
+                from ..contracts.release_effects import release_effects
+                candidate = replace(candidate, branch=candidate.branch.with_element_tags(
+                    release_effects(self.env, builder)))
+        elif overload.reflection_operation is not None:
             from valiance.asts import IndexAccessNode, IndexSelector, IndexSetNode
             from ..expressions.access_handlers import _index_access_node, _index_set_node
 

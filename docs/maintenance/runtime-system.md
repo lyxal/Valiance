@@ -1425,7 +1425,7 @@ matching implementation. They never use a first matching function-table entry to
 resolve ambiguity or execute a body to test whether it fits. Trait dispatch
 requires the analyser-proven receiver witness.
 
-The portable bytecode format is **0x3C**, analysed interface schema **6**, and
+The portable bytecode format is **0x3E**, analysed interface schema **8**, and
 compiler/interface ABIs **4**/**3**. Older artifacts must be recompiled.
 
 Implicit-receiver structural requirements are checked in the analyser.

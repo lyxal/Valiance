@@ -178,6 +178,14 @@ into each field type without modifying the declaration. Owner evidence retains
 qualified names, generic arguments, and tags. A field's owner and declaration
 index distinguish slots even when they share a value type.
 
+`fields_for_value` retains separate layout alternatives for finite union-valued
+receivers. The value's `fields` operation produces a union of `Fields[Owner]`
+types; runtime selection uses checked cast evidence, with stricter alternatives
+before their supertypes. Incomparable overlapping alternatives and types without
+a usable runtime discriminator are diagnosed. `field_metadata` continues to
+describe a type's own storage: `fields[A | B]` is empty rather than a fabricated
+concatenation of both objects' fields.
+
 Types without managed nominal storage have an empty field collection. The
 collection's `value_type` is the union of every stored field type, or `Never` for
 empty storage. Name lookup through `find` only queries metadata; it does not
@@ -300,7 +308,24 @@ call arguments run after it. Conversion effects and panics belong to the caller
 expression and are not intercepted by `write?`. Type evidence grants no lexical
 write authority, and assignments still perform their ordinary destination checks.
 
-Runtime selection of a value's owner shape and incomplete construction remain pending. Unresolved enumeration is diagnosed
+Managed `Uninit[T]` construction uses concrete layout evidence and the ordinary
+generic specialization path. Allocation, checked descriptor assignment,
+`finished?`, `finish`, and `finish?` require lexical `unsafe`, regardless of the
+owner's duplication policy. Builders are distinct from their owner type and do
+not expose its fields as readable owner values. Their release effects cover
+possible initialized fields without including the incomplete owner's destructor.
+See [managed construction](reflection-implementation.md#managed-construction)
+for readiness, consumption, errors and cleanup contracts.
+
+Finite-union metadata, lookup and access preserve every possible layout.
+Reflective iteration checks a separate callback for each field in each possible
+owner; only the selected layout executes. Returned field-dependent results join
+conservatively, including escaped type evidence. Descriptor properties retain a
+union of exact `Type[T]` alternatives rather than converting it to `Type[A | B]`.
+Read/write plans retain owner-specific permissions and compatibility proofs.
+Qualified nominal names distinguish equally named objects from different modules.
+
+Variant, open-trait and structural receiver shape selection remains pending. Unresolved enumeration is diagnosed
 rather than treated as empty storage.
 Metadata regressions live in `tests/test_types.py`,
 `tests/test_analysis_declarations.py`, `tests/test_runtime.py`, and

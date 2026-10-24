@@ -1072,12 +1072,19 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
-Bytecode version **0x3C** includes `MAKE_FIELDS` (opcode `0x48`) with a named
+Bytecode version **0x3E** includes `MAKE_FIELDS` (opcode `0x48`) with a named
 `ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
 string, a `u32` field count, and name/type-signature/visibility strings for each
 field in declaration order. Type signatures use the same canonical syntax as
 runtime generic arguments. Duplicate field names, empty type evidence and unknown
 visibility categories are rejected while loading.
+
+Value-based `MAKE_FIELDS` uses `("choices", ((cast_spec, layout), ...))` instead
+of a constant layout. It borrows a named or implicit-cycle input, selects the
+matching checked layout, releases temporary owners and produces independent
+metadata. A single choice records a statically known layout; multiple choices
+are ordered by static specificity. Cleanup panics use ordinary handlers. Qualified
+nominal cast names preserve module identity.
 
 `REFLECT_READ` (opcode `0x49`) consumes an owner occurrence and field descriptor.
 Its tuple payload contains the checked layout, a Boolean lexical private-access
@@ -1089,6 +1096,12 @@ identity raises `ReflectionFieldFault`; denied visibility raises
 occurrences are released on failure; successful reads preserve the result's
 ownership after metadata and receiver cleanup.
 
+`REFLECT_READ` and `REFLECT_WRITE` may carry `("choices", (config, ...))`.
+Descriptor owner identity selects one complete ordinary access config, including
+its lexical permission and checked field casts. `REFLECT_CALL` retains the same
+choice table for fallible access. Loading rejects duplicate owner entries,
+malformed contracts and empty dispatch tables.
+
 `SPECIALIZE_FUNCTION` (opcode `0x4A`) consumes a function value and binds a checked
 `FunctionCode` payload to its original closure. The selected declaration identity
 also selects the correct member of an overload set. Captures retain their ordinary
@@ -1096,7 +1109,7 @@ ownership rules; caller locals are never substituted for definition captures.
 `FunctionCode.requires_specialization` is a Boolean serialized after parameter
 collection ranks. It marks a generic closure template, which the VM refuses to
 execute without a checked specialization. The opcode payload must be executable
-function code, never another template. Analysed interfaces use schema **6** to
+function code, never another template. Analysed interfaces use schema **8** to
 retain deferred capture contexts, checked call-site bodies, fallible access plans and descriptor conversion branches.
 
 `REFLECT_WRITE` (opcode `0x4B`) consumes a replacement, owner occurrence and field
@@ -1147,11 +1160,28 @@ cycle arguments under ordinary call ownership rules. Its payload is an argument
 count. Target expressions run exactly once; explicit prefix source expressions
 run only after target evaluation, including on the missing-target path.
 
+`CONSTRUCT` (opcode `0x50`) carries an operation name (`uninit`, `finished?`,
+`finish`, or `finish?`), concrete `ReflectionFieldsReference`, an optional hidden
+constructor binding and a nominal owner cast specification. Allocation borrows
+lifecycle metadata from that constructor without invoking it. `UninitValue`
+stores initialized fields only; its cleanup metadata includes field order but
+excludes the owner's destructor and must-call contract. Finalization moves the
+fields into a complete owner or releases them in reverse declaration order on
+failure. Shared references retain a consumed construction state and subsequent
+operations raise `StateFault`. Protected field ownership transfers without
+duplication. Loading validates construction payloads and their layout metadata.
+
 Reflective `FOREACH` uses `ReflectionForeachReference` (value tag `0x13`): the
 owner layout, one checked `FunctionCode` per field, an index-parameter flag, and
 the completion-result count. Loading verifies callback count and parameter arity
 and validates nested bytecode. The VM verifies each descriptor's owner, index,
 name, type and visibility against the layout before invoking its selected body.
+
+For a union of field collections, `FOREACH` carries
+`("reflection_choices", (ReflectionForeachReference, ...))`. The collection's
+exact owner evidence selects a plan. Each plan has its own field count and
+callbacks, including zero-field plans. Nested loops, shared captures, break and
+return use the same execution path as concrete reflective iteration.
 Callbacks borrow the paused caller's lexical environment and share sequential
 binding updates. Break and return values acquire ownership before the metadata
 collection is released. An empty layout produces ordinary completion without

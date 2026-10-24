@@ -275,6 +275,17 @@ class Environment:
     default_argument_scopes: dict[tuple[str | None, Overload], Environment] = field(
         default_factory=dict, compare=False, repr=False,
     )
+    call_site_dependencies: dict[str, tuple[object, ...]] = field(
+        default_factory=dict, compare=False, repr=False,
+    )
+
+    def call_site_dependency_scope(self, overload: Overload) -> tuple[object, ...]:
+        """Return private provider declarations needed by a deferred imported body."""
+        if overload.implementation_id in self.call_site_dependencies:
+            return self.call_site_dependencies[overload.implementation_id]
+        if self.parent is not None:
+            return self.parent.call_site_dependency_scope(overload)
+        return ()
 
     def default_argument_scope(self, overload: Overload) -> Environment | None:
         """Return the provider scope retained for an imported callable's defaults."""
@@ -388,28 +399,38 @@ class Environment:
             raise KeyError(f"unknown object {name}")
         self.objects[name] = replace(definition, destructor_effects=effects)
 
-    def destructor_effects(self, typ: Type) -> frozenset[ElementTag]:
+    def destructor_effects(
+        self, typ: Type, *, _active: frozenset[Type] = frozenset(),
+    ) -> frozenset[ElementTag]:
         """Return effects that may occur when one owned value is released."""
         typ = normalize(typ)
+        if typ in _active:
+            return frozenset()
+        _active = _active | {typ}
         if isinstance(typ, NominalType):
+            if typ.name == Symbol("Uninit") and len(typ.args) == 1:
+                return frozenset(
+                    tag for field in self.field_metadata(typ.args[0]).fields
+                    for tag in self.destructor_effects(field.type.typ, _active=_active)
+                )
             definition = self.lookup_object(typ.name)
             own = frozenset() if definition is None else definition.destructor_effects
             nested = frozenset(
-                tag for argument in typ.args for tag in self.destructor_effects(argument)
+                tag for argument in typ.args for tag in self.destructor_effects(argument, _active=_active)
             )
             return own | nested
         if isinstance(typ, UnionType):
             return frozenset(
-                tag for item in typ.items for tag in self.destructor_effects(item)
+                tag for item in typ.items for tag in self.destructor_effects(item, _active=_active)
             )
         if isinstance(typ, TupleType):
             return frozenset(
-                tag for item in typ.params for tag in self.destructor_effects(item)
+                tag for item in typ.params for tag in self.destructor_effects(item, _active=_active)
             )
         if isinstance(typ, CollectionType):
-            return self.destructor_effects(typ.base)
+            return self.destructor_effects(typ.base, _active=_active)
         if isinstance(typ, (TaggedType, NoVecType, ExactType)):
-            return self.destructor_effects(typ.inner)
+            return self.destructor_effects(typ.inner, _active=_active)
         return frozenset()
 
     def define_constructor_metadata(

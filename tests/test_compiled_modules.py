@@ -15,6 +15,124 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_runtime_union_layout_selection_distinguishes_qualified_owner_names(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'one.vlnc').write_text('public object Owner => public $value: Int end\n', encoding='utf-8')
+            (root / 'two.vlnc').write_text('public object Owner => public $value: String end\n', encoding='utf-8')
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {one, two}
+define pick(flag: Int) -> one.Owner | two.Owner =>
+  if $flag == 1 => one.Owner(7) else => two.Owner("hello") end
+end
+$owner = pick(0)
+$metadata = $owner fields
+$field = $metadata["value"]
+$field.owner
+$field.type
+$owner[$field]
+read?($owner, fields[one.Owner]["value"])
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                stack = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual(stack[0].type_args, ('two.Owner',))
+                self.assertEqual(stack[1].type_args, ('String',))
+                self.assertEqual(stack[2], 'hello')
+                self.assertEqual(stack[3].fields['reason'], 'InvalidField')
+
+    def test_runtime_union_reflection_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public define[T] names(owner: T) =>
+  $out: String* = []
+  $owner fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector.names}
+object A => public $number: Int end
+object B => public $label: String end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+names(pick(1))
+names(pick(0))
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))), [['number'], ['label']])
+
+    def test_managed_construction_preserves_namespaced_owner_identity(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'model.vlnc').write_text('public object Owner => public $value: Int end\n',
+                                             encoding='utf-8')
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {model}
+unsafe =>
+  $builder = uninit[model.Owner]
+  $builder[fields[model.Owner]["value"]] = 7
+  finish $builder
+end
+model.Owner(7)
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                built, ordinary = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual(built.type_name, ordinary.type_name)
+                self.assertEqual(built.fields, ordinary.fields)
+                self.assertEqual(built.runtime_type, ordinary.runtime_type)
+
+    def test_managed_construction_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+        from valiance.vtypes.symbols import Symbol
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'builder.vlnc'
+            library.write_text('''
+object[T] Box => public $value: T end
+public define[T] build(value: T) =>
+  unsafe =>
+    $builder = uninit[Box[T]]
+    $builder[fields[Box[T]]["value"]] = $value
+    finish? $builder
+  end
+end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {builder.build}
+$box = build("hello") ?!
+$box
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertIsNone(analyser.env.lookup_object(Symbol('Box')))
+            for optimize in (False, True):
+                (box,) = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual(box.type_name, 'Box')
+                self.assertEqual(box.type_args, ('String',))
+                self.assertEqual(box.fields, {'value': 'hello'})
+
     def test_descriptor_conversion_specializes_from_source_free_modules(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
@@ -855,7 +973,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x06"))
+        self.assertTrue(first.startswith(b"VLNI\x08"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -872,10 +990,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x06{"schema":6,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x08{"schema":8,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x06{"schema":6,"value":null}trailing'
+                b'VLNI\x08{"schema":8,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -883,7 +1001,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x06{"schema":6,"value":')
+            loads_interface(b'VLNI\x08{"schema":8,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

@@ -184,6 +184,18 @@ def _field_set_node(
         (reconstructed.emit(TypedNode(node, result_type)),)
     )
 
+def _reflection_private_owners(metadata, friendly_owners: frozenset[Symbol]) -> tuple[T.Type, ...]:
+    """Retain owner-scope authority separately for each possible storage layout."""
+    permitted = []
+    for layout in metadata.alternatives:
+        storage = T.normalize(layout.owner.typ)
+        while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
+            storage = storage.inner
+        if isinstance(storage, T.NominalType) and storage.name in friendly_owners:
+            permitted.append(layout.owner.typ)
+    return tuple(permitted)
+
+
 def _literal_integer_index(node: IndexAccessNode) -> int | None:
     """Return a scalar index only when its source is one integer literal."""
     expression = _scalar_index_expression(node)
@@ -440,16 +452,17 @@ def _index_access_node(
 
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
     receiver = T.normalize(receiver_type)
-    if (isinstance(receiver, T.NominalType) and receiver.name == Symbol("Fields")
-            and len(receiver.args) == 1):
-        if not self.require_reflection_permission(receiver.args[0], node):
+    from valiance.vtypes.reflection import fields_type_owners, fields_for_value
+    collection_owners = fields_type_owners(receiver)
+    if collection_owners is not None:
+        if not self.require_reflection_permission(T.U(*collection_owners), node):
             return _core.BranchSet()
         if (len(node.selectors) != 1 or node.selectors[0].is_slice or node.spread
                 or len(index_types) != 1
                 or not T.assignable(index_types[0], T.String, self.env.context)):
             self._diagnose("field lookup requires one String name", node)
             return _core.BranchSet()
-        typ = T.N(Symbol("Field"), receiver.args[0])
+        typ = T.U(*(T.N(Symbol("Field"), owner) for owner in collection_owners))
         return _core.BranchSet((base_branch.push(typ).emit(TypedNode(node, typ)),))
     from valiance.vtypes.reflection import field_type_evidence
 
@@ -459,7 +472,7 @@ def _index_access_node(
         if not _simple_protocol_selectors(node) or len(node.selectors) != 1 or node.spread:
             self._diagnose("reflective reads require one field descriptor", node)
             return _core.BranchSet()
-        if not T.assignable(receiver_type, owner, self.env.context):
+        if not _utils._types_overlap(receiver_type, owner, self.env.context):
             self._diagnose("field descriptor owner does not match the receiver", node)
             return _core.BranchSet()
         if not self.require_reflection_permission(owner, node):
@@ -467,7 +480,7 @@ def _index_access_node(
         if _functions._contains_type_var(owner):
             self._diagnose("runtime-generic reflective reads are not implemented yet", node)
             return _core.BranchSet()
-        metadata = self.env.field_metadata(owner)
+        metadata = fields_for_value(owner, self.env)
         result = witness if witness is not None else metadata.value_type
         storage = T.normalize(owner)
         while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
@@ -476,7 +489,8 @@ def _index_access_node(
             isinstance(storage, T.NominalType) and storage.name in self._friendly_owners
         )
         return _core.BranchSet((base_branch.push(result).emit(
-            TypedReflectiveReadNode(node, result, metadata, allow_private)
+            TypedReflectiveReadNode(node, result, metadata, allow_private,
+                                    private_owners=_reflection_private_owners(metadata, self._friendly_owners))
         ),))
     custom = _custom_index_access(
         self, node, branch, base_branch, receiver_type, index_types
@@ -661,7 +675,13 @@ def _index_set_node(
         if len(node.selectors) != 1 or not _simple_protocol_selectors(node):
             self._diagnose("reflective writes require one field descriptor", node)
             return _core.BranchSet()
-        if not T.assignable(receiver_type, owner, self.env.context):
+        receiver = T.normalize(receiver_type)
+        builder = (isinstance(receiver, T.NominalType) and receiver.name == Symbol("Uninit")
+                   and len(receiver.args) == 1)
+        if builder and not self.reflection_unsafe:
+            self._diagnose("builder assignment requires lexical unsafe", node)
+            return _core.BranchSet()
+        if not _utils._types_overlap(receiver.args[0] if builder else receiver_type, owner, self.env.context):
             self._diagnose("field descriptor owner does not match the receiver", node)
             return _core.BranchSet()
         if not self.require_reflection_permission(owner, node):
@@ -671,7 +691,8 @@ def _index_set_node(
             return _core.BranchSet()
         if self.defer_reflection and _functions._contains_type_var(value_type):
             raise _core.ReflectionSpecializationRequired(value_type)
-        metadata = self.env.field_metadata(owner)
+        from valiance.vtypes.reflection import fields_for_value
+        metadata = fields_for_value(owner, self.env)
         destination = witness if witness is not None else metadata.value_type
         if not _utils._types_overlap(value_type, destination, self.env.context):
             self._diagnose(f"cannot assign {T.show(value_type)} to reflected fields of {T.show(owner)}", node)
@@ -695,7 +716,7 @@ def _index_set_node(
             | release_effects(self.env, receiver_type)
         ).emit(TypedReflectiveWriteNode(node, receiver_type, metadata, allow_private, tuple(
             T.assignable(value_type, field.type.typ, self.env.context) for field in metadata.fields
-        ))),))
+        ), private_owners=_reflection_private_owners(metadata, self._friendly_owners))),))
     if not _intrinsic_index_receiver(receiver_type) and isinstance(
         T.normalize(receiver_type), T.NominalType
     ):
