@@ -38,12 +38,19 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x37
+BYTECODE_VERSION = 0x3C
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
     OpCode.MAKE_FIELDS: 0x48,
+    OpCode.REFLECT_READ: 0x49,
+    OpCode.SPECIALIZE_FUNCTION: 0x4A,
+    OpCode.REFLECT_WRITE: 0x4B,
+    OpCode.REFLECT_CALL: 0x4C,
+    OpCode.TYPE_DISPATCH: 0x4D,
+    OpCode.CONVERSION_MISSING: 0x4E,
+    OpCode.SOURCE_ARGS_BORROW: 0x4F,
     OpCode.LOAD_VAR: 0x02,
     OpCode.STORE_VAR: 0x03,
     OpCode.LOAD_ELEMENT: 0x04,
@@ -224,10 +231,61 @@ def _validate_implementation_identity(identity: object, *, allow_none: bool = Fa
 
 def _validate_concurrency_bytecode(code: FunctionCode) -> None:
     """Reject malformed concurrency payloads and unbalanced scope bytecode."""
+    if type(code.requires_specialization) is not bool:
+        raise BytecodeFormatError("invalid function specialization flag")
     scope_depth = 0
     for index, instruction in enumerate(code.instructions):
         op = instruction.op
         argument = instruction.arg
+        if op is OpCode.SOURCE_ARGS_BORROW and (type(argument) is not int or argument < 0):
+            raise BytecodeFormatError("invalid borrowed argument source count")
+        if op is OpCode.TYPE_DISPATCH:
+            if (not isinstance(argument, tuple) or len(argument) != 2
+                    or not isinstance(argument[0], tuple)
+                    or type(argument[1]) is not int or not 0 <= argument[1] < len(code.instructions)):
+                raise BytecodeFormatError("invalid type descriptor dispatch payload")
+            signatures = set()
+            for entry in argument[0]:
+                if (not isinstance(entry, tuple) or len(entry) != 2
+                        or not isinstance(entry[0], str) or not entry[0]
+                        or type(entry[1]) is not int or not 0 <= entry[1] < len(code.instructions)
+                        or entry[0] in signatures):
+                    raise BytecodeFormatError("invalid type descriptor dispatch entry")
+                signatures.add(entry[0])
+        if op is OpCode.CONVERSION_MISSING and type(argument) is not bool:
+            raise BytecodeFormatError("invalid missing conversion policy")
+        if op is OpCode.REFLECT_CALL:
+            if (not isinstance(argument, tuple) or len(argument) != 6
+                    or type(argument[0]) is not bool or type(argument[2]) is not bool
+                    or not isinstance(argument[3], tuple) or not isinstance(argument[4], tuple)
+                    or any(type(depth) is not int or depth < 0 for depth in argument[3])
+                    or any(rank is not None and (type(rank) is not int or rank < 0) for rank in argument[4])
+                    or (argument[5] is not None and not isinstance(argument[5], VectorExtensionReference))):
+                raise BytecodeFormatError("invalid fallible reflection call payload")
+            width = 3 if argument[0] else 2
+            if (argument[3] and len(argument[3]) != width) or (argument[4] and len(argument[4]) != width):
+                raise BytecodeFormatError("invalid fallible reflection vectorisation plan")
+            op = OpCode.REFLECT_WRITE if argument[0] else OpCode.REFLECT_READ
+            argument = argument[1]
+        if op is OpCode.REFLECT_READ:
+            if (not isinstance(argument, tuple) or len(argument) != 3
+                    or type(argument[1]) is not bool
+                    or not isinstance(argument[2], tuple)):
+                raise BytecodeFormatError("invalid reflective read payload")
+            _validate_reflection_fields(argument[0])
+        if op is OpCode.REFLECT_WRITE:
+            if (not isinstance(argument, tuple) or len(argument) != 4
+                    or type(argument[1]) is not bool
+                    or not isinstance(argument[2], tuple)
+                    or not isinstance(argument[3], tuple)):
+                raise BytecodeFormatError("invalid reflective write payload")
+            _validate_reflection_fields(argument[0])
+            if (len(argument[3]) != len(argument[0].fields)
+                    or any(spec is not None and not isinstance(spec, tuple) for spec in argument[3])):
+                raise BytecodeFormatError("invalid reflective write field contracts")
+        if op is OpCode.SPECIALIZE_FUNCTION and (
+                not isinstance(argument, FunctionCode) or argument.requires_specialization):
+            raise BytecodeFormatError("specialization requires checked function bytecode")
         if op is OpCode.MAKE_FIELDS:
             _validate_reflection_fields(argument)
         if op is OpCode.FOREACH and isinstance(argument, ReflectionForeachReference):
@@ -719,6 +777,7 @@ class _Writer:
         self.value(function.return_tag_specs)
         self.value(function.return_collection_ranks)
         self.value(function.param_collection_ranks)
+        self.bool(function.requires_specialization)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -1236,6 +1295,7 @@ class _Reader:
             rank is None or isinstance(rank, int) for rank in param_collection_ranks
         ):
             raise BytecodeFormatError("invalid function parameter collection ranks")
+        requires_specialization = self.bool()
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -1266,4 +1326,5 @@ class _Reader:
             return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,
             param_collection_ranks=param_collection_ranks,
+            requires_specialization=requires_specialization,
         )

@@ -96,6 +96,15 @@ ParseError = N(PARSE_ERROR)
 
 
 class TypeLibraryTests(unittest.TestCase):
+    def test_nominal_generic_inference_uses_a_refined_rows_base(self):
+        """Structural evidence does not erase nominal generic arguments."""
+        variable = T.V("Value", T.TypeVarId(98765, 0))
+        overload = T.Overload((T.N(Symbol("Box"), variable),), (variable,))
+        refined = T.Row(T.N(Symbol("Box"), T.Int), T.Field(Symbol("name"), T.String))
+        applied = T.try_apply_overload(overload, (refined,), T.Context()).applied
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.actual_returns, (T.Int,))
+
     def test_ffi_nominal_namespace_is_distinct_from_valiance_namespace(self):
         ffi_int = T.FFI(Symbol("int"))
         valiance_int = N(Symbol("int"))

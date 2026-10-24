@@ -15,6 +15,47 @@ from valiance.parsing import parse
 class CallPlanningBoundaryTests(unittest.TestCase):
     """Verify call planning is owned outside the analyser façade."""
 
+    def test_generic_reflection_checks_every_concrete_field_specialization(self):
+        source = '''
+object Pair =>
+  public $number: Int
+  public $text: String
+end
+define onlyInt(value: Int) -> Int => $value end
+define[T] inspect(value: T) =>
+  fields[T] foreach (field) => onlyInt($value[$field]) end
+end
+'''
+        analyser = Analyser()
+        analyser.analyse(parse(source + "inspect(1)"))
+        self.assertEqual(analyser.diagnostics, [])
+        analyser = Analyser()
+        analyser.analyse(parse(source + '$pair = Pair(1, "text")\ninspect($pair)'))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_caller_unsafe_does_not_authorize_generic_helper_reflection(self):
+        source = '''
+@nodup("resource")
+object Resource => public $value: Int end
+define[T] metadata(value: T) => $value fields end
+$resource = Resource(7)
+unsafe => metadata($resource) end
+'''
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_runtime_type_arguments_require_type_evidence_and_conversion_provider(self):
+        for source, message in (
+            ('$target = 1\n42 to[$target]', 'Type[T] evidence'),
+            ('object Owner => public $value: String end\n'
+             '$field = fields[Owner]["value"]\nChannel[$field.type]', 'conversion provider'),
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(any(message in str(d) for d in analyser.diagnostics), analyser.diagnostics)
+
     def test_analyser_constructs_a_call_service(self) -> None:
         """The façade exposes the dedicated call-planning subsystem."""
         analyser = Analyser()

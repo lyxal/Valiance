@@ -21,6 +21,8 @@ from valiance.asts import (
     TypedConcurrentNode,
     TypedUnsafeNode,
     TypedFieldsNode,
+    TypedReflectiveReadNode,
+    TypedDescriptorConversionNode,
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
@@ -158,7 +160,13 @@ def _refine_typed_body(
 def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
     """Refine typed node during static analysis."""
     typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
-    if isinstance(typed_node, TypedFieldsNode):
+    if isinstance(typed_node, TypedDescriptorConversionNode):
+        return replace(typed_node, typ=typ,
+                       target_body=_refine_typed_body(typed_node.target_body, old, new),
+                       choices=tuple((_refine_type(target, old, new), _refine_typed_body(body, old, new))
+                                     for target, body in typed_node.choices),
+                       fallback_body=_refine_typed_body(typed_node.fallback_body, old, new))
+    if isinstance(typed_node, (TypedFieldsNode, TypedReflectiveReadNode)):
         return replace(typed_node, typ=typ)
     if isinstance(typed_node, TypedUnsafeNode):
         return TypedUnsafeNode(
@@ -299,6 +307,10 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.behaviour_provider,
             structural_witnesses=typed_node.structural_witnesses,
             callable_witnesses=typed_node.callable_witnesses,
+            specialization=(None if typed_node.specialization is None else
+                            _refine_typed_node(typed_node.specialization, old, new)),
+            reflection_access=(None if typed_node.reflection_access is None else
+                               _refine_typed_node(typed_node.reflection_access, old, new)),
         )
     if isinstance(typed_node, TypedCallNode):
         return TypedCallNode(

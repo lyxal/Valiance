@@ -61,6 +61,7 @@ def _call_site_checked_overload_signature(
     type_values: dict[T.TypeVarKey, T.Type] | None = None,
     where_evaluated: bool = False,
     static_values: dict[str, int] | None = None,
+    checked_bodies: list[TypedFunctionNode] | None = None,
 ) -> T.Overload | None:
     """Build the signature for call site checked overload during static analysis."""
     if callable(overload.call_site_body):
@@ -81,6 +82,21 @@ def _call_site_checked_overload_signature(
                         declared.params + declared.returns
                     )
                 )
+                if candidate.specialize_body:
+                    arity = len(declared.params)
+                    explicit = stack[-arity:] if arity else ()
+                    application = _candidate_apply_overload_to_branch(
+                        candidate, explicit, _core.AnalysisBranch(), ctx, analyser=analyser,
+                    )
+                    if application is None:
+                        continue
+                    if checked_bodies is not None and application.specialization is not None:
+                        checked_bodies.append(application.specialization)
+                    applied = application.applied
+                    return T.Overload(
+                        (*applied.params, function_type), applied.actual_returns,
+                        call_site_body=len(applied.params),
+                    )
                 if (
                     isinstance(candidate.call_site_body, tuple)
                     and len(candidate.call_site_body) == 2
@@ -95,6 +111,7 @@ def _call_site_checked_overload_signature(
                         outer,
                         node,
                         stack,
+                        friendly_owners=candidate.reflection_friendly_owners,
                     )
                     if analysis is None:
                         continue
@@ -102,6 +119,8 @@ def _call_site_checked_overload_signature(
                     if len(candidates) != 1:
                         continue
                     concrete = candidates[0]
+                    if checked_bodies is not None and _functions._has_reflection_plan(analysis.overloads):
+                        checked_bodies.append(_functions._checked_reflection_function(node, analysis, candidate))
                     return T.Overload(
                         (*concrete.params, function_type),
                         concrete.returns,
@@ -166,12 +185,16 @@ def _call_site_checked_overload_signature(
             type_values=type_values,
             where_evaluated=where_evaluated,
             static_values=static_values,
+            friendly_owners=overload.reflection_friendly_owners,
         )
         if analysis is None:
             return None
         overloads = _functions._callable_overloads(analysis.typ)
         if len(overloads) != 1:
             return None
+        if checked_bodies is not None and (
+                overload.specialize_body or _functions._has_reflection_plan(analysis.overloads)):
+            checked_bodies.append(_functions._checked_reflection_function(node, analysis, overload))
         return _substitute_overload_ranks(overloads[0], rank_values or {})
     if len(call_params) < len(overload.params):
         return None

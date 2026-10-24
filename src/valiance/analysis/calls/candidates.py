@@ -452,7 +452,8 @@ def _call_element_candidates(
             declared.where_clause
             or static_where.rank_variable_names(declared.params + declared.returns)
         )
-        if uses_static_values:
+        callable_result = None
+        if uses_static_values or callable_overload.specialize_body:
             callable_result = _apply_overload_to_branch(
                 callable_overload,
                 explicit_args,
@@ -530,6 +531,7 @@ def _call_element_candidates(
                     ),
                 ),
                 branch=result_branch,
+                specialization=callable_result.specialization if callable_result is not None else None,
                 call_arg_order=call_arg_order,
                 callable_implementation_id=callable_overload.implementation_id,
             )
@@ -977,7 +979,9 @@ def _contextual_modifier_overloads(
         ):
             continue
         for params in _modifier_call_param_variants(expected.params):
-            analysis = analyser._analyse_function_at_call_site(outer, node, params)
+            analysis = analyser._analyse_function_at_call_site(
+                outer, node, params, friendly_owners=overload.reflection_friendly_owners,
+            )
             if analysis is None:
                 continue
             compatible = tuple(
@@ -1271,6 +1275,22 @@ def _apply_overload_to_branch(
     generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply overload to branch during static analysis."""
+    if overload.reflection_operation is not None and not generic_args:
+        from valiance.vtypes.reflection import field_type_evidence
+
+        descriptor = T.normalize(args[1])
+        while isinstance(descriptor, (T.CollectionType, T.TaggedType, T.NoVecType, T.ExactType)):
+            descriptor = descriptor.base if isinstance(descriptor, T.CollectionType) else descriptor.inner
+        evidence = field_type_evidence(descriptor)
+        if evidence is None:
+            return None
+        # The descriptor fixes the owner before ordinary vectorisation solves
+        # the call; a collection receiver must not widen the descriptor's owner.
+        concrete = replace(overload, params=(evidence[0], descriptor, *args[2:]))
+        applied = T.try_apply_overload(concrete, args, ctx, disambiguation=disambiguation).applied
+        if applied is None:
+            return None
+        return _core.OverloadApplication(replace(applied, overload=overload), branch)
     products = _where_union_argument_products(overload, args, ctx)
     if products is not None:
         applications = tuple(
@@ -1636,11 +1656,27 @@ def _apply_call_site_checked_overload(
         static_source.params, args
     ):
         rank_bound = _substitute_overload_ranks(static_source, initial_rank_values)
+        if overload.specialize_body:
+            solved = T.try_apply_overload(
+                replace(rank_bound, returns=()), args, ctx, generic_args=generic_args,
+            ).applied
+            if solved is None:
+                continue
+            _, source_node = overload.call_site_body
+            if source_node.generic_scope_id is not None:
+                for index, argument in enumerate(generic_args):
+                    if argument is not None:
+                        solved.substitution[T.TypeVarId(source_node.generic_scope_id, index)] = argument
+            rank_bound = _functions._transform_overload_types(
+                rank_bound, lambda typ: _substitute_branch_type(typ, solved.substitution),
+            )
         preliminary_substitution = (
             _static_type_substitution(args, rank_bound.params, ctx)
             if static_source.where_clause
             else _branch_argument_substitution(args, rank_bound.params, ctx)
         )
+        if overload.specialize_body and preliminary_substitution is not None:
+            preliminary_substitution = {**preliminary_substitution, **solved.substitution}
         if preliminary_substitution is None:
             continue
         where_result = _evaluate_where_clause(
@@ -1721,6 +1757,7 @@ def _apply_call_site_checked_overload(
                     continue
                 stack_args, _ = preview
             call_params = stack_args + args
+            checked_bodies: list[TypedFunctionNode] = []
             concrete = _call_site_checked_overload_signature(
                 deferred,
                 call_params,
@@ -1730,6 +1767,7 @@ def _apply_call_site_checked_overload(
                 type_values=preliminary_substitution,
                 where_evaluated=True,
                 static_values=static_values,
+                checked_bodies=checked_bodies,
             )
             if concrete is None or len(concrete.params) < len(args):
                 continue
@@ -1758,7 +1796,8 @@ def _apply_call_site_checked_overload(
             if len(concrete.params) != len(concrete_args):
                 continue
             candidate = T.try_apply_overload(
-                concrete, concrete_args, ctx, generic_args=generic_args
+                concrete, concrete_args, ctx,
+                generic_args=() if overload.specialize_body else generic_args,
             ).applied
             if candidate is None:
                 continue
@@ -1791,7 +1830,9 @@ def _apply_call_site_checked_overload(
                     else concrete.runtime_static_values
                 ),
             )
-            return _core.OverloadApplication(applied, result_branch)
+            return _core.OverloadApplication(
+                applied, result_branch, checked_bodies[0] if checked_bodies else None,
+            )
     return None
 
 
@@ -1815,7 +1856,7 @@ def _call_site_static_overload(overload: T.Overload) -> T.Overload:
 
 def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
     """Return whether an overload requires call-site checking."""
-    return any(
+    return overload.specialize_body or any(
         _functions._is_call_site_checked_param(param) for param in overload.params
     )
 

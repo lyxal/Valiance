@@ -804,6 +804,27 @@ class PanicSignal(Exception):
         super().__init__(value)
         self.value = value
 
+    @property
+    def recoverable(self) -> bool:
+        """Keep ownership-integrity failures outside language panic handlers."""
+        value = unwrap_runtime_value(self.value)
+        return not (isinstance(value, ObjectValue) and value.type_name == "DuplicationFault")
+
+
+def is_recoverable_fault(error: BaseException) -> bool:
+    """Reject recovery when a primary or secondary fault is an integrity failure."""
+    pending = [error]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        if not getattr(current, "recoverable", True):
+            return False
+        pending.extend(getattr(current, "secondary_faults", ()))
+    return True
+
 
 from .bigdecimal import BigDecimal
 

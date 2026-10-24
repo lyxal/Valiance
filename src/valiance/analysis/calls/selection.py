@@ -410,6 +410,7 @@ class _CallSelection:
                     call_arg_order=source.call_arg_order,
                     implementation_id=source.implementation_id,
                     source_arguments=source.arguments,
+                    specialization=candidate.specialization,
                     dispatch_priority=(
                         0
                         if selected_is_friendly
@@ -556,6 +557,39 @@ class _CallSelection:
         if overload.annotation_warning is not None:
             self._warn(overload.annotation_warning, node)
 
+        reflection_access = None
+        if overload.reflection_operation is not None:
+            from valiance.asts import IndexAccessNode, IndexSelector, IndexSetNode
+            from ..expressions.access_handlers import _index_access_node, _index_set_node
+
+            arguments = candidate.source_arguments
+            if candidate.applied.vectorised:
+                arguments = candidate.applied.params
+            writing = overload.reflection_operation == "write?"
+            # Check the intrinsic through the same scalar indexing analyser.
+            # Selector expressions were already evaluated as ordinary call arguments.
+            selectors = (IndexSelector(start=(node,)),)
+            access_node = (IndexSetNode(selectors, location=node.location) if writing else
+                           IndexAccessNode(selectors, location=node.location))
+            stack = (arguments[2], arguments[0], arguments[1]) if writing else arguments
+            checked = (_index_set_node if writing else _index_access_node)(
+                self, access_node, replace(candidate.branch, stack=T.TypeStack(stack), typed_body=()),
+            )
+            if not checked:
+                return None
+            checked_branch = checked.branches[0]
+            reflection_access = replace(checked_branch.typed_body[-1], node=node)
+            error = T.N(Symbol("ReflectionWriteError" if writing else "ReflectionReadError"))
+            scalar_result = T.N(Symbol("Result"), reflection_access.typ, error)
+            result = scalar_result
+            if candidate.applied.vectorised:
+                from valiance.vtypes.relations import _project_vector_shape
+                result = _project_vector_shape(candidate.applied.actual_returns[0], result)
+            from ..contracts.release_effects import release_effects
+            effects = checked_branch.element_tags | release_effects(self.env, arguments[0])
+            candidate = replace(candidate, branch=candidate.branch.with_element_tags(effects),
+                                applied=replace(candidate.applied, returns=(scalar_result,), actual_returns=(result,)))
+
         actual_returns = annotation_hooks.annotated_element_returns(
             node,
             candidate.applied.actual_returns,
@@ -638,6 +672,8 @@ class _CallSelection:
                 behaviour_provider,
                 structural_witnesses=tuple(structural_witnesses),
                 callable_witnesses=tuple(callable_witnesses),
+                specialization=candidate.specialization,
+                reflection_access=reflection_access,
             )
         )
 
@@ -713,6 +749,7 @@ class _CallSelection:
                             candidate.call_arg_order,
                             candidate.callable_implementation_id,
                             structural_witnesses=evidence,
+                            specialization=candidate.specialization,
                         )
                     )
                 )
@@ -811,6 +848,7 @@ class _CallSelection:
                         candidate.callable_implementation_id,
                         extension,
                         structural_witnesses=evidence,
+                        specialization=candidate.specialization,
                     )
                 )
             )

@@ -1,4 +1,4 @@
-"""Runtime metadata construction and lookup, without access to owner instances."""
+"""Managed reflection metadata and descriptor validation for owner access."""
 
 from __future__ import annotations
 
@@ -53,3 +53,20 @@ def lookup_field(collection: ReflectionValue, name: str) -> ReflectionValue:
             "message": f"{collection.type_args[0]} has no stored field '{name}'",
         }))
     return field
+
+
+def validate_field(field: object, layout: ReflectionFieldsReference) -> ReflectionFieldReference:
+    """Validate complete descriptor identity before consulting access permissions."""
+    if isinstance(field, ReflectionValue) and field.type_name == "Field":
+        index = field.fields.get("index")
+        if (isinstance(index, RuntimeNumber) and index == index.to_integral_value()
+                and 0 <= index < len(layout.fields) and field.type_args == (layout.owner,)):
+            reference = layout.fields[int(index)]
+            if (field.fields.get("name") == reference.name
+                    and field.fields["owner"].type_args == (layout.owner,)
+                    and field.fields["type"].type_args == (reference.value_type,)
+                    and field.fields["visibility"].fields["name"] == reference.visibility):
+                return reference
+    raise PanicSignal(ObjectValue("ReflectionFieldFault", {
+        "message": "field descriptor does not match the receiver's storage layout",
+    }))

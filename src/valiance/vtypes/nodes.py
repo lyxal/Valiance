@@ -424,6 +424,9 @@ class Overload:
     is_structural_requirement: bool = field(default=False, compare=False, hash=False)
     # Assigned at the declaration source, not derived from a local overload slot.
     implementation_id: str | None = field(default=None, compare=False, hash=False)
+    specialize_body: bool = False
+    reflection_friendly_owners: frozenset[Symbol] = field(default_factory=frozenset, compare=False, hash=False)
+    reflection_operation: str | None = None
 
 
 @dataclass(frozen=True)

@@ -11,13 +11,15 @@ from typing import Any
 
 from valiance.runtime.serialization import BytecodeFormatError
 
-MAGIC = b"VLNI\x03"
-SCHEMA_VERSION = 3
+MAGIC = b"VLNI\x06"
+SCHEMA_VERSION = 6
 MAX_DEPTH = 256
 MAX_ITEMS = 1_000_000
 
 # Persisted semantic records are restricted to these compiler model modules.
 _ALLOWED_MODULES = (
+    "valiance.analysis.state.branches",
+    "valiance.analysis.state.variables",
     "valiance.asts.nodes",
     "valiance.modules_system.modules",
     "valiance.vtypes.context",
@@ -25,6 +27,7 @@ _ALLOWED_MODULES = (
     "valiance.vtypes.nodes",
     "valiance.vtypes.reflection",
     "valiance.vtypes.symbols",
+    "valiance.vtypes.stack",
 )
 
 

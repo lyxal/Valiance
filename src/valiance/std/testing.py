@@ -8,7 +8,7 @@ import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.documentation import element_documentation
 from valiance.runtime.vm import AssertionFailure
-from valiance.runtime.runtime_values import PanicSignal
+from valiance.runtime.runtime_values import PanicSignal, is_recoverable_fault
 from valiance.elements.stdlib_native import stdlib_element
 
 _VALUE = T.V("Value")
@@ -69,7 +69,7 @@ def _assert_not_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     (),
     param_names=("operation",),
     documentation=element_documentation(
-        "Assert that invoking a callable raises a panic.",
+        "Assert that invoking a callable raises a recoverable panic.",
         parameters=(("operation", "Niladic callable expected to panic."),),
         returns="No stack values when a panic is observed.",
         category="Testing",
@@ -80,7 +80,9 @@ def _assert_panics(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     """Implement the `testing.assertPanics` standard-library element."""
     try:
         ctx.call(args[0], [])
-    except PanicSignal:
+    except PanicSignal as error:
+        if not is_recoverable_fault(error):
+            raise
         return ()
     raise AssertionFailure("expected the operation to panic, but it returned normally")
 

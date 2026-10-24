@@ -71,6 +71,9 @@ from valiance.asts import (
     TypedConcurrentNode,
     TypedUnsafeNode,
     TypedFieldsNode,
+    TypedReflectiveReadNode,
+    TypedReflectiveWriteNode,
+    TypedDescriptorConversionNode,
     FieldsNode,
     UnsafeNode,
     TypedSpawnNode,
@@ -503,6 +506,42 @@ class _Compiler:
         """Lower one typed AST node into bytecode instructions."""
         source_node = node
         typed_node = node if isinstance(node, TypedNode) else None
+        if isinstance(typed_node, TypedDescriptorConversionNode):
+            if typed_node.implicit_source:
+                self.emit(OpCode.SOURCE_ARGS_BORROW, 1)
+            self.emit(OpCode.ISOLATE_STACK_BEGIN)
+            self.expression(typed_node.target_body)
+            self.emit(OpCode.ISOLATE_STACK_END)
+            dispatch = self.emit(OpCode.TYPE_DISPATCH)
+            targets = []
+            exits = []
+            for target, body in typed_node.choices:
+                targets.append((str(normalize(target)), len(self.instructions)))
+                self.expression(body)
+                exits.append(self.emit(OpCode.JUMP))
+            fallback = len(self.instructions)
+            self.expression(typed_node.fallback_body)
+            self.emit(OpCode.CONVERSION_MISSING, typed_node.optional)
+            self.instructions[dispatch] = Instruction(OpCode.TYPE_DISPATCH, (tuple(targets), fallback))
+            for jump in exits:
+                self.patch(jump, len(self.instructions))
+            return
+        if isinstance(typed_node, TypedReflectiveWriteNode):
+            self.emit(OpCode.REFLECT_WRITE, (
+                _reflection_fields_reference(typed_node.metadata), typed_node.allow_private,
+                _cast_type_spec(typed_node.metadata.owner.typ),
+                tuple(None if safe
+                      else _cast_type_spec(field.type.typ)
+                      for field, safe in zip(typed_node.metadata.fields,
+                                             typed_node.statically_safe_fields, strict=True)),
+            ))
+            return
+        if isinstance(typed_node, TypedReflectiveReadNode):
+            self.emit(OpCode.REFLECT_READ, (
+                _reflection_fields_reference(typed_node.metadata), typed_node.allow_private,
+                _cast_type_spec(typed_node.metadata.owner.typ),
+            ))
+            return
         if isinstance(typed_node, TypedFieldsNode):
             if typed_node.consumes_receiver:
                 self.emit(OpCode.POP)
@@ -704,6 +743,26 @@ class _Compiler:
                     args = typed_node.modifier_args
                 for arg in args:
                     self.node(arg)
+                if isinstance(typed_node, TypedElementNode) and typed_node.reflection_access is not None:
+                    access = typed_node.reflection_access
+                    config = (
+                        _reflection_fields_reference(access.metadata), access.allow_private,
+                        _cast_type_spec(access.metadata.owner.typ),
+                    )
+                    writing = isinstance(access, TypedReflectiveWriteNode)
+                    if writing:
+                        config += (tuple(None if safe else _cast_type_spec(field.type.typ)
+                                         for field, safe in zip(access.metadata.fields,
+                                                                access.statically_safe_fields, strict=True)),)
+                    self.emit(OpCode.REFLECT_CALL, (
+                        writing, config, typed_node.overload.vectorised,
+                        typed_node.overload.vectorised_depths,
+                        typed_node.overload.vectorised_target_ranks,
+                        _compiled_element_extension(typed_node.extension),
+                    ))
+                    if any(annotation.name.text == "@@tupled" for annotation in node.annotations):
+                        self.emit(OpCode.BUILD_TUPLE, 1)
+                    return
                 if (
                     isinstance(typed_node, TypedElementNode)
                     and typed_node.implementation_id is not None
@@ -757,6 +816,17 @@ class _Compiler:
                                 consumed_override=1,
                             ),
                         )
+                    return
+                if isinstance(typed_node, TypedElementNode) and typed_node.specialization is not None:
+                    if name.text != "call":
+                        for value in typed_node.overload.runtime_static_values:
+                            self.emit(OpCode.PUSH_CONST, value)
+                    if name.text != "call":
+                        self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(runtime_name))
+                    self.emit(OpCode.SPECIALIZE_FUNCTION, _compile_function_value(
+                        typed_node.specialization, str(runtime_name),
+                    ))
+                    self.emit(OpCode.CALL)
                     return
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:
@@ -1100,6 +1170,8 @@ class _Compiler:
         """Lower an expression body with assignment-receiver borrow metadata."""
         previous = self._borrowed_assignment_nodes
         previous_observed = self._observational_access_nodes
+        previous_calls = self._borrowed_call_nodes
+        self._borrowed_call_nodes = previous_calls | _typed_call_borrows(nodes)
         self._borrowed_assignment_nodes = previous | _borrowed_assignment_receivers(
             nodes
         )
@@ -1115,6 +1187,7 @@ class _Compiler:
         finally:
             self._borrowed_assignment_nodes = previous
             self._observational_access_nodes = previous_observed
+            self._borrowed_call_nodes = previous_calls
 
     def collection(
         self,
@@ -1980,6 +2053,16 @@ def _compile_function_value(
             if isinstance(declared, Overload) and isinstance(
                 declared.call_site_body, tuple
             ):
+                if declared.specialize_body:
+                    # Executable bodies belong to checked concrete call sites.
+                    return replace(_Compiler().compile_function(
+                        (), name=name,
+                        params=tuple(str(parameter) if parameter is not None else f"_{index}"
+                                     for index, parameter in enumerate(declared.param_names)),
+                        signature_types=tuple(show(parameter) for parameter in declared.params),
+                        implementation_id=declared.implementation_id,
+                        return_count=0,
+                    ), requires_specialization=True)
                 return _compile_function_node(
                     node,
                     name,
@@ -2219,6 +2302,34 @@ def _typed_call_borrows(
             # normal duplication checks; never infer a borrow from its copy.
             stack.extend(sources.get(label) if mode == "move" else None
                          for label in poststack)
+        elif isinstance(candidate, TypedFieldsNode):
+            if candidate.consumes_receiver:
+                take(1)
+            stack.append(None)
+        elif isinstance(candidate, TypedDescriptorConversionNode):
+            implicit = (not ast.call_args and not ast.modifier_args) or any(
+                argument.placeholder for argument in ast.call_args
+            )
+            if implicit:
+                source = take(1)[0]
+                if source is not None and isinstance(_unwrap(source), GetVariableNode):
+                    borrowed.add(id(source))
+            stack.append(None)
+        elif isinstance(candidate, TypedReflectiveWriteNode):
+            take(3)
+            stack.append(None)
+        elif isinstance(candidate, TypedReflectiveReadNode):
+            receiver, _descriptor = take(2)
+            # A projection may be observed by the eventual consumer. Storage
+            # and escaping results still materialize through the ordinary path.
+            stack.append(receiver)
+        elif isinstance(ast, FieldAccessNode):
+            stack.extend(take(1))
+        elif (type(candidate) is TypedNode and isinstance(ast, IndexAccessNode)
+              and not ast.spread):
+            take(1 + sum(bool(selector.start) + bool(selector.stop) + bool(selector.step)
+                         for selector in ast.selectors))
+            stack.append(None)
         elif isinstance(candidate, TypedElementNode) and isinstance(ast, ElementNode):
             overload = candidate.overload
             if overload is None or ast.modifier_args:

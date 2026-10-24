@@ -73,6 +73,8 @@ class TypedElementNode(TypedNode):
         tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
     ] = ()
     optional_conversion: bool = False
+    specialization: TypedFunctionNode | None = None
+    reflection_access: TypedReflectiveReadNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +297,21 @@ class TypedUnsafeNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedReflectiveReadNode(TypedNode):
+    """A descriptor-directed read with checked layout and lexical authority."""
+
+    metadata: FieldsDescriptor | None = None
+    allow_private: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TypedReflectiveWriteNode(TypedReflectiveReadNode):
+    """A checked field reconstruction retaining its replacement contract."""
+
+    statically_safe_fields: tuple[bool, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedFieldsNode(TypedNode):
     """Concrete reflection metadata selected by semantic analysis."""
 
@@ -400,6 +417,24 @@ class StringInterpolationNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class TypeArgumentExpression(ASTNode):
+    """A value expression supplying runtime Type evidence to a type argument."""
+
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedDescriptorConversionNode(TypedNode):
+    """Checked conversion branches selected by owner-free runtime type evidence."""
+
+    target_body: tuple[TypedNode, ...] = ()
+    choices: tuple[tuple[Type, tuple[TypedNode, ...]], ...] = ()
+    fallback_body: tuple[TypedNode, ...] = ()
+    optional: bool = False
+    implicit_source: bool = False
+
+
+@dataclass(frozen=True)
 class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 
@@ -409,7 +444,7 @@ class ElementNode(ASTNode):
     call_args: tuple[CallArgument, ...] = ()
     annotations: tuple[ASTNode, ...] = ()
     extension: ElementExtension | None = None
-    generic_args: tuple[Type | None, ...] = ()
+    generic_args: tuple[Type | TypeArgumentExpression | None, ...] = ()
     explicit_call: bool = False
 
 

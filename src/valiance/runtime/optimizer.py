@@ -1048,6 +1048,7 @@ def _contains_control_flow(instructions: tuple[Instruction, ...]) -> bool:
             OpCode.JUMP,
             OpCode.JUMP_IF_FALSE,
             OpCode.JUMP_IF_MATCH,
+            OpCode.TYPE_DISPATCH,
             OpCode.MATCH_ERROR,
             OpCode.UNFOLD,
             OpCode.WHILE,
@@ -1278,6 +1279,10 @@ def _control_flow_targets(instructions: tuple[Instruction, ...]) -> set[int]:
             targets.add(_jump_target(target, count))
         elif instruction.op is OpCode.TRY_BEGIN:
             targets.update(_handler_targets(instruction.arg, count))
+        elif instruction.op is OpCode.TYPE_DISPATCH:
+            entries, fallback = instruction.arg
+            targets.update(_jump_target(target, count) for _, target in entries)
+            targets.add(_jump_target(fallback, count))
     return targets
 
 
@@ -1367,6 +1372,13 @@ def _successors(
     if instruction.op is OpCode.TRY_BEGIN:
         handlers = _handler_targets(instruction.arg, instruction_count)
         return (fallthrough, *handlers)
+    if instruction.op is OpCode.TYPE_DISPATCH:
+        entries, fallback = instruction.arg
+        return tuple(_jump_target(target, instruction_count) for _, target in entries) + (
+            _jump_target(fallback, instruction_count),
+        )
+    if instruction.op is OpCode.CONVERSION_MISSING and not instruction.arg:
+        return ()
     if instruction.op in {
         OpCode.JUMP,
         OpCode.LOOP_BREAK,
@@ -1403,6 +1415,12 @@ def _retarget_instruction(
     remap: Callable[[int], int],
 ) -> Instruction:
     """Rewrite absolute targets carried by a control-flow instruction."""
+    if instruction.op is OpCode.TYPE_DISPATCH:
+        entries, fallback = instruction.arg
+        return Instruction(instruction.op, (
+            tuple((signature, remap(_jump_target(target, instruction_count))) for signature, target in entries),
+            remap(_jump_target(fallback, instruction_count)),
+        ))
     if instruction.op in {OpCode.JUMP, OpCode.JUMP_IF_FALSE}:
         target = _jump_target(instruction.arg, instruction_count)
         return Instruction(instruction.op, remap(target))

@@ -2932,7 +2932,7 @@ class Parser:
 
     def _element_generic_arguments(
         self, start: Token, *, name: Symbol
-    ) -> tuple[tuple[Type | None, ...], tuple[int, ...] | None]:
+    ) -> tuple[tuple[Type | ASTNode | None, ...], tuple[int, ...] | None]:
         """Parse generic arguments and the FFI-only shaped conversion sugar.
 
         ``to[&int{2, 3}]`` is a conversion operation, not a new native pointer
@@ -2944,6 +2944,12 @@ class Parser:
         ):
             return (), None
         self._advance()
+        if self._check(TokenKind.DOLLAR):
+            from valiance.asts import TypeArgumentExpression
+
+            expression = self._chain_until({TokenKind.RBRACKET})
+            self._expect(TokenKind.RBRACKET)
+            return (TypeArgumentExpression(tuple(expression), location=_loc(start)),), None
         if name == Symbol("to") and self._check_op("&"):
             mark = self.index
             base_type = self.parse_type_expression()

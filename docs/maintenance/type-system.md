@@ -227,9 +227,81 @@ callback. Metadata remains read-only and operations retain the lexical safety ga
 `TypedReflectiveForNode` carries all checked bodies through interface serialization
 and code generation; runtime selection uses the checked layout and field index.
 
-Reads/writes of owner values, runtime-generic enumeration and iteration/CSTC, runtime
-selection of a value's owner shape, and incomplete construction are pending.
-Unresolved enumeration is diagnosed rather than treated as empty storage.
+`owner[field]` reads use the descriptor's exact field type inside an opened
+callback and the layout's complete value union elsewhere, including literal-name
+lookups. Analysis rejects incompatible owners and applies the same transitive
+ownership gate as metadata operations. `TypedReflectiveReadNode` records the
+layout and lexical private-access permission. At runtime, descriptor identity
+and receiver compatibility are checked before visibility. Public and readable
+fields are readable; private reads require the owner's ordinary friendly scope
+or lexical `unsafe`. Metadata itself carries no permission. Reads preserve the
+ordinary borrowing, materialization and cleanup contracts.
+
+Generic-owner operations defer through the ordinary call-site checker. A body
+requiring unresolved owner evidence marks its overload for specialization;
+nonrecursive callers propagate that requirement. Each concrete call retains a
+checked function body on `TypedElementNode.specialization`, including layouts,
+per-field callbacks, lexical permissions and conservative escaping result types.
+Opened descriptor refinements survive generic helper parameters. Nominal generic
+solving projects a structural row to its nominal base without erasing the row's
+field evidence during body checking.
+
+Runtime specialization binds checked bytecode to the original function closure;
+it does not capture caller locals or grant caller permissions. Generic closures
+whose reflection depends on enclosing owner evidence cause that enclosing
+function to specialize. Uninstantiated templates cannot execute. Recursive
+functions still require explicit signatures and cannot infer generic reflection.
+`owner[field] = replacement` retains the receiver's type and uses ordinary indexed
+assignment/rebinding. `TypedReflectiveWriteNode` records the concrete layout,
+lexical authority and one static compatibility proof per field. Code generation
+emits checked cast specifications only where that proof is absent. A replacement
+disjoint from every possible destination is rejected; an opened descriptor uses
+its exact witness for this check. Destinations requiring an unsupported runtime
+discriminator are rejected unless compatibility is already statically proven.
+Generic writes use the same call-site specialization path as reads, deferring
+when either the owner or replacement contract needs concrete type evidence.
+
+Writes validate descriptor identity, owner compatibility and visibility before
+checking the replacement's runtime type. Readable fields require owner-scope or
+unsafe authority for writes. Validation failures preserve the original binding;
+discarded replacements and consumed temporary receivers retain ordinary cleanup
+effects and panic-unwinding behavior. Successful writes use the shared object
+reconstruction mechanism, preserving aliases and ownership checks. Reconstruction
+checks all unchanged fields for duplication before retaining any of them.
+
+`read?(owner, field)` and `write?(owner, field, value)` use compiler-owned builtin
+overloads selected by ordinary overload resolution. Their checked indexing plans
+are retained on `TypedElementNode.reflection_access`; refinements and compiled
+interfaces preserve these plans. The descriptor fixes owner evidence before
+ordinary vectorisation. Success types retain an opened field witness or the
+conservative field union, wrapped in `Result[..., ReflectionReadError]`; writes
+return `Result[Owner, ReflectionWriteError]`. Generic helpers specialize through
+the same path as direct access, with their own lexical permissions.
+
+Fallible writes preserve the original owner on success and failure. Only operation
+validation becomes a recoverable error: identity is checked before permission,
+then replacement compatibility. `.reason: String` distinguishes `InvalidField`
+and `AccessDenied`, plus `TypeMismatch` for writes; `.message: String` describes
+the failure. Both error objects implement `Err`, and their constructors accept
+`(reason, message)`. Caller expressions and cleanup panics propagate normally.
+`DuplicationFault` remains unrecoverable. No implicit conversion is performed.
+
+Explicit `value to[$field.type]` and `to?[$evidence](value)` accept ordinary
+`Type[T]` evidence. Analysis checks each compatible visible conversion target
+using the ordinary conversion resolver and retains those checked bodies in
+`TypedDescriptorConversionNode`. Runtime descriptor identity selects an exact
+target; a union-valued field retains its union target rather than selecting an
+arbitrary member. Missing runtime targets raise `ConversionFault`, or return
+`None` for `to?`. Registered provider failures follow ordinary `to`/`to?` rules.
+Generic evidence specializes at concrete call sites, including compiled modules.
+
+The target expression runs once. A postfix source is obtained before it; prefix
+call arguments run after it. Conversion effects and panics belong to the caller
+expression and are not intercepted by `write?`. Type evidence grants no lexical
+write authority, and assignments still perform their ordinary destination checks.
+
+Runtime selection of a value's owner shape and incomplete construction remain pending. Unresolved enumeration is diagnosed
+rather than treated as empty storage.
 Metadata regressions live in `tests/test_types.py`,
 `tests/test_analysis_declarations.py`, `tests/test_runtime.py`, and
 `tests/test_bytecode_serialization.py`.

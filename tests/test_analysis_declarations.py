@@ -71,17 +71,16 @@ length
         analyser.analyse(parse(source))
         self.assertTrue(any("requires lexical unsafe" in item for item in analyser.diagnostics))
 
-    def test_runtime_generic_enumeration_is_explicitly_diagnosed(self):
-        for body, message in (("$value fields", "requires lexical unsafe"),
-                              ("unsafe => $value fields end", "runtime-generic")):
+    def test_generic_reflection_definitions_defer_until_concrete_calls(self):
+        for body in ("$value fields", "unsafe => $value fields end"):
             analyser = Analyser()
-            analyser.analyse(parse(f"define[T] metadata(value: T) => {body} end"))
-            self.assertTrue(any(message in item for item in analyser.diagnostics), analyser.diagnostics)
+            typed = analyser.analyse(parse(f"define[T] metadata(value: T) => {body} end"))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertTrue(typed[0].overloads[0].overload.specialize_body)
         analyser = Analyser()
         analyser.analyse(parse("define[T] evidence(field: Field[T]) => "
                                "unsafe => $field.type end end"))
-        self.assertTrue(any("runtime-generic field type evidence" in item
-                            for item in analyser.diagnostics), analyser.diagnostics)
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_reflection_metadata_uses_checked_generic_storage_declarations(self):
         """Metadata includes private storage and excludes object methods."""

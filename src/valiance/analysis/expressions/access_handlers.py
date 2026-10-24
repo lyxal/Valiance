@@ -49,6 +49,8 @@ from valiance.asts import (
     TypedNode,
     TypedElementNode,
     TypedProtocolIndexNode,
+    TypedReflectiveReadNode,
+    TypedReflectiveWriteNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
     TypedWhileNode,
@@ -449,6 +451,33 @@ def _index_access_node(
             return _core.BranchSet()
         typ = T.N(Symbol("Field"), receiver.args[0])
         return _core.BranchSet((base_branch.push(typ).emit(TypedNode(node, typ)),))
+    from valiance.vtypes.reflection import field_type_evidence
+
+    evidence = field_type_evidence(index_types[0]) if len(index_types) == 1 else None
+    if evidence is not None:
+        owner, witness = evidence
+        if not _simple_protocol_selectors(node) or len(node.selectors) != 1 or node.spread:
+            self._diagnose("reflective reads require one field descriptor", node)
+            return _core.BranchSet()
+        if not T.assignable(receiver_type, owner, self.env.context):
+            self._diagnose("field descriptor owner does not match the receiver", node)
+            return _core.BranchSet()
+        if not self.require_reflection_permission(owner, node):
+            return _core.BranchSet()
+        if _functions._contains_type_var(owner):
+            self._diagnose("runtime-generic reflective reads are not implemented yet", node)
+            return _core.BranchSet()
+        metadata = self.env.field_metadata(owner)
+        result = witness if witness is not None else metadata.value_type
+        storage = T.normalize(owner)
+        while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
+            storage = storage.inner
+        allow_private = self.reflection_unsafe or (
+            isinstance(storage, T.NominalType) and storage.name in self._friendly_owners
+        )
+        return _core.BranchSet((base_branch.push(result).emit(
+            TypedReflectiveReadNode(node, result, metadata, allow_private)
+        ),))
     custom = _custom_index_access(
         self, node, branch, base_branch, receiver_type, index_types
     )
@@ -624,6 +653,49 @@ def _index_set_node(
     value_type = branch.stack[-required]
     receiver_type = branch.stack[-selector_values - 1]
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    from valiance.vtypes.reflection import field_type_evidence
+
+    evidence = field_type_evidence(index_types[0]) if len(index_types) == 1 else None
+    if evidence is not None:
+        owner, witness = evidence
+        if len(node.selectors) != 1 or not _simple_protocol_selectors(node):
+            self._diagnose("reflective writes require one field descriptor", node)
+            return _core.BranchSet()
+        if not T.assignable(receiver_type, owner, self.env.context):
+            self._diagnose("field descriptor owner does not match the receiver", node)
+            return _core.BranchSet()
+        if not self.require_reflection_permission(owner, node):
+            return _core.BranchSet()
+        if _functions._contains_type_var(owner):
+            self._diagnose("reflective writes require concrete owner evidence", node)
+            return _core.BranchSet()
+        if self.defer_reflection and _functions._contains_type_var(value_type):
+            raise _core.ReflectionSpecializationRequired(value_type)
+        metadata = self.env.field_metadata(owner)
+        destination = witness if witness is not None else metadata.value_type
+        if not _utils._types_overlap(value_type, destination, self.env.context):
+            self._diagnose(f"cannot assign {T.show(value_type)} to reflected fields of {T.show(owner)}", node)
+            return _core.BranchSet()
+        for field in metadata.fields:
+            target = field.type.typ
+            if (_utils._types_overlap(value_type, target, self.env.context)
+                    and not T.assignable(value_type, target, self.env.context)
+                    and _patterns._uncheckable_runtime_type(target) is not None):
+                self._diagnose(f"{T.show(target)} cannot be checked at runtime", node)
+                return _core.BranchSet()
+        storage = T.normalize(owner)
+        while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
+            storage = storage.inner
+        allow_private = self.reflection_unsafe or (
+            isinstance(storage, T.NominalType) and storage.name in self._friendly_owners
+        )
+        stack = T.TypeStack(branch.stack.items[:-required]).push(receiver_type)
+        return _core.BranchSet((branch.with_stack(stack).with_element_tags(
+            release_effects(self.env, destination) | release_effects(self.env, value_type)
+            | release_effects(self.env, receiver_type)
+        ).emit(TypedReflectiveWriteNode(node, receiver_type, metadata, allow_private, tuple(
+            T.assignable(value_type, field.type.typ, self.env.context) for field in metadata.fields
+        ))),))
     if not _intrinsic_index_receiver(receiver_type) and isinstance(
         T.normalize(receiver_type), T.NominalType
     ):

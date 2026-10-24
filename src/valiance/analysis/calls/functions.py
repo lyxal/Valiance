@@ -92,7 +92,7 @@ from ..state import (
 )
 from .models import (
     CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
-    ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
+    ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication, ReflectionSpecializationRequired,
 )
 
 
@@ -507,7 +507,22 @@ class _CallableValues:
             return function_env
 
         function_analyser = self._child_analyser(function_environment())
-        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
+        function_analyser.defer_reflection = True
+        try:
+            final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
+        except ReflectionSpecializationRequired as requirement:
+            from valiance.vtypes.structural import nested_types
+
+            if self.defer_reflection and any(
+                isinstance(typ, T.VarType) and typ.identity is not None
+                and typ.identity.scope != node.generic_scope_id
+                for typ in nested_types(requirement.owner)
+            ):
+                raise
+            if annotation_hooks.has_annotation(node.annotations, "recursive"):
+                self._diagnose("recursive reflection requires a concrete owner", node)
+                return None
+            return self._call_site_checked_function(outer, node, specialize_body=True), outer
         self.declarations._validate_function_type_names(
             node, node, function_analyser.env,
         )
@@ -607,6 +622,8 @@ class _CallableValues:
         self,
         outer: AnalysisBranch,
         node: FunctionNode,
+        *,
+        specialize_body: bool = False,
     ) -> FunctionAnalysis:
         """Compute call site checked function during static analysis."""
         params = _functions._declared_params(node)
@@ -614,8 +631,16 @@ class _CallableValues:
             node,
             params=params,
             returns=(),
-            call_site_body=(outer, node),
+            call_site_body=(AnalysisBranch(
+                variables=outer.variables, input_mode=outer.input_mode,
+                atomic_type_vars=outer.atomic_type_vars, origin=outer.origin,
+            ), node),
         )
+        overload = replace(overload, specialize_body=specialize_body,
+                           reflection_friendly_owners=frozenset(self._friendly_owners),
+                           generic_constraints=_functions._generic_constraints(
+                               node.generics, node.generic_variances, node.generic_constraints,
+                           ))
         typ = T.Overloads(overload)
         return FunctionAnalysis(
             typ,
@@ -632,6 +657,7 @@ class _CallableValues:
         type_values: dict[T.TypeVarKey, T.Type] | None = None,
         where_evaluated: bool = False,
         static_values: dict[str, int] | None = None,
+        friendly_owners: frozenset[Symbol] = frozenset(),
     ) -> FunctionAnalysis | None:
         """Analyse a deferred function using call-site static bindings."""
         typed_node = cast(
@@ -667,6 +693,8 @@ class _CallableValues:
             element_tags=typed_node.element_tags,
             element_tags_explicit=typed_node.element_tags_explicit,
             companion_tags_allowed=typed_node.companion_tags_allowed,
+            annotations=typed_node.annotations,
+            object_friendly_receiver=typed_node.object_friendly_receiver,
             location=typed_node.location,
         )
         explicit_count = len(declared)
@@ -705,6 +733,7 @@ class _CallableValues:
             origin=outer.origin,
         )
         function_analyser = self._child_analyser(self.env.lexical_child_scope())
+        function_analyser._friendly_owners = friendly_owners
         final = function_analyser.analyse_block(
             BranchSet((initial,)), call_site_node.body
         )

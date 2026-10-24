@@ -122,7 +122,7 @@ from .contracts import ContractAnalyser
 from .expressions import ExpressionAnalyser
 from .calls.models import (
     CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
-    ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
+    ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication, ReflectionSpecializationRequired,
 )
 
 
@@ -376,6 +376,7 @@ class Analyser:
         self._imported_trait_impl_sources: dict[tuple[Symbol, Symbol], str] = {}
         self._scope_depth = 0
         self.reflection_unsafe = False
+        self.defer_reflection = False
         self._failed_imports: dict[tuple[str, ...], str] = {}
         self._ffi_libraries: dict[Symbol, str] = {}
         self._ffi_structs: dict[str, T.FFIStructSpec] = {}
@@ -840,6 +841,7 @@ class Analyser:
             recover_declarations=self.recover_declarations,
         )
         child._friendly_owners = self._friendly_owners
+        child.defer_reflection = self.defer_reflection
         child._scope_depth = self._scope_depth + 1
         child._imported_definition_sources = (
             self._imported_definition_sources.copy()
@@ -925,6 +927,8 @@ class Analyser:
 
     def require_reflection_permission(self, owner: T.Type, node: ASTNode) -> bool:
         """Enforce the transitive ownership gate at a lexical reflection site."""
+        if self.defer_reflection and _functions._contains_type_var(owner):
+            raise ReflectionSpecializationRequired(owner)
         if not self.reflection_unsafe and self.env.reflection_requires_unsafe(owner):
             self._diagnose(
                 f"reflection on {T.show(owner)} requires lexical unsafe because "
@@ -1081,6 +1085,10 @@ class Analyser:
         branch: AnalysisBranch,
     ) -> BranchSet:
         """Delegate ordinary calls, while fixing concurrency plans statically."""
+        from valiance.asts import TypeArgumentExpression
+
+        if any(isinstance(argument, TypeArgumentExpression) for argument in node.generic_args):
+            return self.calls._element(node, branch)
         if node.name == Symbol("Channel") and not node.modifier_args and not node.call_args:
             if len(node.generic_args) != 1 or node.generic_args[0] is None:
                 self._diagnose("Channel requires exactly one concrete item type", node)

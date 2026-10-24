@@ -15,6 +15,13 @@ class OpCode(Enum):
 
     PUSH_CONST = "push_const"
     MAKE_FIELDS = "make_fields"
+    REFLECT_READ = "reflect_read"
+    REFLECT_WRITE = "reflect_write"
+    REFLECT_CALL = "reflect_call"
+    TYPE_DISPATCH = "type_dispatch"
+    CONVERSION_MISSING = "conversion_missing"
+    SOURCE_ARGS_BORROW = "source_args_borrow"
+    SPECIALIZE_FUNCTION = "specialize_function"
     LOAD_VAR = "load_var"
     LOAD_VAR_FORWARD = "load_var_forward"
     LOAD_VAR_MATERIALIZE = "load_var_materialize"
@@ -257,6 +264,7 @@ class FunctionCode:
     return_tag_specs: tuple[object, ...] = ()
     return_collection_ranks: tuple[int | None, ...] = ()
     param_collection_ranks: tuple[int | None, ...] = ()
+    requires_specialization: bool = False
 
 
 @dataclass(frozen=True, slots=True)

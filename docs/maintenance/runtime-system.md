@@ -1128,6 +1128,13 @@ as the original. Calls made while the receiver is being destroyed cannot satisfy
 successful-call marking path also rejects receivers that are destroying or
 already destroyed.
 
+`DuplicationFault` also bypasses every language handler, including catch-all
+handlers and `testing.assertPanics`. It retains the ordinary `PanicSignal`
+payload and unwind cleanup, but `is_recoverable_fault` rejects recovery from
+that signal or any aggregate containing it. Structured task scopes and grouped
+waits give these integrity failures priority over recoverable failures, and
+cancellation cleanup records them as failed tasks rather than cancellations.
+
 A lone must-call violation during panic unwinding is attached to the active
 `PanicSignal` as secondary context and does not replace it or trigger double
 panic. Outside unwinding, `MustCallFault` remains an ordinary catchable panic
@@ -1418,8 +1425,8 @@ matching implementation. They never use a first matching function-table entry to
 resolve ambiguity or execute a body to test whether it fits. Trait dispatch
 requires the analyser-proven receiver witness.
 
-The portable bytecode format is **0x37**, analysed interface schema **3**, and
-compiler/interface ABI **3**. Older artifacts must be recompiled.
+The portable bytecode format is **0x3C**, analysed interface schema **6**, and
+compiler/interface ABIs **4**/**3**. Older artifacts must be recompiled.
 
 Implicit-receiver structural requirements are checked in the analyser.
 Where the concrete implementation is known, typed conversion nodes and calls

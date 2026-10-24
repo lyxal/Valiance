@@ -101,6 +101,11 @@ The runtime implementation is small, but several files must evolve together.
 - `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
   panics are carried by `PanicSignal` and caught by the nearest active handler
   whose nominal type name matches, or by a catch-all handler.
+- `DuplicationFault` is an unrecoverable ownership-integrity failure. Its
+  `PanicSignal` bypasses all language handlers and `testing.assertPanics`,
+  including when wrapped in runtime tag evidence or attached as a secondary
+  failure. Structured scopes and grouped waits prioritize integrity failures
+  over recoverable faults; cancellation cleanup cannot hide one as cancellation.
 - Cleanup failures carry structured object context. The VM boundary renders the
   primary fault, each ordered secondary lifecycle fault, and nested destruction
   contexts without changing panic catchability.
@@ -1067,12 +1072,80 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
-Bytecode version **0x37** includes `MAKE_FIELDS` (opcode `0x48`) with a named
+Bytecode version **0x3C** includes `MAKE_FIELDS` (opcode `0x48`) with a named
 `ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
 string, a `u32` field count, and name/type-signature/visibility strings for each
 field in declaration order. Type signatures use the same canonical syntax as
 runtime generic arguments. Duplicate field names, empty type evidence and unknown
 visibility categories are rejected while loading.
+
+`REFLECT_READ` (opcode `0x49`) consumes an owner occurrence and field descriptor.
+Its tuple payload contains the checked layout, a Boolean lexical private-access
+permission, and the ordinary runtime cast specification for the owner. The VM
+validates descriptor identity and owner compatibility before checking visibility,
+then extracts the field using ordinary borrowed/owned receiver semantics. Invalid
+identity raises `ReflectionFieldFault`; denied visibility raises
+`ReflectionAccessFault`. Both implement `Fault`. Descriptor and consumed receiver
+occurrences are released on failure; successful reads preserve the result's
+ownership after metadata and receiver cleanup.
+
+`SPECIALIZE_FUNCTION` (opcode `0x4A`) consumes a function value and binds a checked
+`FunctionCode` payload to its original closure. The selected declaration identity
+also selects the correct member of an overload set. Captures retain their ordinary
+ownership rules; caller locals are never substituted for definition captures.
+`FunctionCode.requires_specialization` is a Boolean serialized after parameter
+collection ranks. It marks a generic closure template, which the VM refuses to
+execute without a checked specialization. The opcode payload must be executable
+function code, never another template. Analysed interfaces use schema **6** to
+retain deferred capture contexts, checked call-site bodies, fallible access plans and descriptor conversion branches.
+
+`REFLECT_WRITE` (opcode `0x4B`) consumes a replacement, owner occurrence and field
+descriptor, in that stack order, and produces the reconstructed owner. Its tuple
+payload contains the checked layout, lexical write authority, owner cast contract
+and one destination contract per declared field. A `None` destination contract
+records statically proven compatibility; other entries use ordinary runtime cast
+specifications. Loading validates payload shape, field count and contract entries.
+The VM validates identity before visibility and checks type compatibility last.
+Failures raise `ReflectionFieldFault`, `ReflectionAccessFault` or
+`ReflectionTypeFault`, release temporary inputs under ordinary panic-unwinding
+rules, and leave source bindings unchanged. Successful writes use `_set_field`
+reconstruction and preserve the owner's runtime evidence. No conversion provider
+is consulted. The shared reconstruction path checks all unchanged fields before
+retaining references, so a duplication rejection cannot leak earlier retains.
+
+`REFLECT_CALL` (opcode `0x4C`) lowers the compiler-owned `read?` and `write?`
+overloads. Its payload contains a write flag, the corresponding checked read or
+write contract, a vectorisation flag, vector depths, runtime target ranks and an
+optional vector extension. Arguments use ordinary element-call order:
+`(owner, descriptor[, replacement])`. Both paths reuse direct-access validation,
+but only validation faults become `ReflectionReadError` or `ReflectionWriteError`.
+Errors carry `reason` and `message`; success always uses an explicit `OK` wrapper,
+even when the stored value itself implements `Err`.
+
+Fallible writes force independent reconstruction through `_set_field` without
+consuming the original owner. They check duplication of the owner and unchanged
+fields, retain those fields only after all checks pass, and transfer the replacement
+into the new owner. The replaced original field stays with its original owner.
+Rejected replacements and temporary operands are released outside panic unwinding
+for handled validation errors. Cleanup panics and illegal duplicates propagate.
+Vectorised calls borrow scalar inputs and own each produced Result; aborted eager
+calls release completed outputs, and lazy calls own their cached outputs. Lazy
+owner binding preserves existing owned values and checks all duplicates before
+retaining any input.
+
+`TYPE_DISPATCH` (opcode `0x4D`) consumes owner-free `Type` evidence and jumps
+by exact canonical represented-type signature. Its payload is a tuple of
+`(signature, instruction address)` entries and a fallback address. Each branch
+contains ordinary analyser-checked conversion calls; the VM performs no overload
+resolution. Loading rejects duplicate signatures and invalid branch addresses.
+The optimizer preserves and retargets every dispatch destination.
+`CONVERSION_MISSING` (opcode `0x4E`) consumes the evaluated source, performs its
+ordinary cleanup and raises `ConversionFault`, or produces `None` when its
+Boolean optional flag is true. `SOURCE_ARGS_BORROW` (opcode `0x4F`) obtains a
+postfix source before isolated target evaluation, borrowing implicit function
+cycle arguments under ordinary call ownership rules. Its payload is an argument
+count. Target expressions run exactly once; explicit prefix source expressions
+run only after target evaluation, including on the missing-target path.
 
 Reflective `FOREACH` uses `ReflectionForeachReference` (value tag `0x13`): the
 owner layout, one checked `FunctionCode` per field, an index-parameter flag, and

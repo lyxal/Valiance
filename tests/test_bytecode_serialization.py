@@ -26,6 +26,152 @@ from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_descriptor_conversion_plan_survives_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse(
+            'object Box => public $value: String end\n'
+            '$field = fields[Box]["value"]\n42 to[$field.type]'
+        )))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            self.assertEqual(run(loads(dumps(compile_program(restored, optimize=optimize)))), ["42"])
+
+    def test_malformed_descriptor_conversion_plans_are_rejected(self):
+        payloads = (None, (), ((), -1), ((), True), ((("Int", 0), ("Int", 0)), 0),
+                    ((("", 0),), 0), ((("Int", 1),), 0), ((("Int", True),), 0))
+        cases = [(OpCode.TYPE_DISPATCH, payload) for payload in payloads]
+        cases += [(OpCode.CONVERSION_MISSING, 1), (OpCode.CONVERSION_MISSING, None),
+                  (OpCode.SOURCE_ARGS_BORROW, True), (OpCode.SOURCE_ARGS_BORROW, -1)]
+        for op, payload in cases:
+            with self.subTest(op=op, payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(op, payload),))))
+
+    def test_fallible_reflection_plans_survive_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse('''
+object Box => public $value: Int end
+$box = Box(7)
+read?($box, fields[Box]["value"]) ?!
+$updated = write?($box, fields[Box]["value"], 8) ?!
+$updated.value
+$box.value
+''')))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            self.assertEqual(run(loads(dumps(compile_program(restored, optimize=optimize)))), [7, 8, 7])
+
+    def test_malformed_fallible_reflection_plans_are_rejected(self):
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+
+        layout = ReflectionFieldsReference('Box', (ReflectionFieldReference('value', 'Int', 'public'),))
+        access = (layout, False, ('nominal', 'Box', ()))
+        valid = (False, access, False, (), (), None)
+        payloads = (None, (), (1, *valid[1:]), (False, None, False, (), (), None),
+                    (False, access, 1, (), (), None), (False, access, True, (1,), (), None),
+                    (False, access, True, (-1, 0), (), None),
+                    (False, access, True, (1, 0), (None, -1), None),
+                    (False, access, True, (1, 0), (), 7),
+                    (True, access, False, (), (), None))
+        for payload in payloads:
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.REFLECT_CALL, payload),))))
+
+    def test_reflective_write_plan_survives_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse(
+            'object Box => public $value: Int end\n'
+            '$box = Box(7)\n$box[fields[Box]["value"]] = 8\n$box.value'
+        )))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            self.assertEqual(run(loads(dumps(compile_program(restored, optimize=optimize)))), [RuntimeNumber(8)])
+
+    def test_malformed_reflective_write_contracts_are_rejected(self):
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+
+        layout = ReflectionFieldsReference("Box", (ReflectionFieldReference("value", "Int", "public"),))
+        for payload in (None, (layout, False, ("nominal", "Box", ())),
+                        (layout, 1, (), (None,)), (layout, False, (), ()),
+                        (layout, False, (), (42,)), (None, False, (), (None,))):
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.REFLECT_WRITE, payload),))))
+
+    def test_generic_reflection_templates_and_specializations_survive_interfaces(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse(
+            'object Box => public $value: Int end\n'
+            'define[T] read(value: T) => $value[fields[T]["value"]] end\n'
+            '$box = Box(7)\nread($box)'
+        )))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        for optimize in (False, True):
+            program = compile_program(restored, optimize=optimize)
+            self.assertEqual(run(loads(dumps(program))), [RuntimeNumber(7)])
+
+    def test_specialization_rejects_unchecked_bytecode(self):
+        for payload in (None, (), FunctionCode((), requires_specialization=True)):
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.SPECIALIZE_FUNCTION, payload),))))
+        with self.assertRaises(BytecodeFormatError):
+            dumps(Program(FunctionCode((), requires_specialization=1)))
+
+    def test_uninstantiated_reflection_templates_cannot_execute(self):
+        code = FunctionCode((), requires_specialization=True)
+        program = Program(FunctionCode((Instruction(OpCode.MAKE_FUNCTION, code), Instruction(OpCode.CALL))))
+        for candidate in (program, loads(dumps(program))):
+            with self.assertRaisesRegex(RuntimeError, "requires a checked specialization"):
+                run(candidate)
+
+    def test_reflective_read_plan_survives_interface_round_trip(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse(
+            'object Box => public $value: Int end\n'
+            '$box = Box(7)\n$box[fields[Box]["value"]]'
+        )))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(loads_interface(dumps_interface(typed)), typed)
+
+    def test_malformed_reflective_read_contracts_are_rejected(self):
+        from valiance.runtime.bytecode import ReflectionFieldsReference
+
+        layout = ReflectionFieldsReference("Box")
+        for payload in (None, (layout,), (layout, 1, ("nominal", "Box")),
+                        (layout, False, None), (None, False, ("nominal", "Box"))):
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.REFLECT_READ, payload),))))
+
     def test_reflection_semantic_metadata_survives_interface_round_trip(self):
         from valiance.analysis import Analyser
         from valiance.parsing import parse
@@ -401,7 +547,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x37"))
+        self.assertTrue(data.startswith(b"VLNCBC\x3C"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

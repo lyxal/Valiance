@@ -10,6 +10,15 @@ from valiance.asts import FunctionOverloadTyping, TypedFunctionNode, TypedNode
 from ..state import AnalysisBranch
 
 
+class ReflectionSpecializationRequired(Exception):
+    """Defer a generic body until its reflected owner is concrete."""
+
+    def __init__(self, owner: T.Type) -> None:
+        """Retain owner evidence so enclosing binders can resolve captures."""
+        self.owner = owner
+        super().__init__(str(owner))
+
+
 @dataclass(frozen=True)
 class FunctionAnalysis:
     """Typed function literal result, including per-overload typed bodies."""
@@ -47,6 +56,7 @@ class ElementArguments:
 class OverloadApplication:
     applied: T.AppliedOverload
     branch: AnalysisBranch
+    specialization: TypedFunctionNode | None = None
 
 @dataclass(frozen=True)
 class CallCandidate:
@@ -60,6 +70,7 @@ class CallCandidate:
     # Concrete argument types, retained for compile-time trait evidence.
     source_arguments: tuple[T.Type, ...] = ()
     state_arity: int | None = None
+    specialization: TypedFunctionNode | None = None
 
 @dataclass(frozen=True)
 class ElementCallPreparation:

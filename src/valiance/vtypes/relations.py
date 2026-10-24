@@ -1547,6 +1547,8 @@ def _solve(
             constraints.clear()
             constraints.update(matches[0])
             return True
+        if isinstance(p, NominalType) and isinstance(a, RowType):
+            return rec(p, a.base)
         if isinstance(p, NominalType) and isinstance(a, NominalType):
             if not _same_nominal_family(p, a):
                 return False

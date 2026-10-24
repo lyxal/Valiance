@@ -1027,10 +1027,26 @@ The standard environment also defines message-bearing built-in `Fault` objects:
 same native one-`String` constructor and readable `message` field as built-in
 errors, but implements `Fault` rather than `Err`.
 
+`ReflectionReadError` and `ReflectionWriteError` implement `Err` and expose
+readable `reason: String` and `message: String` fields. Their native constructors
+accept `(reason, message)`. Fallible reflection computes its Result success type
+from checked owner/field evidence rather than exposing an erased field value type.
+
+Descriptor-directed conversions accept a value expression in a type argument:
+`value to[$field.type]` or `to?[$evidence](value)`. The expression must produce
+one `Type[T]` value. Analysis preserves a checked ordinary call body for each
+visible conversion target compatible with `T`; runtime selection compares the
+exact represented type, including union targets. Missing runtime targets raise
+`ConversionFault` (`None` for `to?`). Generic helpers defer until concrete evidence
+is available. Conversion effects remain ordinary caller effects, and evidence
+does not authorize private access or introduce implicit assignment conversions.
+
 The built-in `panic` overload is generic over `F` with a nominal `Fault` bound.
 This both rejects non-fault values and preserves the concrete `Panic[F]` element
 tag after generic substitution. Typed `try` handlers are likewise required to
 name a type implementing `Fault`; an untyped handler remains a catch-all.
+At runtime, ownership-integrity failures such as `DuplicationFault` bypass both
+typed and untyped handlers; their `Fault` type does not grant recoverability.
 
 Assignability and overload solving know the Result success/error split:
 
@@ -1205,6 +1221,8 @@ parameter types of an overload:
 
 - a bare unknown-shape `Function`, represented as `T.Fn()`
 - a variadic tuple parameter, represented as `T.VariadicTupleType`
+- a body requiring concrete reflected owner evidence, represented by an
+  overload with `specialize_body` and its deferred source body
 
 For an unknown-shape function parameter, the definition says "this accepts a
 function, but I cannot prove the body until I know which concrete function was
@@ -1229,6 +1247,17 @@ from the caller's stack and the held value sourced according to the concrete
 `dip` body.
 
 Important invariants:
+
+- Generic reflection defers when semantic analysis needs unresolved owner
+  evidence, including requirements reached through nested nonrecursive calls.
+  Concrete calls solve ordinary generic constraints before checking metadata,
+  permissions, every field callback and inferred outputs. An opened `Field[Owner]`
+  retains its structural field witness through generic descriptor parameters.
+- Reflection calls retain their checked executable `TypedFunctionNode` on the
+  selected `TypedElementNode`; a specialized signature alone is insufficient.
+  Definition-time friendly-owner permissions are retained independently of the
+  caller. Deferred capture contexts omit execution stacks, prior typed bodies
+  and diagnostics, retaining the variable facts needed to check the closure.
 
 - The analyser detects CSTC structurally from overload parameter types. Do not
   add element-name checks for built-ins such as `peek`, `dip`, `fork`, `both`,

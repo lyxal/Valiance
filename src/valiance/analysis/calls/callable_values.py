@@ -20,6 +20,8 @@ from valiance.asts import (
     ElementNode,
     FunctionNode,
     FunctionOverloadTyping,
+    TypedFunctionNode,
+    TypedElementNode,
     FunctionParam,
     ListLiteralNode,
     MatchNode,
@@ -351,6 +353,31 @@ def _is_call_site_checked_param(typ: T.Type | None) -> bool:
     return _is_call_site_checked_type(typ)
 
 
+def _has_reflection_plan(value: object) -> bool:
+    """Find executable reflection decisions retained in a checked body."""
+    from valiance.asts import TypedFieldsNode, TypedReflectiveReadNode, TypedReflectiveForNode, TypedDescriptorConversionNode
+
+    if isinstance(value, (TypedFieldsNode, TypedReflectiveReadNode, TypedReflectiveForNode, TypedDescriptorConversionNode)):
+        return True
+    if isinstance(value, TypedElementNode) and value.specialization is not None:
+        return True
+    if isinstance(value, tuple):
+        return any(_has_reflection_plan(item) for item in value)
+    if isinstance(value, (TypedNode, FunctionOverloadTyping)):
+        return any(_has_reflection_plan(getattr(value, item.name))
+                   for item in fields(value) if item.name not in {"node", "typ", "overload"})
+    return False
+
+
+def _checked_reflection_function(node: FunctionNode, analysis, overload: T.Overload) -> TypedFunctionNode:
+    """Bind a checked executable body to its declaration's closure identity."""
+    return TypedFunctionNode(node, analysis.typ, tuple(
+        replace(typing, overload=replace(typing.overload,
+                implementation_id=overload.implementation_id))
+        for typing in analysis.overloads
+    ))
+
+
 def _is_call_site_checked_type(typ: T.Type) -> bool:
     """Return whether the value is call site checked type."""
     typ = T.normalize(typ)
@@ -429,6 +456,10 @@ def _call_site_placeholder_accepts(
 def _call_site_substitute_type(declared: T.Type, actual: T.Type) -> T.Type:
     """Determine the type of call site substitute during static analysis."""
     declared = T.normalize(declared)
+    from valiance.vtypes.reflection import field_type_evidence
+
+    if field_type_evidence(declared) is not None and field_type_evidence(actual) is not None:
+        return actual
     if _is_bare_function_type(declared) or isinstance(declared, T.VariadicTupleType):
         return actual
     return declared

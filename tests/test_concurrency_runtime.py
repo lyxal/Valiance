@@ -13,6 +13,60 @@ from valiance.runtime.concurrency import (
 
 
 class TaskRuntimeTests(unittest.TestCase):
+    def test_integrity_failure_takes_priority_over_recoverable_scope_faults(self):
+        from valiance.runtime.runtime_values import ObjectValue, PanicSignal
+
+        for in_body in (False, True):
+            scheduler = Scheduler()
+            fatal = PanicSignal(ObjectValue('DuplicationFault', {'message': 'integrity'}))
+            recoverable = PanicSignal(ObjectValue('RuntimeFault', {'message': 'ordinary'}))
+            scope = scheduler.root_scope
+            body, child = (fatal, recoverable) if in_body else (recoverable, fatal)
+            scope.child_faults.append((0, child))
+            with self.subTest(in_body=in_body), self.assertRaises(PanicSignal) as caught:
+                scope.close(body)
+            self.assertIs(caught.exception, fatal)
+            self.assertEqual(fatal.secondary_faults, (recoverable,))
+
+    def test_cancellation_does_not_mask_integrity_failure_during_cleanup(self):
+        from valiance.runtime.concurrency import TaskYield
+        from valiance.runtime.runtime_values import ObjectValue, PanicSignal
+
+        scheduler = Scheduler()
+        fatal = PanicSignal(ObjectValue('DuplicationFault', {'message': 'cleanup'}))
+
+        def operation():
+            try:
+                yield TaskYield()
+            finally:
+                raise fatal
+
+        task = scheduler.root_scope.spawn(operation)
+        task.control.run()
+        task.control.request_cancel()
+        task.control.run()
+        self.assertEqual(task.control.state, TaskState.FAILED)
+        with self.assertRaises(PanicSignal) as caught:
+            scheduler.wait(task)
+        self.assertIs(caught.exception, fatal)
+
+    def test_group_wait_prioritizes_integrity_failure_over_input_order(self):
+        from valiance.runtime.runtime_values import ObjectValue, PanicSignal
+
+        scheduler = Scheduler()
+        first = scheduler.root_scope.spawn(lambda: ())
+        second = scheduler.root_scope.spawn(lambda: ())
+        ordinary = PanicSignal(ObjectValue('RuntimeFault', {'message': 'ordinary'}))
+        fatal = PanicSignal(ObjectValue('DuplicationFault', {'message': 'integrity'}))
+        for task, fault in ((first, ordinary), (second, fatal)):
+            task.control.state = TaskState.FAILED
+            task.control.terminal_fault = fault
+        scheduler.runnable.clear()
+        with self.assertRaises(PanicSignal) as caught:
+            scheduler.wait_all([first, second])
+        self.assertIs(caught.exception, fatal)
+        self.assertEqual(fatal.secondary_faults, (ordinary,))
+
     def test_repeatable_wait_and_alias_execute_once(self):
         scheduler = Scheduler()
         calls = []

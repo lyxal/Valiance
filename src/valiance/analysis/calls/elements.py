@@ -116,8 +116,14 @@ class _ElementCalls:
         self,
         node: ElementNode,
         branch: AnalysisBranch,
+        *,
+        _allow_no_match: bool = False,
     ) -> BranchSet:
         """Analyse a `ElementNode` node and return the surviving branches."""
+        from valiance.asts import TypeArgumentExpression
+
+        if any(isinstance(argument, TypeArgumentExpression) for argument in node.generic_args):
+            return self._descriptor_conversion(node, branch)
         optional_conversion = node.name.text == "to?"
         if optional_conversion:
             node = replace(node, name=Symbol("to", node.name.namespace))
@@ -182,6 +188,8 @@ class _ElementCalls:
         if not sources and len(self.diagnostics) > diagnostics_before:
             return BranchSet()
         candidates = self.element_call_candidates(node, overloads, sources)
+        if _allow_no_match and not candidates:
+            return BranchSet.collect(terminal)
         if node.name in (Symbol("field?"), Symbol("length")) and not self.reflection_unsafe:
             permitted = []
             denied = []
@@ -271,6 +279,127 @@ class _ElementCalls:
                         typed_body=(*committed.typed_body[:-1], typed),
                     )
                 results.append(committed)
+        return BranchSet.collect(results)
+
+    def _descriptor_conversion(self, node: ElementNode, branch: AnalysisBranch) -> BranchSet:
+        """Check ordinary conversion calls for each visible runtime descriptor target."""
+        from valiance.asts import CallArgument, TypeArgumentExpression, TypedDescriptorConversionNode
+        from .models import ReflectionSpecializationRequired
+
+        if len(node.generic_args) != 1 or not isinstance(node.generic_args[0], TypeArgumentExpression):
+            self._diagnose("a descriptor-directed conversion requires one Type expression", node)
+            return BranchSet()
+        optional = node.name.text == "to?"
+        name = Symbol("to", node.name.namespace) if optional else node.name
+        overloads = tuple(item for item in self.env.overloads_for(name) if item.conversion_target is not None)
+        if not overloads:
+            self._diagnose("runtime Type arguments require a conversion provider", node)
+            return BranchSet()
+        implicit = (not node.call_args and not node.modifier_args) or any(
+            argument.placeholder for argument in node.call_args
+        )
+        source_branch = branch
+        source_type = None
+        if implicit:
+            sourced = branch.source_arguments((T.V("ConversionSource"),))
+            if sourced is None:
+                self._diagnose("descriptor-directed conversion requires a source value", node)
+                return BranchSet()
+            (source_type,), source_branch = sourced
+        seed = replace(source_branch, stack=T.TypeStack())
+        targets = self.analyse_scoped_block(BranchSet((seed,)), node.generic_args[0].body)
+        results = []
+        for evidence_branch in targets:
+            if evidence_branch.terminal:
+                target_body = evidence_branch.typed_body[len(branch.typed_body):]
+                results.append(replace(evidence_branch, typed_body=branch.typed_body).emit(
+                    TypedDescriptorConversionNode(node, T.Never(), target_body, (), (), optional, implicit),
+                ))
+                continue
+            if len(evidence_branch.stack) != 1:
+                self._diagnose("conversion target expression must produce one Type value", node)
+                continue
+
+            def bounds(typ):
+                """Recover represented types without erasing a descriptor union."""
+                typ = T.normalize(typ)
+                if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
+                    return bounds(typ.inner)
+                if isinstance(typ, T.RowType):
+                    return bounds(typ.base)
+                if isinstance(typ, T.UnionType):
+                    values = tuple(bounds(item) for item in typ.items)
+                    return T.U(*values) if all(value is not None for value in values) else None
+                if isinstance(typ, T.NominalType) and typ.name == Symbol("Type") and len(typ.args) == 1:
+                    return typ.args[0]
+                return None
+
+            bound = bounds(evidence_branch.stack[-1])
+            if bound is None:
+                self._diagnose("conversion target expression must have Type[T] evidence", node)
+                continue
+            unresolved = next((typ for typ in (bound, *branch.stack, *source_branch.inputs)
+                               if _functions._contains_type_var(typ)), None)
+            if unresolved is not None:
+                if self.defer_reflection:
+                    raise ReflectionSpecializationRequired(unresolved)
+                self._diagnose("descriptor-directed conversion requires concrete type evidence", node)
+                continue
+            baseline = replace(evidence_branch, stack=(source_branch.stack.push(source_type)
+                                                       if implicit else branch.stack))
+            start = len(baseline.typed_body)
+            choices = []
+            joined = None
+            possible = sorted({T.normalize(item.conversion_target) for item in overloads
+                               if not _functions._contains_type_var(item.conversion_target)
+                               and T.assignable(item.conversion_target, bound, self.env.context)}, key=T.show)
+            diagnostics = len(self.diagnostics)
+            for target in possible:
+                outputs = self._element(replace(node, generic_args=(target,)), baseline, _allow_no_match=True)
+                if len(self.diagnostics) != diagnostics:
+                    return BranchSet()
+                if not outputs:
+                    continue
+                body = _patterns._typed_block(outputs, start, ())
+                if not body:
+                    self._diagnose("conversion requires a unique checked body for each runtime target", node)
+                    return BranchSet()
+                choices.append((target, body))
+                for output in outputs:
+                    joined = _patterns._join_match_output(original=baseline, baseline=baseline,
+                                                          joined=joined, candidate=output, ctx=self.env.context)
+                    if joined is None:
+                        self._diagnose("runtime conversion branches infer incompatible inputs", node)
+                        return BranchSet()
+            if joined is None:
+                self._diagnose(f"no visible conversion matches Type[{T.show(bound)}] and the supplied source", node)
+                continue
+            call_args = tuple(replace(argument, name=None) for argument in node.call_args)
+            if node.modifier_args:
+                call_args += tuple(CallArgument(value=(function,)) for function in node.modifier_args)
+            fallback = self._element(ElementNode(Symbol("*::pop"), call_args=call_args,
+                                                  explicit_call=node.explicit_call or bool(call_args)), baseline)
+            if not fallback:
+                return BranchSet()
+            checked_fallback = _patterns._typed_block(fallback, start, ())
+            if not checked_fallback:
+                self._diagnose("conversion fallback requires consistent source evaluation", node)
+                return BranchSet()
+            fallback_body = checked_fallback[:-1]
+            for output in fallback:
+                output = output.push(T.NoneType() if optional else T.Never())
+                if not optional:
+                    output = output.with_element_tags((T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),))
+                joined = _patterns._join_match_output(original=baseline, baseline=baseline,
+                                                      joined=joined, candidate=output, ctx=self.env.context)
+                if joined is None:
+                    self._diagnose("runtime conversion fallback infers incompatible inputs", node)
+                    return BranchSet()
+            target_body = evidence_branch.typed_body[len(branch.typed_body):]
+            result = replace(joined, typed_body=branch.typed_body).emit(TypedDescriptorConversionNode(
+                node, joined.stack[-1], target_body, tuple(choices), fallback_body, optional, implicit,
+            ))
+            results.append(result)
         return BranchSet.collect(results)
 
     @staticmethod

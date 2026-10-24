@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import builtins as _py_builtins
 import copy
-from valiance.runtime.reflection import ReflectionValue, make_fields_value, lookup_field
+from valiance.runtime.reflection import ReflectionValue, make_fields_value, lookup_field, validate_field
 import ctypes
 from threading import Event, Lock, get_ident
 import re
@@ -65,6 +65,7 @@ from valiance.runtime.runtime_values import (
     format_runtime_value,
     is_eager_sequence,
     is_list_like,
+    is_recoverable_fault,
     object_type_name,
     runtime_collection_rank,
     runtime_value_tags,
@@ -195,6 +196,8 @@ class AssertionFailure(RuntimeError):
 
 class DoublePanicAbort(RuntimeError):
     """Fatal, non-catchable failure caused by a panic during panic unwinding."""
+
+    recoverable = False
 
     def __init__(
         self,
@@ -782,8 +785,13 @@ class VirtualMachine:
 
     def _discard_frame_during(self, frame: _Frame, error: BaseException) -> None:
         """Discard a failed frame while exposing any active panic to destructors."""
-        with self._unwinding(error):
-            self._discard_frame(frame)
+        try:
+            with self._unwinding(error):
+                self._discard_frame(frame)
+        except BaseException as cleanup_error:
+            if is_recoverable_fault(error) or not is_recoverable_fault(cleanup_error):
+                raise
+            _attach_secondary_faults(error, (cleanup_error,))
 
     def _raise_pending_cancellation(self) -> None:
         """Observe task cancellation after one synchronous VM call returns."""
@@ -832,7 +840,10 @@ class VirtualMachine:
                 self._scope_stack.pop().close(body_error)
             self.scheduler.root_scope.close(body_error)
         except BaseException as close_error:
-            body_error = close_error
+            if body_error is not None and not is_recoverable_fault(body_error):
+                _attach_secondary_faults(body_error, (close_error,))
+            else:
+                body_error = close_error
         if body_error is not None:
             if isinstance(body_error, PanicSignal):
                 raise _concurrency_runtime_error(
@@ -2745,7 +2756,10 @@ class VirtualMachine:
                 with self._unwinding(error):
                     _release_value(request.release_after, self)
             except Exception as exc:
-                error = exc
+                if is_recoverable_fault(error):
+                    error = exc
+                else:
+                    _attach_secondary_faults(error, (exc,))
         self._raise_activation_error(activation, error)
 
     def _raise_activation_error(
@@ -2785,6 +2799,8 @@ class VirtualMachine:
         retained_locals: frozenset[str] = frozenset(),
     ) -> _Activation:
         """Create one resumable bytecode activation."""
+        if code.requires_specialization:
+            raise RuntimeError("generic reflection template requires a checked specialization")
         return _Activation(
             code,
             _Frame(
@@ -3097,6 +3113,18 @@ class VirtualMachine:
                                 or not _needs_release(value)
                                 else _duplicate_occurrence(value)
                             )
+                        case OpCode.SPECIALIZE_FUNCTION:
+                            template = _pop(frame.stack, "function specialization")
+                            try:
+                                original = _selected_function_implementation(
+                                    _accessed_value(template), instruction.arg.implementation_id,
+                                )
+                                frame.stack.append(_make_function_value(
+                                    instruction.arg, original.globals,
+                                    {name: original.globals[name] for name in original.owned_names},
+                                ))
+                            finally:
+                                _release_value(template, self)
                         case OpCode.MAKE_FUNCTION:
                             frame.stack.append(
                                 _make_function_value(
@@ -3479,6 +3507,27 @@ class VirtualMachine:
                                     in_place=borrowed,
                                 )
                             )
+                        case OpCode.REFLECT_READ:
+                            receiver, descriptor = _source_args(frame, 2, "reflective read")
+                            transferred = False
+                            try:
+                                field = _validate_reflected_access(receiver, descriptor, instruction.arg)
+                                result = _read_object_field(
+                                    unwrap_runtime_value(_accessed_value(receiver)), field.name,
+                                )
+                                result = _consume_receiver_result(receiver, result, self)
+                                transferred = True
+                                frame.stack.append(result)
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                            finally:
+                                _release_value(descriptor, self)
+                                if not transferred:
+                                    _release_value(receiver, self)
                         case OpCode.GET_INDEX:
                             try:
                                 values = _pop_index_values(frame.stack, instruction.arg)
@@ -3518,6 +3567,60 @@ class VirtualMachine:
                                     frame.stack.extend(result)
                                 else:
                                     frame.stack.append(result)
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.REFLECT_WRITE:
+                            try:
+                                value, receiver, descriptor = _source_args(frame, 3, "reflective write")
+                                frame.stack.append(_write_reflected_field(
+                                    value, receiver, descriptor, instruction.arg, self,
+                                ))
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.REFLECT_CALL:
+                            try:
+                                frame.stack.extend(_call_reflection(frame, instruction.arg, self))
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.TYPE_DISPATCH:
+                            descriptor = _pop(frame.stack, "conversion type descriptor")
+                            try:
+                                value = unwrap_runtime_value(descriptor)
+                                entries, fallback = instruction.arg
+                                signature = (value.type_args[0] if isinstance(value, ReflectionValue)
+                                             and value.type_name == "Type" and len(value.type_args) == 1 else None)
+                                target = next((target for expected, target in entries if expected == signature), fallback)
+                                _release_value(descriptor, self)
+                                ip = _validated_jump_target(target, len(instructions))
+                                continue
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.CONVERSION_MISSING:
+                            source = _source_args(frame, 1, "descriptor-directed conversion", borrow_cycle=True)[0]
+                            error = (None if instruction.arg else PanicSignal(_fault_object(
+                                "ConversionFault", "no visible conversion matches the runtime type descriptor and source",
+                            )))
+                            error = _release_runtime_occurrences((source,), self, error)
+                            try:
+                                if error is not None:
+                                    raise error
+                                frame.stack.append(ObjectValue("None", {}))
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
                                 if target is None:
@@ -3644,11 +3747,12 @@ class VirtualMachine:
                             _enter_cycle(frame, instruction.arg)
                         case OpCode.CYCLE_END:
                             _exit_cycle(frame)
-                        case OpCode.SOURCE_ARGS:
+                        case OpCode.SOURCE_ARGS | OpCode.SOURCE_ARGS_BORROW:
                             args = _source_args(
                                 frame,
                                 _resolve_pop_count(instruction.arg, frame.locals),
                                 "argument source",
+                                borrow_cycle=instruction.op is OpCode.SOURCE_ARGS_BORROW,
                             )
                             frame.stack.extend(args)
                         case OpCode.FOREACH:
@@ -4168,6 +4272,8 @@ class VirtualMachine:
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
         """Handle panic during VM execution."""
+        if not is_recoverable_fault(panic):
+            return None
         while frame.panic_handlers:
             handler = frame.panic_handlers.pop()
             for type_name, target in handler.handlers:
@@ -4680,6 +4786,8 @@ class VirtualMachine:
         ] = (),
     ) -> _FunctionCallRequest | None:
         """Invoke or suspend a user function during VM execution."""
+        if callee.code.requires_specialization:
+            raise RuntimeError("generic reflection template requires a checked specialization")
         arity = (
             arity_override
             if arity_override is not None
@@ -4792,6 +4900,8 @@ class VirtualMachine:
         function: FunctionValue,
     ) -> bool:
         """Return whether a proved leaf can bypass activation scheduling."""
+        if function.code.requires_specialization:
+            return False
         if function.direct_leaf is None:
             direct_leaf = True
             for instruction in function.code.instructions:
@@ -5403,8 +5513,8 @@ def _function_call_locals(
     return locals_, frozenset(retained)
 
 
-def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
-    """Compute source args during VM execution."""
+def _source_args(frame: _Frame, arity: int, context: str, *, borrow_cycle: bool = False) -> tuple[Any, ...]:
+    """Consume stack operands, optionally borrowing implicit inputs owned by a frame."""
     try:
         (
             args,
@@ -5418,6 +5528,9 @@ def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
     frame.cycle_stack_remaining = next_cycle_stack_remaining
+    if borrow_cycle:
+        cycle_count = arity - stack_count
+        args = tuple(_BorrowedValue(_accessed_value(arg)) for arg in args[:cycle_count]) + args[cycle_count:]
     return args
 
 
@@ -6032,8 +6145,9 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
         value.refcount -= 1
         if value.refcount > 0:
             return
-        for item in value.owned_values:
-            _release_value(item, vm)
+        error = _release_runtime_occurrences(value.owned_values, vm)
+        if error is not None:
+            raise error
         return
     if isinstance(value, ObjectValue):
         if value.ownership_transferred:
@@ -6089,8 +6203,9 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
         if value.refcount > 0:
             return
         if not _list_ownership_is_trivial(value):
-            for item in value:
-                _release_value(item, vm)
+            error = _release_runtime_occurrences(value, vm)
+            if error is not None:
+                raise error
         return
     if isinstance(value, DictValue):
         value.refcount -= 1
@@ -6249,6 +6364,7 @@ def _attach_secondary_faults(
     secondary: tuple[BaseException, ...],
 ) -> None:
     """Attach cleanup failures that must not replace the primary failure."""
+    secondary = tuple(fault for fault in secondary if fault is not primary)
     if not secondary:
         return
     existing = tuple(getattr(primary, "secondary_faults", ()))
@@ -6417,11 +6533,10 @@ def _bind_lazy_result_owners(
         if not isinstance(value, LazyList):
             bound.append(value)
             continue
-        owned: list[Any] = []
         for arg in args:
-            retained = _duplicate_occurrence(arg)
-            owned.append(retained)
-        value.owned_values = tuple(owned)
+            _check_duplication_allowed(arg)
+        owned = tuple(_retain_runtime_reference(arg) for arg in args)
+        value.owned_values = (*value.owned_values, *owned)
         bound.append(value)
     return tuple(bound)
 
@@ -7856,6 +7971,7 @@ def _vectorize_resolved_depths(
     extension: _RuntimeVectorExtension | None = None,
     *,
     stop_at_zero: bool = False,
+    owns_results: bool = False,
 ) -> tuple[Any, ...]:
     """Vectorize resolved depths during VM execution."""
     if not any(depth > 0 for depth in depths):
@@ -7875,6 +7991,7 @@ def _vectorize_resolved_depths(
             depths,
             extension,
             stop_at_zero=stop_at_zero,
+            owns_results=owns_results,
         )
     lazy_items = _vectorize_lazy_resolved_depths(
         implementation,
@@ -7883,8 +8000,21 @@ def _vectorize_resolved_depths(
         depths,
         extension,
         stop_at_zero=stop_at_zero,
+        owns_results=owns_results,
     )
-    return (LazyList(lazy_items),)
+    result = LazyList(lazy_items)
+    if owns_results:
+        owned = ListValue([])
+
+        def owning_items():
+            """Transfer generated owning outputs to the lazy collection's cache."""
+            for item in lazy_items:
+                owned.append(item)
+                yield item
+
+        result.iterable = owning_items()
+        result.owned_values = (owned,)
+    return (result,)
 
 
 def _resolve_vectorisation_depths(
@@ -8090,6 +8220,7 @@ def _vectorize_eager_resolved_depths(
     extension: _RuntimeVectorExtension | None = None,
     *,
     stop_at_zero: bool = False,
+    owns_results: bool = False,
 ) -> tuple[Any, ...]:
     """Vectorize eager resolved depths during VM execution."""
     vector_lengths = tuple(
@@ -8104,27 +8235,31 @@ def _vectorize_eager_resolved_depths(
 
     item_depths = tuple(max(depth - 1, 0) for depth in depths)
     result_items = []
-    for index in range(max(vector_lengths)):
-        item_args = tuple(
-            (
-                (arg[index] if index < len(arg) else _MISSING_VECTOR_ITEM)
-                if depth > 0 and is_eager_sequence(arg)
-                else arg
+    try:
+        for index in range(max(vector_lengths)):
+            item_args = tuple(
+                (
+                    (arg[index] if index < len(arg) else _MISSING_VECTOR_ITEM)
+                    if depth > 0 and is_eager_sequence(arg)
+                    else arg
+                )
+                for arg, depth in zip(args, depths, strict=False)
             )
-            for arg, depth in zip(args, depths, strict=False)
-        )
-        item_args = _extend_vector_args(item_args, extension, context)
-        item_result = _vectorize_resolved_depths(
-            implementation,
-            item_args,
-            context,
-            item_depths,
-            extension,
-            stop_at_zero=stop_at_zero,
-        )
-        # The eager outer result does not itself retain callback arguments for
-        # deferred inner results. Bind those owners before transposing them.
-        result_items.append(_bind_lazy_result_owners(item_args, item_result))
+            item_args = _extend_vector_args(item_args, extension, context)
+            item_result = _vectorize_resolved_depths(
+                implementation, item_args, context, item_depths, extension,
+                stop_at_zero=stop_at_zero, owns_results=owns_results,
+            )
+            # The eager outer result does not itself retain callback arguments for
+            # deferred inner results. Bind those owners before transposing them.
+            result_items.append(_bind_lazy_result_owners(item_args, item_result))
+    except BaseException as error:
+        if owns_results:
+            vm = cast(VirtualMachine, context.call.__self__)
+            error = _release_runtime_occurrences(
+                (value for row in result_items for value in row), vm, error,
+            )
+        raise error
 
     return _transpose_vectorized_items(result_items)
 
@@ -8137,6 +8272,7 @@ def _vectorize_lazy_resolved_depths(
     extension: _RuntimeVectorExtension | None = None,
     *,
     stop_at_zero: bool = False,
+    owns_results: bool = False,
 ):
     """Vectorize lazy resolved depths during VM execution."""
     iterators = tuple(
@@ -8163,6 +8299,7 @@ def _vectorize_lazy_resolved_depths(
             item_depths,
             extension,
             stop_at_zero=stop_at_zero,
+            owns_results=owns_results,
         )
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
@@ -9916,6 +10053,142 @@ def _get_field(receiver: Any, field: str) -> Any:
         raise RuntimeError(f"value has no field '{field}'") from exc
 
 
+def _validate_reflected_access(receiver: Any, descriptor: Any, config: tuple, value: Any = None):
+    """Validate identity, lexical visibility and replacement compatibility in order."""
+    layout, allow_private, owner_spec, *contracts = config
+    field = validate_field(_accessed_value(descriptor), layout)
+    if not _matches_cast_type(_accessed_value(receiver), owner_spec):
+        raise PanicSignal(_fault_object("ReflectionFieldFault", "field descriptor owner does not match the receiver"))
+    writing = bool(contracts)
+    if not allow_private and (field.visibility != "public" if writing else field.visibility == "private"):
+        raise PanicSignal(_fault_object("ReflectionAccessFault", f"field '{field.name}' is not accessible"))
+    if writing:
+        spec = contracts[0][int(_accessed_value(descriptor).fields["index"])]
+        if spec is not None and not _matches_cast_type(value, spec, allow_lazy_rank=False):
+            raise PanicSignal(_fault_object("ReflectionTypeFault",
+                f"replacement does not satisfy {field.value_type} for field '{field.name}'"))
+    return field
+
+
+def _release_runtime_occurrences(occurrences, vm: VirtualMachine, error=None):
+    """Release an owned row completely while preserving fatal cleanup failures."""
+    for occurrence in occurrences:
+        try:
+            with vm._unwinding(error):
+                _release_value(occurrence, vm)
+        except BaseException as failure:
+            if error is None:
+                error = failure
+            elif not is_recoverable_fault(error) and is_recoverable_fault(failure):
+                _attach_secondary_faults(error, (failure,))
+            else:
+                _attach_secondary_faults(failure, (error,))
+                error = failure
+    return error
+
+
+def _fallible_reflection(args: tuple, writing: bool, config: tuple, vm: VirtualMachine):
+    """Produce an owning Result, intercepting only operation validation faults."""
+    receiver, descriptor = args[:2]
+    replacement = args[2] if writing else None
+    result = None
+    error = None
+    try:
+        try:
+            field = _validate_reflected_access(receiver, descriptor, config, replacement)
+        except PanicSignal as failure:
+            reasons = {"ReflectionFieldFault": "InvalidField", "ReflectionAccessFault": "AccessDenied",
+                       "ReflectionTypeFault": "TypeMismatch"}
+            reason = reasons.get(failure.value.type_name)
+            if reason is None:
+                raise
+            result = ObjectValue("ReflectionWriteError" if writing else "ReflectionReadError", {
+                "reason": reason, "message": failure.value.fields["message"],
+            })
+            _release_value(failure.value, vm)
+        else:
+            if writing:
+                replacement = _materialize_access(replacement)
+                updated = _set_field(unwrap_runtime_value(receiver), field.name, replacement,
+                                     vm=vm, preserve_receiver=True)
+                replacement = None
+                payload = _replace_access(receiver, updated)
+            else:
+                payload = _duplicate_occurrence(_read_object_field(unwrap_runtime_value(receiver), field.name))
+            result = ObjectValue("OK", {"value": payload})
+    except BaseException as failure:
+        error = failure
+    error = _release_runtime_occurrences((replacement, descriptor, receiver), vm, error)
+    if error is not None:
+        error = _release_runtime_occurrences((result,), vm, error)
+        raise error
+    return result
+
+
+def _call_reflection(frame: _Frame, config: tuple, vm: VirtualMachine) -> tuple:
+    """Execute a checked scalar or vectorised fallible reflection call."""
+    writing, access, vectorised, depths, target_ranks, extension_reference = config
+    args = _source_args(frame, 3 if writing else 2, "fallible reflection", borrow_cycle=True)
+    if not vectorised:
+        return (_fallible_reflection(args, writing, access, vm),)
+    extension = None
+    context = RuntimeContext(vm.output, vm.call_value, vm.format_value, vm.call_value_overload)
+
+    def scalar(item_args, _context):
+        """Borrow vector inputs for one independently owned Result."""
+        output = _fallible_reflection(tuple(_BorrowedValue(_accessed_value(item)) for item in item_args),
+                                      writing, access, vm)
+        return (output,)
+
+    result = ()
+    error = None
+    try:
+        extension = _materialize_vector_extension(vm, extension_reference, frame)
+        resolved = _resolve_vectorisation_depths(args, depths, target_ranks)
+        result = _vectorize_resolved_depths(scalar, args, context, resolved, extension,
+                                          stop_at_zero=True, owns_results=True)
+        ownership_args = (*args, *_extension_owned_values(extension))
+        result = _bind_lazy_result_owners(ownership_args, result)
+    except BaseException as failure:
+        error = failure
+    error = _release_runtime_occurrences((*args, *_extension_owned_values(extension)), vm, error)
+    if error is not None:
+        error = _release_runtime_occurrences(result, vm, error)
+        raise error
+    return result
+
+
+def _write_reflected_field(value: Any, receiver: Any, descriptor: Any, config: tuple, vm: VirtualMachine) -> Any:
+    """Validate and reconstruct one reflected field, releasing failed inputs."""
+    owned_receiver = receiver
+    owned_value = value
+    try:
+        field = _validate_reflected_access(receiver, descriptor, config, value)
+        access = _borrowed_payload(receiver)
+        in_place = access is not None and access.allows_reconstruction
+        if access is not None and not in_place:
+            owned_receiver = _materialize_access(receiver)
+        owned_value = _materialize_access(value)
+        result = _set_field(owned_receiver, field.name, owned_value, vm=vm, in_place=in_place)
+        return _replace_access(receiver, result)
+    except BaseException as error:
+        cleanup_error = None
+        with vm._unwinding(error):
+            for occurrence in (owned_value, owned_receiver):
+                try:
+                    _release_value(occurrence, vm)
+                except BaseException as failure:
+                    if cleanup_error is None:
+                        cleanup_error = failure
+                    else:
+                        _attach_secondary_faults(cleanup_error, (failure,))
+        if cleanup_error is not None:
+            raise cleanup_error from error
+        raise
+    finally:
+        _release_value(descriptor, vm)
+
+
 def _set_field(
     receiver: Any,
     field: str,
@@ -9923,6 +10196,7 @@ def _set_field(
     *,
     vm: VirtualMachine | None = None,
     in_place: bool = False,
+    preserve_receiver: bool = False,
 ) -> Any:
     """Update field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
@@ -9934,16 +10208,20 @@ def _set_field(
 
         fields = dict(receiver.fields)
         fields[field] = value
-        shared = receiver.refcount > 1
+        if preserve_receiver:
+            _check_duplication_allowed(receiver)
+        shared = preserve_receiver or receiver.refcount > 1
 
         if shared:
             # The old immutable version remains observable through another
             # occurrence. Give the replacement independent ownership and retain
             # every unchanged owned field for its new structural lifetime.
-            for name, item in receiver.fields.items():
-                if name != field:
-                    _duplicate_occurrence(item)
-            if not in_place:
+            unchanged = tuple(item for name, item in receiver.fields.items() if name != field)
+            for item in unchanged:
+                _check_duplication_allowed(item)
+            for item in unchanged:
+                _retain_runtime_reference(item)
+            if not in_place and not preserve_receiver:
                 # This stack occurrence was consumed by reconstruction. Other
                 # occurrences continue to own the old immutable version.
                 receiver.refcount -= 1

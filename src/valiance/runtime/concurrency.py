@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Generic, Iterator, TypeVar
 
+from .runtime_values import is_recoverable_fault
+
 T = TypeVar("T")
 
 
@@ -47,6 +49,11 @@ def _with_secondary_faults(
     context: str,
 ) -> BaseException:
     """Attach deterministic secondary concurrency failures to one primary fault."""
+    if is_recoverable_fault(primary):
+        fatal = next((fault for fault in secondary if not is_recoverable_fault(fault)), None)
+        if fatal is not None:
+            secondary = (primary, *(fault for fault in secondary if fault is not fatal))
+            primary = fatal
     filtered = tuple(fault for fault in secondary if fault is not primary)
     if not filtered:
         return primary
@@ -323,12 +330,13 @@ class TaskControlBlock:
                 cleanup_fault = fault
             finally:
                 self.runner = None
-        cancelled = CancelledFault(f"task {self.id} was cancelled")
+        cancelled: BaseException = CancelledFault(f"task {self.id} was cancelled")
         if cleanup_fault is not None:
-            _with_secondary_faults(
+            cancelled = _with_secondary_faults(
                 cancelled, (cleanup_fault,), context="cancellation cleanup"
             )
-        self._finish(TaskState.CANCELLED, fault=cancelled)
+        state = TaskState.CANCELLED if is_recoverable_fault(cancelled) else TaskState.FAILED
+        self._finish(state, fault=cancelled)
 
     def _finish(
         self,

@@ -75,6 +75,8 @@ BUILTIN_ERROR_TYPES = tuple(
     )
 )
 
+REFLECTION_ERROR_TYPES = (Symbol("ReflectionReadError"), Symbol("ReflectionWriteError"))
+
 BUILTIN_FAULT_TYPES = tuple(
     Symbol(name)
     for name in (
@@ -87,6 +89,9 @@ BUILTIN_FAULT_TYPES = tuple(
         "DivisionByZeroFault",
         "IndexFault",
         "KeyFault",
+        "ReflectionAccessFault",
+        "ReflectionFieldFault",
+        "ReflectionTypeFault",
         "ShapeFault",
         "SliceFault",
         "StateFault",
@@ -110,6 +115,7 @@ TRAIT_IMPLS = (
     (INT, REAL),
     (REAL, NUMBER),
     *((error_type, ERR) for error_type in BUILTIN_ERROR_TYPES),
+    *((error_type, ERR) for error_type in REFLECTION_ERROR_TYPES),
     *((fault_type, FAULT) for fault_type in BUILTIN_FAULT_TYPES),
     (Symbol("AssertError"), ERR),
     (Symbol("PanicError"), ERR),
@@ -961,6 +967,7 @@ def builtin(
     vectorisable: bool = True,
     where_clause: tuple[object, ...] = (),
     conversion_target: T.Type | None = None,
+    reflection_operation: str | None = None,
 ):
     """Register one overload of `name`, implemented by the decorated function."""
     normalized_param_names = tuple(
@@ -970,7 +977,7 @@ def builtin(
     if normalized_param_names and len(normalized_param_names) != len(params):
         raise ValueError("param_names must match the number of parameters")
 
-    def register(fn: RuntimeImpl) -> RuntimeImpl:
+    def register(fn: RuntimeImpl | None) -> RuntimeImpl | None:
         """Register the decorated callable for the built-in catalogue and runtime."""
         for tag_name, tag_kind in data_tags:
             _DATA_TAG_REGISTRY[_name_key(tag_name)] = tag_kind
@@ -985,7 +992,7 @@ def builtin(
             tuple(repr(rule) for rule in where_clause),
             tuple(sorted(str(tag) for tag in element_tags)),
             T.show(conversion_target) if conversion_target is not None else None,
-            fn.__module__, fn.__qualname__,
+            *((fn.__module__, fn.__qualname__) if fn is not None else ("compiler", reflection_operation)),
         ))
         intrinsic_id = 'intrinsic:' + hashlib.sha256(
             intrinsic_key.encode('utf-8')
@@ -1007,6 +1014,7 @@ def builtin(
                 element_tags=frozenset(element_tags),
                 conversion_target=conversion_target,
                 implementation_id=intrinsic_id,
+                reflection_operation=reflection_operation,
             ),
             fn,
             vectorisable,
@@ -3997,6 +4005,54 @@ def _fields_length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     return (RuntimeNumber(len(unwrap_runtime_value(args[0]).fields["#fields"])),)
 
 
+for _operation, _error in zip(("read?", "write?"), REFLECTION_ERROR_TYPES, strict=True):
+    _owner = T.V("Owner")
+    _params = (_owner, T.N(Symbol("Field"), _owner))
+    _names = ("owner", "field")
+    if _operation == "write?":
+        _params += (T.V("Value"),)
+        _names += ("value",)
+    builtin(
+        _operation, _params,
+        # The selected compiler plan supplies the descriptor's actual FieldValue.
+        (T.N(RESULT, _owner if _operation == "write?" else T.V("FieldValue"), T.N(_error)),),
+        param_names=_names, reflection_operation=_operation,
+        documentation=element_documentation(
+            "Read a reflected field, returning a reflection error on denied or invalid access."
+            if _operation == "read?" else
+            "Reconstruct an independent owner, returning a reflection error on invalid access or replacement.",
+            parameters=tuple((name, {"owner": "Owner to inspect; preserved by reconstruction.",
+                                    "field": "Owner-bound field descriptor.",
+                                    "value": "Replacement without implicit conversion."}[name]) for name in _names),
+            returns="A Result containing the value or the named reflection error.",
+            category="Reflection",
+            examples=((
+                'object Box => public $value: Int end\n'
+                '$box = Box(7)\nread?($box, fields[Box]["value"])',
+                'OK{value: 7}',
+            ),) if _operation == "read?" else ((
+                'object Box => public $value: Int end\n$box = Box(7)\n'
+                '$updated = write?($box, fields[Box]["value"], 8) ?!\n'
+                '$updated.value\n$box.value', '8 7',
+            ),),
+        ),
+    )(None)
+
+for _error in REFLECTION_ERROR_TYPES:
+    def _construct_reflection_error(args, ctx, *, _type_name=_error):
+        """Construct a recoverable reflection error with an explicit reason."""
+        return (ObjectValue(_type_name.text, {"reason": args[0], "message": args[1]}),)
+
+    builtin(_error, (T.String, T.String), (T.N(_error),),
+            param_names=("reason", "message"),
+            documentation=element_documentation(
+                "Construct a recoverable reflection error with its reason and message.",
+                parameters=(("reason", "Named failure reason."), ("message", "Failure description.")),
+                returns="A recoverable reflection error.", category="Reflection",
+                examples=((f'{_error.text}("AccessDenied", "private field")', None,
+                           'Construct an ordinary Err value with a named reflection reason.'),),
+            ))(_construct_reflection_error)
+
 BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
 
 
@@ -4019,6 +4075,8 @@ def default_environment() -> T.Environment:
     message_attribute = T.ObjectAttribute(Symbol("message"), T.String)
     for message_type in (*BUILTIN_ERROR_TYPES, *BUILTIN_FAULT_TYPES):
         env.define_object(message_type, (message_attribute,))
+    for error_type in REFLECTION_ERROR_TYPES:
+        env.define_object(error_type, (T.ObjectAttribute(Symbol("reason"), T.String), message_attribute))
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))
     env.context.set_generic_variance(
         RESULT,

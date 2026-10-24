@@ -222,6 +222,17 @@ class MinimumRankParserTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_runtime_conversion_type_argument_retains_expression(self):
+        from valiance.asts import TypeArgumentExpression
+
+        nodes = parse('42 to[$field.type]')
+        self.assertIsInstance(nodes[-1], ElementNode)
+        argument, = nodes[-1].generic_args
+        self.assertIsInstance(argument, TypeArgumentExpression)
+        self.assertIsInstance(argument.body[0], GetVariableNode)
+        self.assertIsInstance(argument.body[1], FieldAccessNode)
+        self.assertEqual(parse('42 to[String]')[-1].generic_args, (T.N(Symbol('String')),))
+
     def test_fields_type_value_and_adjacent_lookup_forms(self):
         from valiance.asts import FieldsNode, FieldAccessNode, IndexAccessNode
         from valiance.vtypes import Int

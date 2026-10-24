@@ -252,6 +252,799 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_fallible_access_returns_owned_results_and_preserves_original(self):
+        source = '''
+object Owner => public $value: Int end
+$owner = Owner(7)
+$read = read?($owner, fields[Owner]["value"]) ?
+$updated = write?($owner, fields[Owner]["value"], 8) ?
+$read
+$updated.value
+$owner.value
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [7, 8, 7])
+
+    def test_implicit_fallible_calls_borrow_function_cycle_parameters(self):
+        source = '''
+object Owner => public $value: Int end
+define inspect(owner: Owner, field: Field[Owner]) =>
+  read?
+  $owner.value
+end
+define replaceValue(owner: Owner, field: Field[Owner], value: Int) =>
+  write?
+  $owner.value
+end
+inspect(Owner(7), fields[Owner]["value"])
+replaceValue(Owner(7), fields[Owner]["value"], 8)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [7, 7])
+
+    def test_fallible_access_errors_distinguish_visibility_and_type(self):
+        source = '''
+object Owner =>
+  private $secret: Int
+  readable $visible: Int
+  public $text: String
+end
+$owner = Owner(7, 8, "old")
+read?($owner, fields[Owner]["secret"])
+read?($owner, fields[Owner]["visible"])
+write?($owner, fields[Owner]["secret"], "wrong")
+write?($owner, fields[Owner]["visible"], 9)
+write?($owner, fields[Owner]["text"], 9)
+$owner.text
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([value.type_name for value in stack[:-1]],
+                             ['ReflectionReadError', 'OK', 'ReflectionWriteError',
+                              'ReflectionWriteError', 'ReflectionWriteError'])
+            self.assertEqual([stack[index].fields['reason'] for index in (0, 2, 3, 4)],
+                             ['AccessDenied', 'AccessDenied', 'AccessDenied', 'TypeMismatch'])
+            self.assertEqual(stack[-1], 'old')
+            self.assertEqual(stack[1].fields['value'], 8)
+            self.assertNotIn('owner', stack[4].fields)
+
+    def test_fallible_access_respects_lexical_authority_and_generic_helpers(self):
+        source = '''
+object Owner => private $value: Int end
+define[T] inspect(owner: T, field: Field[T]) => read?($owner, $field) end
+define[T,U] replaceValue(owner: T, field: Field[T], value: U) => write?($owner, $field, $value) end
+$owner = Owner(7)
+unsafe =>
+  read?($owner, fields[Owner]["value"])
+  write?($owner, fields[Owner]["value"], 8)
+  inspect($owner, fields[Owner]["value"])
+  replaceValue($owner, fields[Owner]["value"], 9)
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([value.type_name for value in stack],
+                             ['OK', 'OK', 'ReflectionReadError', 'ReflectionWriteError'])
+            self.assertEqual(stack[0].fields['value'], 7)
+            self.assertEqual(stack[1].fields['value'].fields['value'], 8)
+
+    def test_fallible_access_keeps_opened_field_evidence_through_generic_calls(self):
+        source = '''
+object Owner =>
+  public $value: Int
+  public $text: String
+end
+define[T] inspect(owner: T, field: Field[T]) => read?($owner, $field) end
+define describe(value: Int) -> String => "integer" end
+define describe(value: String) -> String => "text" end
+$owner = Owner(7, "hello")
+fields[Owner] foreach (field) =>
+  print describe(inspect($owner, $field) ?!)
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            list(self.execute_variants(source))
+        self.assertEqual(output.getvalue(), 'integertext' * 4)
+
+    def test_fallible_write_named_arguments_follow_ordinary_evaluation_order(self):
+        source = '''
+object Owner => public $value: Int end
+define replacement(seed: Int) -> Int => print "value" 8 end
+define owner(seed: Int) -> Owner => print "owner" Owner(7) end
+define descriptor(seed: Int) -> Field[Owner] => print "field" fields[Owner]["value"] end
+write?(value=replacement(0), field=descriptor(0), owner=owner(0))
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0].fields['value'].fields['value'], 8)
+        self.assertEqual(output.getvalue(), 'ownerfieldvalue' * 4)
+
+    def test_fallible_write_does_not_intercept_argument_panics(self):
+        source = '''
+object Owner => public $value: Int end
+define replacement(seed: Int) -> Int => ReflectionTypeFault("argument") panic end
+try =>
+  write?(Owner(7), fields[Owner]["value"], replacement(0))
+handle ReflectionTypeFault => "argument panic" end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['argument panic'])
+
+    def test_rejected_fallible_write_discards_replacement_with_normal_cleanup(self):
+        source = '''
+object Temporary => define ~Temporary => "released" println end end
+object Owner => public $value: Int end
+define replacement(seed: Int) -> Int | Temporary => Temporary end
+$owner = Owner(7)
+write?($owner, fields[Owner]["value"], replacement(0))
+$owner.value
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0].fields['reason'], 'TypeMismatch')
+                self.assertEqual(stack[1], 7)
+        self.assertEqual(output.getvalue(), 'released\n' * 4)
+
+    def test_non_consuming_write_does_not_duplicate_the_replaced_protected_field(self):
+        source = '''
+@nodup("resource")
+object Child =>
+  public $value: Int
+  define ~Child => print "released" end
+end
+object Owner => public $child: Child end
+define exercise(seed: Int) -> =>
+$owner = Owner(Child(7))
+unsafe =>
+  $updated = write?($owner, fields[Owner]["child"], Child(8)) ?!
+end
+print $owner.child.value
+print $updated.child.value
+end
+exercise(0)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), '78releasedreleased' * 4)
+
+    def test_fallible_reflection_does_not_recover_from_illegal_duplication(self):
+        sources = ('''
+@nodup("resource")
+object Resource => public $value: Int end
+object Owner => public $resource: Resource end
+$owner = Owner(Resource(7))
+unsafe =>
+  try => read?($owner, fields[Owner]["resource"])
+  handle => print "caught" end
+end
+''', '''
+@nodup("owner")
+object Owner => public $value: Int end
+$owner = Owner(7)
+unsafe =>
+  try => write?($owner, fields[Owner]["value"], 8)
+  handle => print "caught" end
+end
+''')
+        for source in sources:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for candidate in (program, loads(dumps(program))):
+                    with self.assertRaisesRegex(RuntimeError, 'DuplicationFault'):
+                        run(candidate)
+
+    def test_fallible_access_vectorises_and_keeps_originals(self):
+        source = '''
+object Owner => public $value: Int end
+$owners = [Owner(7), Owner(8)]
+read?($owners, fields[Owner]["value"])
+write?($owners, fields[Owner]["value"], 9)
+$owners.value
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([item.fields['value'] for item in stack[0]], [7, 8])
+            self.assertEqual([item.fields['value'].fields['value'] for item in stack[1]], [9, 9])
+            self.assertEqual(stack[2], [7, 8])
+
+    def test_lazy_fallible_results_release_their_owned_cache(self):
+        source = '''
+object Owner => public $value: Int end
+$owners = range(1, 3) map: fn (value) => Owner($value) end
+read?($owners, fields[Owner]["value"])
+'''
+        for stack in self.execute_variants(source):
+            results = stack[0]
+            cached = list(results)
+            self.assertEqual([item.fields['value'] for item in cached], [1, 2, 3])
+            self.assertEqual(list(results), cached)
+            _release_value(results, VirtualMachine())
+            self.assertTrue(all(item.destroyed for item in cached))
+
+    def test_fallible_access_preserves_nested_vector_shape(self):
+        source = '''
+object Owner => public $value: Int end
+read?([[Owner(7)], [Owner(8)]], fields[Owner]["value"])
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([[item.fields['value'] for item in row] for row in stack[0]], [[7], [8]])
+
+    def test_reading_an_error_value_still_returns_explicit_success(self):
+        source = '''
+object Owner => public $value: ValueError end
+read?(Owner(ValueError("stored")), fields[Owner]["value"])
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_name, 'OK')
+            self.assertEqual(stack[0].fields['value'].type_name, 'ValueError')
+
+    def test_aborted_owning_vectorisation_releases_completed_results(self):
+        from valiance.elements.builtins import RuntimeContext
+        from valiance.runtime.vm import _vectorize_resolved_depths
+
+        vm = VirtualMachine()
+        context = RuntimeContext(vm.output, vm.call_value, vm.format_value, vm.call_value_overload)
+        payload = ObjectValue('Temporary', {})
+        completed = ObjectValue('OK', {'value': payload})
+
+        def operation(args, _context):
+            if args[0] == 2:
+                raise PanicSignal(ObjectValue('DuplicationFault', {'message': 'integrity'}))
+            return (completed,)
+
+        with self.assertRaises(PanicSignal):
+            _vectorize_resolved_depths(operation, ([1, 2],), context, (1,),
+                                      stop_at_zero=True, owns_results=True)
+        self.assertTrue(completed.destroyed)
+        self.assertTrue(payload.destroyed)
+
+    def test_fallible_invalid_descriptor_precedes_visibility_and_type(self):
+        for operation in ('read?($owner, fields[Owner]["value"])',
+                          'write?($owner, fields[Owner]["value"], 8)'):
+            analyser = Analyser()
+            typed = analyser.analyse(parse('object Owner => private $value: Int end\n'
+                                            '$owner = Owner(7)\n' + operation))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                instructions = tuple(replace(instruction, arg=replace(instruction.arg, owner='Other'))
+                                     if instruction.op is OpCode.MAKE_FIELDS else instruction
+                                     for instruction in program.main.instructions)
+                program = replace(program, main=replace(program.main, instructions=instructions))
+                for candidate in (program, loads(dumps(program))):
+                    result, = run(candidate)
+                    self.assertEqual(result.fields['reason'], 'InvalidField')
+
+    def test_rejected_fallible_write_cleanup_panic_is_catchable(self):
+        source = '''
+object Temporary => define ~Temporary => RuntimeFault("cleanup") panic end end
+object Owner => public $value: Int end
+define replacement(seed: Int) -> Int | Temporary => Temporary end
+$owner = Owner(7)
+try =>
+  write?($owner, fields[Owner]["value"], replacement(0))
+handle RuntimeFault => "cleanup panic" end
+$owner.value
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['cleanup panic', 7])
+
+    def test_fallible_write_never_invokes_conversions(self):
+        source = '''
+object Owner =>
+  public $value: Int
+  public $text: String
+end
+@convert(String -> Int)
+define to(value: String) -> Int => print "converted" 42 end
+$owner = Owner(7, "old")
+write?($owner, fields[Owner]["value"], "wrong")
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0].fields['reason'], 'TypeMismatch')
+        self.assertEqual(output.getvalue(), '')
+
+    def test_generic_fallible_reader_closure_keeps_its_capture(self):
+        source = '''
+object Owner => public $value: Int end
+define[T] factory(field: Field[T]) =>
+  fn (owner: T) => read?($owner, $field) end
+end
+$reader = factory(fields[Owner]["value"])
+$reader(Owner(7)) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [7])
+
+    def test_fallible_errors_expose_reason_and_message_as_ordinary_err_values(self):
+        source = '''
+define reason(value: ReflectionWriteError) -> String => $value.reason end
+ReflectionWriteError("TypeMismatch", "replacement") | reason
+$error = ReflectionReadError("AccessDenied", "private")
+$error.message
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['TypeMismatch', 'private'])
+
+    def test_generic_replacement_specializes_a_write_to_a_concrete_owner(self):
+        source = '''
+object Owner => public $value: Int end
+define[T] replaceValue(replacement: T) =>
+  $owner = Owner(7)
+  $owner[fields[Owner]["value"]] = $replacement
+  $owner
+end
+$owner = replaceValue(8)
+$owner.value
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(8)])
+        analyser = Analyser()
+        analyser.analyse(parse(source + '\nreplaceValue("wrong")'))
+        self.assertTrue(analyser.diagnostics)
+    def test_unique_protected_owner_can_be_reconstructed_inside_unsafe(self):
+        source = '''
+@nodup("resource")
+object Resource => public $value: Int end
+$resource = Resource(7)
+unsafe => $resource[fields[Resource]["value"]] = 8 end
+print $resource.value
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "8" * 4)
+
+    def test_nested_reflective_write_reconstructs_each_owner(self):
+        source = '''
+object Child => public $value: Int end
+object Parent => public $child: Child end
+$parent = Parent(Child(7))
+$old = $parent
+$parent.child[fields[Child]["value"]] = 8
+$parent.child.value
+$old.child.value
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(8), RuntimeNumber(7)])
+
+    def test_rejected_write_enters_normal_panic_unwinding_during_cleanup(self):
+        from valiance.runtime.vm import DoublePanicAbort
+
+        source = '''
+object Temporary =>
+  public $name: String
+  define ~Temporary => RuntimeFault("cleanup") panic end
+end
+object Owner => public $value: Int end
+define replacement(seed: Int) -> Int | Temporary => Temporary("discarded") end
+$owner = Owner(7)
+try =>
+  $owner[fields[Owner]["value"]] = replacement(0)
+handle ReflectionTypeFault => 99
+end
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                with self.assertRaises(DoublePanicAbort):
+                    run(candidate)
+
+    def test_reflective_write_never_invokes_conversion_providers(self):
+        source = '''
+object Owner =>
+  public $value: Int
+  public $text: String
+end
+@convert(String -> Int)
+define to(value: String) -> Int => print "converted" 42 end
+$owner = Owner(7, "old")
+try =>
+  $owner[fields[Owner]["value"]] = "wrong"
+handle ReflectionTypeFault => 99
+end
+$owner.value
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [RuntimeNumber(99), RuntimeNumber(7)])
+        self.assertEqual(output.getvalue(), "")
+
+    def test_reflective_write_keeps_statically_proven_callable_contracts(self):
+        source = '''
+object Owner => public $callback: Function[Int -> Int] end
+$owner = Owner(fn (value: Int) -> Int => $value end)
+unsafe =>
+  $owner[fields[Owner]["callback"]] = fn (value: Int) -> Int => $value + 1 end
+end
+$callback = $owner.callback
+$callback(7)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(8)])
+
+    def test_reflective_write_checks_identity_before_visibility(self):
+        source = '''
+object Owner => private $value: Int end
+$owner = Owner(7)
+try =>
+  $owner[fields[Owner]["value"]] = 8
+handle ReflectionFieldFault => 99
+end
+unsafe => $owner[fields[Owner]["value"]] end
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            write_index = next(position for position, item in enumerate(program.main.instructions)
+                               if item.op is OpCode.REFLECT_WRITE)
+            instructions = tuple(
+                replace(instruction, arg=replace(instruction.arg, owner="Other"))
+                if instruction.op is OpCode.MAKE_FIELDS and index < write_index else instruction
+                for index, instruction in enumerate(program.main.instructions)
+            )
+            program = replace(program, main=replace(program.main, instructions=instructions))
+            for candidate in (program, loads(dumps(program))):
+                self.assertEqual(run(candidate), [RuntimeNumber(99), RuntimeNumber(7)])
+    def test_checked_reflective_writes_reconstruct_without_changing_aliases(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+$person = Person("Ada", 37)
+$old = $person
+$person[fields[Person]["age"]] = 42
+$person.age
+$old.age
+$person[fields[Person]["name"]] = "Grace"
+$person.name
+$old.name
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(42), RuntimeNumber(37), "Grace", "Ada"])
+
+    def test_generic_writes_and_opened_callback_updates_keep_exact_types(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+define update(value: String) -> String => "updated" end
+define update(value: Int) -> Int => $value + 1 end
+define[T] updateAll(value: T) =>
+  $copy = $value
+  fields[T] foreach (field) => $copy[$field] = update($copy[$field]) end
+  $copy
+end
+$person = Person("Ada", 37)
+$updated = updateAll($person)
+$updated.name
+$updated.age
+$person.age
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["updated", RuntimeNumber(38), RuntimeNumber(37)])
+
+    def test_reflective_augmented_update_uses_normal_checked_arithmetic(self):
+        source = ('object Counter => public $value: Int end\n'
+                  '$counter = Counter(7)\n$field = fields[Counter]["value"]\n'
+                  '$counter[$field] := + 2\n$counter.value')
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(9)])
+
+    def test_reflective_write_visibility_precedes_type_failure_and_preserves_owner(self):
+        for visibility in ("private", "readable"):
+            source = f'''
+object Owner =>
+  {visibility} $secret: Int
+  public $text: String
+end
+$owner = Owner(7, "old")
+try =>
+  $owner[fields[Owner]["secret"]] = "wrong"
+handle ReflectionAccessFault => 99
+end
+unsafe => $owner[fields[Owner]["secret"]] = 8 end
+unsafe => $owner[fields[Owner]["secret"]] end
+'''
+            with self.subTest(visibility=visibility):
+                for stack in self.execute_variants(source):
+                    self.assertEqual(stack, [RuntimeNumber(99), RuntimeNumber(8)])
+
+    def test_rejected_replacement_is_released_and_original_binding_survives(self):
+        source = '''
+object Temporary =>
+  public $name: String
+  define ~Temporary => print $self.name end
+end
+object Owner => public $value: Int end
+define replacement(seed: Int) -> Int | Temporary => Temporary("discarded") end
+$owner = Owner(7)
+try =>
+  $owner[fields[Owner]["value"]] = replacement(0)
+handle ReflectionTypeFault => 99
+end
+$owner.value
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [RuntimeNumber(99), RuntimeNumber(7)])
+        self.assertEqual(output.getvalue(), "discarded" * 4)
+
+    def test_specialized_reflection_preserves_multiple_return_contracts(self):
+        source = '''
+object Person => public $age: Int end
+@returnAll
+define[T] inspect(value: T) =>
+  $value[fields[T]["age"]]
+  $value[fields[T]["age"]]
+end
+$person = Person(37)
+inspect($person)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(37), RuntimeNumber(37)])
+
+    def test_generic_descriptor_helper_retains_opened_field_evidence(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+define[T] read(value: T, field: Field[T]) => $value[$field] end
+define describe(value: Int) -> String => "integer" end
+define describe(value: String) -> String => "text" end
+$person = Person("Ada", 37)
+fields[Person] foreach (field) => print describe(read($person, $field)) end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            list(self.execute_variants(source))
+        self.assertEqual(output.getvalue(), "textinteger" * 4)
+
+    def test_generic_reflective_read_specializes_nested_helpers_and_each_owner(self):
+        source = r'''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+object[T] Box => public $value: T end
+define[T] read(value: T, name: String) => $value[fields[T][$name]] end
+define[U] forward(value: U, name: String) => read($value, $name) end
+define[T] \metadata => fields[T] end
+$person = Person("Ada", 37)
+$box = Box("box")
+forward($person, "age")
+forward($box, "value")
+\metadata[Int] | length
+\metadata[Person] | length
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(37), "box", RuntimeNumber(0), RuntimeNumber(2)])
+
+    def test_generic_iteration_checks_exact_field_values_and_escaping_transforms(self):
+        source = '''
+object Person =>
+  public $name: String
+  public $age: Int
+end
+define convert(value: Int) -> String => "integer" end
+define convert(value: String) -> Int => 1 end
+define[T] choose(value: T) =>
+  $value fields foreach (field) =>
+    if $field.name == "age" => break convert($value[$field]) end
+  end
+end
+$person = Person("Ada", 37)
+choose($person)
+'''
+        import valiance.vtypes as T
+
+        analyser = Analyser()
+        branches = analyser.analyse_program_branches(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(all(T.same(branch.top, T.optional(T.U(T.Int, T.String))) for branch in branches))
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["integer"])
+
+    def test_generic_function_values_specialize_through_higher_order_calls(self):
+        source = '''
+object Person => public $age: Int end
+$person = Person(37)
+$reader = fn[T] (value: T, name: String) => $value[fields[T][$name]] end
+define invoke(operation: Function, value: Person) => $operation($value, "age") end
+invoke($reader, $person)
+$reader($person, "age")
+$person "age" $reader call
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(37)] * 3)
+
+    def test_specialized_function_preserves_its_definition_closure(self):
+        source = '''
+object Person => public $age: Int end
+define factory(seed: Int) =>
+  $prefix = "definition"
+  fn[T] (value: T) =>
+    print $prefix
+    $value[fields[T]["age"]]
+  end
+end
+$reader = factory(0)
+$prefix = "caller"
+$person = Person(37)
+$reader($person)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [RuntimeNumber(37)])
+        self.assertEqual(output.getvalue(), "definition" * 4)
+
+    def test_nested_closure_uses_its_enclosing_concrete_owner(self):
+        source = '''
+object Person => public $age: Int end
+define[T] factory(value: T) =>
+  fn (name: String) =>
+    $value[fields[T][$name]]
+  end
+end
+$person = Person(37)
+$reader = factory($person)
+$reader("age")
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(37)])
+
+    def test_protected_field_can_be_observed_but_not_materialized(self):
+        declaration = ('@nodup("child cannot be copied")\n'
+                       'object Child => public $value: Int end\n'
+                       'object Parent => public $child: Child end\n'
+                       '$parent = Parent(Child(7))\n')
+        source = declaration + ('unsafe =>\n'
+                                'print $parent[fields[Parent]["child"]].value\nend\n'
+                                'print $parent.child.value')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "77" * 4)
+        source = declaration + ('unsafe =>\n'
+                                '$copy = $parent[fields[Parent]["child"]]\nend')
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                with self.assertRaisesRegex(RuntimeError, "DuplicationFault"):
+                    run(candidate)
+
+    def test_reflected_protected_field_materialization_cannot_resume_in_a_handler(self):
+        source = '''
+@nodup("child cannot be copied")
+object Child => public $value: Int end
+object Parent => public $child: Child end
+$parent = Parent(Child(7))
+unsafe =>
+  try =>
+    $copy = $parent[fields[Parent]["child"]]
+  handle => "caught" println
+  end
+end
+"continued" println
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    with self.assertRaisesRegex(RuntimeError, 'DuplicationFault'):
+                        run(candidate)
+                self.assertEqual(output.getvalue(), '')
+
+    def test_runtime_descriptor_owner_mismatch_precedes_private_access(self):
+        from dataclasses import replace
+        from valiance.runtime.bytecode import OpCode
+
+        source = ('object Secret => private $value: Int end\n$owner = Secret(7)\n'
+                  'try => $owner[fields[Secret]["value"]]\n'
+                  'handle ReflectionFieldFault => 99\nend')
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            # Simulate a dynamically supplied descriptor for another owner.
+            instructions = tuple(
+                replace(instruction, arg=replace(instruction.arg, owner="Other"))
+                if instruction.op is OpCode.MAKE_FIELDS else instruction
+                for instruction in program.main.instructions
+            )
+            program = replace(program, main=replace(program.main, instructions=instructions))
+            for candidate in (program, loads(dumps(program))):
+                self.assertEqual(run(candidate), [RuntimeNumber(99)])
+
+    def test_invalid_descriptor_identity_precedes_visibility(self):
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+        from valiance.runtime.reflection import make_fields_value, validate_field
+        from valiance.runtime.runtime_values import PanicSignal
+
+        layout = ReflectionFieldsReference("Secret", (
+            ReflectionFieldReference("value", "Int", "private"),
+        ))
+        for property_name, replacement in (("index", RuntimeNumber(3)), ("name", "other")):
+            descriptor = make_fields_value(layout).fields["#fields"][0]
+            descriptor.fields[property_name] = replacement
+            with self.subTest(property_name=property_name), self.assertRaises(PanicSignal) as error:
+                validate_field(descriptor, layout)
+            self.assertEqual(error.exception.value.type_name, "ReflectionFieldFault")
+
+    def test_generic_owner_read_retains_concrete_field_type(self):
+        source = ('object[T] Box => public $value: T end\n'
+                  '$box = Box("text")\n$box[fields[Box[String]]["value"]]')
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["text"])
+
+    def test_owner_reads_preserve_dynamic_union_and_exact_callback_values(self):
+        source = '\n'.join((
+            'object Person =>', 'public $name: String', 'readable $age: Int', 'end',
+            '$person = Person("Ada", 37)',
+            'define describe(value: String) -> String => $value end',
+            'define describe(value: Int) -> String => "integer" end',
+            'fields[Person] foreach (field) => print describe($person[$field]) end',
+            '$person[fields[Person]["name"]]', '$person[fields[Person]["age"]]',
+        ))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[-2:], ["Ada", RuntimeNumber(37)])
+        self.assertEqual(output.getvalue(), "Adainteger" * 4)
+
+    def test_private_read_fault_and_lexical_unsafe(self):
+        declaration = 'object Secret => private $value: Int end\n$owner = Secret(7)\n'
+        source = declaration + 'unsafe => $owner[fields[Secret]["value"]] end'
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(7)])
+        source = declaration + 'try => $owner[fields[Secret]["value"]]\nhandle ReflectionAccessFault => 99\nend'
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(99)])
+        # Creating metadata in unsafe does not transfer permission to the read.
+        source = declaration + 'unsafe =>\n$field = fields[Secret]["value"]\nend\n'
+        source += 'try => $owner[$field]\nhandle ReflectionAccessFault => 99\nend'
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(99)])
+
+    def test_managed_read_survives_receiver_and_descriptor_cleanup(self):
+        source = '\n'.join((
+            'object Child => public $value: Int end',
+            'object Parent => public $child: Child end',
+            '$parent = Parent(Child(7))', '$parent[fields[Parent]["child"]]',
+        ))
+        for stack in self.execute_variants(source):
+            child = stack[0]
+            self.assertFalse(child.destroyed)
+            self.assertEqual(child.fields["value"], RuntimeNumber(7))
+
     def test_heterogeneous_foreach_selects_each_actual_type_and_nested_generic_call(self):
         source = '''
 object Person =>
@@ -417,6 +1210,144 @@ end
                 self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "000000000000")
 
+    def test_descriptor_conversion_retains_each_opened_field_target(self):
+        source = '''
+object Owner =>
+  public $number: Int
+  public $text: String
+end
+$owner = Owner(0, "old")
+fields[Owner] foreach (field) =>
+  $owner[$field] = "42" to[$field.type]
+end
+$owner.number
+$owner.text
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(42), "42"])
+
+    def test_descriptor_conversion_uses_exact_union_target(self):
+        source = '''
+object Owner => public $value: Int | String end
+@convert(String -> Int)
+define to(value: String) -> Int => 7
+@convert(String -> Int | String)
+define to(value: String) -> Int | String => "union"
+$field = fields[Owner]["value"]
+"42" to[$field.type]
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["union"])
+
+    def test_descriptor_conversion_specializes_generic_type_evidence(self):
+        source = '''
+object Owner => public $value: String end
+define[U] convert(value: Int, evidence: Type[U]) => $value to[$evidence] end
+convert(7, fields[Owner]["value"].type)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["7"])
+
+    def test_descriptor_conversion_sources_implicit_closure_argument(self):
+        source = '''
+object Owner => public $value: String end
+$field = fields[Owner]["value"]
+$convert = fn (value: Int) => to[$field.type] end
+42 $convert call
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["42"])
+
+    def test_descriptor_conversion_evaluates_target_once_before_prefix_source(self):
+        source = '''
+object Owner => public $value: String end
+$field = fields[Owner]["value"]
+$get = fn => print("target") $field.type end
+$value = fn => print("source") 42 end
+to[$get()]($value())
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, ["42"])
+        self.assertEqual(output.getvalue(), "targetsource" * 4)
+
+    def test_descriptor_conversion_handles_missing_target_and_conversion_failure(self):
+        declaration = '''
+object Owner =>
+  public $number: Int
+  public $empty: None
+end
+'''
+        for name, text in (("empty", "42"), ("number", "bad")):
+            with self.subTest(name=name):
+                source = declaration + f'$field = fields[Owner]["{name}"]\n'
+                for stack in self.execute_variants(source + f'"{text}" to?[$field.type]'):
+                    self.assertEqual(stack, [ObjectValue("None", {})])
+                source += f'try => "{text}" to[$field.type]\nhandle ConversionFault => 99\nend'
+                for stack in self.execute_variants(source):
+                    self.assertEqual(stack, [RuntimeNumber(99)])
+
+    def test_descriptor_conversion_borrows_protected_source(self):
+        source = '''
+@nodup("resource")
+object Resource => public $value: Int end
+object Owner => public $value: String end
+$resource = Resource(7)
+$field = fields[Owner]["value"]
+$resource to[$field.type]
+print $resource.value
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, ["Resource{value: 7}"])
+        self.assertEqual(output.getvalue(), "7777")
+
+    def test_descriptor_conversion_retains_escaping_generic_closure(self):
+        source = '''
+object Owner => public $value: String end
+define[T] factory(evidence: Type[T]) =>
+  fn (value: Int) => $value to[$evidence] end
+end
+$convert = factory(fields[Owner]["value"].type)
+$convert(42)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ["42"])
+
+    def test_descriptor_conversion_preserves_ordinary_vectorisation(self):
+        source = ('object Owner => public $value: Int end\n'
+                  '$field = fields[Owner]["value"]\n["1", "2"] to[$field.type]')
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [[RuntimeNumber(1), RuntimeNumber(2)]])
+
+    def test_descriptor_conversion_failure_propagates_through_fallible_write(self):
+        source = '''
+object Owner => public $value: Int end
+$owner = Owner(0)
+$field = fields[Owner]["value"]
+try => write?($owner, $field, "bad" to[$field.type])
+handle ConversionFault => 99
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [RuntimeNumber(99)])
+
+    def test_descriptor_conversion_does_not_grant_write_access(self):
+        source = '''
+object Owner =>
+  private $value: Int
+  public $text: String
+end
+$owner = Owner(0, "old")
+$field = fields[Owner]["value"]
+write?($owner, $field, "42" to[$field.type])
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_name, "ReflectionWriteError")
+            self.assertEqual(stack[0].fields["reason"], "AccessDenied")
+
     def execute_variants(self, source):
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
@@ -530,6 +1461,74 @@ print $resource.value
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_duplication_fault_bypasses_explicit_and_catch_all_handlers(self):
+        for handler in ('DuplicationFault', ''):
+            source = f'''
+@nodup("resource cannot be copied")
+object Resource =>
+  define ~Resource => "released" println end
+end
+define[T] duplicate(value: T) => copy(item -> item) end
+try =>
+  Resource | duplicate
+handle {handler} =>
+  "caught" println
+end
+"continued" println
+'''
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for candidate in (program, loads(dumps(program))):
+                    output = io.StringIO()
+                    with self.subTest(handler=handler, optimize=optimize), contextlib.redirect_stdout(output):
+                        with self.assertRaisesRegex(RuntimeError, 'DuplicationFault'):
+                            run(candidate)
+                    self.assertEqual(output.getvalue(), 'released\n')
+
+    def test_explicit_duplication_fault_cannot_be_swallowed_by_testing_helper(self):
+        source = '''
+import { std.testing }
+try =>
+  testing.assertPanics: fn => DuplicationFault("integrity") panic end
+handle => "caught" println
+end
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    with self.assertRaisesRegex(RuntimeError, 'DuplicationFault'):
+                        run(candidate)
+                self.assertEqual(output.getvalue(), '')
+
+    def test_task_integrity_failure_bypasses_wait_handlers(self):
+        source = '''
+try =>
+  $task = fn -> => DuplicationFault("task integrity") panic end | spawn
+  $task wait
+handle => "caught" println
+end
+"continued" println
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    with self.assertRaisesRegex(RuntimeError, 'DuplicationFault'):
+                        run(candidate)
+                self.assertEqual(output.getvalue(), '')
+
     def test_unsafe_blocks_execute_inline_and_round_trip(self):
         source = """
 $value = 1
@@ -6356,6 +7355,18 @@ end
         self.assertEqual(original.fields["value"], RuntimeNumber("1"))
         self.assertEqual(reconstructed.fields["value"], RuntimeNumber("2"))
         self.assertIs(original.lifecycle_state, reconstructed.lifecycle_state)
+
+    def test_reconstruction_checks_all_unchanged_fields_before_retaining_any(self):
+        child = ObjectValue("Child", {})
+        protected = ObjectValue("Protected", {}, runtime_type=ObjectRuntimeType(dup_error="protected"))
+        original = ObjectValue("Owner", {"child": child, "protected": protected, "value": 7})
+        original.refcount = 2
+        with self.assertRaises(PanicSignal):
+            _set_field(original, "value", 8, vm=VirtualMachine())
+        self.assertEqual(child.refcount, 1)
+        self.assertEqual(protected.refcount, 1)
+        self.assertEqual(original.refcount, 2)
+        self.assertEqual(original.fields["value"], 7)
 
     def test_object_reconstruction_ownership_graph_remains_acyclic(self):
         leaf = ObjectValue("Leaf", {"value": RuntimeNumber("1")})

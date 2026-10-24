@@ -15,6 +15,107 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_descriptor_conversion_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('public define[U] convert(value: Int, evidence: Type[U]) => '
+                               '$value to[$evidence] end\n', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('import {reflector.convert}\n'
+                                           'object Owner => public $value: String end\n'
+                                           'convert(7, fields[Owner]["value"].type)'))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))), ["7"])
+
+    def test_fallible_reflection_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public define[T] inspect(value: T, field: Field[T]) => read?($value, $field) end
+public define[T,U] replaceValue(value: T, field: Field[T], replacement: U) =>
+  write?($value, $field, $replacement)
+end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector.inspect, reflector.replaceValue}
+object Box => public $value: Int end
+$box = Box(7)
+inspect($box, fields[Box]["value"]) ?!
+$updated = replaceValue($box, fields[Box]["value"], 8) ?!
+$updated.value
+$box.value
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))), [7, 8, 7])
+
+    def test_generic_reflective_write_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "reflector.vlnc"
+            library.write_text('''public define[T, U] write(value: T, field: Field[T], replacement: U) =>
+  $copy = $value
+  $copy[$field] = $replacement
+  $copy
+end
+''', encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    "compile-module", "--file", str(library),
+                    "--output", str(library.with_suffix(".vbcm")),
+                ]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse('import {reflector.write}\n'
+                                           'object Box => public $value: Int end\n'
+                                           '$box = Box(7)\n'
+                                           '$updated = write($box, fields[Box]["value"], 8)\n'
+                                           '$box.value\n$updated.value'))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))), [7, 8])
+
+    def test_generic_reflection_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "reflector.vlnc"
+            library.write_text('public define[T] read(value: T, name: String) => '
+                               '$value[fields[T][$name]] end\n', encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    "compile-module", "--file", str(library),
+                    "--output", str(library.with_suffix(".vbcm")),
+                ]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse('import {reflector.[read as inspect]}\n'
+                                           'object Box => public $value: Int end\n'
+                                           '$box = Box(7)\ninspect($box, "value")'))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(loads(dumps(program))), [7])
+
     def test_selected_generic_constructor_keeps_private_nested_enum_defaults(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
@@ -754,7 +855,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x03"))
+        self.assertTrue(first.startswith(b"VLNI\x06"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -771,10 +872,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x03{"schema":3,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x06{"schema":6,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x03{"schema":3,"value":null}trailing'
+                b'VLNI\x06{"schema":6,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -782,7 +883,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x03{"schema":3,"value":')
+            loads_interface(b'VLNI\x06{"schema":6,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""
