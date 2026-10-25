@@ -164,29 +164,29 @@ _DO_DOCS = {
 _EXAMPLES = {
     'readText': """import {std.file}
 import {std.path}
-file.do.readText(path.Path("example.txt"), file.Encoding.UTF8)""",
+file.do.readText(path.Path("example.txt"), file.Encoding.\\UTF8)""",
     'readLines': """import {std.file}
 import {std.path}
-file.do.readLines(path.Path("example.txt"), file.Encoding.UTF8)""",
+file.do.readLines(path.Path("example.txt"), file.Encoding.\\UTF8)""",
     'readBytes': """import {std.file}
 import {std.path}
 file.do.readBytes(path.Path("example.txt"))""",
     'writeText': """import {std.file}
 import {std.path}
-file.do.writeText(path.Path("example.txt"), "hello", file.Encoding.UTF8)""",
+file.do.writeText(path.Path("example.txt"), "hello", file.Encoding.\\UTF8)""",
     'writeLines': """import {std.file}
 import {std.path}
-file.do.writeLines(path.Path("example.txt"), ["a", "b"], file.Encoding.UTF8)""",
+file.do.writeLines(path.Path("example.txt"), ["a", "b"], file.Encoding.\\UTF8)""",
     'writeBytes': """import {std.file}
 import {std.path}
 import {std.file.#byte}
 file.do.writeBytes(path.Path("example.txt"), [65 #byte, 66 #byte])""",
     'appendText': """import {std.file}
 import {std.path}
-file.do.appendText(path.Path("example.txt"), "hello", file.Encoding.UTF8)""",
+file.do.appendText(path.Path("example.txt"), "hello", file.Encoding.\\UTF8)""",
     'appendLines': """import {std.file}
 import {std.path}
-file.do.appendLines(path.Path("example.txt"), ["a", "b"], file.Encoding.UTF8)""",
+file.do.appendLines(path.Path("example.txt"), ["a", "b"], file.Encoding.\\UTF8)""",
     'appendBytes': """import {std.file}
 import {std.path}
 import {std.file.#byte}

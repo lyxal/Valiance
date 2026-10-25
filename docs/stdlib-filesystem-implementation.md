@@ -17,14 +17,14 @@ This checkout extends the existing archive (including its terminal editor and
   never changes the original path, resolves symlinks, or accesses the disk.
   Trailing separators are ignored for component inspection; filesystem roots
   have no name or parent.
-* `file.Encoding.UTF8`, `UTF16LE`, `UTF16BE`, and `Latin1` are importable enum
+* `file.Encoding.\UTF8`, `UTF16LE`, `UTF16BE`, and `Latin1` are importable enum
   members.
 * `file.ReadFile`, `file.WriteFile`, `file.AppendFile` are `@nodup` objects,
   backed by native handles and real Valiance destructor methods. The
   destructor flushes/closes on final release; explicit `file.close` and
   `file.flush` work. Flushing is not a durability sync.
 * Their Valiance-defined constructors use an actual typed default
-  `encoding: Encoding = Encoding.UTF8`, not a sentinel or a native overload.
+  `encoding: Encoding = Encoding.\UTF8`, not a sentinel or a native overload.
   Both `file.WriteFile(path.Path("x"))` and a two-positional-argument call
   with a `file.Encoding` enum value work, alongside named argument calls.
   The `path` parameter is nominally typed as `path.Path`; a `String`, `Int`,
@@ -74,14 +74,14 @@ $text = file.do.readText(path.Path("notes.txt"))
 ```
 
 Optional encoding can be supplied positionally or by name:
-`file.WriteFile(path.Path("notes.txt"), file.Encoding.UTF16LE)` or
-`file.WriteFile(path = path.Path("notes.txt"), encoding = file.Encoding.UTF16LE)`.
+`file.WriteFile(path.Path("notes.txt"), file.Encoding.\UTF16LE)` or
+`file.WriteFile(path = path.Path("notes.txt"), encoding = file.Encoding.\UTF16LE)`.
 The default encoding is UTF-8 for both stateful resources and `file.do` helpers.
 
 ```valiance
 $p = path.Path("utf16.txt")
-file.do.writeText($p, "hello", file.Encoding.UTF16LE)
-$text = file.do.readText($p, encoding = file.Encoding.UTF16LE)
+file.do.writeText($p, "hello", file.Encoding.\UTF16LE)
+$text = file.do.readText($p, encoding = file.Encoding.\UTF16LE)
 $component = path.extension($p)  # Some(Path(".txt"))
 ```
 

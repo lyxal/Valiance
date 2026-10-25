@@ -22,7 +22,7 @@ end
 public object ReadFile =>
   private $handle: Int = 0
 
-  define ReadFile(path: path.Path, encoding: Encoding = Encoding.UTF8) =>
+  define ReadFile(path: path.Path, encoding: Encoding = Encoding.\UTF8) =>
     $self.handle = std.file.nativeOpenRead($path, $encoding)
   end
 
@@ -69,7 +69,7 @@ end
 public object WriteFile =>
   private $handle: Int = 0
 
-  define WriteFile(path: path.Path, encoding: Encoding = Encoding.UTF8) =>
+  define WriteFile(path: path.Path, encoding: Encoding = Encoding.\UTF8) =>
     $self.handle = std.file.nativeOpenWrite($path, $encoding)
   end
 
@@ -106,7 +106,7 @@ end
 public object AppendFile =>
   private $handle: Int = 0
 
-  define AppendFile(path: path.Path, encoding: Encoding = Encoding.UTF8) =>
+  define AppendFile(path: path.Path, encoding: Encoding = Encoding.\UTF8) =>
     $self.handle = std.file.nativeOpenAppend($path, $encoding)
   end
 

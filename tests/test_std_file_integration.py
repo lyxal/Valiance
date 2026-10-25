@@ -68,7 +68,7 @@ class FileLanguageIntegrationTests(unittest.TestCase):
                         self.assertEqual(stream.read(), b'Hello\nWorld\n')
 
     def test_selected_writer_import_does_not_expose_sibling_enum(self):
-        for expression in ('file.Encoding.UTF8', 'Encoding.UTF8'):
+        for expression in ('file.Encoding.\\UTF8', 'Encoding.\\UTF8'):
             with self.subTest(expression=expression):
                 analyser = Analyser()
                 analyser.analyse(parse('import {std.file.WriteFile}\n' + expression))
@@ -188,7 +188,7 @@ $f writeLine "World"
             '  as value: Location => 67\n'
             '  _ => 0\n'
             'end\n'
-            'Encoding.UTF8'
+            'Encoding.\\UTF8'
         ))
         self.assertFalse(analyser.diagnostics, analyser.diagnostics)
         program = compile_program(tree)
@@ -217,11 +217,11 @@ $f writeLine "World"
     def test_two_positional_constructor_arguments_override_default(self):
         path = self._path()
         self._run(
-            f'file.WriteFile(path.Path({path}), file.Encoding.UTF16BE) '
+            f'file.WriteFile(path.Path({path}), file.Encoding.\\UTF16BE) '
             '| file.writeText "hi" | pop'
         )
         self._run(
-            f'file.AppendFile(path.Path({path}), file.Encoding.UTF16BE) '
+            f'file.AppendFile(path.Path({path}), file.Encoding.\\UTF16BE) '
             '| file.writeText "!" | pop'
         )
         with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
@@ -245,7 +245,7 @@ $f writeLine "World"
         for constructor, invalid in (
             ('ReadFile', '123'),
             ('WriteFile', '"filename.txt"'),
-            ('AppendFile', 'file.Encoding.UTF8'),
+            ('AppendFile', 'file.Encoding.\\UTF8'),
         ):
             with self.subTest(constructor=constructor):
                 analyser = Analyser()
@@ -264,15 +264,15 @@ $f writeLine "World"
         location = self._path()
         self._run(
             f'file.WriteFile(path = path.Path({location}), '
-            'encoding = file.Encoding.UTF16LE) | file.writeText "ok" | pop'
+            'encoding = file.Encoding.\\UTF16LE) | file.writeText "ok" | pop'
         )
         self._run(
             f'file.AppendFile(path = path.Path({location}), '
-            'encoding = file.Encoding.UTF16LE) | file.writeText "!" | pop'
+            'encoding = file.Encoding.\\UTF16LE) | file.writeText "!" | pop'
         )
         values, _ = self._run(
             f'file.ReadFile(path = path.Path({location}), '
-            'encoding = file.Encoding.UTF16LE) | file.readText'
+            'encoding = file.Encoding.\\UTF16LE) | file.readText'
         )
         self.assertEqual(values[1], 'ok!')
         for handle in tuple(file_backend._handles.values()):
@@ -296,7 +296,7 @@ $f writeLine "World"
 
     def test_named_encoding_enum_and_text(self):
         path = self._path()
-        self._run(f'file.WriteFile(path = path.Path({path}), encoding = file.Encoding.UTF16LE) | file.writeText "hi" | pop')
+        self._run(f'file.WriteFile(path = path.Path({path}), encoding = file.Encoding.\\UTF16LE) | file.writeText "hi" | pop')
         with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
             self.assertEqual(stream.read(), b'h\x00i\x00')
 
@@ -314,19 +314,19 @@ $f writeLine "World"
         path = self._path('encoded.txt')
         p = os.path.join(self._temp.name, 'encoded.txt')
         self._run(
-            f'file.do.writeText(path.Path({path}), "café", file.Encoding.UTF16LE)'
+            f'file.do.writeText(path.Path({path}), "café", file.Encoding.\\UTF16LE)'
         )
         with open(p, 'rb') as stream:
             self.assertEqual(stream.read(), 'café'.encode('utf-16-le'))
         self._run(
-            f'file.do.appendText(path.Path({path}), "!", file.Encoding.UTF16LE)'
+            f'file.do.appendText(path.Path({path}), "!", file.Encoding.\\UTF16LE)'
         )
         result, _ = self._run(
-            f'file.do.readText(path.Path({path}), file.Encoding.UTF16LE)'
+            f'file.do.readText(path.Path({path}), file.Encoding.\\UTF16LE)'
         )
         self.assertEqual(result, ['café!'])
         result, _ = self._run(
-            f'file.do.readText(path = path.Path({path}), encoding = file.Encoding.UTF16LE)'
+            f'file.do.readText(path = path.Path({path}), encoding = file.Encoding.\\UTF16LE)'
         )
         self.assertEqual(result, ['café!'])
         self.assertFalse(file_backend._handles)
@@ -335,15 +335,15 @@ $f writeLine "World"
         path = self._path('lines.txt')
         p = os.path.join(self._temp.name, 'lines.txt')
         self._run(
-            f'file.do.writeLines(path.Path({path}), ["alpha", "β"], file.Encoding.UTF16BE)'
+            f'file.do.writeLines(path.Path({path}), ["alpha", "β"], file.Encoding.\\UTF16BE)'
         )
         self._run(
-            f'file.do.appendLines(path.Path({path}), ["γ"], file.Encoding.UTF16BE)'
+            f'file.do.appendLines(path.Path({path}), ["γ"], file.Encoding.\\UTF16BE)'
         )
         with open(p, 'rb') as stream:
             self.assertEqual(stream.read(), 'alpha\nβ\nγ\n'.encode('utf-16-be'))
         result, _ = self._run(
-            f'file.do.readLines(path.Path({path}), file.Encoding.UTF16BE)'
+            f'file.do.readLines(path.Path({path}), file.Encoding.\\UTF16BE)'
         )
         self.assertEqual(list(result[0]), ['alpha', 'β', 'γ'])
         self.assertFalse(file_backend._handles)
