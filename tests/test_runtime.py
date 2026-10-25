@@ -252,6 +252,386 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_intersection_reflection_selects_finite_layouts_and_checks_access_failures(self):
+        source = '''
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+object B as View => end
+define first(value: (A | B) & View) =>
+  $value fields foreach(field) => return $value[$field] end
+end
+$owner: (A | B) & View = B("hello")
+$metadata = $owner fields
+$field = $metadata["text"]
+read?($owner, $field) ?!
+$updated = write?($owner, $field, "changed") ?!
+$updated[$field]
+$owner[$field]
+read?($owner, fields[A]["number"])
+$owner[$field] = "direct"
+$owner[$field]
+first(A(7))
+first($owner)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:3], ['hello', 'changed', 'hello'])
+            self.assertEqual(stack[3].fields['reason'], 'InvalidField')
+            self.assertEqual(stack[4:], ['direct', 7, 'direct'])
+
+    def test_intersection_reflection_excludes_owners_without_the_required_trait(self):
+        source = '''
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+$owner: (A | B) & View = A(7)
+$owner fields foreach(field) => $owner[$field] + 1 | println end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for _ in self.execute_variants(source):
+                pass
+        self.assertEqual(output.getvalue(), '8\n' * 4)
+
+    def test_intersection_reflection_uses_concrete_storage_and_exact_callbacks(self):
+        source = '''
+trait View => end
+object Owner =>
+  public $number: Int
+  private $hidden: String
+end
+object Owner as View => end
+$owner: Owner & View = Owner(7, "private")
+$metadata = $owner fields
+$metadata length
+$metadata["number"].owner
+$field = $metadata["number"]
+read?($owner, $field) ?!
+$updated = write?($owner, $field, 8) ?!
+$updated[$field]
+$owner[$field]
+read?($owner, $metadata["hidden"])
+write?($owner, $metadata["hidden"], 99)
+unsafe =>
+  $owner fields foreach(field) =>
+    $owner[$field] | println
+    "42" to[$field.type] | println
+  end
+end
+fields[Owner & View] foreach(field) => missingElement end
+fields[Owner & View] | length
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0], 2)
+                self.assertEqual(stack[1].type_args, ('Owner',))
+                self.assertEqual(stack[2:5], [7, 8, 7])
+                self.assertEqual([value.fields['reason'] for value in stack[5:7]],
+                                 ['AccessDenied', 'AccessDenied'])
+                self.assertEqual(stack[-1], 0)
+        self.assertEqual(output.getvalue(), '7\n42\nprivate\n42\n' * 4)
+
+    def test_intersection_reflection_filters_generic_trait_arguments(self):
+        source = '''
+trait[T] View => end
+object[T] Box => public $value: T end
+object[T] Box as View[T] => end
+$owner: (Box[Int] | Box[String]) & View[Int] = Box(7)
+$metadata = $owner fields
+$metadata["value"].owner
+$owner fields foreach(field) => $owner[$field] + 1 | println end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0].type_args, ('Box[Int]',))
+        self.assertEqual(output.getvalue(), '8\n' * 4)
+
+    def test_intersection_reflection_preserves_generic_variant_and_empty_layouts(self):
+        source = '''
+variant[T] Maybe =>
+  Present => public $value: T end
+  Absent => end
+end
+$value: (Maybe[Int] | Maybe[String]) & Maybe[Int] = Present(7)
+$metadata = $value fields
+$field = $metadata["value"]
+$field.owner
+$field.type
+$value[$field]
+$value fields foreach(field) => $value[$field] + 1 | println end
+$empty: (Maybe[Int] | Maybe[String]) & Maybe[Int] = Maybe.Absent[Int]
+$empty fields | length
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0].type_args, ('Maybe.Present[Int]',))
+                self.assertEqual(stack[1].type_args, ('Int',))
+                self.assertEqual(stack[2], 7)
+                self.assertEqual(stack[-1], 0)
+        self.assertEqual(output.getvalue(), '8\n' * 4)
+
+    def test_intersection_reflection_releases_temporary_owners_with_ordinary_cleanup_panics(self):
+        source = '''
+trait View => end
+@nodup("protected")
+object Resource =>
+  public $number: Int
+  define ~Resource => RuntimeFault("cleanup") panic end
+end
+object Resource as View => end
+define make(seed: Int) -> Resource & View => Resource($seed) end
+try =>
+  unsafe => make(7) fields | length end
+handle RuntimeFault => "cleanup" end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['cleanup'])
+
+    def test_trait_reflection_specializes_named_and_transitive_calls(self):
+        source = '''
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+object B as View => end
+define names(value: View) =>
+  $out: String* = []
+  $value fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+define relay(value: View) => names($value) end
+define count(:View) -> Int => fields | length end
+define ranked(value: View) where ($n = 2) => $value fields | length | + $n end
+names(A(7))
+names(value=B("hello"))
+relay(A(7))
+$inspect = fn(value: View) => names($value) end
+$inspect(B("hello"))
+count(A(7))
+names([A(7), B("hello")])
+names([A(7), A(8)])
+names([[A(7), B("hello")]])
+ranked([A(7), A(8)])
+$rankedOperation = fn(value: View) where ($n = 2) => $value fields | length | + $n end
+$rankedOperation(A(7))
+$rankedOperation([A(7), A(8)])
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [['number'], ['text'], ['number'], ['text'], 1,
+                                     [['number'], ['text']], [['number'], ['number']],
+                                     [[['number'], ['text']]], [3, 3], 3, [3, 3]])
+
+    def test_trait_reflection_preserves_definition_captures_in_lazy_vectorization(self):
+        source = '''
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+object B as View => end
+define factory(seed: Int) =>
+  $prefix = "definition"
+  fn(value: View) =>
+    $value fields foreach(field) => print $prefix $field.name end
+  end
+end
+$inspect = factory(0)
+$prefix = "caller"
+$inspect([A(7), A(8)])
+[[A(7), A(8)]] $inspect call
+$values = [A(7), B("hello")] map: fn(value: A | B) => $value end
+$inspect($values)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                list(stack[-1])
+        self.assertEqual(output.getvalue(), 'definition' * 24)
+
+    def test_anonymous_trait_reflection_keeps_concrete_field_evidence(self):
+        source = '''
+object A => public $number: Int end
+object B => public $text: String end
+define label(value: A) -> String => "A" end
+define label(value: B) -> String => "B" end
+define inspect(value: trait => extend label -> String end) =>
+  $value fields foreach(field) =>
+    $value[$field] | println
+    "42" to[$field.type] | println
+  end
+end
+inspect(A(7))
+inspect(B("hello"))
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for _ in self.execute_variants(source):
+                pass
+        self.assertEqual(output.getvalue(), '7\n42\nhello\n42\n' * 4)
+
+    def test_structural_row_reflection_uses_declared_nominal_storage(self):
+        source = '''
+object A =>
+  public $number: Int
+  private $hidden: String
+end
+define[T] names(value: T(.number: Int)) =>
+  $out: String* = []
+  $value fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+define[T] layout(value: T(.number: Int)) => $value fields end
+names(A(7, "private"))
+$owner = A(7, "private")
+$metadata = layout($owner)
+$metadata["number"].owner
+$field = $metadata["number"]
+read?($owner, $field) ?!
+$updated = write?($owner, $field, 8) ?!
+$updated[$field]
+$owner[$field]
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0], ['number', 'hidden'])
+            self.assertEqual(stack[1].type_args, ('A',))
+            self.assertEqual(stack[2:], [7, 8, 7])
+
+    def test_unsafe_trait_reflection_borrows_protected_storage_and_releases_temporaries(self):
+        source = '''
+trait View => end
+@nodup("protected")
+object Resource =>
+  public $number: Int
+  define ~Resource => "destroy" println end
+end
+object Resource as View => end
+define count(value: View) -> Int => unsafe => $value fields | length end end
+define \\exercise -> =>
+  $owner = Resource(7)
+  count($owner) | println
+  count(Resource(8)) | println
+end
+\\exercise
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), '1\ndestroy\n1\ndestroy\n' * 4)
+
+    def test_variant_fields_select_active_storage_and_exact_callback_evidence(self):
+        source = '''
+variant Value =>
+  Numeric => public $number: Int end
+  Textual => public $text: String end
+  Empty => end
+end
+define inspect(value: Value) -> Int =>
+  $seen = 0
+  $value fields foreach(field) =>
+    $value[$field] | println
+    "42" to[$field.type] | println
+    $seen := $seen + 1
+  end
+  $seen
+end
+inspect(Numeric(7))
+inspect(Textual("hello"))
+inspect(Empty)
+fields[Value] | length
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [1, 1, 0, 0])
+        self.assertEqual(output.getvalue(), '7\n42\nhello\n42\n' * 4)
+
+    def test_generic_variant_fields_retain_member_owner_and_type_arguments(self):
+        source = '''
+variant[T] Maybe =>
+  Present => public $value: T end
+  Absent => end
+end
+define[T] metadata(value: T) => unsafe => $value fields end end
+$owner = Present(7)
+$fields = metadata($owner)
+$field = $fields["value"]
+$field.owner
+$field.type
+$owner[$field]
+$text = metadata(Present("hello"))
+$text["value"].type
+metadata(Maybe.Absent[Int]) | length
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_args, ('Maybe.Present[Int]',))
+            self.assertEqual(stack[1].type_args, ('Int',))
+            self.assertEqual(stack[2], RuntimeNumber(7))
+            self.assertEqual(stack[3].type_args, ('String',))
+            self.assertEqual(stack[4], 0)
+
+    def test_variant_reads_and_writes_preserve_identity_visibility_and_original_owner(self):
+        source = '''
+variant Value =>
+  Numeric => public $number: Int end
+  Textual => public $text: String end
+  Secret => private $hidden: Int end
+end
+$owner = Textual("hello")
+$metadata = $owner fields
+$field = field?($metadata, "text") ?!
+read?($owner, $field) ?!
+$updated = write?($owner, $field, "changed") ?!
+$updated[$field]
+$owner[$field]
+$owner[$field] = "direct"
+$owner[$field]
+$numeric = Numeric(7)
+$numbers = $numeric fields
+$number = $numbers["number"]
+write?($numeric, $number, "wrong")
+read?($numeric, $field)
+$secret = Secret(3)
+$secrets = $secret fields
+$hidden = $secrets["hidden"]
+read?($secret, $hidden)
+write?($secret, $hidden, "wrong")
+unsafe => $secret[$hidden] end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:4], ['hello', 'changed', 'hello', 'direct'])
+            self.assertEqual([value.fields['reason'] for value in stack[4:8]],
+                             ['TypeMismatch', 'InvalidField', 'AccessDenied', 'AccessDenied'])
+            self.assertEqual(stack[8], 3)
+
+    def test_union_containing_variant_selects_member_and_other_layouts(self):
+        source = '''
+variant Value =>
+  Numeric => public $number: Int end
+  Empty => end
+end
+object Other => public $text: String end
+define pick(flag: Int) -> Value | Other =>
+  if $flag == 0 => Empty
+  else if $flag == 1 => Numeric(7)
+  else => Other("hello") end
+end
+define names(value: Value | Other) =>
+  $out: String* = []
+  $value fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+names(pick(0))
+names(pick(1))
+names(pick(2))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [[], ['number'], ['text']])
+
     def test_generic_union_dispatch_specializes_scalar_named_and_vector_calls(self):
         source = '''
 object A => public $number: Int end

@@ -89,7 +89,7 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 - [Reflection metadata](type-system.md#reflection-metadata) describes the
   [compiler descriptor model](../../src/valiance/vtypes/reflection.py), generic
   storage queries, [runtime metadata](../../src/valiance/runtime/reflection.py),
-    heterogeneous iteration, finite runtime union selection, checked generic union specializations and owner access,
+    heterogeneous iteration, finite runtime union and closed variant selection, checked generic union specializations and owner access,
   fallible reconstruction, managed incomplete construction, and the boundary with
   pending runtime shape selection.
 - [Reflection implementation status](reflection-implementation.md) maps completed

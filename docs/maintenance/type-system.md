@@ -338,8 +338,35 @@ union of exact `Type[T]` alternatives rather than converting it to `Type[A | B]`
 Read/write plans retain owner-specific permissions and compatibility proofs.
 Qualified nominal names distinguish equally named objects from different modules.
 
-Variant, open-trait and structural receiver shape selection remains pending. Unresolved enumeration is diagnosed
-rather than treated as empty storage.
+Closed variants expand to their concrete member layouts, retaining the parent's
+generic arguments on each member owner. Unions containing variants flatten and
+deduplicate those layouts. Only the active member's callbacks execute, but every
+possible member's callbacks must check. Type-based `fields[Variant]` remains
+empty. The ownership authorization query follows all member storage, tracking
+recursive parent/member paths. Declaration analysis and compiled imports share
+`_define_variant_shape` to restore storage and variant membership consistently.
+
+Value enumeration in a nonrecursive helper with an open nominal or anonymous
+trait parameter triggers the same call-site body specialization. Ordinary
+conformance is checked first; the checked body then retains actual input types,
+including unnamed cycle parameters. Vectorized calls project input evidence to
+the scalar invocation before checking the body, and preserve that vectorization
+plan through code generation. Static inputs broadcast without being vectorized.
+
+A structural row with a concrete nominal base retains that base's physical
+layout and descriptor owner. Its required properties do not add storage fields
+or hide private metadata. An intersection can also supply concrete owner evidence
+through one of its constituents. Finite union and variant candidates are filtered
+against the intersection's nominal and trait constraints using ordinary type
+relations. Occurrence refinements do not change declared storage; generic
+arguments retain their exact evidence. Every surviving layout's callbacks check.
+The ownership query follows those layouts plus generic and row evidence, visiting
+composite children once through their own proof rules. Release effects use the
+same owner selection and a nominal row's base representation.
+
+Rows with abstract bases, anonymous records, erased traits and intersections
+without finite owner evidence still lack supported storage selection; unresolved
+enumeration is diagnosed rather than treated as empty storage.
 Metadata regressions live in `tests/test_types.py`,
 `tests/test_analysis_declarations.py`, `tests/test_runtime.py`, and
 `tests/test_bytecode_serialization.py`.
@@ -348,6 +375,8 @@ Typed block joins preserve agreed operation metadata even when a terminal branch
 has a shorter body. Break-bearing conditionals retain both typed branches rather
 than erasing resolved operations to source syntax. Code generation must honor the
 already-compiled break operands for both inline and helper-function loops.
+Branch refinement also retains checked return expression groups, including
+reflective access plans and nested specializations.
 
 ### `types/context.py`: relationship facts
 
@@ -1679,7 +1708,10 @@ trait parents. `subtype(...)` uses this relationship for nominal values.
 ### Variants
 
 `Context.variant_members` maps a member nominal type to its variant parent. This
-makes a member a subtype of the variant.
+makes a member a subtype of the variant when its generic arguments satisfy the
+parent's declared variance. Member arguments project onto the parent in the same
+order; different arities or incompatible invariant arguments do not establish
+that subtype relationship.
 
 ### Trait inheritance
 

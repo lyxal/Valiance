@@ -854,7 +854,28 @@ class _Compiler:
                         self.emit(OpCode.SPECIALIZE_FUNCTION, _compile_function_value(
                             specialization, str(runtime_name),
                         ))
-                        self.emit(OpCode.CALL)
+                        vectorised = typed_node.overload.vectorised
+                        depths = typed_node.overload.vectorised_depths
+                        target_ranks = typed_node.overload.vectorised_target_ranks
+                        static_values = ()
+                        if name.text == "call":
+                            values = typed_node.overload.runtime_static_values
+                            if values and values[0] == "__call_static__":
+                                vectorised, depths, target_ranks = values[1:4]
+                                static_values = values[4:]
+                        reference = None
+                        if vectorised or static_values:
+                            hidden_count = (len(static_values) if name.text == "call"
+                                            else len(typed_node.overload.runtime_static_values))
+                            reference = replace(
+                                _resolved_element_reference(typed_node),
+                                vectorised=vectorised,
+                                vectorised_depths=(*depths, *(0 for _ in range(hidden_count))) if vectorised else (),
+                                vectorised_target_ranks=(*target_ranks, *(None for _ in range(hidden_count))) if vectorised else (),
+                                static_values=static_values, dispatch_kind=DispatchKind.STATIC,
+                                union_dispatch_plan=(), arity_override=None, consumed_override=None,
+                            )
+                        self.emit(OpCode.CALL, reference)
                     return
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:

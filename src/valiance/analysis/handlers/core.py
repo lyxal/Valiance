@@ -484,6 +484,9 @@ def _fields_node(
         )
         if len(self.diagnostics) != before:
             return _core.BranchSet()
+    from valiance.vtypes.reflection import value_fields_need_specialization
+    if consumes and self.defer_reflection and value_fields_need_specialization(owner, self.env):
+        raise _core.ReflectionSpecializationRequired(owner)
     if not self.require_reflection_permission(owner, node):
         return _core.BranchSet()
     if _functions._contains_type_var(owner):
@@ -498,13 +501,10 @@ def _fields_node(
             if declaration is not None and len(nested.args) != len(declaration.generics):
                 self._diagnose(f"field enumeration requires complete generic arguments for {nested.name}", node)
                 return _core.BranchSet()
-    storage = owner
-    while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
-        storage = storage.inner
     from valiance.vtypes.reflection import fields_for_value
     metadata = fields_for_value(owner, self.env) if consumes else self.env.field_metadata(owner)
     possibilities = (tuple(layout.owner.typ for layout in metadata.alternatives)
-                     if metadata.alternatives else (storage,))
+                     if metadata.alternatives else (metadata.owner.typ,))
     def storage_type(typ):
         """Consult a layout's nominal representation beneath occurrence wrappers."""
         while isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
@@ -512,7 +512,7 @@ def _fields_node(
         return typ
     possibilities = tuple(storage_type(item) for item in possibilities)
     if consumes and any(
-        isinstance(item, (T.IntersectionType, T.RowType))
+        isinstance(item, (T.IntersectionType, T.RowType, T.AnonymousTraitType))
         or isinstance(item, T.NominalType) and (
             self.env.lookup_trait(item.name) is not None
             or self.env.lookup_variant(item.name) is not None
@@ -544,7 +544,7 @@ def _fields_node(
         metadata = replace(metadata, alternatives=layouts,
                            fields=tuple(field for layout in layouts for field in layout.fields))
     typ = (T.U(*(T.N(Symbol("Fields"), layout.owner.typ) for layout in metadata.alternatives))
-           if metadata.alternatives else T.N(Symbol("Fields"), owner))
+           if metadata.alternatives else T.N(Symbol("Fields"), metadata.owner.typ))
     return _core.BranchSet((branch.push(typ).emit(
         TypedFieldsNode(node, typ, metadata, consumes)
     ),))

@@ -4322,9 +4322,22 @@ class VirtualMachine:
         )
         try:
             if reference is not None:
-                if not isinstance(callee, OverloadedFunctionValue):
+                if isinstance(callee, FunctionValue) and not reference.dispatch_kind & DispatchKind.UNION:
+                    checked_witnesses = self._checked_call_witnesses(frame, reference)
+                    frame.stack.extend(reference.static_values)
+                    request = self._call_function(
+                        callee, frame, vectorised=reference.vectorised,
+                        vectorised_depths=reference.vectorised_depths,
+                        vectorised_target_ranks=reference.vectorised_target_ranks,
+                        extension_reference=reference.extension,
+                        return_tags=reference.return_tags, return_tag_specs=reference.return_tag_specs,
+                        arity_override=reference.arity_override, consumed_override=reference.consumed_override,
+                        checked_witnesses=checked_witnesses,
+                    )
+                elif isinstance(callee, OverloadedFunctionValue):
+                    request = self._call_resolved_overloaded_function(callee, frame, reference)
+                else:
                     raise RuntimeError("checked union call requires specialized implementations")
-                request = self._call_resolved_overloaded_function(callee, frame, reference)
                 if request is None:
                     return None
                 release_callee = False

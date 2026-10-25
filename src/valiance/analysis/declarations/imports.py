@@ -398,6 +398,9 @@ class _ImportDeclarations:
             self.env.define_enum(obj.name, members, value_type=value_type)
             return
 
+        if kind == "variant":
+            self._define_variant_shape(node)
+            return
         if kind != "object" or node.target is not None:
             return
 

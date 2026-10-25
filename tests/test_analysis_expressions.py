@@ -15,6 +15,103 @@ from valiance.parsing import parse
 class ExpressionBoundaryTests(unittest.TestCase):
     """Verify value expressions are owned outside the analyser façade."""
 
+    def test_intersection_reflection_checks_all_reachable_callbacks_and_protected_layouts(self):
+        declaration = '''
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+object B as View => end
+$owner: (A | B) & View = B("hello")
+'''
+        for source in (
+            declaration + '$owner fields foreach(field) => $owner[$field] | length end',
+            declaration.replace('object A =>', '@nodup("protected")\nobject A =>')
+            + '$owner fields',
+            'trait Left => end\ntrait Right => end\n'
+            'define inspect(value: Left & Right) => unsafe => $value fields end end\n'
+            'object Owner => end\nobject Owner as Left => end\nobject Owner as Right => end\n'
+            '$erased: Left & Right = Owner\ninspect($erased)',
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
+
+    def test_trait_reflection_specialization_enforces_conformance_and_lexical_permissions(self):
+        declarations = '''
+trait View => end
+@nodup("protected")
+object Resource => public $number: Int end
+object Resource as View => end
+object Other => end
+'''
+        for definition, call in (
+            ('define inspect(value: View) => $value fields | length end',
+             'unsafe => inspect(Resource(7)) end'),
+            ('define inspect(value: View) => unsafe => $value fields | length end end',
+             'inspect(Other)'),
+            ('define inspect(value: View) => unsafe => $value fields | length end end',
+             '$erased: View = Resource(7)\ninspect($erased)'),
+        ):
+            with self.subTest(call=call):
+                analyser = Analyser()
+                analyser.analyse(parse(declarations + definition + '\n' + call))
+                self.assertTrue(analyser.diagnostics)
+
+    def test_trait_reflection_specialization_checks_every_union_callback(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+object B as View => end
+define inspect(value: View) =>
+  $value fields foreach(field) => $value[$field] | length end
+end
+define pick(flag: Int) -> A | B => if $flag == 1 => A(7) else => B("hello") end end
+inspect(pick(0))
+'''))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_erased_structural_storage_is_diagnosed_instead_of_empty_metadata(self):
+        for source in (
+            'unsafe => record{number => 7} fields end',
+            'define inspect(value: trait => end) => unsafe => $value fields end end\n'
+            '$erased: trait => end = record{number => 7}\ninspect($erased)',
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
+
+    def test_variant_reflection_checks_callbacks_for_inactive_members(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+variant Value =>
+  Numeric => public $number: Int end
+  Textual => public $text: String end
+end
+$owner = Textual("hello")
+$owner fields foreach(field) => $owner[$field] | length end
+'''))
+        self.assertTrue(any('length' in message for message in analyser.diagnostics))
+
+    def test_variant_reflection_requires_unsafe_for_protected_member_storage(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+@nodup("protected")
+object Resource => end
+variant Value =>
+  Protected => public $resource: Resource end
+  Empty => end
+end
+$owner = Empty
+$owner fields
+'''))
+        self.assertTrue(any('lexical unsafe' in message for message in analyser.diagnostics))
+
     def test_union_dispatch_retains_checked_generic_reflection_bodies(self):
         analyser = Analyser()
         typed = analyser.analyse(parse('''

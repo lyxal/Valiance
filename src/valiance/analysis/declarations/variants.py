@@ -95,12 +95,10 @@ class Analyser:
 class _VariantDeclarations:
     """Own variants declaration operations."""
 
-    def _variant_definition(
-        self,
-        branch: AnalysisBranch,
-        node: ObjectNode,
-    ) -> BranchSet:
-        """Build the definition for variant during static analysis."""
+    def _define_variant_shape(
+        self, node: ObjectNode, *, member_aliases: bool = False,
+    ) -> tuple[Symbol, ...] | None:
+        """Register closed member storage and parent relations without checking bodies."""
         generic_constraints = _functions._generic_constraints(
             node.generics,
             node.generic_variances,
@@ -113,7 +111,7 @@ class _VariantDeclarations:
             members.append(member_name)
             object_attributes = self._object_attributes(member.fields, node.generics)
             if object_attributes is None:
-                return BranchSet((branch.emit(TypedNode(node, None)),))
+                return None
             variant_type = _utils._declared_nominal(node.name, node.generics)
             self._define_object_shape(
                 member_name,
@@ -122,14 +120,15 @@ class _VariantDeclarations:
                 result_type=variant_type,
                 generic_constraints=generic_constraints,
             )
-            self.env.define_overload(
-                member.name,
-                T.Overload(
-                    params=tuple(attribute.typ for attribute in object_attributes),
-                    returns=(variant_type,),
-                    generic_constraints=generic_constraints,
-                ),
-            )
+            if member_aliases:
+                self.env.define_overload(
+                    member.name,
+                    T.Overload(
+                        params=tuple(attribute.typ for attribute in object_attributes),
+                        returns=(variant_type,),
+                        generic_constraints=generic_constraints,
+                    ),
+                )
         self.env.define_variant(
             node.name,
             tuple(members),
@@ -145,6 +144,21 @@ class _VariantDeclarations:
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):
             self.env.add_trait_impl(node.name, Symbol("Err"))
+        return tuple(members)
+
+    def _variant_definition(
+        self,
+        branch: AnalysisBranch,
+        node: ObjectNode,
+    ) -> BranchSet:
+        """Build the definition for variant during static analysis."""
+        members = self._define_variant_shape(node, member_aliases=True)
+        if members is None:
+            return BranchSet((branch.emit(TypedNode(node, None)),))
+        generic_constraints = _functions._generic_constraints(
+            node.generics, node.generic_variances, node.generic_constraints,
+        )
+        requirements = _utils._trait_requirements(node)
 
         current = branch.emit(
             TypedNode(node, _utils._declared_nominal(node.name, node.generics))

@@ -13,6 +13,20 @@ from valiance.vtypes.symbols import Symbol
 class AnalysisStateBoundaryTests(unittest.TestCase):
     """Exercise the public transformations without constructing an analyser."""
 
+    def test_refinement_retains_checked_return_expressions(self):
+        from valiance.asts import GetVariableNode, ReturnNode, TypedNode, TypedReturnNode
+        from valiance.vtypes import V
+
+        variable = V('T')
+        read = GetVariableNode(Symbol('value'))
+        returned = TypedReturnNode(ReturnNode(((read,),)), variable,
+                                   expressions=((TypedNode(read, variable),),), explicit_values=True)
+        refined = AnalysisBranch(typed_body=(returned,)).refine_type(variable, Int).typed_body[0]
+        self.assertIsInstance(refined, TypedReturnNode)
+        self.assertEqual(refined.expressions[0][0].typ, Int)
+        self.assertTrue(refined.explicit_values)
+        self.assertEqual(returned.expressions[0][0].typ, variable)
+
     def test_refinement_preserves_checked_unsafe_bodies(self):
         from valiance.asts import GetVariableNode, TypedNode, TypedUnsafeNode, UnsafeNode
         from valiance.vtypes import V

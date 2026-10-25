@@ -1271,7 +1271,7 @@ Important invariants:
   caller. Deferred capture contexts omit execution stacks, prior typed bodies
   and diagnostics, retaining the variable facts needed to check the closure.
 
-- Value-based finite-union reflection preserves separate field layouts and
+- Value-based finite-union and closed-variant reflection preserves separate field layouts and
   returns a union of owner-specific collection types. Per-layout callbacks retain
   exact field witnesses. Direct and fallible access select a checked plan by
   descriptor owner identity. Union overload coverage checks each cartesian input
@@ -1279,6 +1279,26 @@ Important invariants:
   `TypedFunctionDispatchNode` retains selected bodies, original declaration
   identities, static inputs and vectorization plans. Every branch must check;
   a runtime overload identity alone cannot instantiate a reflective function.
+  Variants expand to concrete member owners with the parent's generic arguments;
+  unions flatten and deduplicate those layouts. Type-based enumeration describes
+  only declared storage, so `fields[Variant]` is empty. The transitive ownership
+  gate checks every member, with recursive path tracking. Imported variants use
+  the same storage-shape registration as local declarations, including when the
+  provider is loaded from a source-free compiled interface.
+
+- Open nominal and anonymous trait parameters can defer value-based enumeration
+  to concrete calls. Ordinary parameter conformance still applies. Specialized
+  bodies retain actual input types and explicit-parameter cycling; vectorized
+  input evidence is projected to the scalar invocation before checking. A
+  nominal structural row selects its base owner's declared storage and canonical
+  descriptor owner. Fully erased receivers remain unsupported and diagnosed.
+  Intersections select finite owner candidates from their concrete constituents
+  and filter them through ordinary nominal/trait relations. Occurrence tags and
+  row constraints do not add storage; descriptor identities and field types come
+  from the selected owners. Ownership and release-effect queries use those same
+  layouts, retaining generic and row evidence for conservative safety checks.
+  Branch refinement preserves checked return expressions rather than rebuilding
+  their reflective operations from source syntax.
 
 - The analyser detects CSTC structurally from overload parameter types. Do not
   add element-name checks for built-ins such as `peek`, `dip`, `fork`, `both`,

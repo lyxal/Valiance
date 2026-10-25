@@ -9,6 +9,7 @@ Understand the relevant architecture before editing code.
   - **Analyser, types, or type relations:** `docs/maintenance/type-system.md`
   - **Code generation, bytecode, VM, runtime values, or serialization:** `docs/maintenance/runtime-system.md`
 - Consult the corresponding detailed references in `docs/Compiler Documentation` before implementing changes.
+- Also, make sure to check `docs/AGENT_NOTES.md` for findings other agents have found while working on this programming language. That file is full of little things agents have struggled with, so check there to avoid struggling with the same things yourself!
 - Read additional documentation when the change crosses subsystem boundaries. Do not read unrelated exhaustive documentation unnecessarily.
 - Inspect existing implementations, interfaces, and tests before designing a solution. Follow established conventions unless there is a concrete reason to improve them.
 

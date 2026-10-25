@@ -625,6 +625,11 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return all(subtype(s, target, ctx) for s in source.items)
 
     if isinstance(target, UnionType):
+        # A guaranteed constituent may itself span several target alternatives.
+        if isinstance(source, IntersectionType) and any(subtype(item, target, ctx) for item in source.items):
+            return True
+        if isinstance(source, RowType) and subtype(source.base, target, ctx):
+            return True
         return any(subtype(source, t, ctx) for t in target.items)
 
     if isinstance(target, IntersectionType):
@@ -681,7 +686,9 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         if target.name == ERR and _is_builtin_err(source):
             return True
         if ctx.variant_members.get(source.name) == target.name:
-            return True
+            return len(source.args) == len(target.args) and _nominal_args_subtype(
+                NominalType(target.name, source.args), target, ctx,
+            )
         if source.name == INT and target.name in {REAL, NUMBER}:
             return True
         if source.name == REAL and target.name == NUMBER:

@@ -155,6 +155,16 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(I(Int, Never()), Never())
         self.assertEqual(I(Never(), String), Never())
 
+    def test_intersection_and_row_views_retain_union_constituent_subtyping(self):
+        a, b, c = (N(Symbol(name)) for name in ('A', 'B', 'C'))
+        union = U(a, b)
+        view = I(union, c)
+        for relation in (subtype, assignable, compatible):
+            self.assertTrue(relation(view, union))
+            self.assertTrue(relation(T.Row(view, Field(Symbol('value'), Int)), union))
+            self.assertTrue(relation(I(a, b), U(I(a, b), c)))
+        self.assertFalse(subtype(view, a))
+
     def test_optional_never_normalizes_to_none(self):
         self.assertEqual(optional(Never()), NoneType())
 
@@ -507,6 +517,18 @@ class TypeLibraryTests(unittest.TestCase):
         box = Symbol("Box")
 
         self.assertFalse(assignable(N(box, Car), N(box, Vehicle), ctx))
+
+    def test_variant_members_preserve_parent_arguments_and_declared_variance(self):
+        parent, member = Symbol('Variant'), Symbol('Variant.Member')
+        ctx = Context(variant_members={member: parent})
+        self.assertTrue(subtype(N(member, Int), N(parent, Int), ctx))
+        self.assertFalse(subtype(N(member, String), N(parent, Int), ctx))
+        self.assertFalse(subtype(N(member), N(parent, Int), ctx))
+        ctx.set_generic_variance(parent, (Variance.COVARIANT,))
+        self.assertTrue(subtype(N(member, Int), N(parent, Number), ctx))
+        self.assertFalse(subtype(N(member, String), N(parent, Number), ctx))
+        ctx.set_generic_variance(parent, (Variance.CONTRAVARIANT,))
+        self.assertTrue(subtype(N(member, Number), N(parent, Int), ctx))
 
     def test_nominal_generic_arguments_follow_declared_covariance(self):
         ctx = Context(trait_impls={CAR: {VEHICLE}})
@@ -2026,6 +2048,102 @@ class InlineTraitElementTagConformanceTests(unittest.TestCase):
 
 
 class ReflectionMetadataTests(unittest.TestCase):
+    def test_intersection_layouts_filter_finite_owners_without_fabricating_type_storage(self):
+        from valiance.vtypes.reflection import fields_for_value, value_fields_need_specialization
+
+        env = Environment()
+        a, b, view = (N(Symbol(name)) for name in ('A', 'B', 'View'))
+        env.define_object(a.name, (T.ObjectAttribute(Symbol('number'), Int),))
+        env.define_object(b.name, (T.ObjectAttribute(Symbol('text'), String),), duplication_error='protected')
+        env.define_trait(view.name)
+        env.add_trait_impl(a.name, view.name)
+        owner = I(U(a, b), view)
+        metadata = fields_for_value(owner, env)
+        self.assertEqual(tuple(layout.owner.typ for layout in metadata.alternatives), (a,))
+        self.assertEqual(metadata.value_type, Int)
+        self.assertFalse(value_fields_need_specialization(owner, env))
+        self.assertFalse(env.reflection_requires_unsafe(owner))
+        for nested in (U(owner, String), T.Row(owner, Field(Symbol('number'), Int)),
+                       ExactList(owner), T.Tup(owner, String)):
+            self.assertFalse(env.reflection_requires_unsafe(nested))
+        env.set_object_destructor_effects(b.name, frozenset((ElementTag(Symbol('IO')),)))
+        self.assertEqual(env.destructor_effects(owner), frozenset())
+        self.assertEqual(env.field_metadata(owner).fields, ())
+        self.assertTrue(value_fields_need_specialization(I(view, N(Symbol('Other'))), env))
+        env.add_trait_impl(b.name, view.name)
+        self.assertTrue(env.reflection_requires_unsafe(owner))
+        self.assertEqual({layout.owner.typ for layout in fields_for_value(owner, env).alternatives}, {a, b})
+        wrapped = fields_for_value(Tagged(owner, 'marked'), env)
+        self.assertEqual({layout.owner.typ for layout in wrapped.alternatives},
+                         {Tagged(a, 'marked'), Tagged(b, 'marked')})
+
+    def test_intersection_ownership_proof_retains_generic_and_row_evidence(self):
+        env = Environment()
+        a, resource, view = (N(Symbol(name)) for name in ('A', 'Resource', 'View'))
+        env.define_object(a.name)
+        env.define_object(resource.name, duplication_error='protected')
+        env.define_trait(view.name, generics=(Symbol('T'),))
+        env.add_trait_impl(a.name, view.name)
+        self.assertFalse(env.reflection_requires_unsafe(I(a, N(view.name, Int))))
+        self.assertTrue(env.reflection_requires_unsafe(I(a, N(view.name, resource))))
+        self.assertTrue(env.reflection_requires_unsafe(I(a, T.Row(a, Field(Symbol('hidden'), resource)))))
+
+    def test_intersection_and_nominal_row_release_effects_follow_the_storage_owner(self):
+        env = Environment()
+        owner, other = N(Symbol('Owner')), N(Symbol('Other'))
+        effects = frozenset((ElementTag(Symbol('IO')),))
+        env.define_object(owner.name)
+        env.define_object(other.name)
+        env.set_object_destructor_effects(owner.name, effects)
+        self.assertEqual(env.destructor_effects(I(owner, other)), effects)
+        self.assertEqual(env.destructor_effects(T.Row(owner, Field(Symbol('number'), Int))), effects)
+
+    def test_nominal_row_views_preserve_physical_storage_and_canonical_owners(self):
+        from valiance.vtypes.reflection import fields_for_value, value_fields_need_specialization
+
+        env = Environment()
+        owner = N(Symbol('Owner'))
+        env.define_object(owner.name, (
+            T.ObjectAttribute(Symbol('number'), Int),
+            T.ObjectAttribute(Symbol('hidden'), String, access=Symbol('private')),
+        ))
+        view = T.Row(owner, T.Field(Symbol('number'), Int))
+        metadata = fields_for_value(view, env)
+        self.assertEqual(metadata, env.field_metadata(owner))
+        self.assertEqual(fields_for_value(Tagged(view, 'marked'), env),
+                         env.field_metadata(Tagged(owner, 'marked')))
+        self.assertFalse(value_fields_need_specialization(view, env))
+        self.assertTrue(value_fields_need_specialization(T.Row(V('T'), *view.fields), env))
+        self.assertTrue(value_fields_need_specialization(T.Row(N(Symbol('record')), *view.fields), env))
+        self.assertEqual(env.field_metadata(view).fields, ())
+
+    def test_variant_value_layouts_flatten_and_preserve_generic_storage(self):
+        from valiance.vtypes.reflection import fields_for_value
+
+        env = Environment()
+        parent, present, absent = map(Symbol, ('Maybe', 'Maybe.Present', 'Maybe.Absent'))
+        env.define_object(present, (T.ObjectAttribute(Symbol('value'), V('T')),), generics=(Symbol('T'),))
+        env.define_object(absent, generics=(Symbol('T'),))
+        env.define_variant(parent, (present, absent), generics=(Symbol('T'),))
+        owner = N(parent, Int)
+        metadata = fields_for_value(U(owner, N(present, Int)), env)
+        self.assertEqual(tuple(layout.owner.typ for layout in metadata.alternatives),
+                         (N(present, Int), N(absent, Int)))
+        self.assertEqual(metadata.value_type, Int)
+        self.assertEqual(env.field_metadata(owner).fields, ())
+        self.assertFalse(env.reflection_requires_unsafe(owner))
+        self.assertTrue(env.reflection_requires_unsafe(N(parent, V('U'))))
+
+    def test_variant_permission_checks_recursive_members_and_protected_storage(self):
+        env = Environment()
+        parent, node, leaf = map(Symbol, ('Tree', 'Tree.Node', 'Tree.Leaf'))
+        env.define_object(node, (T.ObjectAttribute(Symbol('child'), N(parent)),))
+        env.define_object(leaf)
+        env.define_variant(parent, (node, leaf))
+        self.assertFalse(env.reflection_requires_unsafe(N(parent)))
+        env.define_object(leaf, duplication_error='protected')
+        self.assertTrue(env.reflection_requires_unsafe(N(parent)))
+
     def test_value_union_layouts_preserve_owners_without_fabricating_static_storage(self):
         from valiance.vtypes.reflection import fields_for_value, field_type_evidence, fields_type_owners
 

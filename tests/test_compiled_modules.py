@@ -118,6 +118,127 @@ read?($owner, fields[one.Owner]["value"])
                 self.assertEqual(stack[2], 'hello')
                 self.assertEqual(stack[3].fields['reason'], 'InvalidField')
 
+    def test_intersection_reflection_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public define[T] first(value: T) =>
+  $value fields foreach(field) => return $value[$field] end
+end
+public define[T] names(value: T) =>
+  $out: String* = []
+  $value fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector}
+trait View => end
+object A => public $number: Int end
+object B => public $text: String end
+object A as View => end
+object B as View => end
+$owner: (A | B) & View = B("hello")
+reflector.names($owner)
+reflector.first($owner)
+$numeric: (A | B) & View = A(7)
+reflector.first($numeric)
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))),
+                                 [['text'], 'hello', 7])
+
+    def test_trait_and_structural_reflection_specialize_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public trait View => end
+public define names(value: View) =>
+  $out: String* = []
+  $value fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+public define structural(value: trait => extend label -> String end) =>
+  $out: String* = []
+  $value fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+public define[T] rows(value: T(.number: Int)) => $value fields end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector.View, reflector.names, reflector.structural, reflector.rows}
+object A => public $number: Int end
+object A as View => end
+define label(value: A) -> String => "A" end
+names(A(7))
+structural([A(7), A(8)])
+$metadata = rows(A(7))
+$metadata["number"].owner
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                stack = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual(stack[:2], [['number'], [['number'], ['number']]])
+                self.assertEqual(stack[2].type_args, ('A',))
+
+    def test_variant_reflection_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public variant[T] Maybe =>
+  Present => public $value: T end
+  Absent => end
+end
+public define[T] names(owner: T) =>
+  $out: String* = []
+  $owner fields foreach(field) => $out := $out append $field.name end
+  $out
+end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            for imports, owner, helper in (
+                ('import {reflector}', 'reflector.Maybe', 'reflector.names'),
+                ('import {reflector.Maybe, reflector.names}', 'Maybe', 'names'),
+            ):
+                analyser = Analyser(source_file=root / 'main.vlnc')
+                typed = analyser.analyse(parse(imports + f'''
+$value = {owner}.Present(7)
+{helper}($value)
+$metadata = $value fields
+$field = $metadata["value"]
+$field.owner
+read?($value, $field) ?!
+'''))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    stack = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                    self.assertEqual(stack[0], ['value'])
+                    self.assertEqual(stack[1].type_args, (f'{owner}.Present[Int]',))
+                    self.assertEqual(stack[2], 7)
+
     def test_runtime_union_reflection_specializes_from_source_free_modules(self):
         from valiance.runtime import compile_program, dumps, loads, run
 

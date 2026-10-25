@@ -143,18 +143,87 @@ def fields_for_type(owner: T.Type, env: Environment) -> FieldsDescriptor:
 
 
 def fields_for_value(owner: T.Type, env: Environment) -> FieldsDescriptor:
-    """Retain each statically known storage possibility of a runtime union."""
+    """Resolve storage evidence through nominal views, unions and variants."""
     owner = T.normalize(owner)
+    if isinstance(owner, T.RowType) and not value_fields_need_specialization(owner, env):
+        return fields_for_value(owner.base, env)
+    if isinstance(owner, T.IntersectionType):
+        alternatives = _intersection_layouts(owner, env)
+        if alternatives:
+            return FieldsDescriptor(TypeDescriptor(owner),
+                                    tuple(field for layout in alternatives for field in layout.fields),
+                                    alternatives)
     possibilities = owner.items if isinstance(owner, T.UnionType) else ()
+    if isinstance(owner, T.NominalType) and (variant := env.lookup_variant(owner.name)) is not None:
+        possibilities = tuple(T.N(member, *owner.args) for member in variant.members)
     if isinstance(owner, (T.TaggedType, T.NoVecType, T.ExactType)):
         inner = fields_for_value(owner.inner, env)
+        if not inner.alternatives and inner.owner.typ != T.normalize(owner.inner):
+            return fields_for_value(replace(owner, inner=inner.owner.typ), env)
         possibilities = tuple(replace(owner, inner=layout.owner.typ) for layout in inner.alternatives)
     if possibilities:
-        alternatives = tuple(fields_for_type(item, env) for item in possibilities)
+        layouts = tuple(fields_for_value(item, env) for item in possibilities)
+        alternatives = tuple(dict.fromkeys(
+            alternative for layout in layouts
+            for alternative in (layout.alternatives or (layout,))
+        ))
         return FieldsDescriptor(TypeDescriptor(owner),
                                 tuple(field for layout in alternatives for field in layout.fields),
                                 alternatives)
     return fields_for_type(owner, env)
+
+
+def _storage_constraint(owner: T.Type) -> T.Type:
+    """Project occurrence refinements to constraints on physical owner shapes."""
+    owner = T.normalize(owner)
+    if isinstance(owner, (T.TaggedType, T.NoVecType, T.ExactType)):
+        return _storage_constraint(owner.inner)
+    if isinstance(owner, T.RowType):
+        return _storage_constraint(owner.base)
+    if isinstance(owner, T.UnionType):
+        return T.U(*(_storage_constraint(item) for item in owner.items))
+    if isinstance(owner, T.IntersectionType):
+        return T.I(*(_storage_constraint(item) for item in owner.items))
+    return owner
+
+
+def _intersection_layouts(owner: T.IntersectionType, env: Environment) -> tuple[FieldsDescriptor, ...]:
+    """Intersect finite owner evidence without inventing storage for open views."""
+    candidates: list[FieldsDescriptor] = []
+    for item in sorted(owner.items, key=T.show):
+        if value_fields_need_specialization(item, env):
+            continue
+        metadata = fields_for_value(item, env)
+        candidates.extend(metadata.alternatives or (metadata,))
+    constraint = _storage_constraint(owner)
+    return tuple(dict.fromkeys(layout for layout in candidates
+                               if T.assignable(layout.owner.typ, constraint, env.context)))
+
+
+def value_fields_need_specialization(owner: T.Type, env: Environment) -> bool:
+    """Identify receiver views that do not determine a concrete storage layout."""
+    owner = T.normalize(owner)
+    if isinstance(owner, (T.TaggedType, T.NoVecType, T.ExactType)):
+        return value_fields_need_specialization(owner.inner, env)
+    if isinstance(owner, T.RowType):
+        base = T.normalize(owner.base)
+        while isinstance(base, (T.TaggedType, T.NoVecType, T.ExactType)):
+            base = base.inner
+        if isinstance(base, T.UnionType):
+            return any(value_fields_need_specialization(T.Row(item, *owner.fields), env)
+                       for item in base.items)
+        if isinstance(base, T.IntersectionType):
+            return value_fields_need_specialization(base, env)
+        return not (isinstance(base, T.NominalType) and (
+            env.lookup_object(base.name) is not None or env.lookup_variant(base.name) is not None
+        ))
+    if isinstance(owner, T.UnionType):
+        return any(value_fields_need_specialization(item, env) for item in owner.items)
+    if isinstance(owner, T.IntersectionType):
+        return not _intersection_layouts(owner, env)
+    if isinstance(owner, (T.VarType, T.AnonymousTraitType)):
+        return True
+    return isinstance(owner, T.NominalType) and env.lookup_trait(owner.name) is not None
 
 
 def fields_type_owners(typ: T.Type) -> tuple[T.Type, ...] | None:
@@ -178,6 +247,23 @@ def reflection_requires_unsafe(owner: T.Type, env: Environment) -> bool:
     when their recursive edges expand generic arguments. Arguments are checked
     before cutting a recursive edge so they cannot conceal protected storage.
     """
+    def visit_view(typ: T.Type, active: frozenset[Symbol]) -> bool:
+        """Check refinement evidence while selected layouts account for storage."""
+        typ = T.normalize(typ)
+        if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
+            return visit_view(typ.inner, active)
+        if isinstance(typ, T.RowType):
+            return visit_view(typ.base, active) or any(visit(field.typ, active) for field in typ.fields)
+        if isinstance(typ, (T.UnionType, T.IntersectionType)):
+            return any(visit_view(item, active) for item in typ.items)
+        if isinstance(typ, T.NominalType):
+            return isinstance(typ, T.FFINamedType) or any(visit(argument, active) for argument in typ.args)
+        if isinstance(typ, T.AnonymousTraitType):
+            return any(isinstance(item, T.VarType) or (
+                isinstance(item, T.NominalType) and any(visit(arg, active) for arg in item.args)
+            ) for item in nested_types(typ))
+        return visit(typ, active)
+
     def visit(typ: T.Type, active: frozenset[Symbol]) -> bool:
         """Follow stored representation and type evidence on one graph path."""
         typ = T.normalize(typ)
@@ -202,6 +288,12 @@ def reflection_requires_unsafe(owner: T.Type, env: Environment) -> bool:
                     visit(field.type.typ, active | {typ.name})
                     for field in fields_for_type(typ, env).fields
                 )
+            variant = env.lookup_variant(typ.name)
+            if variant is not None:
+                if typ.name in active:
+                    return False
+                return any(visit(T.N(member, *typ.args), active | {typ.name})
+                           for member in variant.members)
             # Built-in scalar representations do not contain managed owners.
             # Unresolved nominal categories (including traits) lack that proof.
             return typ not in (T.Int, T.String)
@@ -211,9 +303,22 @@ def reflection_requires_unsafe(owner: T.Type, env: Environment) -> bool:
             return True
         if isinstance(typ, (T.NeverType, T.NoneTypeNode)):
             return False
-        if isinstance(typ, (T.CollectionType, T.TupleType, T.VariadicTupleType,
-                            T.RowType, T.UnionType, T.IntersectionType)):
-            return any(visit(child, active) for child in tuple(nested_types(typ))[1:])
-        return True
+        if isinstance(typ, T.IntersectionType):
+            layouts = _intersection_layouts(typ, env)
+            return (not layouts or any(visit(layout.owner.typ, active) for layout in layouts)
+                    or visit_view(typ, active))
+        if isinstance(typ, T.CollectionType):
+            children = (typ.base,)
+        elif isinstance(typ, T.TupleType):
+            children = typ.params
+        elif isinstance(typ, T.VariadicTupleType):
+            children = tuple(item.typ for item in typ.items)
+        elif isinstance(typ, T.RowType):
+            children = (typ.base, *(field.typ for field in typ.fields))
+        elif isinstance(typ, T.UnionType):
+            children = typ.items
+        else:
+            return True
+        return any(visit(child, active) for child in children)
 
     return visit(owner, frozenset())

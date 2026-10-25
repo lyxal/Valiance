@@ -30,6 +30,37 @@ from ..support import analysis_utils as _utils
 
 _MAX_RANK_BINDING_CANDIDATES = 1_024
 
+def _call_site_body_arguments(
+    args: tuple[T.Type, ...], applied: T.AppliedOverload, ctx: T.Context,
+) -> tuple[T.Type, ...]:
+    """Project actual input evidence through the call's checked vectorisation."""
+    def project(typ: T.Type, expected: T.Type, depth: int) -> T.Type:
+        """Retain the concrete type seen by one invocation of the scalar body."""
+        typ = T.normalize(typ)
+        if isinstance(typ, T.UnionType):
+            alternatives = []
+            for item in typ.items:
+                branch = T.try_apply_overload(T.Overload((expected,), ()), (item,), ctx).applied
+                alternatives.append(project(item, expected, branch.vectorised_depths[0]
+                                            if branch.vectorised_depths else 0))
+            return T.U(*alternatives)
+        if depth == 0:
+            return typ
+        if isinstance(typ, T.TaggedType):
+            return T.Tagged(project(typ.inner, expected, depth), *(
+                replace(tag, depth=tag.depth - depth) for tag in typ.tags if tag.depth >= depth
+            ))
+        if isinstance(typ, (T.NoVecType, T.ExactType)):
+            return project(typ.inner, expected, depth)
+        return T.C(type(typ), typ.base, typ.rank - depth) if typ.rank > depth else typ.base
+
+    if not applied.vectorised:
+        return args
+    return tuple(project(arg, expected, depth) for arg, expected, depth in zip(
+        args, applied.params, applied.vectorised_depths, strict=True,
+    ))
+
+
 def _candidate_apply_overload_to_branch(*args, **kwargs):
     """Lazily call the core candidate applicator without an import cycle."""
     from .candidates import _apply_overload_to_branch
@@ -95,8 +126,13 @@ def _call_site_checked_overload_signature(
                         checked_bodies.append(application.specialization)
                     applied = application.applied
                     return T.Overload(
-                        (*applied.params, function_type), applied.actual_returns,
+                        (*explicit, function_type), applied.actual_returns,
                         call_site_body=len(applied.params),
+                        runtime_static_values=(
+                            "__call_static__", applied.vectorised,
+                            applied.vectorised_depths, applied.vectorised_target_ranks,
+                            *applied.runtime_static_values,
+                        ),
                     )
                 if (
                     isinstance(candidate.call_site_body, tuple)
@@ -202,6 +238,7 @@ def _call_site_checked_overload_signature(
             static_values=static_values,
             friendly_owners=overload.reflection_friendly_owners,
             dependencies=analyser.env.call_site_dependency_scope(overload),
+            specialize_body=overload.specialize_body,
         )
         if analysis is None:
             return None

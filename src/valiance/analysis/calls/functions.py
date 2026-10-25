@@ -659,6 +659,7 @@ class _CallableValues:
         static_values: dict[str, int] | None = None,
         friendly_owners: frozenset[Symbol] = frozenset(),
         dependencies: tuple[object, ...] = (),
+        specialize_body: bool = False,
     ) -> FunctionAnalysis | None:
         """Analyse a deferred function using call-site static bindings."""
         if dependencies:
@@ -679,6 +680,7 @@ class _CallableValues:
                 outer, node, call_params, rank_values=rank_values, type_values=type_values,
                 where_evaluated=where_evaluated, static_values=static_values,
                 friendly_owners=friendly_owners,
+                specialize_body=specialize_body,
             )
         typed_node = cast(
             FunctionNode,
@@ -702,6 +704,11 @@ class _CallableValues:
         )
         if substituted_params is None:
             return None
+        if specialize_body:
+            substituted_params = tuple(
+                replace(param, typ=actual)
+                for param, actual in zip(substituted_params, call_params[-len(declared):], strict=True)
+            ) if declared else ()
         call_site_node = FunctionNode(
             params=substituted_params,
             body=tuple(
@@ -741,11 +748,21 @@ class _CallableValues:
             if write.variables is None:
                 return None
             variables = write.variables
+        explicit_types = call_params[-explicit_count:] if explicit_count else ()
+        cycle_types = explicit_types[1:] if node.object_friendly_receiver else explicit_types
+        initial_stack = stack_params + (tuple(
+            typ for index, (param, typ) in enumerate(zip(substituted_params, explicit_types, strict=True))
+            if param.name is None and not (node.object_friendly_receiver and index == 0)
+        ) if specialize_body else ())
         initial = AnalysisBranch(
-            stack=T.TypeStack(stack_params),
+            stack=T.TypeStack(initial_stack),
             inputs=call_params,
             variables=variables,
-            input_mode=InputMode.NILADIC,
+            input_mode=(InputMode.CYCLE_EXPLICIT_PARAMS
+                        if specialize_body and declared else InputMode.NILADIC),
+            cycle_params=cycle_types if specialize_body else (),
+            cycle_stack_remaining=len(cycle_types) if specialize_body else 0,
+            cycle_from_top=specialize_body,
             atomic_type_vars=(
                 outer.atomic_type_vars
                 | _functions._atomic_parameter_type_vars(call_params)

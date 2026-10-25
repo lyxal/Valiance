@@ -1086,6 +1086,20 @@ matching checked layout, releases temporary owners and produces independent
 metadata. A single choice records a statically known layout; multiple choices
 are ordered by static specificity. Cleanup panics use ordinary handlers. Qualified
 nominal cast names preserve module identity.
+Closed variants use this same payload: each choice describes a concrete member
+with its generic arguments. Unions containing variants flatten to concrete
+choices; no runtime discovery of unchecked member layouts is performed.
+Intersections with finite owner evidence use the same concrete choices after
+analysis filters them by their nominal and trait constraints. The runtime
+selects a recorded storage layout; abstract view constraints grant no field
+access authority and contribute no fabricated slots.
+
+Calls to a single checked reflective specialization retain a resolved `CALL`
+payload when vectorization or bound static inputs are required. The loaded specialized function supplies
+the implementation; the payload supplies the checked depths, target ranks,
+extension and return contracts. Function-value calls preserve their inner call
+plan, and hidden static inputs have zero vectorization depth. This uses the
+existing call payload format and bytecode version.
 
 `REFLECT_READ` (opcode `0x49`) consumes an owner occurrence and field descriptor.
 Its tuple payload contains the checked layout, a Boolean lexical private-access

@@ -1312,8 +1312,16 @@ def _apply_overload_to_branch(
         # the call; a collection receiver must not widen the descriptor's owner.
         receiver = T.normalize(args[0])
         owner = evidence[0]
-        if (isinstance(receiver, T.UnionType)
-                and not any(isinstance(item, T.CollectionType) for item in receiver.items)
+        storage = receiver
+        while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
+            storage = storage.inner
+        closed_owner = isinstance(storage, (T.UnionType, T.IntersectionType, T.RowType)) or (
+            isinstance(storage, T.NominalType) and env is not None
+            and env.lookup_variant(storage.name) is not None
+        )
+        if (closed_owner
+                and (not isinstance(storage, T.UnionType)
+                     or not any(isinstance(item, T.CollectionType) for item in storage.items))
                 and _utils._types_overlap(receiver, owner, ctx)):
             owner = receiver
         concrete = replace(overload, params=(owner, descriptor, *args[2:]))
@@ -1686,12 +1694,15 @@ def _apply_call_site_checked_overload(
         static_source.params, args
     ):
         rank_bound = _substitute_overload_ranks(static_source, initial_rank_values)
+        body_args = args
         if overload.specialize_body:
             solved = T.try_apply_overload(
                 replace(rank_bound, returns=()), args, ctx, generic_args=generic_args,
             ).applied
             if solved is None:
                 continue
+            body_args = _row_views_for_arguments(_call_site_body_arguments(args, solved, ctx),
+                                                rank_bound.params, env)
             _, source_node = overload.call_site_body
             if source_node.generic_scope_id is not None:
                 for index, argument in enumerate(generic_args):
@@ -1701,9 +1712,9 @@ def _apply_call_site_checked_overload(
                 rank_bound, lambda typ: _substitute_branch_type(typ, solved.substitution),
             )
         preliminary_substitution = (
-            _static_type_substitution(args, rank_bound.params, ctx)
+            _static_type_substitution(body_args, rank_bound.params, ctx)
             if static_source.where_clause
-            else _branch_argument_substitution(args, rank_bound.params, ctx)
+            else _branch_argument_substitution(body_args, rank_bound.params, ctx)
         )
         if overload.specialize_body and preliminary_substitution is not None:
             preliminary_substitution = {**preliminary_substitution, **solved.substitution}
@@ -1711,7 +1722,7 @@ def _apply_call_site_checked_overload(
             continue
         where_result = _evaluate_where_clause(
             static_source,
-            args,
+            body_args,
             initial_rank_values,
             preliminary_substitution,
         )
@@ -1735,7 +1746,7 @@ def _apply_call_site_checked_overload(
             static_source,
             lambda typ: static_where.substitute_static_type(typ, ranks=rank_values, types=preliminary_substitution),
         )
-        if not _call_site_explicit_args_match(specialized_source.params, args, ctx):
+        if not _call_site_explicit_args_match(specialized_source.params, body_args, ctx):
             continue
 
         deferred = replace(
@@ -1786,7 +1797,7 @@ def _apply_call_site_checked_overload(
                 if preview is None:
                     continue
                 stack_args, _ = preview
-            call_params = stack_args + args
+            call_params = stack_args + body_args
             checked_bodies: list[TypedFunctionNode | TypedFunctionDispatchNode] = []
             concrete = _call_site_checked_overload_signature(
                 deferred,
@@ -1893,6 +1904,7 @@ def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
 
 
 from .vectorisation import (
+    _call_site_body_arguments,
     _call_site_explicit_args_match,
     _call_site_checked_overload_signature,
     _call_site_consumed_count,

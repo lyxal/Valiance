@@ -24,8 +24,10 @@ from valiance.vtypes.nodes import (
     ElementTag,
     FunctionType,
     GenericConstraint,
+    IntersectionType,
     NeverType,
     NominalType,
+    RowType,
     TaggedType,
     NoVecType,
     ExactType,
@@ -419,6 +421,14 @@ class Environment:
                 tag for argument in typ.args for tag in self.destructor_effects(argument, _active=_active)
             )
             return own | nested
+        if isinstance(typ, IntersectionType):
+            from valiance.vtypes.reflection import fields_for_value
+
+            layouts = fields_for_value(typ, self).alternatives
+            owners = tuple(layout.owner.typ for layout in layouts) if layouts else typ.items
+            return frozenset(
+                tag for owner in owners for tag in self.destructor_effects(owner, _active=_active)
+            )
         if isinstance(typ, UnionType):
             return frozenset(
                 tag for item in typ.items for tag in self.destructor_effects(item, _active=_active)
@@ -428,6 +438,8 @@ class Environment:
                 tag for item in typ.params for tag in self.destructor_effects(item, _active=_active)
             )
         if isinstance(typ, CollectionType):
+            return self.destructor_effects(typ.base, _active=_active)
+        if isinstance(typ, RowType):
             return self.destructor_effects(typ.base, _active=_active)
         if isinstance(typ, (TaggedType, NoVecType, ExactType)):
             return self.destructor_effects(typ.inner, _active=_active)

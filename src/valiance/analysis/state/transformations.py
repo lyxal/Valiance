@@ -22,6 +22,7 @@ from valiance.asts import (
     TypedUnsafeNode,
     TypedFieldsNode,
     TypedReflectiveReadNode,
+    TypedReturnNode,
     TypedDescriptorConversionNode,
     TypedElementExtension,
     TypedElementNode,
@@ -168,6 +169,10 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
                        fallback_body=_refine_typed_body(typed_node.fallback_body, old, new))
     if isinstance(typed_node, (TypedFieldsNode, TypedReflectiveReadNode)):
         return replace(typed_node, typ=typ)
+    if isinstance(typed_node, TypedReturnNode):
+        return replace(typed_node, typ=typ, expressions=tuple(
+            _refine_typed_body(expression, old, new) for expression in typed_node.expressions
+        ))
     if isinstance(typed_node, TypedUnsafeNode):
         return TypedUnsafeNode(
             typed_node.node, typ, _refine_typed_body(typed_node.body, old, new)
