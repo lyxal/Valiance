@@ -21,6 +21,7 @@ from valiance.asts import (
     TypedConcurrentNode,
     TypedUnsafeNode,
     TypedFieldsNode,
+    TypedTypeMetadataNode,
     TypedReflectiveReadNode,
     TypedReturnNode,
     TypedDescriptorConversionNode,
@@ -28,6 +29,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedExtensionPatternRule,
     TypedFunctionNode,
+    TypedFunctionDispatchNode,
     TypedForNode,
     TypedReflectiveForNode,
     TypedIfNode,
@@ -88,7 +90,7 @@ def transform_type_children(
     if isinstance(typ, T.VariadicTupleType):
         return T.TupVariadic(*(T.TupleTypeItem(transform(item.typ), item.repeated) for item in typ.items))
     if isinstance(typ, T.RowType):
-        return T.Row(transform(typ.base), *(T.Field(item.name, transform(item.typ)) for item in typ.fields))
+        return T.normalize(type(typ)(transform(typ.base), tuple(T.Field(item.name, transform(item.typ)) for item in typ.fields)))
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), transform(typ.base), typ.rank)
     if isinstance(typ, T.FunctionType):
@@ -167,8 +169,13 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
                        choices=tuple((_refine_type(target, old, new), _refine_typed_body(body, old, new))
                                      for target, body in typed_node.choices),
                        fallback_body=_refine_typed_body(typed_node.fallback_body, old, new))
-    if isinstance(typed_node, (TypedFieldsNode, TypedReflectiveReadNode)):
+    if isinstance(typed_node, (TypedFieldsNode, TypedReflectiveReadNode, TypedTypeMetadataNode)):
         return replace(typed_node, typ=typ)
+    if isinstance(typed_node, TypedFunctionDispatchNode):
+        return replace(typed_node, typ=typ, specializations=tuple(
+            (identity, None if body is None else _refine_typed_node(body, old, new), values)
+            for identity, body, values in typed_node.specializations
+        ))
     if isinstance(typed_node, TypedReturnNode):
         return replace(typed_node, typ=typ, expressions=tuple(
             _refine_typed_body(expression, old, new) for expression in typed_node.expressions

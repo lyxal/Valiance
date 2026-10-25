@@ -15,6 +15,46 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_erased_reflection_and_category_queries_specialize_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+public define[T] names(value: T) =>
+  $names: String* = []
+  unsafe =>
+    $value fields foreach(field) => $names := $names append $field.name end
+  end
+  $names
+end
+public define[T] info(value: T) => typeInfo[T] end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(['compile-module', '--file', str(library),
+                                          '--output', str(library.with_suffix('.vbcm'))]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector.names, reflector.info}
+trait View => end
+object[T] Box => public $value: T end
+object[T] Box as View => end
+$first: View = Box(7)
+names($first)
+$second: View = Box("hello")
+names($second)
+names(record{z => 7, a => "hello"})
+$metadata = info(Box(7))
+$metadata.arguments[0]
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                stack = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual(stack[:3], [['value'], ['value'], ['z', 'a']])
+                self.assertEqual(stack[3].type_args, ('Int',))
+
     def test_imported_enum_members_are_niladic_elements(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
@@ -1168,7 +1208,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x09"))
+        self.assertTrue(first.startswith(b"VLNI\x0a"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -1185,10 +1225,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x09{"schema":9,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x0a{"schema":10,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x09{"schema":9,"value":null}trailing'
+                b'VLNI\x0a{"schema":10,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -1196,7 +1236,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x09{"schema":9,"value":')
+            loads_interface(b'VLNI\x0a{"schema":10,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

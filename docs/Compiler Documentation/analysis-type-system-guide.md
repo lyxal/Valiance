@@ -1291,7 +1291,10 @@ Important invariants:
   bodies retain actual input types and explicit-parameter cycling; vectorized
   input evidence is projected to the scalar invocation before checking. A
   nominal structural row selects its base owner's declared storage and canonical
-  descriptor owner. Fully erased receivers remain unsupported and diagnosed.
+  descriptor owner. Fully erased receivers use a finite compiler-discovered shape universe.
+  Discovery isolates provisional analysis from published diagnostics, traces and
+  observations; the final pass checks every candidate callback. Anonymous record
+  literals retain complete `RecordType` storage, distinct from open row requirements.
   Intersections select finite owner candidates from their concrete constituents
   and filter them through ordinary nominal/trait relations. Occurrence tags and
   row constraints do not add storage; descriptor identities and field types come

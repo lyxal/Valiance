@@ -8,13 +8,13 @@ some infrastructure does not mean earlier stages are complete.
 
 | Spec stage | Status | Implemented scope and remaining work |
 | --- | --- | --- |
-| R0: type and field metadata | Concrete owners, generic call sites, finite runtime unions and closed variants implemented | Exact owner and field type evidence, generic arguments, declaration order, visibility, and field identity. Value-based enumeration selects a checked layout for finite distinguishable unions and active variant members. Type-based enumeration describes the requested type's own storage. Erased open trait and structural receiver shape selection remains pending. |
+| R0: type and field metadata | Concrete and erased managed owners implemented | Exact owner and field type evidence, generic arguments, declaration order, visibility, and field identity. Value-based enumeration selects a checked layout for finite distinguishable unions and active variant members. Type-based enumeration describes the requested type's own storage. Erased nominal/anonymous traits and structural receivers select from a discovered finite compiled owner universe. Anonymous record literals retain complete, reified storage shapes. |
 | R1: heterogeneous `foreach` | Concrete, finite-union and closed-variant metadata iteration implemented | Each possible declared field gets a separately checked callback with its actual `Type[T]` evidence and exact owner-read result. Runtime selection invokes only the actual layout's callbacks. Generic helpers, overload selection, nested loops, index parameters, shared bindings, and break/return are supported. |
 | R2: CSTC over reflective outputs | Concrete call-site specialization implemented | Generic metadata, reads and iteration defer to concrete call sites, including through nonrecursive helpers, trait and structural parameters, and function values. Checked executable bodies retain layouts and exact callback types; escaping transformed results combine conservatively. Empty layouts skip callback instantiation. Inferred recursive reflection is unsupported. |
 | R3: dynamic selection, reads and writes | Lookup, direct access and fallible access implemented | String indexing always performs dynamic metadata lookup; missing names raise `KeyFault`. `field?` returns an optional descriptor. Direct and fallible reads retain exact callback types and conservative dynamic unions. Direct writes and non-consuming `write?` use checked destination compatibility without invoking conversions. `read?` and `write?` return ordinary Results with named reflection errors. Explicit descriptor-directed `to` and `to?` conversions use checked ordinary providers and exact runtime target selection. |
 | R4: permission and ownership integrity | Direct and fallible access contracts implemented | Lexical `unsafe` and conservative transitive `@nodup` checks gate metadata and value access. Descriptors carry no authority or owner instance. Access validates identity before visibility; writes check types last. Fallible writes preserve the original owner on success and failure and discard rejected replacements normally. Eager and lazy fallible outputs retain managed ownership. `DuplicationFault` bypasses handlers and testing helpers, including across task observation, aggregation and cancellation cleanup. |
 | R5: managed `Uninit[T]` | Implemented for concrete managed object layouts and generic call sites | Empty storage, checked dynamic initialization and replacement, non-consuming `finished?`, consuming `finish`/`finish?`, and cleanup of initialized fields. All construction operations require lexical `unsafe`. Native/opaque storage remains unsupported. |
-| R6: broader categories and `std.json` | Pending | Category-specific reflection and the end-to-end serialization proof. Empty `fields[T]` for non-storage concrete types does not imply those category-specific APIs exist. |
+| R6: broader categories and `std.json` | Category metadata implemented; JSON pending | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. The end-to-end `std.json` proof remains separate work. |
 
 ## Supported metadata surface
 
@@ -28,7 +28,7 @@ Generic-owner operations require concrete evidence at their call sites. Value-ba
 enumeration over `A | B` selects between checked `Fields[A]` and `Fields[B]` layouts,
 including empty alternatives. In contrast, `fields[A | B]` is empty because a union
 type itself declares no storage. All possible callbacks must check, even if a
-particular call's runtime value selects only one layout. Open-ended or ambiguous
+particular call's runtime value selects only one layout. Unresolved or ambiguous
 runtime owner selection produces diagnostics rather than empty collections. No public erased reflection
 type or extra `Field` type argument is introduced. Metadata enumeration includes
 private fields. Direct reads and writes enforce ordinary visibility unless
@@ -52,9 +52,9 @@ static inputs broadcast and lazy calls retain the definition's closure.
 Structural row views of concrete nominal owners enumerate the owner's declared
 storage, including private fields; row requirements do not add physical fields.
 Descriptors identify the nominal storage owner, so ordinary access, visibility
-and reconstruction apply. A row whose base remains abstract, an anonymous record,
-or an erased trait value still lacks supported storage evidence. These receivers
-are diagnosed rather than exposed as empty object layouts. Type-based queries
+and reconstruction apply. Abstract rows and erased traits select among the concrete shapes discovered by
+ordinary checking. Anonymous record literals carry complete `RecordType` evidence
+and a runtime storage signature; row requirements alone do not declare storage. Type-based queries
 continue to describe only the requested type's own declared storage.
 
 Intersections containing finite concrete owner evidence select from those checked
@@ -68,8 +68,8 @@ the selected storage owner's identity and declaration types. Type-based
 The ownership proof follows the selected layouts and retains conservative checks
 on generic arguments and row field evidence. Release effects follow the same
 selected owners, so excluded layouts do not contribute cleanup effects. An
-intersection of open traits alone still requires concrete caller evidence and
-cannot discover unchecked layouts at runtime.
+intersection of open traits uses the same finite compiled universe. The VM never
+discovers or instantiates an unchecked callback.
 
 Union overload dispatch retains a checked specialization for each possible input
 combination. A helper accepting invariant `Field[T]` can receive
@@ -91,7 +91,7 @@ solving accepts the union use the shared specialization path.
   [compiler](../../src/valiance/runtime/compiler.py), and
   [VM](../../src/valiance/runtime/vm.py): managed metadata and execution.
 - [Bytecode guide](../Compiler%20Documentation/runtime-codegen-guide.md#bytecode-files):
-  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x3F**;
+  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x40**, with analysed interface schema **10**;
   older compiled artifacts require recompilation.
 
 ## Managed construction
@@ -174,7 +174,7 @@ Open-parameter specialization coverage includes nominal and anonymous trait
 conformance, structural nominal rows, implicit cycle inputs, homogeneous and
 heterogeneous nested vectors, static-input broadcasting, lazy closure lifetimes,
 protected owner borrowing and cleanup, lexical permissions, source-free helpers,
-and rejection of erased receivers and invalid callbacks.
+erased receivers, and rejection of invalid callbacks.
 
 Intersection coverage includes finite union filtering, generic trait arguments,
 generic variant members and parent variance,
@@ -184,7 +184,20 @@ source-free helper specialization. It also checks compositional ownership proofs
 release effects, union-constituent subtyping and preservation of checked return
 expressions during branch refinement.
 
-The next integration work is open-category owner-shape selection, broader category
-reflection and the `std.json` serialization proof. These operations must preserve
-the same evidence, failure precedence and ownership rules. Pending surfaces should not be inferred
-to work from the implemented metadata and access APIs alone.
+Erased-owner discovery runs in isolated analysis state until the reachable type
+set stabilizes, then the authoritative pass checks every selected callback.
+Provisional failures cannot prevent discovery of independent later value origins.
+Diagnostics, traces and source-query observations come from the authoritative
+pass. Discovery has a 64-pass compiler resource limit; nonconvergence is diagnosed.
+Generic and source-free call-site templates participate in discovery. This is a
+closed compiled universe, not runtime type-definition discovery.
+
+Category metadata regression coverage includes generic evidence, union and variant
+children, record declaration order and reconstruction, optional payloads, list
+ranks, dictionary keys/values, callable signatures/effects, task outputs, enum
+names, tag facts and resource annotations. Recipes, complete record shapes and
+checked operations survive analysed-interface and optimized/unoptimized bytecode
+round trips. Malformed recipes and layouts are rejected before execution.
+
+The next integration work is the `std.json` serialization proof. Native/opaque
+storage construction and runtime-defined novel types remain unsupported.

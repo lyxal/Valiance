@@ -19,6 +19,7 @@ from valiance.asts import (
     UnsafeNode,
     FieldsNode,
     TypedFieldsNode,
+    TypedTypeMetadataNode,
     TypedUnsafeNode,
     DictLiteralNode,
     ElementTagDeclarationNode,
@@ -484,14 +485,6 @@ def _fields_node(
         )
         if len(self.diagnostics) != before:
             return _core.BranchSet()
-    from valiance.vtypes.reflection import value_fields_need_specialization
-    if consumes and self.defer_reflection and value_fields_need_specialization(owner, self.env):
-        raise _core.ReflectionSpecializationRequired(owner)
-    if not self.require_reflection_permission(owner, node):
-        return _core.BranchSet()
-    if _functions._contains_type_var(owner):
-        self._diagnose("runtime-generic field enumeration is not implemented yet", node)
-        return _core.BranchSet()
     from valiance.vtypes.structural import nested_types
     for nested in nested_types(owner):
         if isinstance(nested, T.NominalType) and not isinstance(nested, T.FFINamedType):
@@ -501,8 +494,28 @@ def _fields_node(
             if declaration is not None and len(nested.args) != len(declaration.generics):
                 self._diagnose(f"field enumeration requires complete generic arguments for {nested.name}", node)
                 return _core.BranchSet()
+    if node.operation != "fields":
+        if _functions._contains_type_var(owner):
+            if self.defer_reflection:
+                raise _core.ReflectionSpecializationRequired(owner)
+            self._diagnose("type metadata requires concrete type evidence", node)
+            return _core.BranchSet()
+        from valiance.vtypes.reflection import type_metadata
+        typ, payload = type_metadata(owner, self.env, node.operation)
+        return _core.BranchSet((branch.push(typ).emit(TypedTypeMetadataNode(node, typ, payload)),))
+    from valiance.vtypes.reflection import value_fields_need_specialization
+    if consumes and self.defer_reflection and value_fields_need_specialization(owner, self.env):
+        raise _core.ReflectionSpecializationRequired(owner)
+    if not self.require_reflection_permission(owner, node):
+        return _core.BranchSet()
+    if _functions._contains_type_var(owner):
+        self._diagnose("runtime-generic field enumeration is not implemented yet", node)
+        return _core.BranchSet()
     from valiance.vtypes.reflection import fields_for_value
     metadata = fields_for_value(owner, self.env) if consumes else self.env.field_metadata(owner)
+    if (consumes and value_fields_need_specialization(owner, self.env) and not metadata.alternatives
+            and self.env.reflection_universe is not None and self.env.reflection_universe.collecting):
+        metadata = self.env.field_metadata(T.Int)
     possibilities = (tuple(layout.owner.typ for layout in metadata.alternatives)
                      if metadata.alternatives else (metadata.owner.typ,))
     def storage_type(typ):
@@ -512,8 +525,11 @@ def _fields_node(
         return typ
     possibilities = tuple(storage_type(item) for item in possibilities)
     if consumes and any(
-        isinstance(item, (T.IntersectionType, T.RowType, T.AnonymousTraitType))
+        isinstance(item, (T.IntersectionType, T.AnonymousTraitType))
+        or isinstance(item, T.RowType) and not isinstance(item, T.RecordType)
         or isinstance(item, T.NominalType) and (
+            item.name == Symbol("record")
+            or
             self.env.lookup_trait(item.name) is not None
             or self.env.lookup_variant(item.name) is not None
         ) for item in possibilities
@@ -531,6 +547,8 @@ def _fields_node(
         for index, left in enumerate(layouts):
             for right in layouts[index + 1:]:
                 a, b = left.owner.typ, right.owner.typ
+                if isinstance(a, T.RecordType) and isinstance(b, T.RecordType):
+                    continue
                 if (_utils._types_overlap(a, b, self.env.context)
                         and not T.assignable(a, b, self.env.context)
                         and not T.assignable(b, a, self.env.context)):

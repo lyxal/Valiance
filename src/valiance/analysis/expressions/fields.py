@@ -232,6 +232,18 @@ class _FieldExpressions:
         if isinstance(receiver_type, T.UnionType) and field_type_evidence(receiver_type) is not None:
             properties = tuple(self._field_type(item, name, branch, write=write)[0] for item in receiver_type.items)
             return (T.U(*properties), None) if all(item is not None for item in properties) else (None, None)
+        metadata_base = receiver_type.base if isinstance(receiver_type, T.RowType) else receiver_type
+        if isinstance(metadata_base, T.NominalType) and metadata_base.name == Symbol("TypeInfo"):
+            if write or len(metadata_base.args) != 1:
+                return None, None
+            if _functions._contains_type_var(metadata_base.args[0]):
+                if self.defer_reflection:
+                    from valiance.analysis.calls.models import ReflectionSpecializationRequired
+                    raise ReflectionSpecializationRequired(metadata_base.args[0])
+                return None, None
+            from valiance.vtypes.reflection import type_metadata
+            schema, _ = type_metadata(metadata_base.args[0], self.env)
+            return _utils._row_field_type(schema, name), None
         evidence = field_type_evidence(receiver_type)
         if evidence is not None:
             from valiance.vtypes.reflection import fields_for_value

@@ -15,6 +15,39 @@ from valiance.parsing import parse
 class ExpressionBoundaryTests(unittest.TestCase):
     """Verify value expressions are owned outside the analyser façade."""
 
+    def test_erased_callbacks_check_shapes_created_after_the_first_invocation(self):
+        source = '''
+trait View => end
+object A => public $value: String end
+object B => public $value: Int end
+object A as View => end
+object B as View => end
+define inspect(value: View) =>
+  unsafe =>
+    $value fields foreach(field) => $value[$field] | length end
+  end
+end
+$first: View = A("hello")
+inspect($first)
+$later: View = B(7)
+inspect($later)
+'''
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_category_metadata_rejects_undefined_incomplete_and_mutable_evidence(self):
+        for source in (
+            'typeInfo[Missing]',
+            'record{x => 7, x => "duplicate"} fields',
+            'object[T] Box => public $value: T end\ntypeInfo[Box]',
+            '$info = typeInfo[Int]\n$info.name = "changed"',
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
+
     def test_intersection_reflection_checks_all_reachable_callbacks_and_protected_layouts(self):
         declaration = '''
 trait View => end
@@ -28,10 +61,6 @@ $owner: (A | B) & View = B("hello")
             declaration + '$owner fields foreach(field) => $owner[$field] | length end',
             declaration.replace('object A =>', '@nodup("protected")\nobject A =>')
             + '$owner fields',
-            'trait Left => end\ntrait Right => end\n'
-            'define inspect(value: Left & Right) => unsafe => $value fields end end\n'
-            'object Owner => end\nobject Owner as Left => end\nobject Owner as Right => end\n'
-            '$erased: Left & Right = Owner\ninspect($erased)',
         ):
             with self.subTest(source=source):
                 analyser = Analyser()
@@ -51,8 +80,6 @@ object Other => end
              'unsafe => inspect(Resource(7)) end'),
             ('define inspect(value: View) => unsafe => $value fields | length end end',
              'inspect(Other)'),
-            ('define inspect(value: View) => unsafe => $value fields | length end end',
-             '$erased: View = Resource(7)\ninspect($erased)'),
         ):
             with self.subTest(call=call):
                 analyser = Analyser()
@@ -75,7 +102,7 @@ inspect(pick(0))
 '''))
         self.assertTrue(analyser.diagnostics)
 
-    def test_erased_structural_storage_is_diagnosed_instead_of_empty_metadata(self):
+    def test_erased_structural_storage_retains_record_layouts(self):
         for source in (
             'unsafe => record{number => 7} fields end',
             'define inspect(value: trait => end) => unsafe => $value fields end end\n'
@@ -84,7 +111,7 @@ inspect(pick(0))
             with self.subTest(source=source):
                 analyser = Analyser()
                 analyser.analyse(parse(source))
-                self.assertTrue(analyser.diagnostics)
+                self.assertEqual(analyser.diagnostics, [])
 
     def test_variant_reflection_checks_callbacks_for_inactive_members(self):
         analyser = Analyser()

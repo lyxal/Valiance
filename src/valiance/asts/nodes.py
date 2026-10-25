@@ -332,6 +332,13 @@ class TypedFieldsNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedTypeMetadataNode(TypedNode):
+    """Checked, owner-free category metadata lowered without runtime type discovery."""
+
+    payload: tuple = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedConstructionNode(TypedFieldsNode):
     """A checked managed construction operation with concrete owner evidence."""
 
@@ -561,6 +568,7 @@ class FieldsNode(ASTNode):
     """Enumerate storage for an explicit type or a stack-sourced value."""
 
     owner: Type | None = None
+    operation: str = "fields"
 
 
 @dataclass(frozen=True)

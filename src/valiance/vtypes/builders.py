@@ -30,6 +30,7 @@ from valiance.vtypes.nodes import (
     RankVariable,
     RowField,
     RowType,
+    RecordType,
     TaggedType,
     TaskType,
     TupleType,
@@ -400,9 +401,10 @@ def normalize(t: Type) -> Type:
         return type(t)(base, t.rank)
 
     if isinstance(t, RowType):
-        return RowType(
+        return type(t)(
             normalize(t.base),
-            _normalize_row_fields(t.fields),
+            tuple(RowField(item.name, normalize(item.typ)) for item in t.fields)
+            if isinstance(t, RecordType) else _normalize_row_fields(t.fields),
         )
 
     if isinstance(t, FunctionType):
@@ -680,7 +682,7 @@ def _alpha_canonicalize(
             )
         )
     if isinstance(t, RowType):
-        return RowType(
+        return type(t)(
             _alpha_canonicalize(t.base, scope, depth),
             tuple(
                 RowField(

@@ -135,13 +135,13 @@ def _parameter_value_type(typ: T.Type) -> T.Type:
             )
         )
     if isinstance(typ, T.RowType):
-        return T.Row(
+        return T.normalize(type(typ)(
             _parameter_value_type(typ.base),
-            *(
+            tuple(
                 T.Field(field.name, _parameter_value_type(field.typ))
                 for field in typ.fields
             ),
-        )
+        ))
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), _parameter_value_type(typ.base), typ.rank)
     if isinstance(typ, T.TaggedType):
@@ -223,9 +223,9 @@ def _restore_type_markers(declared: T.Type, inferred: T.Type) -> T.Type:
             )
     if isinstance(declared, T.RowType) and isinstance(inferred, T.RowType):
         declared_fields = {field.name: field.typ for field in declared.fields}
-        return T.Row(
+        return T.normalize(type(inferred)(
             _restore_type_markers(declared.base, inferred.base),
-            *(
+            tuple(
                 T.Field(
                     field.name,
                     _restore_type_markers(
@@ -235,7 +235,7 @@ def _restore_type_markers(declared: T.Type, inferred: T.Type) -> T.Type:
                 )
                 for field in inferred.fields
             ),
-        )
+        ))
     if isinstance(declared, T.CollectionType) and isinstance(
         inferred,
         T.CollectionType,
@@ -355,9 +355,9 @@ def _is_call_site_checked_param(typ: T.Type | None) -> bool:
 
 def _has_reflection_plan(value: object) -> bool:
     """Find executable reflection decisions retained in a checked body."""
-    from valiance.asts import TypedFieldsNode, TypedReflectiveReadNode, TypedReflectiveForNode, TypedDescriptorConversionNode
+    from valiance.asts import TypedTypeMetadataNode, TypedFieldsNode, TypedReflectiveReadNode, TypedReflectiveForNode, TypedDescriptorConversionNode
 
-    if isinstance(value, (TypedFieldsNode, TypedReflectiveReadNode, TypedReflectiveForNode, TypedDescriptorConversionNode)):
+    if isinstance(value, (TypedFieldsNode, TypedTypeMetadataNode, TypedReflectiveReadNode, TypedReflectiveForNode, TypedDescriptorConversionNode)):
         return True
     if isinstance(value, TypedElementNode) and value.specialization is not None:
         return True

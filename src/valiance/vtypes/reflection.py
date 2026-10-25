@@ -6,7 +6,7 @@ granting permission to access their values. They are not language runtime values
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -66,6 +66,31 @@ class FieldsDescriptor:
         return next((field for field in self.fields if field.name == name), None)
 
 
+@dataclass
+class ReflectionUniverse:
+    """Reachable closed-world receiver shapes shared by one module's analysers."""
+
+    types: set[T.Type] = field(default_factory=set)
+    collecting: bool = True
+    requested: bool = False
+
+    def observe(self, typ: T.Type, env: Environment) -> None:
+        """Retain concrete representations reached by ordinary type checking."""
+        for item in nested_types(typ):
+            if any(isinstance(child, T.VarType) for child in nested_types(item)):
+                continue
+            if isinstance(item, T.NominalType):
+                variant = env.lookup_variant(item.name)
+                if variant is not None and len(item.args) == len(variant.generics):
+                    for member in variant.members:
+                        self.observe(T.N(member, *item.args), env)
+            if (isinstance(item, T.NominalType) and env.lookup_object(item.name) is not None
+                    or item in (T.Int, T.Real, T.Number, T.String, T.NoneType())
+                    or isinstance(item, (T.CollectionType, T.TupleType))
+                    or isinstance(item, T.RecordType)):
+                self.types.add(item)
+
+
 def field_type_evidence(typ: T.Type) -> tuple[T.Type, T.Type | None] | None:
     """Recover an owner and an optional opened field witness from a descriptor view."""
     typ = T.normalize(typ)
@@ -112,6 +137,11 @@ def fields_for_type(owner: T.Type, env: Environment) -> FieldsDescriptor:
     storage = descriptor.typ
     while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
         storage = storage.inner
+    if isinstance(storage, T.RecordType):
+        return FieldsDescriptor(descriptor, tuple(
+            FieldDescriptor(descriptor, field.name.text, index, TypeDescriptor(field.typ), Visibility.PUBLIC)
+            for index, field in enumerate(storage.fields)
+        ))
     definition = (
         env.lookup_object(storage.name)
         if isinstance(storage, T.NominalType)
@@ -145,6 +175,18 @@ def fields_for_type(owner: T.Type, env: Environment) -> FieldsDescriptor:
 def fields_for_value(owner: T.Type, env: Environment) -> FieldsDescriptor:
     """Resolve storage evidence through nominal views, unions and variants."""
     owner = T.normalize(owner)
+    if (env.reflection_universe is not None
+            and not isinstance(owner, (T.TaggedType, T.NoVecType, T.ExactType))
+            and value_fields_need_specialization(owner, env)
+            and not any(isinstance(item, T.VarType) for item in nested_types(owner))):
+        universe = env.reflection_universe
+        universe.requested = True
+        alternatives = tuple(fields_for_type(item, env) for item in sorted(universe.types, key=T.show)
+                             if T.assignable(item, _shape_view_constraint(owner), env.context))
+        return FieldsDescriptor(TypeDescriptor(owner),
+                                tuple(field for layout in alternatives for field in layout.fields), alternatives)
+    if isinstance(owner, T.RecordType):
+        return fields_for_type(owner, env)
     if isinstance(owner, T.RowType) and not value_fields_need_specialization(owner, env):
         return fields_for_value(owner.base, env)
     if isinstance(owner, T.IntersectionType):
@@ -171,6 +213,19 @@ def fields_for_value(owner: T.Type, env: Environment) -> FieldsDescriptor:
                                 tuple(field for layout in alternatives for field in layout.fields),
                                 alternatives)
     return fields_for_type(owner, env)
+
+
+def _shape_view_constraint(owner: T.Type) -> T.Type:
+    """Keep structural requirements while projecting occurrence wrappers to storage."""
+    if isinstance(owner, (T.TaggedType, T.NoVecType, T.ExactType)):
+        return _shape_view_constraint(owner.inner)
+    if isinstance(owner, T.RowType):
+        return T.normalize(type(owner)(_shape_view_constraint(owner.base), owner.fields))
+    if isinstance(owner, T.UnionType):
+        return T.U(*(_shape_view_constraint(item) for item in owner.items))
+    if isinstance(owner, T.IntersectionType):
+        return T.I(*(_shape_view_constraint(item) for item in owner.items))
+    return owner
 
 
 def _storage_constraint(owner: T.Type) -> T.Type:
@@ -207,6 +262,8 @@ def value_fields_need_specialization(owner: T.Type, env: Environment) -> bool:
         return value_fields_need_specialization(owner.inner, env)
     if isinstance(owner, T.RowType):
         base = T.normalize(owner.base)
+        if isinstance(owner, T.RecordType):
+            return any(isinstance(item, T.VarType) for item in nested_types(owner))
         while isinstance(base, (T.TaggedType, T.NoVecType, T.ExactType)):
             base = base.inner
         if isinstance(base, T.UnionType):
@@ -223,7 +280,7 @@ def value_fields_need_specialization(owner: T.Type, env: Environment) -> bool:
         return not _intersection_layouts(owner, env)
     if isinstance(owner, (T.VarType, T.AnonymousTraitType)):
         return True
-    return isinstance(owner, T.NominalType) and env.lookup_trait(owner.name) is not None
+    return isinstance(owner, T.NominalType) and (owner.name == Symbol("record") or env.lookup_trait(owner.name) is not None)
 
 
 def fields_type_owners(typ: T.Type) -> tuple[T.Type, ...] | None:
@@ -314,7 +371,7 @@ def reflection_requires_unsafe(owner: T.Type, env: Environment) -> bool:
         elif isinstance(typ, T.VariadicTupleType):
             children = tuple(item.typ for item in typ.items)
         elif isinstance(typ, T.RowType):
-            children = (typ.base, *(field.typ for field in typ.fields))
+            children = (() if isinstance(typ, T.RecordType) else (typ.base,)) + tuple(field.typ for field in typ.fields)
         elif isinstance(typ, T.UnionType):
             children = typ.items
         else:
@@ -322,3 +379,111 @@ def reflection_requires_unsafe(owner: T.Type, env: Environment) -> bool:
         return any(visit(child, active) for child in children)
 
     return visit(owner, frozenset())
+
+
+def type_metadata(owner: T.Type, env: Environment, operation: str = "typeInfo") -> tuple[T.Type, tuple]:
+    """Describe category structure with exact evidence and portable constant recipes.
+
+    Collections expose element types, never fabricated storage slots. Compound
+    types retain their normalized children; variant cases retain declaration order.
+    Metadata recipes contain no owner occurrence or lexical access capability.
+    """
+    owner = T.normalize(owner)
+
+    def evidence(typ: T.Type) -> tuple[T.Type, tuple]:
+        """Pair one exact type witness with its allocation recipe."""
+        return T.N(Symbol("Type"), typ), ("type", T.show(typ))
+
+    def sequence(types) -> tuple[T.Type, tuple]:
+        """Keep a union of exact witnesses in an ordinary iterable metadata list."""
+        children = tuple(evidence(item) for item in types)
+        return T.ExactList(T.U(*(item[0] for item in children))), ("list", tuple(item[1] for item in children))
+
+    storage = owner
+    tags = ()
+    while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
+        if isinstance(storage, T.TaggedType):
+            tags += tuple(sorted(storage.tags))
+        storage = storage.inner
+    nominal = storage if isinstance(storage, T.NominalType) else None
+    variant = None if nominal is None else env.lookup_variant(nominal.name)
+    definition = None if nominal is None else env.lookup_object(nominal.name)
+    enum = None if nominal is None else env.lookup_enum(nominal.name)
+    alternatives = sorted(storage.items, key=T.show) if isinstance(storage, T.UnionType) else ()
+    optional_payloads = tuple(item.args[0] for item in alternatives
+                              if isinstance(item, T.NominalType) and item.name == Symbol("Some") and len(item.args) == 1)
+    is_optional = (bool(optional_payloads) and any(isinstance(item, T.NoneTypeNode) for item in alternatives)
+                   and len(optional_payloads) + 1 == len(alternatives))
+    cases = () if variant is None else tuple(T.N(member, *nominal.args) for member in variant.members)
+    if operation in {"alternatives", "cases"}:
+        return sequence(alternatives if operation == "alternatives" else cases)
+    category = (
+        "tagged" if isinstance(owner, T.TaggedType) else
+        "ffi" if isinstance(storage, T.FFINamedType) else
+        "optional" if is_optional else
+        "dictionary" if nominal is not None and nominal.name == Symbol("Dict") else
+        "union" if isinstance(storage, T.UnionType) else
+        "intersection" if isinstance(storage, T.IntersectionType) else
+        "record" if isinstance(storage, T.RowType) and storage.base == T.N(Symbol("record")) else
+        "row" if isinstance(storage, T.RowType) else
+        "list" if isinstance(storage, T.CollectionType) else
+        "tuple" if isinstance(storage, (T.TupleType, T.VariadicTupleType)) else
+        "function" if isinstance(storage, (T.FunctionType, T.OverloadSetType)) else
+        "task" if isinstance(storage, T.TaskType) else
+        "trait" if isinstance(storage, T.AnonymousTraitType) or nominal is not None and env.lookup_trait(nominal.name) is not None else
+        "variant" if variant is not None else
+        "enum" if nominal is not None and env.lookup_enum(nominal.name) is not None else
+        "primitive" if storage in (T.Int, T.Real, T.Number, T.String) else
+        "none" if isinstance(storage, T.NoneTypeNode) else
+        "never" if isinstance(storage, T.NeverType) else
+        "object" if definition is not None else "nominal"
+    )
+    properties = {
+        "type": evidence(owner),
+        "name": (T.String, ("text", T.show(owner))),
+        "category": (T.String, ("text", category)),
+        "arguments": sequence(() if nominal is None else nominal.args),
+        "alternatives": sequence(alternatives),
+        "payload": sequence(optional_payloads if is_optional else ()),
+        "cases": sequence(cases),
+        "constraints": sequence(sorted(storage.items, key=T.show) if isinstance(storage, T.IntersectionType) else ()),
+        "elements": sequence((storage.base,) if isinstance(storage, T.CollectionType) else
+                             storage.params if isinstance(storage, T.TupleType) else
+                             tuple(item.typ for item in storage.items) if isinstance(storage, T.VariadicTupleType) else ()),
+        "parameters": sequence(storage.params or () if isinstance(storage, T.FunctionType) else ()),
+        "returns": sequence(storage.returns or () if isinstance(storage, T.FunctionType) else ()),
+        "outputs": sequence(storage.outputs if isinstance(storage, T.TaskType) else ()),
+        "keys": sequence(nominal.args[:1] if nominal is not None and nominal.name == Symbol("Dict") else ()),
+        "values": sequence(nominal.args[1:2] if nominal is not None and nominal.name == Symbol("Dict") else ()),
+        "signatures": sequence(T.Fn(overload.params, overload.returns, overload.element_tags)
+                               for overload in storage.overloads) if isinstance(storage, T.OverloadSetType) else sequence(()),
+        "rank": (T.Int, ("int", storage.rank if isinstance(storage, T.CollectionType) and isinstance(storage.rank, int) else 0)),
+        "protected": (T.Int, ("int", int(definition is not None and definition.duplication_error is not None))),
+        "base": sequence((storage,) if storage != owner else
+                         (storage.base,) if isinstance(storage, T.RowType) else ()),
+        "rankMode": (T.String, ("text", {T.ListExactType: "exact", T.ListMinType: "minimum", T.ListRuggedType: "rugged"}.get(type(storage), ""))),
+    }
+    members = () if enum is None else enum.members
+    properties["members"] = (T.ExactList(T.String),
+                              ("list", tuple(("text", member.name.text) for member in members)))
+    tag_type = T.RecordType(T.N(Symbol("record")), (T.Field(Symbol("name"), T.String),
+                           T.Field(Symbol("depth"), T.Int), T.Field(Symbol("absent"), T.Int)))
+    properties["tags"] = (T.ExactList(tag_type), ("list", tuple(
+        ("record", T.show(tag_type), (("name", ("text", str(tag.name))), ("depth", ("int", tag.depth)),
+                    ("absent", ("int", int(tag.absent))))) for tag in tags
+    )))
+    effects = (storage.element_tags if isinstance(storage, T.FunctionType) else
+               storage.effects if isinstance(storage, T.TaskType) else ())
+    effect_items = []
+    for effect in sorted(effects, key=lambda item: (str(item.name), tuple(map(T.show, item.args)), item.absent)):
+        arguments, recipe = sequence(effect.args)
+        effect_type = T.RecordType(T.N(Symbol("record")), (
+            T.Field(Symbol("name"), T.String), T.Field(Symbol("arguments"), arguments), T.Field(Symbol("absent"), T.Int),
+        ))
+        effect_items.append((effect_type, ("record", T.show(effect_type), (
+            ("name", ("text", str(effect.name))), ("arguments", recipe), ("absent", ("int", int(effect.absent))),
+        ))))
+    properties["effects"] = (T.ExactList(T.U(*(item[0] for item in effect_items))),
+                              ("list", tuple(item[1] for item in effect_items)))
+    typ = T.Row(T.N(Symbol("TypeInfo"), owner), *(T.Field(Symbol(name), item[0]) for name, item in properties.items()))
+    return typ, ("info", T.show(owner), tuple((name, item[1]) for name, item in properties.items()))

@@ -1105,6 +1105,7 @@ def _exact_straight_line_depth(
         OpCode.MAKE_CLOSED_FUNCTION,
         OpCode.MAKE_OBJECT_CONSTRUCTOR,
         OpCode.MAKE_ENUM_MEMBER,
+        OpCode.MAKE_TYPE_METADATA,
     }:
         return depth + 1
     if instruction.op in {OpCode.STORE_VAR, OpCode.POP}:
@@ -1130,7 +1131,7 @@ def _exact_straight_line_depth(
         return _builder_depth(depth, count, 1)
     if instruction.op is OpCode.BUILD_RECORD:
         return (
-            _builder_depth(depth, len(instruction.arg), 1)
+            _builder_depth(depth, len(instruction.arg[0]), 1)
             if isinstance(instruction.arg, tuple)
             else None
         )

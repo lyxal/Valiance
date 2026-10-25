@@ -569,10 +569,10 @@ def _transform_type_children(
             *(T.TupleTypeItem(transform(item.typ), item.repeated) for item in typ.items)
         )
     if isinstance(typ, T.RowType):
-        return T.Row(
+        return T.normalize(type(typ)(
             transform(typ.base),
-            *(T.Field(field.name, transform(field.typ)) for field in typ.fields),
-        )
+            tuple(T.Field(field.name, transform(field.typ)) for field in typ.fields),
+        ))
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), transform(typ.base), typ.rank)
     if isinstance(typ, T.FunctionType):

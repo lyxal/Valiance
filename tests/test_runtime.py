@@ -252,6 +252,234 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_erased_trait_receivers_keep_generic_layouts_and_checked_access(self):
+        source = '''
+trait View => end
+object[T] Box => public $value: T end
+object[T] Box as View => end
+define inspect(value: View) =>
+  unsafe =>
+    $metadata = $value fields
+    $field = $metadata["value"]
+    $direct = $value[$field]
+    $read = read?($value, $field) ?!
+    $updated = write?($value, $field, "changed")
+    $value fields foreach(field) => $field.type | println end
+    {$direct, $read, $value[$field], $updated}
+  end
+end
+$first: View = Box(7)
+inspect($first)
+$second: View = Box("hello")
+inspect($second)
+'''
+        with contextlib.redirect_stdout(io.StringIO()):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0][:3], (7, 7, 7))
+                self.assertEqual(stack[0][3].fields['reason'], 'TypeMismatch')
+                self.assertEqual(stack[1][:3], ('hello', 'hello', 'hello'))
+                self.assertEqual(stack[1][3].fields['value'].fields['value'], 'changed')
+
+    def test_erased_intersections_and_empty_members_select_only_actual_callbacks(self):
+        source = '''
+trait Left => end
+trait Right => end
+object A => public $number: Int end
+object Empty => end
+object A as Left => end
+object A as Right => end
+object Empty as Left => end
+object Empty as Right => end
+define count(value: Left & Right) =>
+  $count = 0
+  unsafe =>
+    $value fields foreach(field) =>
+    $count := $count + 1
+    $value[$field] + 1 | println
+  end
+  end
+  $count
+end
+$first: Left & Right = A(7)
+count($first)
+$empty: Left & Right = Empty
+count($empty)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [1, 0])
+        self.assertEqual(output.getvalue(), '8\n' * 4)
+
+    def test_record_reflection_preserves_aliases_and_exact_callback_types(self):
+        source = '''
+$owner = record{number => 7, text => "hello"}
+$metadata = $owner fields
+$metadata length
+$field = $metadata["number"]
+$field.index
+$field.visibility.name
+$owner[$field]
+$updated = write?($owner, $field, 8) ?!
+$updated[$field]
+$owner[$field]
+$owner[$field] = 9
+$owner[$field]
+$owner fields foreach(field) => "42" to[$field.type] | println end
+define inspect(value: trait => end) => unsafe => $value fields | length end end
+$erased: trait => end = record{number => 1, text => "world"}
+inspect($erased)
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack, [2, 0, 'public', 7, 8, 7, 9, 2])
+        self.assertEqual(output.getvalue(), '42\n42\n' * 4)
+
+    def test_category_metadata_retains_generic_and_compound_type_evidence(self):
+        source = '''
+variant[T] Maybe =>
+  Present => public $value: T end
+  Absent => end
+end
+object[T] Box => public $value: T end
+define[T] info(value: T) => typeInfo[T] end
+$info = info(Box(7))
+$info.category
+typeInfo[Box[Int]].arguments[0]
+typeInfo[Int | String].alternatives
+alternatives[Int | String]
+cases[Maybe[Int]]
+typeInfo[Maybe[Int]].cases
+typeInfo[Int*].elements[0]
+typeInfo[Int*].rank
+typeInfo[{Int, String}].elements
+typeInfo[Function[Int -> String]].parameters[0]
+typeInfo[Function[Int -> String]].returns[0]
+typeInfo[record(.number: Int)].category
+fields[Int | String] | length
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0], 'object')
+            self.assertEqual(stack[1].type_args, ('Int',))
+            self.assertEqual(stack[2], stack[3])
+            self.assertEqual(stack[4], stack[5])
+            self.assertEqual([item.type_args for item in stack[4]], [('Maybe.Present[Int]',), ('Maybe.Absent[Int]',)])
+            self.assertEqual(stack[6].type_args, ('Int',))
+            self.assertEqual(stack[7], 1)
+            self.assertEqual([item.type_args for item in stack[8]], [('Int',), ('String',)])
+            self.assertEqual(stack[9].type_args, ('Int',))
+            self.assertEqual(stack[10].type_args, ('String',))
+            self.assertEqual(stack[11:], ['record', 0])
+
+    def test_category_metadata_exposes_tags_optionals_tasks_and_resources(self):
+        source = '''
+tag #marked as computed
+enum Mode => First Second end
+@nodup("protected")
+object Resource => end
+typeInfo[#marked Int].tags[0].name
+typeInfo[#marked Int].tags[0].depth
+typeInfo[#marked Int].base[0]
+typeInfo[Int?].category
+typeInfo[Int?].payload[0]
+typeInfo[Task[Int, String]].outputs
+typeInfo[Function[Int -> String]<IO>].effects[0].name
+typeInfo[Resource].protected
+typeInfo[Mode].members
+typeInfo[Dict[String, Int]].category
+typeInfo[Int+2].rankMode
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:2], ['marked', 0])
+            self.assertEqual(stack[2].type_args, ('Int',))
+            self.assertEqual(stack[3], 'optional')
+            self.assertEqual(stack[4].type_args, ('Int',))
+            self.assertEqual([item.type_args for item in stack[5]], [('Int',), ('String',)])
+            self.assertEqual(stack[6:], ['IO', 1, ['First', 'Second'], 'dictionary', 'exact'])
+
+    def test_erased_record_row_views_select_full_physical_storage(self):
+        source = '''
+define names(value: record(.visible: Int)) =>
+  $names: String* = []
+  unsafe =>
+    $value fields foreach(field) => $names := $names append $field.name end
+  end
+  $names
+end
+$value: record(.visible: Int) = record{extra => "hello", visible => 7}
+names($value)
+unsafe => fields[record(.visible: Int)] | length end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [['extra', 'visible'], 0])
+
+    def test_category_iteration_specializes_helpers_from_exact_type_witnesses(self):
+        source = '''
+define[T] name(type: Type[T]) => typeInfo[T].name end
+$types = alternatives[Int | String]
+$types foreach(type) => name($type) | println end
+name($types[0]) | println
+object Owner =>
+  public $number: Int
+  public $text: String
+end
+fields[Owner] foreach(field) => name($field.type) | println end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for _ in self.execute_variants(source):
+                pass
+        self.assertEqual(output.getvalue(), 'Int\nString\nInt\nInt\nString\n' * 4)
+
+    def test_category_iteration_preserves_escaping_and_nested_borrowed_evidence(self):
+        source = '''
+define[T] name(type: Type[T]) => typeInfo[T].name end
+define choose(seed: Int) -> (Type[Int] | Type[String])? =>
+  alternatives[Int | String] foreach(type) => return $type end
+end
+choose(0) | ?!
+alternatives[Int | String] foreach(type) => break $type end | ?!
+$nested = [alternatives[Int | String]]
+$nested foreach(types) =>
+  $types match =>
+    [$first = _, ...] => name($first) | println
+    _ => "empty" println
+end
+name($nested[0][0]) | println
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual([item.type_args for item in stack[:2]], [('Int',), ('Int',)])
+                self.assertTrue(all(not item.destroyed for item in stack[:2]))
+        self.assertEqual(output.getvalue(), 'Int\nInt\n' * 4)
+
+    def test_fieldless_callable_values_need_no_runtime_signature_discrimination(self):
+        source = '''
+$operation = fn(value: Int) -> Int => $value end
+unsafe => $operation fields | length end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [0])
+
+    def test_erased_tagged_views_preserve_storage_without_inventing_fields(self):
+        source = '''
+tag #marked as unit
+trait View => end
+object Owner => public $number: Int end
+object Owner as View => end
+$erased: View = Owner(7)
+$tagged = $erased #marked
+unsafe =>
+  $metadata = $tagged fields
+  $metadata length
+  $tagged[$metadata["number"]]
+end
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [1, 7])
+
     def test_intersection_reflection_selects_finite_layouts_and_checks_access_failures(self):
         source = '''
 trait View => end

@@ -1173,7 +1173,7 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
             return False
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
-        if typ.name in {Symbol("Type"), Symbol("Field"), Symbol("Fields"), Symbol("Visibility")}:
+        if typ.name in {Symbol("Type"), Symbol("TypeInfo"), Symbol("Field"), Symbol("Fields"), Symbol("Visibility")}:
             return isinstance(value, ReflectionValue) and value.type_name == typ.name.text
         if typ.name == NUMBER:
             return isinstance(value, RuntimeNumber)
@@ -4095,7 +4095,7 @@ def default_environment() -> T.Environment:
         env.define_tag(Symbol(name), kind)
     env.define_trait(ERR)
     env.define_trait(FAULT)
-    for name in ("Type", "Field", "Fields", "Uninit"):
+    for name in ("Type", "Field", "Fields", "Uninit", "TypeInfo"):
         env.define_trait(Symbol(name), generics=(Symbol("Owner"),))
     env.define_trait(Symbol("Visibility"))
     message_attribute = T.ObjectAttribute(Symbol("message"), T.String)

@@ -1315,11 +1315,12 @@ def _apply_overload_to_branch(
         storage = receiver
         while isinstance(storage, (T.TaggedType, T.NoVecType, T.ExactType)):
             storage = storage.inner
-        closed_owner = isinstance(storage, (T.UnionType, T.IntersectionType, T.RowType)) or (
+        receiver_view = isinstance(storage, (T.UnionType, T.IntersectionType, T.RowType)) or (
             isinstance(storage, T.NominalType) and env is not None
-            and env.lookup_variant(storage.name) is not None
+            and (storage.name == Symbol("record") or env.lookup_variant(storage.name) is not None or env.lookup_trait(storage.name) is not None)
         )
-        if (closed_owner
+        receiver_view = receiver_view or isinstance(storage, T.AnonymousTraitType)
+        if (receiver_view
                 and (not isinstance(storage, T.UnionType)
                      or not any(isinstance(item, T.CollectionType) for item in storage.items))
                 and _utils._types_overlap(receiver, owner, ctx)):

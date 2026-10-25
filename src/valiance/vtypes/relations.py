@@ -2299,7 +2299,7 @@ def _substitute(t: Type, subst: dict[TypeVarKey, Type]) -> Type:
         )
     if isinstance(t, RowType):
         return normalize(
-            RowType(
+            type(t)(
                 _substitute(t.base, subst),
                 tuple(
                     type(field)(field.name, _substitute(field.typ, subst))
@@ -2627,6 +2627,9 @@ def _runtime_dispatch_pattern(
             tags=tuple(sorted(typ.tags)),
         )
     if isinstance(typ, NominalType):
+        if typ.name in {Symbol("Type"), Symbol("TypeInfo"), Symbol("Field"), Symbol("Fields")}:
+            return RuntimeTypePattern("nominal", name=str(typ.name), accepted_names=(str(typ.name),),
+                                      children=tuple(RuntimeTypePattern("signature", name=show(arg)) for arg in typ.args))
         children = tuple(_runtime_dispatch_pattern(arg, ctx) for arg in typ.args)
         if any(child is None for child in children):
             return None
@@ -2717,6 +2720,8 @@ def _runtime_patterns_overlap(
         )
     if left.kind != right.kind:
         return False
+    if left.kind == "signature":
+        return left.name == right.name
     if left.kind == "nominal":
         if not set(left.accepted_names).intersection(right.accepted_names):
             return False

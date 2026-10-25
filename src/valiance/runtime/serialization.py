@@ -39,11 +39,12 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x3F
+BYTECODE_VERSION = 0x40
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
+    OpCode.MAKE_TYPE_METADATA: 0x51,
     OpCode.MAKE_FIELDS: 0x48,
     OpCode.CONSTRUCT: 0x50,
     OpCode.REFLECT_READ: 0x49,
@@ -240,6 +241,12 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
     for index, instruction in enumerate(code.instructions):
         op = instruction.op
         argument = instruction.arg
+        if op is OpCode.BUILD_RECORD:
+            if (not isinstance(argument, tuple) or len(argument) != 2 or not isinstance(argument[0], tuple)
+                    or any(not isinstance(name, str) or not name for name in argument[0])
+                    or len(set(argument[0])) != len(argument[0])
+                    or not isinstance(argument[1], str) or not argument[1]):
+                raise BytecodeFormatError("invalid reified record layout")
         if op is OpCode.SOURCE_ARGS_BORROW and (type(argument) is not int or argument < 0):
             raise BytecodeFormatError("invalid borrowed argument source count")
         if op is OpCode.CONSTRUCT:
@@ -289,6 +296,8 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                 _validate_function_specialization(argument)
             elif not isinstance(argument, FunctionCode) or argument.requires_specialization:
                 raise BytecodeFormatError("specialization requires checked function bytecode")
+        if op is OpCode.MAKE_TYPE_METADATA:
+            _validate_type_metadata(argument)
         if op is OpCode.MAKE_FIELDS:
             if isinstance(argument, tuple):
                 if (len(argument) != 2 or argument[0] != "choices"
@@ -450,6 +459,37 @@ def _validate_reflection_access(value: object, writing: bool) -> None:
     if writing and (not isinstance(value[3], tuple) or len(value[3]) != len(value[0].fields)
                     or any(spec is not None and not isinstance(spec, tuple) for spec in value[3])):
         raise BytecodeFormatError("invalid reflective write field contracts")
+
+
+def _validate_type_metadata(value: object) -> None:
+    """Reject malformed allocation recipes before executing metadata bytecode."""
+    if not isinstance(value, tuple) or not value or not isinstance(value[0], str):
+        raise BytecodeFormatError("invalid type metadata recipe")
+    kind = value[0]
+    if kind in {"type", "text", "int"}:
+        if (len(value) != 2 or (type(value[1]) is not int if kind == "int" else
+                               not isinstance(value[1], str) or kind == "type" and not value[1])):
+            raise BytecodeFormatError("invalid type metadata scalar")
+        return
+    if kind == "list" and len(value) == 2 and isinstance(value[1], tuple):
+        for item in value[1]:
+            _validate_type_metadata(item)
+        return
+    if kind in {"info", "record"}:
+        if len(value) != 3 or not isinstance(value[1], str) or not value[1]:
+            raise BytecodeFormatError("invalid type metadata owner")
+        value = ("record", value[2])
+        kind = "record"
+    if kind == "record" and len(value) == 2 and isinstance(value[1], tuple):
+        names = set()
+        for item in value[1]:
+            if (not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str)
+                    or not item[0] or item[0] in names):
+                raise BytecodeFormatError("invalid type metadata properties")
+            names.add(item[0])
+            _validate_type_metadata(item[1])
+        return
+    raise BytecodeFormatError("invalid type metadata recipe")
 
 
 def _validate_reflection_fields(value: object) -> None:

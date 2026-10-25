@@ -300,6 +300,10 @@ def _record_literal_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse each record field independently on an empty stack."""
+    names = [name for name, _ in node.fields]
+    if len(set(names)) != len(names):
+        self._diagnose("record literals require distinct field names", node)
+        return _core.BranchSet()
     if _reject_noncopyable_literal_storage(self, node, branch, "a record field"):
         return _core.BranchSet()
     expressions = tuple(expr for _, expr in node.fields)
@@ -308,9 +312,9 @@ def _record_literal_node(
         return _core.BranchSet()
     return _isolated_literal_results(
         self, branch, item_options, node,
-        lambda combo: T.Row(
+        lambda combo: T.RecordType(
             T.N(Symbol("record")),
-            *(T.Field(name, item.typ) for (name, _), item in zip(node.fields, combo, strict=True)),
+            tuple(T.Field(name, item.typ) for (name, _), item in zip(node.fields, combo, strict=True)),
         ),
     )
 

@@ -1348,16 +1348,16 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[T.TypeVarKey, T.Type
             )
         )
     if isinstance(typ, T.RowType):
-        return T.Row(
+        return T.normalize(type(typ)(
             _substitute_branch_type(typ.base, substitution),
-            *(
+            tuple(
                 T.Field(
                     field.name,
                     _substitute_branch_type(field.typ, substitution),
                 )
                 for field in typ.fields
             ),
-        )
+        ))
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), _substitute_branch_type(typ.base, substitution), typ.rank)
     if isinstance(typ, T.FunctionType):

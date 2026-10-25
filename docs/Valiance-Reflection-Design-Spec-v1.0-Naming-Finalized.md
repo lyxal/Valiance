@@ -457,7 +457,19 @@ It is intentional that `finish` can construct a storage-complete object without 
 
 The `fields` operation exists on **every type**. For nominal managed objects it enumerates declared instance storage fields, including concrete generic instantiations. For primitives (`Int`), fieldless objects, and other types without actual stored fields, it returns an **empty collection**. A category does not acquire fabricated stored fields merely by supporting `fields`.
 
-Further metadata APIs may cover primitives, tags/refinements, optional and union types, variants, anonymous records, lists, dictionaries, and resource categories. A variant case, list element, or union alternative is not necessarily a declared object storage field. Category-appropriate APIs can share `Type[T]` evidence and CSTC where appropriate.
+`typeInfo[T]` exposes category-specific metadata for primitives, tags/refinements,
+optional and union types, variants, anonymous records, lists, dictionaries,
+callables, tasks, enums and resource annotations. `alternatives[T]` and `cases[T]`
+provide direct access to union alternatives and variant member types. Child types
+retain exact `Type[Child]` witnesses in ordinary lists with a union of exact witness types; generic
+queries specialize at concrete call sites. Type-only metadata retains neither an
+owner occurrence nor stored-field access authority.
+
+A variant case, list element, or union alternative is not a declared object
+storage field. Anonymous record literals have complete reified storage shapes;
+a structural row requirement alone does not declare physical fields. The
+[maintenance guide](maintenance/type-system.md#reflection-metadata) specifies the
+metadata properties and their empty/inapplicable results.
 
 The first implementation must not claim support for arbitrary FFI-backed layout construction or runtime-defined novel Valiance types.
 
@@ -562,7 +574,7 @@ The core surface-language semantics and final public API names are now decided. 
 **Deferred features (not initial implementation blockers):**
 
 7. **Consuming reconstruction:** No separate move-based reflective write API in the first version.
-8. **Broader reflection and JSON policy:** Variant cases, union alternatives, tag metadata, and serializer field-inclusion defaults get category-appropriate specifications later.
+8. **Broader reflection and JSON policy:** Section 8 defines category metadata. Serializer field-inclusion defaults and the `std.json` integration proof remain separate policy work.
 
 ---
 

@@ -14,6 +14,7 @@ class OpCode(Enum):
     """Bytecode operations understood by the Valiance VM."""
 
     PUSH_CONST = "push_const"
+    MAKE_TYPE_METADATA = "make_type_metadata"
     MAKE_FIELDS = "make_fields"
     CONSTRUCT = "construct"
     REFLECT_READ = "reflect_read"

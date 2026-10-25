@@ -489,17 +489,8 @@ class Analyser:
             self.declarations.prescan_define(definition)
         current = self.analyse_block(initial, setup)
         if current:
-            for definition in definitions:
-                if definition not in early_definitions:
-                    self.declarations.prescan_define(definition)
-            for definition in self._incomplete_recursive_definitions:
-                self._diagnose(
-                    f"recursive element '{definition.name}' must have complete "
-                    "parameter and return signatures",
-                    definition,
-                )
-            current = self.analyse_block(current, definitions)
-        final = self.analyse_block(current, executable) if current else current
+            self._discover_reflection_shapes(current, definitions, executable, early_definitions)
+        final = self._analyse_program_tail(current, definitions, executable, early_definitions)
         for code, directive in self.file_lint_suppressions.items():
             if code not in self.attempted_lint_codes:
                 self._record_lint_finding(
@@ -511,6 +502,79 @@ class Analyser:
                     )
                 )
         return final
+
+    def _analyse_program_tail(self, current, definitions, executable, early_definitions):
+        """Check declarations and execution against the module's frozen shape universe."""
+        if current:
+            for definition in definitions:
+                if definition not in early_definitions:
+                    self.declarations.prescan_define(definition)
+            for definition in self._incomplete_recursive_definitions:
+                self._diagnose(
+                    f"recursive element '{definition.name}' must have complete "
+                    "parameter and return signatures",
+                    definition,
+                )
+            current = self.analyse_block(current, definitions)
+        final = self.analyse_block(current, executable) if current else current
+        return final
+
+    def _discover_reflection_shapes(self, current, definitions, executable, early_definitions):
+        """Find a fixed point of concrete shapes before checking erased callbacks.
+
+        Discovery uses isolated analysis state and never publishes executable
+        bodies, diagnostics, traces or source-query observations. Only types
+        reached by ordinary checking feed the subsequent, authoritative pass.
+        """
+        from copy import deepcopy
+        from valiance.asts import FieldsNode
+        from valiance.vtypes.reflection import ReflectionUniverse
+
+        def queries(value):
+            """Locate value enumeration, including imported deferred templates."""
+            if isinstance(value, FieldsNode):
+                return value.owner is None
+            if isinstance(value, (tuple, list)):
+                return any(queries(item) for item in value)
+            if is_dataclass(value) and not isinstance(value, T.Type):
+                return any(queries(getattr(value, item.name)) for item in fields(value)
+                           if item.name not in {"location", "capture_context"})
+            return False
+
+        scopes = []
+        scope = self.env
+        while scope is not None:
+            scopes.append(scope)
+            scope = scope.parent
+        if not (queries((definitions, executable)) or any(
+            queries(overload.call_site_body) for scope in scopes
+            for overloads in scope.overloads.values() for overload in overloads
+        )):
+            return
+        previous = self.env.reflection_universe
+        universe = ReflectionUniverse(types=set() if previous is None else previous.types.copy())
+        self.env.reflection_universe = universe
+        for branch in current:
+            for typ in (*branch.stack, *(typ for _, typ in branch.variables.visible_items())):
+                universe.observe(typ, self.env)
+        # Built-ins are immutable shared declarations; avoid cloning that root.
+        memo = {id(self.module_loader): self.module_loader, id(scopes[-1]): scopes[-1]}
+        if self.trace is not None:
+            memo[id(self.trace)] = None
+        if self.observer is not None:
+            memo[id(self.observer)] = None
+        for _ in range(64):
+            before = len(universe.types)
+            discovery, initial = deepcopy((self, current), {**memo, id(universe): universe})
+            discovery.trace = None
+            discovery.observer = None
+            discovery._analyse_program_tail(initial, definitions, executable, early_definitions)
+            if not universe.requested or len(universe.types) == before:
+                break
+        else:
+            self._diagnose("erased reflection owner discovery did not converge; "
+                           "use a finite concrete receiver type")
+        universe.collecting = False
 
 
     def _top_level_analysis_phases(
@@ -784,6 +848,19 @@ class Analyser:
                 self._diagnose(str(error), node)
                 next_branches.append(branch)
         result = BranchSet.collect(next_branches)
+        universe = self.env.reflection_universe
+        if universe is not None and universe.collecting:
+            if not result:
+                # A provisional callback can reject today's incomplete universe.
+                # Keep exploring independent declarations and value origins; the
+                # authoritative pass will report errors against the fixed point.
+                result = branches
+            for output in result:
+                for typ in output.stack:
+                    universe.observe(typ, self.env)
+                for typed in output.typed_body[len(branches.branches[0].typed_body):] if branches.branches else ():
+                    if typed.typ is not None:
+                        universe.observe(typed.typ, self.env)
         if self.observer is not None:
             self.observer(self, node, branches, result)
         return result

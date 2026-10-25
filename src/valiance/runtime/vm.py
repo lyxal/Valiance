@@ -3355,13 +3355,17 @@ class VirtualMachine:
                                       for value in _pop_many(frame.stack, instruction.arg))
                             )
                         case OpCode.BUILD_RECORD:
+                            names, signature = instruction.arg
                             values = [
                                 _materialize_access(value)
-                                for value in _pop_many(frame.stack, len(instruction.arg))
+                                for value in _pop_many(frame.stack, len(names))
                             ]
                             frame.stack.append(
-                                RecordValue(zip(instruction.arg, values, strict=True))
+                                RecordValue(zip(names, values, strict=True), type_signature=signature)
                             )
+                        case OpCode.MAKE_TYPE_METADATA:
+                            from valiance.runtime.reflection import make_type_metadata
+                            frame.stack.append(make_type_metadata(instruction.arg))
                         case OpCode.MAKE_FIELDS:
                             try:
                                 if isinstance(instruction.arg, tuple):
@@ -4774,25 +4778,37 @@ class VirtualMachine:
             self._reflective_foreach(frame, config)
             return
         body_code, has_index, completion_count = config
-        iterable = _source_args(frame, 1, "foreach")[0]
-        if not is_list_like(iterable):
-            raise RuntimeError("foreach requires a list value")
-        body = _make_function_value(body_code, frame.globals, _closure_locals(frame))
-        for index, item in enumerate(iterable):
-            args = [item]
-            if has_index:
-                args.append(RuntimeNumber(index))
-            try:
-                self.call(body, args, isolate_captures=False)
-            except _LoopBreak as signal:
-                _sync_captured_globals(frame, body.globals)
-                frame.stack.extend(signal.values)
-                return
-            except _FunctionReturn:
-                _sync_captured_globals(frame, body.globals)
-                raise
-        _sync_captured_globals(frame, body.globals)
-        frame.stack.extend(ObjectValue("None", {}) for _ in range(completion_count))
+        occurrence = _source_args(frame, 1, "foreach")[0]
+        iterable = _accessed_value(occurrence)
+        captured = dict(frame.globals)
+        captured.update(_closure_locals(frame) or {})
+        error = None
+        try:
+            if not is_list_like(iterable):
+                raise RuntimeError("foreach requires a list value")
+            body = FunctionValue(body_code, captured)
+            for index, item in enumerate(iterable):
+                args = [_BorrowedValue(item) if _needs_release(item) else item]
+                if has_index:
+                    args.append(RuntimeNumber(index))
+                try:
+                    outputs = self.call(body, args, isolate_captures=False)
+                    for value in outputs:
+                        _release_value(value, self)
+                except _LoopBreak as signal:
+                    frame.stack.extend(_materialize_access(value) for value in signal.values)
+                    return
+                except _FunctionReturn as signal:
+                    raise _FunctionReturn(tuple(_materialize_access(value) for value in signal.values))
+            frame.stack.extend(ObjectValue("None", {}) for _ in range(completion_count))
+        except BaseException as failure:
+            error = failure
+            raise
+        finally:
+            _sync_captured_globals(frame, captured)
+            cleanup_error = _release_runtime_occurrences((occurrence,), self, error)
+            if cleanup_error is not None and cleanup_error is not error:
+                raise cleanup_error
 
     def _reflective_foreach(self, frame: _Frame, config: ReflectionForeachReference) -> None:
         """Execute the checked body for each exact field, sharing lexical loop state."""
@@ -4800,6 +4816,7 @@ class VirtualMachine:
         collection = _accessed_value(occurrence)
         captured = dict(frame.globals)
         captured.update(_closure_locals(frame) or {})
+        error = None
         try:
             if (not isinstance(collection, ReflectionValue) or collection.type_name != "Fields"
                     or collection.type_args != (config.layout.owner,)):
@@ -4834,9 +4851,14 @@ class VirtualMachine:
                 except _FunctionReturn as signal:
                     raise _FunctionReturn(tuple(_materialize_access(value) for value in signal.values))
             frame.stack.extend(ObjectValue("None", {}) for _ in range(config.completion_count))
+        except BaseException as failure:
+            error = failure
+            raise
         finally:
             _sync_captured_globals(frame, captured)
-            _release_value(occurrence, self)
+            cleanup_error = _release_runtime_occurrences((occurrence,), self, error)
+            if cleanup_error is not None and cleanup_error is not error:
+                raise cleanup_error
 
     def _call_function(
         self,
@@ -5167,8 +5189,9 @@ class VirtualMachine:
             return False
         kind = pattern[0]
         if kind == "literal":
-            return value == pattern[1]
+            return _accessed_value(value) == pattern[1]
         if kind == "regex":
+            value = _accessed_value(value)
             if not isinstance(value, str):
                 return False
             match = re.fullmatch(pattern[1], value)
@@ -5234,7 +5257,10 @@ class VirtualMachine:
         """Return the Boolean result of match list pattern during virtual-machine execution."""
         if not is_eager_sequence(value):
             return False
-        return self._match_list_items(tuple(value), items, bindings, captures, 0, 0)
+        values = tuple(unwrap_runtime_value(value))
+        if _borrowed_payload(value) is not None:
+            values = tuple(_readonly_access(_borrow_named_access(item)) for item in values)
+        return self._match_list_items(values, items, bindings, captures, 0, 0)
 
     def _match_list_items(
         self,
@@ -6759,6 +6785,10 @@ def _select_union_dispatch_overload(
 
 def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
     """Return the Boolean result of runtime pattern matches during virtual-machine execution."""
+    if pattern.kind == "nominal" and pattern.children and all(child.kind == "signature" for child in pattern.children):
+        actual = unwrap_runtime_value(value)
+        return (isinstance(actual, ReflectionValue) and actual.type_name == pattern.name
+                and actual.type_args == tuple(child.name for child in pattern.children))
     if pattern.kind == "tagged":
         actual_tags = runtime_value_tags(value)
         for required in pattern.tags:
@@ -7886,6 +7916,8 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
 
 def _read_object_field(receiver: ObjectValue, field: str) -> Any:
     """Read an object field without creating or releasing an occurrence."""
+    if isinstance(receiver, RecordValue):
+        return receiver[field]
     try:
         value = receiver.fields[field]
     except KeyError as exc:
@@ -8183,6 +8215,7 @@ def _parameter_stops_vectorisation(typ: Any) -> bool:
 
 def _minimum_runtime_collection_rank(value: Any) -> int:
     """Return the shallowest leaf rank without consuming lazy collections."""
+    value = unwrap_runtime_value(value)
     if not is_list_like(value):
         return 0
     if not is_eager_sequence(value):
@@ -8290,6 +8323,7 @@ def _vectorize_eager_kernel(
     depths: tuple[int, ...],
 ) -> tuple[Any, ...]:
     """Run a rank-one eager vector loop directly against one scalar kernel."""
+    args = tuple(unwrap_runtime_value(arg) for arg in args)
     vectors = tuple(
         arg
         for arg, depth in zip(args, depths, strict=True)
@@ -8330,6 +8364,13 @@ def _vectorize_eager_kernel(
     return _transpose_vectorized_items(result_items)
 
 
+def _vector_child_access(owner: Any, item: Any) -> Any:
+    """Preserve a collection borrow when vectorisation opens one of its items."""
+    if item is _MISSING_VECTOR_ITEM or _borrowed_payload(owner) is None:
+        return item
+    return _readonly_access(_borrow_named_access(item))
+
+
 def _vectorize_eager_resolved_depths(
     implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
     args: tuple[Any, ...],
@@ -8342,7 +8383,7 @@ def _vectorize_eager_resolved_depths(
 ) -> tuple[Any, ...]:
     """Vectorize eager resolved depths during VM execution."""
     vector_lengths = tuple(
-        len(arg)
+        len(unwrap_runtime_value(arg))
         for arg, depth in zip(args, depths, strict=False)
         if depth > 0 and is_eager_sequence(arg)
     )
@@ -8357,7 +8398,8 @@ def _vectorize_eager_resolved_depths(
         for index in range(max(vector_lengths)):
             item_args = tuple(
                 (
-                    (arg[index] if index < len(arg) else _MISSING_VECTOR_ITEM)
+                    (_vector_child_access(arg, unwrap_runtime_value(arg)[index])
+                     if index < len(unwrap_runtime_value(arg)) else _MISSING_VECTOR_ITEM)
                     if depth > 0 and is_eager_sequence(arg)
                     else arg
                 )
@@ -8394,7 +8436,7 @@ def _vectorize_lazy_resolved_depths(
 ):
     """Vectorize lazy resolved depths during VM execution."""
     iterators = tuple(
-        iter(arg) if depth > 0 and is_list_like(arg) else None
+        iter(unwrap_runtime_value(arg)) if depth > 0 and is_list_like(arg) else None
         for arg, depth in zip(args, depths, strict=False)
     )
     item_depths = tuple(max(depth - 1, 0) for depth in depths)
@@ -8406,7 +8448,7 @@ def _vectorize_lazy_resolved_depths(
             raise _vectorisation_fault()
         item_iter = iter(items)
         item_args = tuple(
-            next(item_iter) if depth > 0 and is_list_like(arg) else arg
+            _vector_child_access(arg, next(item_iter)) if depth > 0 and is_list_like(arg) else arg
             for arg, depth in zip(args, depths, strict=False)
         )
         item_args = _extend_vector_args(item_args, extension, context)
@@ -8675,6 +8717,9 @@ def _matches_cast_type(
     if not isinstance(spec, tuple) or not spec:
         return False
     kind = spec[0]
+    if kind == "record":
+        actual = unwrap_runtime_value(value)
+        return isinstance(actual, RecordValue) and actual.type_signature == spec[1]
     if kind == "structural":
         return (
             len(spec) == 2

@@ -26,6 +26,45 @@ from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_category_metadata_and_record_shapes_survive_interfaces(self):
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+        from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+
+        analyser = Analyser()
+        typed = tuple(analyser.analyse(parse('''
+$owner = record{z => 7, a => "hello"}
+$owner fields foreach(field) => $field.name | println end
+typeInfo[Dict[String, Int]].keys[0]
+typeInfo[Dict[String, Int]].values[0]
+''')))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads_interface(dumps_interface(typed))
+        self.assertEqual(restored, typed)
+        import contextlib
+        import io
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for optimize in (False, True):
+                stack = run(loads(dumps(compile_program(restored, optimize=optimize))))
+                self.assertEqual([value.type_args for value in stack], [('String',), ('Int',)])
+        self.assertEqual(output.getvalue(), 'z\na\n' * 2)
+
+    def test_malformed_category_metadata_and_record_layouts_are_rejected(self):
+        cases = [(OpCode.MAKE_TYPE_METADATA, value) for value in (
+            (), ('future',), ('type', ''), ('text', 0), ('int', True),
+            ('list', (('type', ''),)), ('info', '', ()),
+            ('info', 'Int', (('name', ('text', 'Int')), ('name', ('text', 'Int')))),
+            ('record', 'record', ((0, ('text', 'bad')),)),
+        )]
+        cases += [(OpCode.BUILD_RECORD, value) for value in (
+            (), (('x', 'x'), 'record'), (('x',), ''), (('x', 0), 'record'),
+        )]
+        for operation, payload in cases:
+            with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(operation, payload), Instruction(OpCode.RETURN)))))
+
     def test_runtime_union_reflection_survives_interface_round_trip(self):
         from valiance.analysis import Analyser
         from valiance.parsing import parse
@@ -675,7 +714,7 @@ nameOf($field)
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x3F"))
+        self.assertTrue(data.startswith(b"VLNCBC\x40"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

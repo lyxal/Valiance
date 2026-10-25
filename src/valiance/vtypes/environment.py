@@ -9,7 +9,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from valiance.vtypes.reflection import FieldsDescriptor
+    from valiance.vtypes.reflection import FieldsDescriptor, ReflectionUniverse
 
 from valiance.vtypes.symbols import Symbol, tag_symbol
 from valiance.vtypes.context import (
@@ -28,6 +28,7 @@ from valiance.vtypes.nodes import (
     NeverType,
     NominalType,
     RowType,
+    RecordType,
     TaggedType,
     NoVecType,
     ExactType,
@@ -223,6 +224,7 @@ class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
 
     context: Context = field(default_factory=Context)
+    reflection_universe: ReflectionUniverse | None = field(default=None, compare=False, repr=False)
     parent: Environment | None = None
     overloads: dict[Symbol, list[Overload]] = field(
         default_factory=dict[Symbol, list[Overload]]
@@ -300,11 +302,11 @@ class Environment:
 
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
-        return Environment(context=self.context, parent=self)
+        return Environment(context=self.context, parent=self, reflection_universe=self.reflection_universe)
 
     def lexical_child_scope(self) -> Environment:
         """Return a child frame whose declarations and relation facts are local."""
-        return Environment(context=self.context.copy(), parent=self)
+        return Environment(context=self.context.copy(), parent=self, reflection_universe=self.reflection_universe)
 
     def bind_runtime_name(
         self,
@@ -416,6 +418,12 @@ class Environment:
                     for tag in self.destructor_effects(field.type.typ, _active=_active)
                 )
             definition = self.lookup_object(typ.name)
+            if definition is None and self.lookup_trait(typ.name) is not None and self.reflection_universe is not None:
+                from valiance.vtypes.reflection import fields_for_value
+
+                layouts = fields_for_value(typ, self).alternatives
+                return frozenset(tag for layout in layouts
+                                 for tag in self.destructor_effects(layout.owner.typ, _active=_active))
             own = frozenset() if definition is None else definition.destructor_effects
             nested = frozenset(
                 tag for argument in typ.args for tag in self.destructor_effects(argument, _active=_active)
@@ -440,6 +448,9 @@ class Environment:
         if isinstance(typ, CollectionType):
             return self.destructor_effects(typ.base, _active=_active)
         if isinstance(typ, RowType):
+            if isinstance(typ, RecordType):
+                return frozenset(tag for attribute in typ.fields
+                                 for tag in self.destructor_effects(attribute.typ, _active=_active))
             return self.destructor_effects(typ.base, _active=_active)
         if isinstance(typ, (TaggedType, NoVecType, ExactType)):
             return self.destructor_effects(typ.inner, _active=_active)

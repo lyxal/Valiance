@@ -429,6 +429,12 @@ class DictValue(dict[Any, Any]):
 class RecordValue(DictValue):
     """A record mapping whose bareword keys are retained for display."""
 
+    def __init__(self, *args: Any, type_signature: str | None = None, **kwargs: Any) -> None:
+        """Retain declared storage evidence across immutable record reconstruction."""
+        super().__init__(*args, **kwargs)
+        self.type_signature = (type_signature if type_signature is not None else
+                               getattr(args[0], "type_signature", None) if args else None)
+
 
 @dataclass(frozen=True, eq=False)
 class TaggedValue:

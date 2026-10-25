@@ -90,8 +90,8 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   [compiler descriptor model](../../src/valiance/vtypes/reflection.py), generic
   storage queries, [runtime metadata](../../src/valiance/runtime/reflection.py),
     heterogeneous iteration, finite runtime union and closed variant selection, checked generic union specializations and owner access,
-  fallible reconstruction, managed incomplete construction, and the boundary with
-  pending runtime shape selection.
+  fallible reconstruction, managed incomplete construction, finite compiled
+  shape discovery, and category metadata.
 - [Reflection implementation status](reflection-implementation.md) maps completed
   support and remaining work to the design specification's R0–R6 stages.
 - [Understanding the runtime and code generator](runtime-system.md) follows

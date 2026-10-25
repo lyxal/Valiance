@@ -364,9 +364,54 @@ The ownership query follows those layouts plus generic and row evidence, visitin
 composite children once through their own proof rules. Release effects use the
 same owner selection and a nominal row's base representation.
 
-Rows with abstract bases, anonymous records, erased traits and intersections
-without finite owner evidence still lack supported storage selection; unresolved
-enumeration is diagnosed rather than treated as empty storage.
+Erased nominal/anonymous traits, abstract rows and open intersections select from
+a finite `ReflectionUniverse` populated by ordinary checking of concrete value
+origins and specialized bodies. Discovery uses isolated analysis state, followed
+by one authoritative pass over a frozen universe. Each selected layout retains
+its own exact callbacks and permissions; unresolved selection is diagnosed.
+
+Anonymous literals use `RecordType`, a complete storage shape that preserves
+field declaration order. `RowType` continues to mean a structural requirement,
+which may omit physical fields. Normalization, substitution and branch refinement
+preserve this distinction. Record bytecode reifies the complete shape, and
+reconstruction retains it. Reflection selects records by this signature rather
+than reading field values to guess their types. Type-based queries on a mere row
+requirement have no declared storage. Record metadata and owner access use the
+same descriptor, visibility and ownership machinery as nominal storage.
+`typeInfo[T]` returns read-only `TypeInfo[T]` metadata. `alternatives[T]` and
+`cases[T]` return the corresponding lists of exact `Type[Child]`
+witnesses. Generic queries defer to concrete calls. These type-only queries
+retain no value or field-access capability and require no unsafe scope; stored
+field enumeration and access retain their existing authorization gates.
+
+| Property | Evidence |
+| --- | --- |
+| `type`, `name`, `category` | Exact witness, normalized spelling and category |
+| `arguments`, `constraints` | Nominal arguments and intersection constituents |
+| `alternatives`, `cases`, `payload` | Union alternatives, variant members and optional payloads |
+| `elements`, `rank`, `rankMode` | List element or tuple positions; rank and exact/minimum/rugged mode |
+| `keys`, `values` | Dictionary key/value evidence |
+| `parameters`, `returns`, `signatures` | Function stack rows and overload signatures |
+| `outputs`, `effects` | Task output row and function/task effect facts |
+| `tags`, `base` | Tag name/depth/absence records and underlying wrapper/row evidence |
+| `members`, `protected` | Enum member names and the object's own nodup annotation flag |
+
+Type sequences are ordinary lists whose item type is a union of exact witnesses,
+not a witness for the union itself. Inapplicable sequences are empty; rank and
+protection flags are zero when inapplicable, and `rankMode` is empty for nonlists.
+Union order follows normalized type spelling; variant and enum order follows the
+declaration. None of these categories fabricates stored object fields.
+
+```valiance
+variant[T] Maybe =>
+  Present => public $value: T end
+  Absent => end
+end
+cases[Maybe[Int]]
+typeInfo[Dict[String, Int]].values[0]
+typeInfo[Int?].payload[0]
+```
+
 Metadata regressions live in `tests/test_types.py`,
 `tests/test_analysis_declarations.py`, `tests/test_runtime.py`, and
 `tests/test_bytecode_serialization.py`.

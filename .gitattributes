@@ -1,0 +1,11 @@
+# Use LF in all detected text files on every platform
+* text=auto eol=lf
+
+# Keep Windows command scripts as CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Explicitly protect binaries as needed
+*.png binary
+*.jpg binary
+*.pdf binary

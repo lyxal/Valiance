@@ -1916,7 +1916,9 @@ class Parser:
             return _ChainPiece((self._concurrent(self._previous),), True)
         if self._check_ident("unsafe") and self._peek(1).kind is TokenKind.FAT_ARROW:
             return _ChainPiece((self._unsafe(self._advance()),), True)
-        if self._check_ident("fields") and self._peek(1).kind is not TokenKind.DOT:
+        if (self._check_ident("fields") and self._peek(1).kind is not TokenKind.DOT
+                or any(self._check_ident(name) for name in ("typeInfo", "alternatives", "cases"))
+                and self._peek(1).kind is TokenKind.LBRACKET):
             return self._fields(self._advance())
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
@@ -2062,7 +2064,7 @@ class Parser:
         if self._match(TokenKind.LBRACKET):
             owner = self.parse_type_expression()
             self._expect(TokenKind.RBRACKET)
-        nodes: list[ASTNode] = [FieldsNode(owner, location=_loc(start))]
+        nodes: list[ASTNode] = [FieldsNode(owner, operation=start.value, location=_loc(start))]
         anchor = self._previous
         while self._adjacent(anchor, self._current):
             if self._match(TokenKind.LBRACKET):

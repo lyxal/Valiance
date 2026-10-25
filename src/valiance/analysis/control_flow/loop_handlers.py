@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from valiance.analysis.contracts.release_effects import released_types_effects
+
 from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
@@ -126,6 +128,7 @@ def _for_node(
         iterable_type = branch.stack[-1]
 
     normalized = T.normalize(iterable_type)
+    branch = branch.with_element_tags(released_types_effects(self.env, (iterable_type,)))
     from valiance.vtypes.reflection import fields_type_owners
     collection_owners = fields_type_owners(normalized)
     if collection_owners is not None and len(collection_owners) > 1:

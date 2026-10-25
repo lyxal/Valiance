@@ -883,13 +883,13 @@ def _substitute_type(
             )
         )
     if isinstance(typ, T.RowType):
-        return T.Row(
+        return T.normalize(type(typ)(
             _substitute_type(typ.base, ranks, types),
-            *(
+            tuple(
                 T.Field(field.name, _substitute_type(field.typ, ranks, types))
                 for field in typ.fields
             ),
-        )
+        ))
     if isinstance(typ, T.FunctionType):
         tags = tuple(
             T.ElementTag(

@@ -186,6 +186,11 @@ class RowType(Type):
 
 
 @dataclass(frozen=True)
+class RecordType(RowType):
+    """A complete anonymous storage shape, distinct from a row requirement."""
+
+
+@dataclass(frozen=True)
 class CollectionType(Type):
     """Base class for collection types with a base type and positive rank."""
 

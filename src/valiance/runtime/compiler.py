@@ -73,6 +73,7 @@ from valiance.asts import (
     TypedConcurrentNode,
     TypedUnsafeNode,
     TypedFieldsNode,
+    TypedTypeMetadataNode,
     TypedReflectiveReadNode,
     TypedReflectiveWriteNode,
     TypedDescriptorConversionNode,
@@ -535,11 +536,16 @@ class _Compiler:
         if isinstance(typed_node, TypedReflectiveReadNode):
             self.emit(OpCode.REFLECT_READ, _reflection_access_config(typed_node))
             return
+        if isinstance(typed_node, TypedTypeMetadataNode):
+            self.emit(OpCode.MAKE_TYPE_METADATA, typed_node.payload)
+            return
         if isinstance(typed_node, TypedFieldsNode):
             if typed_node.consumes_receiver:
+                layouts = typed_node.metadata.alternatives or (typed_node.metadata,)
                 self.emit(OpCode.MAKE_FIELDS, ("choices", tuple(
-                    (_cast_type_spec(layout.owner.typ), _reflection_fields_reference(layout))
-                    for layout in (typed_node.metadata.alternatives or (typed_node.metadata,))
+                    (_cast_type_spec(layout.owner.typ) if len(layouts) > 1 else ("static",),
+                     _reflection_fields_reference(layout))
+                    for layout in layouts
                 )))
                 return
             self.emit(OpCode.MAKE_FIELDS, _reflection_fields_reference(typed_node.metadata))
@@ -1115,7 +1121,7 @@ class _Compiler:
                         self._literal_storage = previous_storage
                     self.emit(OpCode.ISOLATE_STACK_END)
                     keys.append(key.text)
-                self.emit(OpCode.BUILD_RECORD, tuple(keys))
+                self.emit(OpCode.BUILD_RECORD, (tuple(keys), show(typed_node.typ)))
             case DictLiteralNode(entries):
                 typed_items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
                 expressions = tuple(expr for entry in entries for expr in entry)
@@ -3585,6 +3591,8 @@ def _cast_type_spec(typ: Type) -> object:
     from valiance.vtypes import VarType
 
     typ = normalize(typ)
+    if isinstance(typ, RowType) and typ.base == NominalType(Symbol("record")):
+        return ("record", show(typ))
     if isinstance(typ, NoneTypeNode):
         return ("none",)
     if isinstance(typ, VarType):

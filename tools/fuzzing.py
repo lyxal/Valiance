@@ -831,6 +831,10 @@ def _valid_bytecode_argument(
     op: OpCode, rng: random.Random, depth: int
 ) -> object:
     """Return a serializer-valid argument for opcodes with constrained payloads."""
+    if op is OpCode.MAKE_TYPE_METADATA:
+        return ("info", "Int", (("type", ("type", "Int")), ("category", ("text", "primitive"))))
+    if op is OpCode.BUILD_RECORD:
+        return (("value",), "record(.value: Int)")
     if op is OpCode.MAKE_FIELDS:
         layout = _random_reflection_fields(rng)
         if rng.random() < 0.5:
@@ -1291,7 +1295,7 @@ def _fuzz_runtime_bytecode(
                 ((), len(instructions) + 1) if op is OpCode.TYPE_DISPATCH else
                 _valid_bytecode_argument(op, rng, 1)
                 if op in {
-                    OpCode.MAKE_FIELDS,
+                    OpCode.MAKE_FIELDS, OpCode.MAKE_TYPE_METADATA, OpCode.BUILD_RECORD,
                     OpCode.CONSTRUCT, OpCode.REFLECT_READ, OpCode.REFLECT_WRITE,
                     OpCode.REFLECT_CALL, OpCode.SPECIALIZE_FUNCTION,
                     OpCode.CONVERSION_MISSING, OpCode.SOURCE_ARGS_BORROW,

@@ -1513,6 +1513,8 @@ def _uncheckable_runtime_pattern_type(
 def _uncheckable_runtime_type(typ: T.Type) -> T.Type | None:
     """Return a type whose values carry no usable runtime discriminator."""
     typ = T.normalize(typ)
+    if isinstance(typ, T.RecordType):
+        return None
     if isinstance(
         typ,
         (

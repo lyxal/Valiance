@@ -73,7 +73,7 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         lines.append("])")
         return "\n".join(lines)
     if isinstance(value, FieldsNode):
-        return f"FieldsNode(owner={value.owner}{_location_arg(value)})"
+        return f"FieldsNode(owner={value.owner}" + ("" if value.operation == "fields" else f", operation={value.operation!r}") + f"{_location_arg(value)})"
     if isinstance(value, (UnsafeNode, TypedUnsafeNode)):
         label = type(value).__name__
         lines = [f"{label}(body=["]

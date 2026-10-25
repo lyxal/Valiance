@@ -1073,7 +1073,7 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
-Bytecode version **0x3F** includes `MAKE_FIELDS` (opcode `0x48`) with a named
+Bytecode version **0x40** includes `MAKE_FIELDS` (opcode `0x48`) with a named
 `ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
 string, a `u32` field count, and name/type-signature/visibility strings for each
 field in declaration order. Type signatures use the same canonical syntax as
@@ -1089,6 +1089,18 @@ nominal cast names preserve module identity.
 Closed variants use this same payload: each choice describes a concrete member
 with its generic arguments. Unions containing variants flatten to concrete
 choices; no runtime discovery of unchecked member layouts is performed.
+Erased receivers use these same choices after isolated compile-time shape
+discovery and callback checking. Anonymous record choices compare reified storage
+signatures, preserving field order without inspecting field values. `BUILD_RECORD`
+records names and the complete type signature; immutable reconstruction preserves
+that signature.
+
+`MAKE_TYPE_METADATA` (opcode `0x51`) allocates fresh type/category metadata from
+validated immutable recipes. Recipes contain exact type signatures, lists,
+strings, integers and named metadata/record properties. They carry no owner
+occurrence, authority or executable type-discovery logic. Analysed interface
+schema **10** retains the queries, checked recipes and complete record types.
+
 Intersections with finite owner evidence use the same concrete choices after
 analysis filters them by their nominal and trait constraints. The runtime
 selects a recorded storage layout; abstract view constraints grant no field
@@ -1136,7 +1148,7 @@ dispatch. `CALL` accepts a checked `ResolvedElementReference` for these stack
 callables, reusing ordinary union dispatch and vectorization. Lazy vectorized
 results retain the specialized closures they invoke.
 
-Analysed interfaces use schema **9** to retain deferred capture contexts, checked
+Analysed interfaces use schema **10** to retain deferred capture contexts, checked
 call-site bodies and union specializations, fallible access plans and descriptor
 conversion branches.
 

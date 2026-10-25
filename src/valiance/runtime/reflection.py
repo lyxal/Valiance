@@ -27,6 +27,27 @@ class ReflectionValue(ObjectValue):
     """An ordinary managed metadata value whose public properties are read-only."""
 
 
+def make_type_metadata(recipe: tuple):
+    """Allocate fresh metadata occurrences from a checked portable recipe."""
+    from valiance.runtime.runtime_values import ListValue, RecordValue
+
+    kind, *data = recipe
+    if kind == "type":
+        return ReflectionValue("Type", {}, type_args=(data[0],))
+    if kind == "text":
+        return data[0]
+    if kind == "int":
+        return RuntimeNumber(data[0])
+    if kind == "list":
+        return ListValue(make_type_metadata(item) for item in data[0])
+    if kind == "record":
+        return RecordValue(((name, make_type_metadata(item)) for name, item in data[1]), type_signature=data[0])
+    if kind == "info":
+        return ReflectionValue("TypeInfo", {name: make_type_metadata(item) for name, item in data[1]},
+                               type_args=(data[0],))
+    raise RuntimeError("invalid checked metadata recipe")
+
+
 def make_fields_value(reference: ReflectionFieldsReference) -> ReflectionValue:
     """Allocate independent metadata occurrences for one concrete storage layout."""
     fields = tuple(
