@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
 
+import valiance.vtypes as T
+
 from valiance.asts import (
     ASTNode,
     ForNode,
@@ -29,6 +31,8 @@ def unused_foreach_index(context: NodeLintContext):
     """Report a named foreach index that is not read by the loop body."""
     node = context.node
     if not isinstance(node, ForNode) or node.index_variable is None:
+        return ()
+    if context.branch.stack and T.collection_item_type(context.branch.top) is None:
         return ()
     if _reads_name(node.body, node.index_variable):
         return ()

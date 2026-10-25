@@ -4784,13 +4784,16 @@ class VirtualMachine:
         captured.update(_closure_locals(frame) or {})
         error = None
         try:
-            if not is_list_like(iterable):
-                raise RuntimeError("foreach requires a list value")
+            if not is_list_like(iterable) and not isinstance(iterable, DictValue):
+                raise RuntimeError("foreach requires a list or dictionary value")
             body = FunctionValue(body_code, captured)
-            for index, item in enumerate(iterable):
+            entries = iterable.items() if isinstance(iterable, DictValue) else (
+                (item, RuntimeNumber(index)) for index, item in enumerate(iterable)
+            )
+            for item, second in entries:
                 args = [_BorrowedValue(item) if _needs_release(item) else item]
                 if has_index:
-                    args.append(RuntimeNumber(index))
+                    args.append(_BorrowedValue(second) if _needs_release(second) else second)
                 try:
                     outputs = self.call(body, args, isolate_captures=False)
                     for value in outputs:

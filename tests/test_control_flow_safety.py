@@ -28,6 +28,57 @@ def execute(source: str, *, round_trip: bool = False):
 
 
 class ControlFlowSafetyTests(unittest.TestCase):
+    def test_dictionary_foreach_pairs_and_key_only_iteration(self):
+        source = '''
+$seen = ""
+dict{"a" => "first", "b" => "second"} foreach (key, value) =>
+  $seen := $seen + $key + $value
+end
+dict{"c" => 3} foreach (key) => $seen := $seen + $key end
+$seen
+'''
+        for round_trip in (False, True):
+            self.assertEqual(execute(source, round_trip=round_trip), ["afirstbsecondc"])
+
+    def test_dictionary_foreach_generic_nested_values_and_return(self):
+        source = '''
+define[K, V] firstValue(data: Dict[K, V]) -> V? =>
+  $data foreach (key, value) => return $value end
+  None
+end
+firstValue(dict{1 => [2, 3]})
+'''
+        self.assertEqual(execute(source, round_trip=True), [[RuntimeNumber(2), RuntimeNumber(3)]])
+
+    def test_dictionary_foreach_cycles_key_and_value_and_breaks(self):
+        source = '''
+dict{"key" => "value"} foreach (key, value) =>
+  break (+)
+end
+'''
+        self.assertEqual(execute(source, round_trip=True), ["keyvalue"])
+
+    def test_dictionary_foreach_retains_entries_during_mutation_and_nested_loops(self):
+        source = '''
+$data = dict{"a" => [1], "b" => [2]}
+$total = 0
+$data foreach (key, values) =>
+  $data[$key] = [9]
+  $values foreach (value) => $total := + $value end
+end
+$total
+$data["a"]
+'''
+        self.assertEqual(execute(source, round_trip=True), [RuntimeNumber(3), [RuntimeNumber(9)]])
+
+    def test_empty_dictionary_foreach_and_invalid_pair_types(self):
+        self.assertEqual(
+            execute('dict{} foreach (key, value) => break (1, 2) end'),
+            [ObjectValue("None", {})] * 2,
+        )
+        analyser, _ = analyse('dict{"a" => "text"} foreach (key, value) => $value + 1 end')
+        self.assertTrue(analyser.diagnostics)
+
     def test_if_rejects_non_boolean_and_multi_value_conditions(self):
         for source in (
             'if (1) => "then" else => "else" end',

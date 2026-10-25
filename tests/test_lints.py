@@ -103,6 +103,12 @@ class BuiltinLintRuleTests(unittest.TestCase):
             self._codes("[1, 2] foreach (n, index) => $n 1 + end"),
         )
 
+    def test_dictionary_foreach_does_not_suggest_list_operations(self) -> None:
+        """Dictionary values are not list indices or vectorisation inputs."""
+        codes = self._codes('dict{"a" => 1} foreach (key, value) => $key end')
+        for code in ("unused-loop-index", "prefer-vectorisation-or-map", "prefer-fold"):
+            self.assertNotIn(code, codes)
+
 
     def test_augmented_assignment_is_not_treated_as_single_assignment(self) -> None:
         """An accumulator update is inherently a reassignment, even before break."""

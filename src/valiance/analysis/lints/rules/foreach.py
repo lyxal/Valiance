@@ -40,6 +40,8 @@ def lint_stateless_foreach(context: NodeLintContext):
     node = context.node
     if not isinstance(node, ForNode):
         return ()
+    if context.branch.stack and T.collection_item_type(context.branch.top) is None:
+        return ()
     if _contains_loop_exit(node.body):
         return ()
 
@@ -75,6 +77,8 @@ def lint_stateless_foreach_as_fold(context: NodeLintContext):
     """Prefer fold when one accumulator is updated from each loop item."""
     node = context.node
     if not isinstance(node, ForNode):
+        return ()
+    if context.branch.stack and T.collection_item_type(context.branch.top) is None:
         return ()
     if _contains_loop_exit(node.body):
         return ()

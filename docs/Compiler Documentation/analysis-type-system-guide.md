@@ -826,6 +826,10 @@ meaning. Use `T.normalize(...)` before comparing types structurally. Use
 
 ### Collection Item Types
 
+Dictionary `foreach` checks `Dict[K, V]` separately from ranked collections:
+`foreach (key, value)` binds `K` and `V`, while `foreach (key)` binds `K`.
+Implicit callback inputs cycle through those same binding types in order.
+
 Use `T.collection_item_type(typ)` to peel one rank for `foreach`-style analysis.
 It handles tagged collections:
 

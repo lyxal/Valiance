@@ -85,6 +85,8 @@ def _loop_iterable_requirement(
     outputs: _core.BranchSet,
 ) -> T.Type | None:
     """Lift negative loop-item tag requirements onto the iterable input."""
+    if T.collection_item_type(iterable_type) is None:
+        return None
     absent_tags: set[T.DataTag] = set()
     for output in outputs:
         if not output.cycle_params:
@@ -162,6 +164,13 @@ def _for_node(
     if (isinstance(normalized, T.NominalType) and normalized.name == Symbol("Fields")
             and len(normalized.args) == 1):
         return _reflective_for_node(self, node, branch, normalized.args[0], consumes_stack_iterable)
+    dictionary_type = normalized.inner if isinstance(normalized, T.TaggedType) else normalized
+    if (isinstance(dictionary_type, T.NominalType) and dictionary_type.name == Symbol("Dict")
+            and len(dictionary_type.args) == 2):
+        return _analyse_for_item(
+            self, node, branch, iterable_type, dictionary_type.args[0], consumes_stack_iterable,
+            second_type=dictionary_type.args[1],
+        )
     item_type = T.collection_item_type(iterable_type)
     if not item_type:
         source = branch.typed_body[-1].node if branch.typed_body else None
@@ -193,14 +202,14 @@ def _for_node(
 def _analyse_for_item(
     self: _core.Analyser, node: ForNode, branch: _core.AnalysisBranch,
     iterable_type: T.Type, item_type: T.Type, consumes_stack_iterable: bool,
-    *, nonempty: bool = False,
+    *, nonempty: bool = False, second_type: T.Type = T.Int,
 ) -> _core.BranchSet:
     """Check one iteration contract using the ordinary loop stack and variable rules."""
     body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
     body_branch = branch.with_stack(body_stack)
     cycle_params = (item_type,)
     if node.index_variable is not None:
-        cycle_params = (item_type, T.Int)
+        cycle_params = (item_type, second_type)
     body_branch = replace(
         body_branch,
         input_mode=_core.InputMode.CYCLE_EXPLICIT_PARAMS,
@@ -214,7 +223,7 @@ def _analyse_for_item(
     )
     if node.index_variable is not None:
         body_branch = body_branch.with_variables(
-            body_branch.variables.with_block_local(node.index_variable, T.Int)
+            body_branch.variables.with_block_local(node.index_variable, second_type)
         )
 
     body_outputs = self.analyse_from(body_branch, node.body)

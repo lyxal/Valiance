@@ -904,6 +904,11 @@ rules. `MATCH_ERROR` protects runtime integrity when no emitted case matches.
 
 ### `foreach`, parameterised loops, and return propagation
 
+`Dict[K, V]` supports `foreach (key, value)` in insertion order. A single
+binding receives the key. Unlike a list loop, the second binding receives the
+value rather than an integer index. Both entries are borrowed from the retained
+dictionary during each callback, preserving copy-on-write and ownership rules.
+
 Nested loop bodies compile as `FunctionCode`. Internal exceptions `_LoopBreak`
 and `_FunctionReturn` carry values across the nested Python call boundary.
 They are VM implementation signals, not user-visible faults.
