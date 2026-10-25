@@ -375,8 +375,8 @@ class _ImportDeclarations:
                 self.env.define_overload(obj.name, overload)
             if node.kind.text == "enum":
                 for member in node.enum_members:
-                    canonical = Symbol(member.name.text, (*node.name.namespace, node.name.text))
-                    visible = Symbol(member.name.text, (*obj.name.namespace, obj.name.text))
+                    canonical = Symbol(f"\\{member.name.text}", (*node.name.namespace, node.name.text))
+                    visible = Symbol(f"\\{member.name.text}", (*obj.name.namespace, obj.name.text))
                     for overload in self.env.overloads_for(canonical):
                         self.env.define_overload(visible, overload)
                     self.env.bind_runtime_name(visible, canonical)

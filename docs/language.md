@@ -2490,13 +2490,16 @@ enum[String] TokenType =>
 end
 ```
 
-- Member access with `enumName.member`
-- Value access with `enumName.member.value`
+- Every enum member generates a qualified niladic element, spelled `enumName.\member`.
+  Like other `\`-prefixed elements, it terminates the current chain without
+  requiring name resolution to determine chain boundaries.
+- The stored value of a valued member can be read with ordinary field access,
+  `enumName.\member.value`. Members also expose their unprefixed `name` field.
 - Example:
 
 ```
-Colour.RED
-TokenType.NUMBER.value
+Colour.\RED
+TokenType.\NUMBER.value
 ```
 
 - The enum name can be used as a type, just like a trait or a variant.

@@ -97,6 +97,13 @@ code stops looking magical.
 
 ## A map of the implementation
 
+Enum declarations register niladic overloads under `\`-prefixed names such as
+`Colour.\RED`, while enum member metadata keeps the ordinary name (`RED`)
+for exhaustive pattern matching. An enum member's backing `value` is checked
+as a read-only field of its nominal enum type; it is not another global nilad.
+Imported and aliased enums preserve the generated member names through the
+normal runtime-name binding mechanism.
+
 Imported constructors retain a private provider scope for omitted argument
 defaults. Sibling enum types and nested enum expressions are qualified before
 rebuilding the constructor; their runtime declarations travel in the import

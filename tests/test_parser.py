@@ -1425,6 +1425,23 @@ end
             ),
         )
 
+    def test_enum_niladic_member_and_postfix_field_end_chains(self):
+        nodes = parse(r"""enum[String] TokenType => NUMBER = "Number" end
+println TokenType.\NUMBER.value
+TokenType.\NUMBER.name println
+""")
+        self.assertEqual(
+            [type(node) for node in nodes[1:]],
+            [ElementNode, FieldAccessNode, ElementNode,
+             ElementNode, FieldAccessNode, ElementNode],
+        )
+        self.assertEqual(nodes[1].name, Symbol("\\NUMBER", ("TokenType",)))
+        self.assertEqual(nodes[2].name, Symbol("value"))
+        self.assertEqual(nodes[3].name, Symbol("println"))
+        self.assertEqual(nodes[4].name, Symbol("\\NUMBER", ("TokenType",)))
+        self.assertEqual(nodes[5].name, Symbol("name"))
+        self.assertEqual(nodes[6].name, Symbol("println"))
+
     def test_parses_object_destructor_and_mustcall_annotation(self):
         [tx] = parse(
             """

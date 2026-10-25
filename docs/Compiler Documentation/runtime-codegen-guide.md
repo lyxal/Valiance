@@ -82,7 +82,8 @@ The runtime implementation is small, but several files must evolve together.
 - Record fields and dictionary keys/values are wrapped in `ISOLATE_STACK_BEGIN` / `ISOLATE_STACK_END`; the VM hides the caller stack, requires one result, restores the caller stack, and appends that result.
 - Object and variant declarations compile constructor globals with
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
-  `MAKE_ENUM_MEMBER` and optional backing-value globals.
+  `MAKE_ENUM_MEMBER` under their `\`-prefixed element names; the member's
+  optional backing value is a field on the enum object.
 - `MAKE_OBJECT_CONSTRUCTOR` also carries runtime lifecycle metadata for
   destructors, duplication faults, and `@mustcall` protocol contracts.
 - When an object declares same-name definitions, codegen stores those compiled

@@ -303,6 +303,15 @@ class _FieldExpressions:
             )
 
         if isinstance(receiver_type, T.NominalType):
+            enum = self.env.lookup_enum(receiver_type.name)
+            if enum is not None:
+                if write:
+                    return None, None
+                if name == Symbol("name"):
+                    return T.String, None
+                if name == Symbol("value") and enum.value_type is not None:
+                    return enum.value_type, None
+                return None, None
             definition = self.env.lookup_object(receiver_type.name)
             attribute = None if definition is None else definition.attribute(name)
             if attribute is None:

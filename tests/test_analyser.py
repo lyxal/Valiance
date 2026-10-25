@@ -2730,18 +2730,34 @@ end
         env = Environment()
         analyser = Analyser(env)
 
-        typed = analyser.analyse(parse("enum Colour => RED GREEN end\nColour.RED"))
+        typed = analyser.analyse(parse("enum Colour => RED GREEN end\nColour.\\RED"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Colour")))
-        self.assertTrue(env.overloads_for(Symbol("RED", ("Colour",))))
+        self.assertTrue(env.overloads_for(Symbol("\\RED", ("Colour",))))
+
+    def test_enum_members_require_niladic_prefix(self):
+        env = Environment()
+        analyser = Analyser(env)
+        analyser.analyse(parse("enum Colour => RED end\nColour.RED"))
+        self.assertTrue(any("unknown element 'Colour.RED'" in message
+                            for message in analyser.diagnostics))
+        self.assertFalse(env.overloads_for(Symbol("RED", ("Colour",))))
+        self.assertTrue(env.overloads_for(Symbol("\\RED", ("Colour",))))
+
+    def test_enum_fields_require_declared_backing_value(self):
+        analyser = Analyser()
+        analyser.analyse(parse(r"enum Colour => RED end" + "\n" +
+                               r"Colour.\RED.value"))
+        self.assertTrue(any("no known field 'value'" in message
+                            for message in analyser.diagnostics))
 
     def test_match_on_enum_requires_all_members_without_default(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(parse("""
+        analyser.analyse(parse(r"""
 enum Colour => RED GREEN BLUE end
-Colour.RED
+Colour.\RED
 match =>
   as :RED => "red"
   as :GREEN => "green"

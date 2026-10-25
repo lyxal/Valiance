@@ -2014,6 +2014,14 @@ class Parser:
                 self._previous, name=name
             )
             disambiguation = self._element_disambiguation(self._previous)
+            postfix_fields: list[ASTNode] = []
+            if name.text.startswith("\\"):
+                while (self._check(TokenKind.DOT)
+                       and self._peek(1).kind is TokenKind.IDENT
+                       and self._adjacent(self._previous, self._current)):
+                    dot = self._advance()
+                    field = self._symbol("expected field name")
+                    postfix_fields.append(FieldAccessNode(field, location=_loc(dot)))
             call_anchor = self._previous
             call_args: tuple[CallArgument, ...] = ()
             modifier_args: tuple[FunctionNode, ...] = ()
@@ -2034,7 +2042,7 @@ class Parser:
                         "shaped FFI conversion must use postfix to[&type{dimensions}]"
                     )
                 return self._shaped_ffi_conversion_piece(token, generic_args[0], ffi_shape)
-            return self._element_piece(
+            piece = self._element_piece(
                 ElementNode(
                     name,
                     modifier_args,
@@ -2045,6 +2053,7 @@ class Parser:
                 ),
                 breaks_chain=breaks_chain,
             )
+            return replace(piece, nodes=(*piece.nodes, *postfix_fields))
         self._error("expected expression")
 
     def _fields(self, start: Token) -> _ChainPiece:
@@ -2350,6 +2359,8 @@ class Parser:
                 last = self._advance()
                 text += last.value
             parts.append(text)
+            if text.startswith("\\"):
+                break
         name = Symbol(parts[-1], tuple(parts[:-1]))
         if self._match(TokenKind.DOUBLE_COLON):
             if not self._match(TokenKind.IDENT, TokenKind.OP):

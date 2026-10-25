@@ -1369,7 +1369,7 @@ class _Compiler:
                 enum_name = _symbol_runtime_name(node.name)
                 for member in node.enum_members:
                     member_name = _symbol_runtime_name(member.name)
-                    runtime_name = f"{enum_name}.{member_name}"
+                    runtime_name = f"{enum_name}.\\{member_name}"
                     value = None
                     if member.value:
                         value = _literal_expression_value(member.value)
@@ -1378,12 +1378,6 @@ class _Compiler:
                         (enum_name, member_name, value),
                     )
                     self.emit(OpCode.STORE_VAR, runtime_name)
-                    if value is not None:
-                        self.emit(OpCode.PUSH_CONST, value)
-                        self.emit(
-                            OpCode.STORE_VAR,
-                            f"{runtime_name}.value",
-                        )
 
     def object_constructor(
         self,

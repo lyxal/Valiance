@@ -338,6 +338,13 @@ Foo::bar
 The token after `::` may be an identifier or operator. This is required for
 built-in operator access such as `*::+`.
 
+The final segment of a qualified niladic element retains its leading backslash,
+for example `Colour.\RED`. `_qualified_symbol` stops at that segment so an
+adjacent `.value` or `.name` is lowered to ordinary `FieldAccessNode` operations
+on the nilad's result. Consequently, `println Colour.\RED.value` has a
+syntactically determined chain boundary before `println`; no enum name lookup
+is needed during parsing.
+
 Keep `_term()` focused on choosing a syntactic form. Put nested parsing in
 helper methods such as `_record_fields`, `_dict_entries`, or
 `_modifier_arguments`.

@@ -8523,16 +8523,39 @@ Person("Ada")
 enum[String] TokenType =>
   NUMBER = "Number"
 end
-TokenType.NUMBER.value
+TokenType.\\NUMBER.value
 """),
             ["Number"],
         )
 
+    def test_executes_enum_niladic_access_in_chains(self):
+        source = r"""enum Colour => RED GREEN end
+Colour.\RED
+Colour.\GREEN.name
+"""
+        for optimize in (False, True):
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(loads(dumps(compile_program(typed, optimize=optimize))))
+            self.assertIsInstance(result[0], ObjectValue)
+            self.assertEqual(result[0].fields["name"], "RED")
+            self.assertEqual(result[1], "GREEN")
+
+        self.assertEqual(execute(r"""enum[String] TokenType => NUMBER = "Number" end
+TokenType.\NUMBER.value
+"""), ["Number"])
+        mapped = execute(r"""enum Colour => RED GREEN end
+[1, 2, 3] map: Colour.\RED
+""")
+        self.assertEqual([member.fields["name"] for member in mapped[0]],
+                         ["RED", "RED", "RED"])
+
     def test_executes_match_on_enum_and_variant_members(self):
         self.assertEqual(
-            execute("""
+            execute(r"""
 enum Colour => RED GREEN end
-Colour.GREEN
+Colour.\GREEN
 match =>
   as :RED => "red"
   as :GREEN => "green"

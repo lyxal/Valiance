@@ -546,12 +546,12 @@ class Environment:
         """Register an enum and niladic overloads for its members."""
         self.enums[name] = EnumDefinition(name, value_type, members)
         for member in members:
-            self.define_overload(member.name, Overload((), (NominalType(name),)))
-            if member.typ is not None and member.has_value:
-                self.define_overload(
-                    Symbol("value", (*member.name.namespace, member.name.text)),
-                    Overload((), (member.typ,)),
-                )
+            # The member name remains unprefixed in enum metadata (for matches),
+            # but its generated element is explicitly niladic in source syntax.
+            self.define_overload(
+                Symbol(f"\\{member.name.text}", member.name.namespace),
+                Overload((), (NominalType(name),)),
+            )
 
     def lookup_enum(self, name: Symbol) -> EnumDefinition | None:
         """Return an enum definition, if visible."""

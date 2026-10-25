@@ -15,6 +15,48 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_imported_enum_members_are_niladic_elements(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "palette.vlnc").write_text(
+                'public enum Colour => RED GREEN end\n'
+                'public enum[String] TokenType => NUMBER = "Number" end\n',
+                encoding="utf-8",
+            )
+            for source in (
+                r'import {palette}' + '\n' + r'palette.Colour.\RED',
+                r'import {palette.Colour}' + '\n' + r'Colour.\RED',
+                r'import {palette.[Colour as Hue]}' + '\n' + r'Hue.\RED',
+            ):
+                analyser = Analyser(source_file=root / 'main.vlnc')
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    result = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                    self.assertEqual(result[0].fields['name'], 'RED')
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse(
+                r'import {palette}' + '\n' + r'palette.TokenType.\NUMBER.value'
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertEqual(run(loads(dumps(compile_program(typed)))), ['Number'])
+
+            library = root / 'palette.vlnc'
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    'compile-module', '--file', str(library),
+                    '--output', str(library.with_suffix('.vbcm')),
+                ]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse(
+                r'import {palette}' + '\n' + r'palette.TokenType.\NUMBER.value'
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertEqual(run(loads(dumps(compile_program(typed)))), ['Number'])
+
     def test_generic_union_dispatch_specializes_from_source_free_modules(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
@@ -276,7 +318,7 @@ end
 public object[T] Holder =>
   $value: T
   $modes: Mode+
-  define Holder(value: T, modes: Mode+ = [Mode.First]) =>
+  define Holder(value: T, modes: Mode+ = [Mode.\\First]) =>
     $self.value = $value
     $self.modes = $modes
   end
@@ -310,7 +352,7 @@ $box.modes
                     invalid = Analyser(source_file=root / 'main.vlnc')
                     invalid.analyse(parse('''import {provider.[Holder as Box]}
 enum Mode => Local end
-Box(67, [Mode.Local])
+Box(67, [Mode.\\Local])
 '''))
                     self.assertTrue(any(
                         'no overloads' in diagnostic for diagnostic in invalid.diagnostics
