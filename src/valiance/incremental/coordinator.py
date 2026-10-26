@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable
@@ -188,12 +188,25 @@ class CompilationCoordinator:
         try:
             source = source_bytes.decode("utf-8")
             program = parse(source)
-            analyser = Analyser(module_loader=self.module_loader, source_file=source_file)
+            env = None
+            native_exports = None
+            if module_name.startswith("std."):
+                from valiance.elements.builtins import default_environment
+                from valiance.elements.stdlib_native import (
+                    attach_native_object_elements, install_native_stdlib, native_module_exports,
+                )
+                native_name = module_name.removeprefix("std.")
+                program = attach_native_object_elements(program, native_name)
+                env = install_native_stdlib(default_environment().child_scope(), native_name)
+                native_exports = native_module_exports(native_name)
+            analyser = Analyser(env=env, module_loader=self.module_loader, source_file=source_file)
             typed = analyser.analyse(program)
             if analyser.diagnostics:
                 raise RuntimeError("; ".join(analyser.diagnostics))
             bytecode = compile_program(typed, optimize=optimize)
             interface = collect_module_exports(module_name, program, typed, analyser)
+            if native_exports is not None:
+                interface = replace(interface, definitions=native_exports.definitions + interface.definitions)
             dependencies = self.module_loader.dependency_hashes_for(source_file)
             for identity, _ in dependencies:
                 path = dependency_path_from_identity(identity)

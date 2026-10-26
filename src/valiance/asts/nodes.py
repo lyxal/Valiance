@@ -288,6 +288,7 @@ class TypedFunctionDispatchNode(TypedNode):
     vectorised: bool = False
     vectorised_depths: tuple[int, ...] = ()
     vectorised_target_ranks: tuple[int | None, ...] = ()
+    runtime_names: tuple[Symbol | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

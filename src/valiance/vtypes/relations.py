@@ -1889,7 +1889,14 @@ def collection_item_type(t: Type) -> Type | None:
     """Return the type produced by iterating one rank of a collection."""
     t = normalize(t)
     if isinstance(t, TaggedType):
-        return collection_item_type(t.inner)
+        item = collection_item_type(t.inner)
+        if item is None:
+            return None
+        carried = tuple(
+            DataTag(tag.name, tag.depth - 1, tag.absent)
+            for tag in t.tags if tag.depth > 0
+        )
+        return Tagged(item, *carried) if carried else item
     if not isinstance(t, CollectionType):
         return None
     return _collection_remainder(type(t), t.base, t.rank - 1)

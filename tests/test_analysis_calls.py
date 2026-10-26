@@ -10,10 +10,88 @@ import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.analysis.calls import CallAnalyser, choose_best_overload
 from valiance.parsing import parse
+from valiance.vtypes.symbols import Symbol
 
 
 class CallPlanningBoundaryTests(unittest.TestCase):
     """Verify call planning is owned outside the analyser façade."""
+
+    def test_json_field_encoder_must_accept_every_declared_field_type(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+import {std.json}
+json.encodeObject(record{number => 2, text => "hello"},
+  fn(value: Int) -> Result[String, ValueError] => json.encode($value) end)
+'''))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_deferred_reflection_rejects_invalid_match_branch(self):
+        source = '''
+define onlyString(value: String) -> Int => 1 end
+define[T] inspect(value: T, flag: Int) -> Int =>
+  fields[T] | length | pop
+  $flag match =>
+    0 => onlyString($value)
+    _ => 1
+  end
+end
+'''
+        for flag in (0, 1):
+            with self.subTest(flag=flag):
+                analyser = Analyser()
+                analyser.analyse(parse(source + f'inspect(7, {flag})'))
+                self.assertTrue(analyser.diagnostics)
+        analyser = Analyser()
+        analyser.analyse(parse(source + 'inspect("valid", 1)'))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_recursive_reflection_keeps_signature_and_lexical_permission_requirements(self):
+        sources = (
+            ('@recursive define[T] inspect(value: T) => fields[T] | length end',
+             'explicit parameter and return types'),
+            ('@recursive define[T] inspect(value) -> Int => fields[T] | length end',
+             'explicit parameter and return types'),
+            ('@recursive define inspect(values) -> Int => $values foreach(item) => end 1 end',
+             'explicit parameter and return types'),
+            ('@recursive define inspect(callback) -> Int => $callback(1) end',
+             'explicit parameter and return types'),
+            ('''@nodup("protected") object Owner => end
+@recursive define[T] inspect(value: T) -> Int => fields[T] | length end
+unsafe => inspect(Owner) end''', 'no overloads'),
+        )
+        for source, message in sources:
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(any(message in item for item in analyser.diagnostics),
+                                analyser.diagnostics)
+
+    def test_deferred_reflection_preserves_declared_return_contract(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('''
+define[T] summary(value: T) -> String, Int =>
+  $count = $value fields | length
+  $count to[String]
+  $count
+end
+'''))
+        self.assertEqual(analyser.diagnostics, [])
+        [overload] = analyser.env.overloads[Symbol("summary")]
+        self.assertTrue(overload.specialize_body)
+        self.assertEqual(overload.returns, (T.String, T.Int))
+        self.assertEqual(typed[0].overloads[0].typ.returns, (T.String, T.Int))
+
+    def test_deferred_reflection_checks_declared_returns_at_call_site(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+object Owner => public $number: Int end
+define[T] summary(value: T) -> String => $value fields | length end
+summary(Owner(7))
+'''))
+        self.assertTrue(any(
+            "return type mismatch: expected String" in diagnostic
+            for diagnostic in analyser.diagnostics
+        ))
 
     def test_generic_reflection_checks_every_concrete_field_specialization(self):
         source = '''

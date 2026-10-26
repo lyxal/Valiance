@@ -773,7 +773,7 @@ class _Compiler:
                     and typed_node.implementation_id is not None
                     and name.text == "?"
                 ):
-                    self.emit(OpCode.TRY_UNWRAP)
+                    self.emit(OpCode.TRY_UNWRAP, True if self.return_as_signal else None)
                     return
                 if (
                     isinstance(typed_node, TypedElementNode)
@@ -845,6 +845,8 @@ class _Compiler:
                             entries.append((original, dispatch.implementation_id, code, static_values))
                         self.emit(OpCode.SPECIALIZE_FUNCTION, FunctionSpecializationReference(
                             tuple(entries), specialization.dispatch_plan.branches,
+                            tuple(_symbol_runtime_name(name) if name is not None else None
+                                  for name in specialization.runtime_names),
                         ))
                         reference = _resolved_element_reference(typed_node)
                         self.emit(OpCode.CALL, replace(
@@ -2725,12 +2727,19 @@ def _link_recursive_identity(code: FunctionCode, local: str, declaration: str) -
         """Preserve independent nested closures while linking outer self references."""
         if isinstance(value, ResolvedElementReference) and value.name == "this" and value.implementation_id == local:
             return replace(value, implementation_id=declaration)
-        if isinstance(value, FunctionCode) and not value.recursive:
-            return replace(value, instructions=tuple(link(item) for item in value.instructions))
+        if isinstance(value, FunctionCode):
+            return value if value.recursive else replace(
+                value, instructions=tuple(link(item) for item in value.instructions),
+            )
         if isinstance(value, Instruction):
             return replace(value, arg=link(value.arg))
         if isinstance(value, tuple):
             return tuple(link(item) for item in value)
+        if is_dataclass(value) and not isinstance(value, type):
+            return replace(value, **{
+                item.name: link(getattr(value, item.name))
+                for item in fields(value) if item.init
+            })
         return value
     return replace(code, instructions=tuple(link(item) for item in code.instructions))
 

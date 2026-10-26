@@ -1269,7 +1269,15 @@ Important invariants:
   Concrete calls solve ordinary generic constraints before checking metadata,
   permissions, every field callback and inferred outputs. An opened `Field[Owner]`
   retains its structural field witness through generic descriptor parameters.
-- Reflection calls retain their checked executable `TypedFunctionNode` on the
+  - Deferred reflection overloads retain explicit return annotations in both
+    overload and callable types, including result multiplicity. Concrete body
+    checking must validate those annotations before producing executable code.
+  - Explicitly typed `@recursive` templates bind `this` to their concrete
+    call-site contract before checking the body. Recursion reuses that checked
+    specialization; it does not infer a recursive signature or new owner types.
+    Any diagnosed body path rejects the specialization, even when another match
+    branch produces a valid result.
+  - Reflection calls retain their checked executable `TypedFunctionNode` on the
   selected `TypedElementNode`; a specialized signature alone is insufficient.
   Definition-time friendly-owner permissions are retained independently of the
   caller. Deferred capture contexts omit execution stacks, prior typed bodies

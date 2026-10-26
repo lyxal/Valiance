@@ -284,6 +284,8 @@ class FunctionSpecializationReference:
     # Original identity, branch identity, checked code (None reuses the original), static inputs.
     overloads: tuple[tuple[str | None, str, FunctionCode | None, tuple[Any, ...]], ...]
     dispatch_plan: tuple[UnionDispatchBranch, ...]
+    # None entries reuse the supplied callable; names select separate declaration closures.
+    runtime_names: tuple[str | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

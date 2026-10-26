@@ -556,6 +556,7 @@ class _CallSelection:
         )
         concrete = []
         specializations = []
+        runtime_names = []
         for index, branch_args in enumerate(product(*alternatives)):
             candidates = self.element_call_candidates(node, overloads, tuple(
                 replace(source, overload=overload,
@@ -584,8 +585,12 @@ class _CallSelection:
                 implementation_id=identity,
             ))
             specializations.append((winner.implementation_id, winner.specialization, applied.runtime_static_values))
+            runtime_names.append(
+                None if node.name == Symbol("call")
+                else self.env.runtime_name_for(node.name, applied.overload)
+            )
         return tuple(concrete), TypedFunctionDispatchNode(
-            node, specializations=tuple(specializations),
+            node, specializations=tuple(specializations), runtime_names=tuple(runtime_names),
         )
 
     @staticmethod

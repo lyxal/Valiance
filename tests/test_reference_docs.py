@@ -31,6 +31,14 @@ from valiance.elements.reference_docs import (
 
 
 class ReferenceDocumentationTests(unittest.TestCase):
+    def test_json_reference_retains_overload_docs_and_hides_native_hooks(self):
+        references = {reference.qualified_name: reference for reference in collect_stdlib_references()}
+        self.assertNotIn('std.json.quote', references)
+        self.assertNotIn('std.json.number', references)
+        encode = references['std.json.encode']
+        self.assertGreater(len({item.summary for item in encode.overload_documentation}), 1)
+        self.assertTrue(all(item.examples for item in encode.overload_documentation))
+
     def test_every_reference_overload_has_an_example(self):
         for reference in collect_language_references():
             self.assertEqual(len(reference.overloads), len(reference.overload_documentation))

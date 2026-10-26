@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 
 from ffi_support import (
     build_shared_library, native_library_directory, shared_library_path,
@@ -26,6 +27,13 @@ from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_unwrap_return_policy_round_trip_and_validation(self):
+        program = Program(FunctionCode((Instruction(OpCode.TRY_UNWRAP, True),)))
+        self.assertEqual(loads(dumps(program)), program)
+        for policy in (False, 0, 1, "signal", ()):
+            with self.subTest(policy=policy), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.TRY_UNWRAP, policy),))))
+
     def test_category_metadata_and_record_shapes_survive_interfaces(self):
         from valiance.analysis import Analyser
         from valiance.parsing import parse
@@ -277,6 +285,9 @@ $box.value
         branch = UnionDispatchBranch((RuntimeTypePattern('nominal', name='Int', accepted_names=('Int',)),), 'checked')
         checked = FunctionCode((), params=('x',), implementation_id='checked')
         valid = FunctionSpecializationReference((('original', 'checked', checked, ()),), (branch,))
+        bound = replace(valid, runtime_names=('provider.function',))
+        self.assertEqual(loads(dumps(Program(FunctionCode((Instruction(OpCode.SPECIALIZE_FUNCTION, bound),))))).main.instructions[0].arg,
+                         bound)
         self.assertEqual(loads(dumps(Program(FunctionCode((Instruction(OpCode.SPECIALIZE_FUNCTION, valid),))))).main.instructions[0].arg,
                          valid)
         for payload in (
@@ -286,6 +297,9 @@ $box.value
             FunctionSpecializationReference((('original', 'other', checked, ()),), (branch,)),
             FunctionSpecializationReference((('original', 'checked', FunctionCode((), implementation_id='checked', requires_specialization=True), ()),), (branch,)),
             FunctionSpecializationReference((('original', 'checked', checked, (1, 2)),), (branch,)),
+            replace(valid, runtime_names=('one', 'two')),
+            replace(valid, runtime_names=('',)),
+            replace(valid, runtime_names=(1,)),
         ):
             with self.subTest(payload=payload), self.assertRaises(BytecodeFormatError):
                 dumps(Program(FunctionCode((Instruction(OpCode.SPECIALIZE_FUNCTION, payload),))))
@@ -714,7 +728,7 @@ nameOf($field)
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x40"))
+        self.assertTrue(data.startswith(b"VLNCBC\x42"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

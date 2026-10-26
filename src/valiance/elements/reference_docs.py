@@ -113,6 +113,8 @@ def collect_stdlib_references(*, strict: bool = True) -> tuple[ElementReference,
     for module_name, functions in native_stdlib_functions().items():
         grouped_functions: dict[str, list[NativeFunction]] = {}
         for function in functions:
+            if not function.exported:
+                continue
             grouped_functions.setdefault(function.name.text, []).append(function)
         for function_name, overloads in grouped_functions.items():
             qualified_name = f"std.{module_name}.{function_name}"
@@ -157,11 +159,7 @@ def collect_stdlib_references(*, strict: bool = True) -> tuple[ElementReference,
         documented_names = set(documented_by_name)
         for name in sorted(public_names - documented_names, key=str.casefold):
             missing.append(f"std.{module_name}.{name}")
-        for function_name, definitions in documented_by_name.items():
-            docstrings = {definition.docstring for definition in definitions}
-            if len(docstrings) > 1:
-                conflicts.append(f"std.{module_name}.{function_name}")
-                continue
+        for definitions in documented_by_name.values():
             references.append(_source_reference(module_name, definitions))
 
     if strict and (missing or conflicts):
@@ -490,7 +488,31 @@ def _source_reference(
 ) -> ElementReference:
     """Build one reference entry from a documented Valiance stdlib definition."""
     definition = definitions[0]
-    documentation = ElementDocumentation(
+    overload_documentation = tuple(_source_documentation(module_name, item) for item in definitions)
+    documentation = overload_documentation[0]
+    qualified_name = f"std.{module_name}.{definition.name}"
+    return ElementReference(
+        name=definition.name,
+        qualified_name=qualified_name,
+        scope="standard-library",
+        module=f"std.{module_name}",
+        category=documentation.category,
+        summary=documentation.summary,
+        description=documentation.description,
+        parameters=documentation.parameters,
+        returns=documentation.returns,
+        examples=documentation.examples,
+        notes=documentation.notes,
+        see_also=documentation.see_also,
+        overloads=tuple(item.signature for item in definitions),
+        overload_documentation=overload_documentation,
+        source_path=definition.source_path,
+    )
+
+
+def _source_documentation(module_name: str, definition: DefinitionReference) -> ElementDocumentation:
+    """Retain documentation and examples for one source-language overload."""
+    return ElementDocumentation(
         summary=_summary_from_description(definition.docstring.description),
         description=definition.docstring.description,
         parameters=tuple(
@@ -508,24 +530,6 @@ def _source_reference(
             field for field in definition.docstring.extra_fields
             if not field.startswith("@example ")
         ),
-    )
-    qualified_name = f"std.{module_name}.{definition.name}"
-    return ElementReference(
-        name=definition.name,
-        qualified_name=qualified_name,
-        scope="standard-library",
-        module=f"std.{module_name}",
-        category=documentation.category,
-        summary=documentation.summary,
-        description=documentation.description,
-        parameters=documentation.parameters,
-        returns=documentation.returns,
-        examples=documentation.examples,
-        notes=documentation.notes,
-        see_also=documentation.see_also,
-        overloads=tuple(item.signature for item in definitions),
-        overload_documentation=tuple(documentation for _ in definitions),
-        source_path=definition.source_path,
     )
 
 

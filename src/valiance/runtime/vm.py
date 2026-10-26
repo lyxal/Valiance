@@ -3119,6 +3119,7 @@ class VirtualMachine:
                             try:
                                 frame.stack.append(_specialize_function_value(
                                     _accessed_value(template), instruction.arg, self,
+                                    bindings=(frame.locals, frame.globals),
                                 ))
                             finally:
                                 _release_value(template, self)
@@ -3808,6 +3809,8 @@ class VirtualMachine:
                             if _try_unwrap(frame.stack, self):
                                 result = frame.stack
                                 frame.stack = []
+                                if instruction.arg is True:
+                                    raise _FunctionReturn(tuple(self._select_return_values(result, 1)))
                                 return self._finalize_frame(frame, result, code.return_count)
                         case OpCode.VALIDATE_TAG:
                             try:
@@ -5448,10 +5451,13 @@ def _selected_function_implementation(
     if isinstance(value, FunctionValue):
         if implementation_id is None or value.code.implementation_id == implementation_id:
             return value
-    elif isinstance(value, OverloadedFunctionValue) and implementation_id is not None:
-        selected = _linked_function_implementation(value, implementation_id)
-        if selected is not None:
-            return selected
+    elif isinstance(value, OverloadedFunctionValue):
+        if implementation_id is None and len(value.overloads) == 1:
+            return value.overloads[0]
+        if implementation_id is not None:
+            selected = _linked_function_implementation(value, implementation_id)
+            if selected is not None:
+                return selected
     raise RuntimeError(f"function implementation {implementation_id!r} cannot be linked")
 
 
@@ -5464,6 +5470,8 @@ def _specialize_function_value(
     template: FunctionValue | OverloadedFunctionValue,
     reference: FunctionCode | FunctionSpecializationReference,
     runtime: VirtualMachine,
+    *,
+    bindings: tuple[dict[str, Any], dict[str, Any]] | None = None,
 ) -> FunctionValue | OverloadedFunctionValue:
     """Bind checked bodies and static inputs to their declaration closures."""
     entries = (
@@ -5472,8 +5480,14 @@ def _specialize_function_value(
     )
     functions = []
     try:
-        for original_id, identity, code, static_values in entries:
-            original = _selected_function_implementation(template, original_id)
+        for index, (original_id, identity, code, static_values) in enumerate(entries):
+            declaration = template
+            if (isinstance(reference, FunctionSpecializationReference) and reference.runtime_names
+                    and reference.runtime_names[index] is not None):
+                if bindings is None:
+                    raise RuntimeError("function specialization requires declaration bindings")
+                declaration = _accessed_value(_load_element_name(reference.runtime_names[index], *bindings))
+            original = _selected_function_implementation(declaration, original_id)
             code = code if code is not None else original.code
             captures = {name: original.globals[name] for name in original.owned_names}
             if static_values:
@@ -8735,7 +8749,7 @@ def _matches_cast_type(
             )
         )
     if kind == "none":
-        return _is_none_result_value(value)
+        return _is_none_result_value(_accessed_value(value))
     if kind == "var":
         return not is_list_like(value)
     if kind == "ffi":

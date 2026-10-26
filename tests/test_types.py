@@ -1295,6 +1295,14 @@ class TypeLibraryTests(unittest.TestCase):
             Number,
         )
 
+    def test_collection_item_type_projects_nested_tag_facts(self):
+        collection = Tagged(ExactList(Int, 2), DataTag("boolean", 2),
+                            DataTag("checked", 1, absent=True), DataTag("container", 0))
+        item = collection_item_type(collection)
+        self.assertEqual(item, Tagged(ExactList(Int), DataTag("boolean", 1),
+                                      DataTag("checked", 0, absent=True)))
+        self.assertEqual(collection_item_type(item), Tagged(Int, DataTag("boolean", 0)))
+
     def test_row_type_displays_required_fields(self):
         self.assertEqual(
             str(Row(V("@1"), Field(BAZ, V("@2")))),

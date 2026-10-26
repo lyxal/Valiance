@@ -281,8 +281,9 @@ def recursive_overload(
     node: FunctionNode,
     params: tuple[T.Type, ...],
 ) -> T.Overload | None:
-    """Build or resolve the overload for recursive while applying compiler annotations."""
-    if node.returns is None:
+    """Build the self-call contract from explicit parameter and return types."""
+    if (node.returns is None or node.params is None
+            or any(param.typ is None for param in node.params)):
         return None
     return T.Overload(
         params,

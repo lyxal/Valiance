@@ -519,9 +519,6 @@ class _CallableValues:
                 for typ in nested_types(requirement.owner)
             ):
                 raise
-            if annotation_hooks.has_annotation(node.annotations, "recursive"):
-                self._diagnose("recursive reflection requires a concrete owner", node)
-                return None
             return self._call_site_checked_function(outer, node, specialize_body=True), outer
         self.declarations._validate_function_type_names(
             node, node, function_analyser.env,
@@ -625,12 +622,13 @@ class _CallableValues:
         *,
         specialize_body: bool = False,
     ) -> FunctionAnalysis:
-        """Compute call site checked function during static analysis."""
+        """Defer body checking while retaining the declared callable contract."""
         params = _functions._declared_params(node)
+        returns = node.returns if node.returns is not None else ()
         overload = _functions._function_overload(
             node,
             params=params,
-            returns=(),
+            returns=returns,
             call_site_body=(AnalysisBranch(
                 variables=outer.variables, input_mode=outer.input_mode,
                 atomic_type_vars=outer.atomic_type_vars, origin=outer.origin,
@@ -644,7 +642,7 @@ class _CallableValues:
         typ = T.Overloads(overload)
         return FunctionAnalysis(
             typ,
-            (FunctionOverloadTyping(T.Fn(params, ()), (), overload),),
+            (FunctionOverloadTyping(T.Fn(params, returns), (), overload),),
         )
 
     def _analyse_function_at_call_site(
@@ -771,10 +769,26 @@ class _CallableValues:
         )
         function_analyser = self._child_analyser(self.env.lexical_child_scope())
         function_analyser._friendly_owners = friendly_owners
+        if annotation_hooks.has_annotation(call_site_node.annotations, "recursive"):
+            recursive_overload = annotation_hooks.recursive_overload(call_site_node, call_params)
+            if recursive_overload is None:
+                return None
+            write = initial.variables.write(
+                Symbol("this"),
+                T.Fn(recursive_overload.params, recursive_overload.returns,
+                     recursive_overload.element_tags),
+                block_local=False,
+            )
+            if write.variables is None:
+                return None
+            initial = initial.with_variables(write.variables)
+            function_analyser.env.define_overload(Symbol("this"), recursive_overload)
         final = function_analyser.analyse_block(
             BranchSet((initial,)), call_site_node.body
         )
         signatures = self._function_signatures(call_site_node, final)
+        if function_analyser.diagnostics:
+            return None
         return _functions._function_analysis_from_signatures(signatures, self.env.context)
 
 

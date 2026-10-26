@@ -216,6 +216,10 @@ A public stdlib definition without a contiguous `#??` block is a documentation
 error. This deliberately differs from ordinary project documentation, where an
 undocumented definition is simply omitted from `vln docs` output.
 
+Source-language overloads retain their own documentation and examples beneath a
+shared reference entry. Native hooks marked `exported=False` remain internal and
+are excluded from the public reference.
+
 ## Collector and renderers
 
 `src/valiance/elements/reference_docs.py` owns the generated catalogue:

@@ -156,6 +156,11 @@ inside the representation layer.
 
 ### Correlated minimum-rank collection results
 
+Peeling one collection rank preserves element-level tag facts by decrementing
+their positive depths, including absent facts. Tags at depth zero describe the
+container and do not transfer to its elements. Iteration and indexing therefore
+expose the same element evidence, including Boolean facts in reflected lists.
+
 Iterating a minimum-rank collection directly gives an isolated item the
 conservative shape ``T | T*``. Calling an exact-rank generic parameter is
 different: first preserve the whole item shape when the callback accepts it.
@@ -264,8 +269,14 @@ field evidence during body checking.
 Runtime specialization binds checked bytecode to the original function closure;
 it does not capture caller locals or grant caller permissions. Generic closures
 whose reflection depends on enclosing owner evidence cause that enclosing
-function to specialize. Uninstantiated templates cannot execute. Recursive
-functions still require explicit signatures and cannot infer generic reflection.
+function to specialize. Uninstantiated templates cannot execute. An explicitly
+typed `@recursive` helper can defer reflection until a concrete call site. Its
+`this` contract uses the concrete parameters and declared returns of that
+specialization, and recursive calls reuse its checked body and definition
+closure. Self references remain linked inside reflective callbacks and match
+branches; independently recursive nested closures retain their own self binding.
+Recursive signatures cannot be inferred, and `this` does not infer a different
+generic instantiation on a recursive edge.
 When a union argument needs distinct generic instantiations, call selection checks
 every cartesian input branch with ordinary overload resolution. A
 `TypedFunctionDispatchNode` retains the checked bodies, original closure identities,

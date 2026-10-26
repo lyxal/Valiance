@@ -252,6 +252,321 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_json_default_encoders_preserve_tokens_and_container_structure(self):
+        source = r'''
+import {std.json}
+json.encode("quote\" slash\\ line\n tab\t") ?!
+json.encode("雪😀") ?!
+json.encode(12345678901234567890.123456789) ?!
+json.encode([[true, false], [false, true]]) ?!
+json.encode(dict{"number" => 42, "text" => "Ada"}) ?!
+json.encode(Some(true)) ?!
+json.encode(\None) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [
+                r'"quote\" slash\\ line\n tab\t"', r'"\u96ea\ud83d\ude00"',
+                '12345678901234567890.123456789', '[[true,false],[false,true]]',
+                '{"number":42,"text":"Ada"}', 'true', 'null',
+            ])
+
+    def test_json_object_codec_uses_readable_fields_and_skips_private_values(self):
+        source = '''
+import {std.json}
+object Owner =>
+  public $name: String
+  private $secret: String
+  readable $age: Int
+end
+$encoder = fn(value: String | Int) -> Result[String, ValueError] =>
+  $value match =>
+    "hidden" => ValueError("Private field was exposed")
+    _ => json.encode($value)
+  end
+end
+json.encodeObject(Owner("Ada", "hidden", 42), $encoder) ?!
+json.encodeObject(record{}, fn(value: Int) -> Result[String, ValueError] => json.encode($value) end) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['{"name":"Ada","age":42}', '{}'])
+
+    def test_json_recursive_object_codec_reuses_checked_this(self):
+        source = '''
+import {std.json}
+object Node => public $next: Node? end
+@recursive
+define encodeNode(value: Node) -> Result[String, ValueError] =>
+  $recur = $this
+  json.encodeObject($value, fn(child: Node?) -> Result[String, ValueError] =>
+    json.encodeOptional($child, $recur)
+  end)
+end
+encodeNode(Node(Some(Node(Some(Node(\\None)))))) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['{"next":{"next":{"next":null}}}'])
+
+    def test_json_recursive_variant_codec_composes_object_and_list_encoders(self):
+        source = '''
+import {std.json}
+variant Tree =>
+  Leaf => public $value: Int end
+  Branch => public $children: Tree+ end
+end
+@recursive
+define encodeTree(value: Tree) -> Result[String, ValueError] =>
+  $recur = $this
+  $value match =>
+    as leaf: Tree.Leaf => json.encodeObject($leaf,
+      fn(value: Int) -> Result[String, ValueError] => json.encode($value) end)
+    as branch: Tree.Branch => json.encodeObject($branch,
+      fn(children: Tree+) -> Result[String, ValueError] => json.encodeList($children, $recur) end)
+  end
+end
+encodeTree(Branch([Leaf(2), Branch([Leaf(3)])])) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['{"children":[{"value":2},{"children":[{"value":3}]}]}'])
+
+    def test_json_object_codec_rejects_protected_and_non_object_inputs(self):
+        source = '''
+import {std.json}
+@nodup("protected") object Protected => end
+$encoder = fn(value: Int) -> Result[String, ValueError] => json.encode($value) end
+json.encodeObject(Protected, $encoder)
+json.encodeObject(2, $encoder)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([item.type_name for item in stack], ['ValueError', 'ValueError'])
+            self.assertEqual([item.fields['message'] for item in stack], [
+                'Protected values cannot be JSON encoded', 'Expected managed JSON object storage',
+            ])
+
+    def test_json_child_errors_propagate_without_partial_output(self):
+        source = '''
+import {std.json}
+json.encode([2, 1i2, 3])
+json.encode(dict{"before" => 2, "bad" => 1i2})
+json.encodeObject(record{before => 2, bad => 1i2},
+  fn(value: Number) -> Result[String, ValueError] => json.encode($value) end)
+json.encode(Some(1i2))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(len(stack), 4)
+            for error in stack:
+                self.assertEqual(error.type_name, 'ValueError')
+                self.assertEqual(error.fields['message'], 'JSON numbers must be real')
+
+    def test_json_optional_codec_handles_borrowed_absence_and_raw_payloads(self):
+        source = '''
+import {std.json}
+$missing: Int? = \\None
+$encoder = fn(value: Int) -> Result[String, ValueError] => json.encode($value) end
+json.encodeOptional($missing, $encoder) ?!
+json.encodeOptional(Some(7), $encoder) ?!
+json.encodeOptional(8, $encoder) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['null', '7', '8'])
+
+    def test_recursive_generic_reflection_binds_checked_self_inside_callbacks(self):
+        source = '''
+object Node => public $next: Node? end
+@recursive
+define[T] depth(value: T) -> Int =>
+  $result = 0
+  unsafe =>
+    fields[T] foreach(field) =>
+      $value[$field] match =>
+        as :Some[T](child) => $result := this($child) + 1
+        _ => end
+      end
+    end
+  end
+  $result
+end
+depth(Node(\\None))
+depth(Node(Some(Node(\\None))))
+depth(Node(Some(Node(Some(Node(\\None))))))
+depth(record{})
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [0, 1, 2, 0])
+
+    def test_recursive_reflection_closure_retains_its_definition_captures(self):
+        source = '''
+object Node => public $next: Node? end
+define[T] factory(seed: T, offset: Int) =>
+  @recursive fn(value: T) -> Int =>
+    $result = $offset
+    unsafe =>
+      fields[T] foreach(field) =>
+        $value[$field] match =>
+          as :Some[T](child) => $result := this($child) + 1
+          _ => end
+        end
+      end
+    end
+    $result
+  end
+end
+$walker = factory(Node(\\None), 10)
+$walker(Node(Some(Node(\\None))))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [11])
+
+    def test_recursive_reflection_union_dispatch_keeps_each_checked_self(self):
+        source = '''
+object A => public $number: Int end
+object B =>
+  public $text: String
+  public $extra: Int
+end
+define choose(flag: Int) -> Field[A] | Field[B] =>
+  if $flag == 0 => fields[A]["number"] else => fields[B]["text"] end
+end
+@recursive
+define[T] repeat(field: Field[T], remaining: Int) -> Int =>
+  if $remaining == 0 => return fields[T] | length
+  this($field, $remaining - 1)
+end
+repeat(choose(0), 2)
+repeat(choose(1), 2)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [1, 2])
+
+    def test_recursive_reflection_linking_preserves_independent_recursive_closures(self):
+        source = '''
+object Owner => public $number: Int end
+@recursive
+define[T] count(value: T, remaining: Int) -> Int =>
+  fields[T] | length | pop
+  $inner = @recursive fn(value: T, remaining: Int) -> Int =>
+    if $remaining == 0 => return 10
+    this($value, $remaining - 1) + 2
+  end
+  if $remaining == 0 => return $inner($value, 2)
+  this($value, $remaining - 1) + 1
+end
+count(Owner(7), 2)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [16])
+
+    def test_reflected_collection_iteration_retains_boolean_element_evidence(self):
+        source = '''
+$owner = record{flags => [true, false]}
+$owner fields foreach(field) =>
+  $owner[$field] foreach(flag) =>
+    if $flag => "yes" else => "no" end | println
+  end
+end
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for _ in self.execute_variants(source):
+                pass
+        self.assertEqual(output.getvalue(), 'yes\nno\n' * 4)
+
+    def test_question_in_nested_lexical_loops_returns_from_enclosing_function(self):
+        source = '''
+define ordinary(value: Result[Int, ValueError]) -> Result[Int, ValueError] =>
+  [2, 3] foreach(item) =>
+    [4, 5] foreach(inner) => "discarded" $value ? | pop end
+  end
+  99
+end
+object Owner => public $number: Int end
+define reflective(value: Result[Int, ValueError]) -> Result[Int, ValueError] =>
+  fields[Owner] foreach(field) =>
+    [2] foreach(item) => $value ? | pop end
+  end
+  99
+end
+ordinary(ValueError("ordinary"))
+reflective(ValueError("reflective"))
+ordinary(7)
+reflective(7)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([item.fields['message'] for item in stack[:2]],
+                             ['ordinary', 'reflective'])
+            self.assertEqual(stack[2:], [99, 99])
+
+    def test_optional_question_in_reflective_callback_returns_absence(self):
+        source = '''
+object Owner => public $number: Int end
+define inspect(value: Int?) -> Int? =>
+  fields[Owner] foreach(field) => $value ? | pop end
+  Some(99)
+end
+inspect(\\None)
+inspect(Some(7))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_name, 'None')
+            self.assertEqual(stack[1].fields['value'], 99)
+
+    def test_reflective_question_failure_releases_callback_locals(self):
+        source = '''
+object Owner => public $number: Int end
+object Temporary => define ~Temporary => "released" println end end
+define inspect(value: Result[Int, ValueError]) -> Result[Int, ValueError] =>
+  fields[Owner] foreach(field) =>
+    $temporary = Temporary
+    $value ? | pop
+  end
+  99
+end
+inspect(ValueError("stop"))
+'''
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            for stack in self.execute_variants(source):
+                self.assertEqual(stack[0].fields['message'], 'stop')
+        self.assertEqual(output.getvalue(), 'released\n' * 4)
+
+    def test_deferred_reflection_shares_an_explicit_return_overload_contract(self):
+        source = '''
+object Owner => public $number: Int end
+define[T] summary(value: T) -> String =>
+  $value fields | length | to[String]
+end
+define summary(value: Int) -> String => "integer" end
+summary(Owner(7))
+summary(5)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['1', 'integer'])
+
+    def test_deferred_reflection_with_declared_multiple_returns(self):
+        source = '''
+object Owner => public $number: Int end
+define[T] summary(value: T) -> String, Int =>
+  $count = $value fields | length
+  $count to[String]
+  $count
+end
+summary(Owner(7))
+summary("fieldless")
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['1', 1, '0', 0])
+
+    def test_deferred_reflection_closure_preserves_declared_return(self):
+        source = '''
+object Owner => public $number: Int end
+define[T] factory(value: T) =>
+  fn(other: T) -> String => $other fields | length | to[String] end
+end
+$callback = factory(Owner(1))
+$callback(Owner(9))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, ['1'])
+
     def test_erased_trait_receivers_keep_generic_layouts_and_checked_access(self):
         source = '''
 trait View => end

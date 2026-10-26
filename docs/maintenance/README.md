@@ -94,6 +94,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   shape discovery, and category metadata.
 - [Reflection implementation status](reflection-implementation.md) maps completed
   support and remaining work to the design specification's R0–R6 stages.
+- [JSON encoding](reflection-implementation.md#json-encoding) composes checked
+  [Valiance encoders](../../src/valiance/std/json.vlnc) with private
+  [primitive token formatting](../../src/valiance/std/json.py).
 - [Understanding the runtime and code generator](runtime-system.md) follows
   typed nodes through bytecode, frames, calls, vectorisation, ownership, panics,
   serialization, and VM debugging.

@@ -39,7 +39,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x40
+BYTECODE_VERSION = 0x42
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -241,6 +241,8 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
     for index, instruction in enumerate(code.instructions):
         op = instruction.op
         argument = instruction.arg
+        if op is OpCode.TRY_UNWRAP and argument is not None and argument is not True:
+            raise BytecodeFormatError("invalid unwrap return policy")
         if op is OpCode.BUILD_RECORD:
             if (not isinstance(argument, tuple) or len(argument) != 2 or not isinstance(argument[0], tuple)
                     or any(not isinstance(name, str) or not name for name in argument[0])
@@ -526,6 +528,11 @@ def _validate_function_specialization(reference: FunctionSpecializationReference
             or any(not isinstance(branch, UnionDispatchBranch) for branch in reference.dispatch_plan)):
         raise BytecodeFormatError("empty function specialization dispatch")
     identities = set()
+    if (not isinstance(reference.runtime_names, tuple)
+            or reference.runtime_names and len(reference.runtime_names) != len(reference.overloads)
+            or any(name is not None and (not isinstance(name, str) or not name)
+                   for name in reference.runtime_names)):
+        raise BytecodeFormatError("invalid specialization declaration bindings")
     for entry in reference.overloads:
         if not isinstance(entry, tuple) or len(entry) != 4:
             raise BytecodeFormatError("invalid function specialization entry")
@@ -672,6 +679,7 @@ class _Writer:
             self.u32(len(value.dispatch_plan))
             for branch in value.dispatch_plan:
                 self.union_dispatch_branch(branch)
+            self.value(value.runtime_names)
         elif isinstance(value, FunctionSetCode):
             self.u8(_FUNCTION_SET)
             self.function_set(value)
@@ -1014,6 +1022,7 @@ class _Reader:
         if tag == _FUNCTION_SPECIALIZATION_REFERENCE:
             reference = FunctionSpecializationReference(
                 self.value(), tuple(self.union_dispatch_branch() for _ in range(self.u32())),
+                self.value(),
             )
             _validate_function_specialization(reference)
             return reference

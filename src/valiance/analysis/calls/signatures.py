@@ -204,7 +204,10 @@ def _genericize_function_node(
     scope = _generic_scope(generics, scope_id)
     params = None
     if function.params is not None:
-        collection_names, callable_names = _inferred_parameter_shapes(function)
+        if annotation_hooks.has_annotation(function.annotations, "recursive"):
+            collection_names, callable_names = set(), set()
+        else:
+            collection_names, callable_names = _inferred_parameter_shapes(function)
         item_indices = {
             name: index
             for index, name in enumerate(

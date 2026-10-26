@@ -1,6 +1,6 @@
 # Reflection implementation status
 
-Updated: 2026-10-25. This tracks the implementation against the prototype stages
+Updated: 2026-10-26. This tracks the implementation against the prototype stages
 in **Valiance Reflection — Language Design Specification v1.0 (Naming-Finalized
 Candidate)**. The specification describes the target; the table below describes
 what the compiler currently supports. Stages overlap, so a later stage having
@@ -10,11 +10,11 @@ some infrastructure does not mean earlier stages are complete.
 | --- | --- | --- |
 | R0: type and field metadata | Concrete and erased managed owners implemented | Exact owner and field type evidence, generic arguments, declaration order, visibility, and field identity. Value-based enumeration selects a checked layout for finite distinguishable unions and active variant members. Type-based enumeration describes the requested type's own storage. Erased nominal/anonymous traits and structural receivers select from a discovered finite compiled owner universe. Anonymous record literals retain complete, reified storage shapes. |
 | R1: heterogeneous `foreach` | Concrete, finite-union and closed-variant metadata iteration implemented | Each possible declared field gets a separately checked callback with its actual `Type[T]` evidence and exact owner-read result. Runtime selection invokes only the actual layout's callbacks. Generic helpers, overload selection, nested loops, index parameters, shared bindings, and break/return are supported. |
-| R2: CSTC over reflective outputs | Concrete call-site specialization implemented | Generic metadata, reads and iteration defer to concrete call sites, including through nonrecursive helpers, trait and structural parameters, and function values. Checked executable bodies retain layouts and exact callback types; escaping transformed results combine conservatively. Empty layouts skip callback instantiation. Inferred recursive reflection is unsupported. |
+| R2: CSTC over reflective outputs | Concrete call-site specialization implemented | Generic metadata, reads and iteration defer to concrete call sites, including through helpers, trait and structural parameters, and function values. Explicitly typed `@recursive` helpers reuse their checked specialization through `this`. Checked executable bodies retain layouts and exact callback types; escaping transformed results combine conservatively. Empty layouts skip callback instantiation. Recursive signatures cannot be inferred. |
 | R3: dynamic selection, reads and writes | Lookup, direct access and fallible access implemented | String indexing always performs dynamic metadata lookup; missing names raise `KeyFault`. `field?` returns an optional descriptor. Direct and fallible reads retain exact callback types and conservative dynamic unions. Direct writes and non-consuming `write?` use checked destination compatibility without invoking conversions. `read?` and `write?` return ordinary Results with named reflection errors. Explicit descriptor-directed `to` and `to?` conversions use checked ordinary providers and exact runtime target selection. |
 | R4: permission and ownership integrity | Direct and fallible access contracts implemented | Lexical `unsafe` and conservative transitive `@nodup` checks gate metadata and value access. Descriptors carry no authority or owner instance. Access validates identity before visibility; writes check types last. Fallible writes preserve the original owner on success and failure and discard rejected replacements normally. Eager and lazy fallible outputs retain managed ownership. `DuplicationFault` bypasses handlers and testing helpers, including across task observation, aggregation and cancellation cleanup. |
 | R5: managed `Uninit[T]` | Implemented for concrete managed object layouts and generic call sites | Empty storage, checked dynamic initialization and replacement, non-consuming `finished?`, consuming `finish`/`finish?`, and cleanup of initialized fields. All construction operations require lexical `unsafe`. Native/opaque storage remains unsupported. |
-| R6: broader categories and `std.json` | Category metadata implemented; JSON pending | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. The end-to-end `std.json` proof remains separate work. |
+| R6: broader categories and `std.json` | Category metadata and JSON encoding implemented; decoding pending | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. `std.json` composes checked object, optional and collection encoders for recursive schemas. Parsing and typed decoding are not yet exposed. |
 
 ## Supported metadata surface
 
@@ -23,6 +23,11 @@ read-only `name`, `index`, `owner`, `type`, and `visibility`; `Visibility.name`
 exposes the existing accessibility category. Outside an opened callback, `.type`
 has conservative union evidence. Within a concrete callback, it retains that
 field's actual type through the existing structural refinement machinery.
+
+Deferred helpers retain explicit return contracts, including multiple results,
+in their published overloads and callable types. Each concrete specialization
+checks its body against that contract; deferral does not infer or weaken an
+explicit return annotation.
 
 Generic-owner operations require concrete evidence at their call sites. Value-based
 enumeration over `A | B` selects between checked `Fields[A]` and `Fields[B]` layouts,
@@ -91,8 +96,46 @@ solving accepts the union use the shared specialization path.
   [compiler](../../src/valiance/runtime/compiler.py), and
   [VM](../../src/valiance/runtime/vm.py): managed metadata and execution.
 - [Bytecode guide](../Compiler%20Documentation/runtime-codegen-guide.md#bytecode-files):
-  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x40**, with analysed interface schema **10**;
+  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x42**, with analysed interface schema **11**;
   older compiled artifacts require recompilation.
+
+## JSON encoding
+
+`std.json.encode(value)` returns `Result[String, ValueError]`. Default encoders
+cover strings, exact real numbers, Booleans, absence, present optional values,
+finite lists and String-keyed dictionaries whose leaves have default encoders.
+Complex numbers return `ValueError`; numeric formatting never rounds through a
+host float. Strings use JSON escaping, including Unicode and control codes.
+
+Application schemas compose `encodeObject`, `encodeList`, `encodeDictionary`
+and `encodeOptional` with unary callbacks returning `Result[String, ValueError]`.
+Callbacks produce complete JSON values. `encodeObject` emits public and readable
+fields in declaration order and skips private values. Every declared field type
+must still satisfy the callback's checked signature, including private fields.
+Protected owners and invalid object categories return `ValueError`. Lexical
+unsafe inside the library's storage traversal grants no authority to callbacks
+and does not bypass ordinary duplication or cleanup checks.
+
+Recursive codecs use ordinary explicit signatures and `@recursive`:
+
+```valiance
+import {std.json}
+object Node => public $next: Node? end
+@recursive
+define encodeNode(value: Node) -> Result[String, ValueError] =>
+  $recur = $this
+  json.encodeObject($value, fn(child: Node?) -> Result[String, ValueError] =>
+    json.encodeOptional($child, $recur)
+  end)
+end
+encodeNode(Node(Some(Node(\None)))) | ?!
+```
+
+The same composition supports recursive variants containing lists of their
+parent type. Child errors return from the entire encoding operation without
+publishing partial JSON. Source-free standard-library builds retain native
+formatting hooks and each union branch's defining closure. Parsing and typed
+decoding remain separate work; there is no decoding placeholder API.
 
 ## Managed construction
 
@@ -199,5 +242,16 @@ names, tag facts and resource annotations. Recipes, complete record shapes and
 checked operations survive analysed-interface and optimized/unoptimized bytecode
 round trips. Malformed recipes and layouts are rejected before execution.
 
-The next integration work is the `std.json` serialization proof. Native/opaque
-storage construction and runtime-defined novel types remain unsupported.
+Lexical ordinary and reflective `foreach` callbacks propagate `?` failures to their
+enclosing source function, including through nested loops. Iteration retains
+element-level tag evidence from collection types. Both behaviors are covered
+with optimized/unoptimized execution and bytecode round trips.
+
+The JSON encoding proof covers public/readable field policy, recursive codecs,
+primitive and container values, error propagation and source-free modules.
+Explicitly typed recursive reflection is supported through `this`,
+including reflective callbacks, captured closures, finite union dispatch and
+source-free helpers. Invalid specialized match branches reject the whole body.
+The remaining JSON integration is parsing and typed decoding with managed
+construction. Native/opaque storage construction and runtime-defined novel
+types remain unsupported.

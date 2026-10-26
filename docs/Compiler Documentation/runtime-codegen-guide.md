@@ -822,8 +822,14 @@ The VM pops the top value:
   immediately.
 - any other value is pushed back unchanged.
 
+Inside a lexical `foreach` callback, `TRY_UNWRAP` carries a `True` return policy.
+On failure the VM raises the same enclosing-function return signal used by an
+explicit `return`, carrying only the absent/error value. The default `None`
+policy returns from an ordinary function frame. Nested loop callbacks propagate
+the signal through their normal cleanup paths.
+
 This is intentionally a bytecode primitive because the short-circuit target is
-the current frame, not just the built-in implementation. The non-short-circuit
+the enclosing source function, not just the built-in implementation. The non-short-circuit
 helper `?!` remains a normal resolved built-in: it unwraps success values and
 panics with `UnwrappedNoneFault` or `UnwrappedResultFault` for absent/error
 values.
@@ -1073,7 +1079,9 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
-Bytecode version **0x40** includes `MAKE_FIELDS` (opcode `0x48`) with a named
+Bytecode version **0x42** includes per-branch declaration bindings for union
+specializations, the lexical-return policy on `TRY_UNWRAP` and
+`MAKE_FIELDS` (opcode `0x48`) with a named
 `ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
 string, a `u32` field count, and name/type-signature/visibility strings for each
 field in declaration order. Type signatures use the same canonical syntax as
@@ -1099,7 +1107,7 @@ that signature.
 validated immutable recipes. Recipes contain exact type signatures, lists,
 strings, integers and named metadata/record properties. They carry no owner
 occurrence, authority or executable type-discovery logic. Analysed interface
-schema **10** retains the queries, checked recipes and complete record types.
+schema **11** retains the queries, checked recipes and complete record types.
 
 Intersections with finite owner evidence use the same concrete choices after
 analysis filters them by their nominal and trait constraints. The runtime
@@ -1148,7 +1156,7 @@ dispatch. `CALL` accepts a checked `ResolvedElementReference` for these stack
 callables, reusing ordinary union dispatch and vectorization. Lazy vectorized
 results retain the specialized closures they invoke.
 
-Analysed interfaces use schema **10** to retain deferred capture contexts, checked
+Analysed interfaces use schema **11** to retain deferred capture contexts, checked
 call-site bodies and union specializations, fallible access plans and descriptor
 conversion branches.
 

@@ -15,6 +15,78 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_json_encoders_specialize_from_a_source_free_standard_module(self):
+        from valiance.incremental import CompilationCoordinator
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'json.vlnc'
+            source = Path(__file__).parents[1] / 'src/valiance/std/json.vlnc'
+            library.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
+            CompilationCoordinator(root).build_module(
+                library, library.with_suffix('.vbcm'), module_name='std.json', optimize=True,
+            )
+            library.unlink()
+            analyser = Analyser(module_loader=ModuleLoader(std_root=root), source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {std.json}
+object Node => public $next: Node? end
+@recursive
+define encodeNode(value: Node) -> Result[String, ValueError] =>
+  $recur = $this
+  json.encodeObject($value, fn(child: Node?) -> Result[String, ValueError] =>
+    json.encodeOptional($child, $recur)
+  end)
+end
+json.encode(dict{"number" => 42, "text" => "Ada"}) ?!
+encodeNode(Node(Some(Node(\\None)))) ?!
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(loads(dumps(program))), [
+                    '{"number":42,"text":"Ada"}', '{"next":{"next":null}}',
+                ])
+
+    def test_recursive_reflection_specializes_from_source_free_modules(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'reflector.vlnc'
+            library.write_text('''
+@recursive
+public define[T] depth(value: T) -> Int =>
+  $result = 0
+  unsafe =>
+    fields[T] foreach(field) =>
+      $value[$field] match =>
+        as :Some[T](child) => $result := this($child) + 1
+        _ => end
+      end
+    end
+  end
+  $result
+end
+''', encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    'compile-module', '--file', str(library),
+                    '--output', str(library.with_suffix('.vbcm')),
+                ]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / 'main.vlnc')
+            typed = analyser.analyse(parse('''
+import {reflector.[depth as count]}
+object Node => public $next: Node? end
+count(Node(Some(Node(Some(Node(\\None))))))
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(loads(dumps(program))), [2])
+
     def test_erased_reflection_and_category_queries_specialize_from_source_free_modules(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
@@ -468,6 +540,37 @@ end
             for optimize in (False, True):
                 program = compile_program(typed, optimize=optimize)
                 self.assertEqual(run(loads(dumps(program))), [7])
+
+    def test_declared_reflection_returns_survive_source_free_interfaces(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "reflector.vlnc"
+            library.write_text('''
+public define[T] summary(value: T) -> String, Int =>
+  $count = $value fields | length
+  $count to[String]
+  $count
+end
+''', encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    "compile-module", "--file", str(library),
+                    "--output", str(library.with_suffix(".vbcm")),
+                ]), 0)
+            library.unlink()
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse('''
+import {reflector.summary}
+object Owner => public $number: Int end
+summary(Owner(7))
+summary("fieldless")
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(loads(dumps(program))), ['1', 1, '0', 0])
 
     def test_selected_generic_constructor_keeps_private_nested_enum_defaults(self):
         from valiance.runtime import compile_program, dumps, loads, run
@@ -1208,7 +1311,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x0a"))
+        self.assertTrue(first.startswith(b"VLNI\x0b"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -1225,10 +1328,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0a{"schema":10,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x0b{"schema":11,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x0a{"schema":10,"value":null}trailing'
+                b'VLNI\x0b{"schema":11,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -1236,7 +1339,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0a{"schema":10,"value":')
+            loads_interface(b'VLNI\x0b{"schema":11,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""
