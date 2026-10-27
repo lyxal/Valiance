@@ -26,6 +26,7 @@ from valiance.vtypes.symbols import Symbol
 from .. import analyser as _core
 from . import callable_values as _functions
 from ..support import analysis_utils as _utils
+from .models import ContextualModifierCache
 
 
 def _atomic_call_requirements_satisfied(
@@ -72,6 +73,7 @@ def _source_element_arguments(
     ctx: T.Context,
     call_arg_order: tuple[int, ...] = (),
     analyser: _core.Analyser | None = None,
+    contextual_cache: ContextualModifierCache | None = None,
 ) -> Iterator[
     tuple[
         tuple[T.Type, ...],
@@ -81,10 +83,13 @@ def _source_element_arguments(
 ]:
     """Prefer whole-item inference before adapting unknown collection ranks."""
     for adapt_min_rank in (False, True):
-        variants = tuple(_source_element_arguments_for_rank(
-            branch, overload, modifier_args, ctx, call_arg_order, analyser,
-            adapt_min_rank=adapt_min_rank,
-        ))
+        variants = tuple(
+            _source_element_arguments_for_rank(
+                branch, overload, modifier_args, ctx, call_arg_order, analyser,
+                adapt_min_rank=adapt_min_rank,
+                contextual_cache=contextual_cache,
+            )
+        )
         if variants:
             yield from variants
             return
@@ -98,6 +103,7 @@ def _source_element_arguments_for_rank(
     call_arg_order: tuple[int, ...] = (),
     analyser: _core.Analyser | None = None,
     *, adapt_min_rank: bool = False,
+    contextual_cache: ContextualModifierCache | None = None,
 ) -> Iterator[tuple[tuple[T.Type, ...], _core.AnalysisBranch,
                     tuple[_core.ModifierArgumentAnalysis, ...]]]:
     """Source element arguments during static analysis."""
@@ -161,6 +167,7 @@ def _source_element_arguments_for_rank(
             stack_substitution,
             ctx,
             analyser,
+            contextual_cache,
         ):
             specialized_stack_args = tuple(
                 _substitute_branch_type(arg, substitution) for arg in stack_args
@@ -732,6 +739,7 @@ def _specialized_modifier_orders(
     substitution: dict[T.TypeVarKey, T.Type],
     ctx: T.Context,
     analyser: _core.Analyser | None = None,
+    contextual_cache: ContextualModifierCache | None = None,
 ) -> Iterator[tuple[dict[T.TypeVarKey, T.Type], tuple[_core.ModifierArgumentAnalysis, ...]]]:
     """Compute specialized modifier orders during static analysis."""
     if not modifier_indexes:
@@ -775,6 +783,7 @@ def _specialized_modifier_orders(
                 expected,
                 ctx,
                 analyser,
+                contextual_cache,
             ):
                 key = (
                     modifier.typ,
@@ -804,6 +813,7 @@ def _modifier_variants_for_expected(
     expected: T.Type,
     ctx: T.Context,
     analyser: _core.Analyser | None = None,
+    contextual_cache: ContextualModifierCache | None = None,
 ) -> Iterator[tuple[_core.ModifierArgumentAnalysis, dict[T.TypeVarKey, T.Type]]]:
     """Specialize callback alternatives using non-dominated input matches."""
     expected = T.normalize(expected)
@@ -852,7 +862,9 @@ def _modifier_variants_for_expected(
                 )
                 return
 
-    overloads = _contextual_modifier_overloads(modifier, expected, analyser, ctx)
+    overloads = _contextual_modifier_overloads(
+        modifier, expected, analyser, ctx, contextual_cache
+    )
     matches: list[
         tuple[
             _core.ModifierArgumentAnalysis,
@@ -909,6 +921,36 @@ def _modifier_variants_for_expected(
 
 
 def _contextual_modifier_overloads(
+    modifier: _core.ModifierArgumentAnalysis,
+    expected: T.Type,
+    analyser: _core.Analyser | None,
+    ctx: T.Context,
+    cache: ContextualModifierCache | None = None,
+) -> tuple[FunctionOverloadTyping, ...]:
+    """Reuse contextual callback analyses within one element-call request."""
+    if cache is None:
+        return _compute_contextual_modifier_overloads(
+            modifier, expected, analyser, ctx
+        )
+    try:
+        key = (id(modifier), expected)
+        cached = cache.get(key)
+    except TypeError:
+        # Some compiler-owned type payloads cannot be hashed; they continue
+        # through the ordinary analysis path without losing functionality.
+        return _compute_contextual_modifier_overloads(
+            modifier, expected, analyser, ctx
+        )
+    if cached is not None:
+        return cached
+    resolved = _compute_contextual_modifier_overloads(
+        modifier, expected, analyser, ctx
+    )
+    cache[key] = resolved
+    return resolved
+
+
+def _compute_contextual_modifier_overloads(
     modifier: _core.ModifierArgumentAnalysis,
     expected: T.Type,
     analyser: _core.Analyser | None,
@@ -1386,8 +1428,17 @@ def _apply_overload_to_branch(
             continue
         rank_values = dict(where_result.rank_values)
         specialized_overload = _substitute_overload_ranks(overload, rank_values)
-        substitution = _branch_argument_substitution(
-            args, specialized_overload.params, ctx
+        # With no where clause and unchanged parameter patterns, the initial
+        # branch solve is already the final solve.  Do not repeat generic
+        # inference for every ordinary overload candidate.
+        reuse_preliminary = (
+            not overload.where_clause
+            and specialized_overload.params == rank_bound.params
+        )
+        substitution = (
+            preliminary_substitution
+            if reuse_preliminary
+            else _branch_argument_substitution(args, specialized_overload.params, ctx)
         )
         if substitution is None:
             continue

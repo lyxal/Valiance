@@ -1079,7 +1079,7 @@ lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 
-Bytecode version **0x42** includes per-branch declaration bindings for union
+Bytecode version **0x43** includes per-branch declaration bindings for union
 specializations, the lexical-return policy on `TRY_UNWRAP` and
 `MAKE_FIELDS` (opcode `0x48`) with a named
 `ReflectionFieldsReference` value (tag `0x12`). Its payload is an owner type-signature
@@ -1209,7 +1209,7 @@ count. Target expressions run exactly once; explicit prefix source expressions
 run only after target evaluation, including on the missing-target path.
 
 `CONSTRUCT` (opcode `0x50`) carries an operation name (`uninit`, `finished?`,
-`finish`, or `finish?`), concrete `ReflectionFieldsReference`, an optional hidden
+`finish`, `finish?`, `finish+args`, or `finish?+args`), concrete `ReflectionFieldsReference`, an optional hidden
 constructor binding and a nominal owner cast specification. Allocation borrows
 lifecycle metadata from that constructor without invoking it. `UninitValue`
 stores initialized fields only; its cleanup metadata includes field order but
@@ -1217,7 +1217,10 @@ excludes the owner's destructor and must-call contract. Finalization moves the
 fields into a complete owner or releases them in reverse declaration order on
 failure. Shared references retain a consumed construction state and subsequent
 operations raise `StateFault`. Protected field ownership transfers without
-duplication. Loading validates construction payloads and their layout metadata.
+duplication. The `+args` forms consume two source inputs and require empty
+native opaque storage; the VM passes the second input to a registered trusted
+native factory and validates its exact returned type and live-handle state.
+Loading validates construction payloads and their layout metadata.
 
 Reflective `FOREACH` uses `ReflectionForeachReference` (value tag `0x13`): the
 owner layout, one checked `FunctionCode` per field, an index-parameter flag, and

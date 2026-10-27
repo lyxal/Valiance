@@ -107,8 +107,8 @@ class _CallSelection:
         candidates: Iterable[CallCandidate],
         branch: AnalysisBranch,
         node: ASTNode,
-        no_match_message: str,
-        ambiguous_message: str,
+        no_match_message: str | Callable[[], str],
+        ambiguous_message: str | Callable[[], str],
     ) -> tuple[CallCandidate, ...] | None:
         """Select the most specific viable call candidates and diagnose ambiguity."""
         candidates = tuple(candidates)
@@ -183,15 +183,28 @@ class _CallSelection:
                     node,
                 )
             else:
-                self._diagnose(no_match_message, node)
+                message = (
+                    no_match_message()
+                    if callable(no_match_message)
+                    else no_match_message
+                )
+                self._diagnose(
+                    message,
+                    node,
+                )
             return None
         if (
             len(winners) > 1
             and branch.input_mode is not InputMode.INFER_INPUTS
             and not _functions._winners_specialize_inputs(winners, branch)
         ):
+            message = (
+                ambiguous_message()
+                if callable(ambiguous_message)
+                else ambiguous_message
+            )
             self._diagnose(
-                f"{ambiguous_message}\n"
+                f"{message}\n"
                 f"candidate overloads:\n{_utils._show_applied_overloads(winners)}",
                 node,
             )
@@ -627,11 +640,12 @@ class _CallSelection:
             self._warn(overload.annotation_warning, node)
 
         reflection_access = None
-        if overload.reflection_operation in {"uninit", "finished?", "finish", "finish?"}:
+        if overload.reflection_operation in {"uninit", "finished?", "finish", "finish?", "finish+args", "finish?+args"}:
             from valiance.asts import TypedConstructionNode
             operation = overload.reflection_operation
+            base_operation = operation.removesuffix("+args")
             if not self.reflection_unsafe:
-                self._diagnose(f"{operation} requires lexical unsafe", node)
+                self._diagnose(f"{base_operation} requires lexical unsafe", node)
                 return None
             builder = (candidate.applied.actual_returns[0] if operation == "uninit"
                        else candidate.source_arguments[0])
@@ -653,19 +667,26 @@ class _CallSelection:
                 if storage.args:
                     self._diagnose("native construction requires a concrete FFI type", node)
                     return None
+            elif operation.endswith("+args"):
+                self._diagnose("construction arguments require native opaque storage", node)
+                return None
             elif definition is None or len(storage.args) != len(definition.generics):
                 self._diagnose("construction requires a concrete managed object or native type", node)
                 return None
             reflection_access = TypedConstructionNode(
                 node, candidate.applied.actual_returns[0], self.env.field_metadata(owner),
-                operation in {"finish", "finish?"}, operation,
+                base_operation in {"finish", "finish?"}, operation,
                 ((self.env.runtime_name_for(storage.name) or storage.name)
                  if self.env.lookup_constructor(storage.name) is not None else None),
             )
-            if operation in {"finish", "finish?"}:
+            if base_operation in {"finish", "finish?"}:
                 from ..contracts.release_effects import release_effects
                 candidate = replace(candidate, branch=candidate.branch.with_element_tags(
                     release_effects(self.env, builder)))
+        elif overload.reflection_operation is not None and overload.reflection_operation.startswith("dynamic:"):
+            if not self.reflection_unsafe:
+                self._diagnose(f"{node.name} requires lexical unsafe", node)
+                return None
         elif overload.reflection_operation is not None:
             from valiance.asts import IndexAccessNode, IndexSelector, IndexSetNode
             from ..expressions.access_handlers import _index_access_node, _index_set_node

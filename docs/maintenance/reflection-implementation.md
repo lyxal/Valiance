@@ -13,8 +13,20 @@ some infrastructure does not mean earlier stages are complete.
 | R2: CSTC over reflective outputs | Concrete call-site specialization implemented | Generic metadata, reads and iteration defer to concrete call sites, including through helpers, trait and structural parameters, and function values. Explicitly typed `@recursive` helpers reuse their checked specialization through `this`. Checked executable bodies retain layouts and exact callback types; escaping transformed results combine conservatively. Empty layouts skip callback instantiation. Recursive signatures cannot be inferred. |
 | R3: dynamic selection, reads and writes | Lookup, direct access and fallible access implemented | String indexing always performs dynamic metadata lookup; missing names raise `KeyFault`. `field?` returns an optional descriptor. Direct and fallible reads retain exact callback types and conservative dynamic unions. Direct writes and non-consuming `write?` use checked destination compatibility without invoking conversions. `read?` and `write?` return ordinary Results with named reflection errors. Explicit descriptor-directed `to` and `to?` conversions use checked ordinary providers and exact runtime target selection. |
 | R4: permission and ownership integrity | Direct and fallible access contracts implemented | Lexical `unsafe` and conservative transitive `@nodup` checks gate metadata and value access. Descriptors carry no authority or owner instance. Access validates identity before visibility; writes check types last. Fallible writes preserve the original owner on success and failure and discard rejected replacements normally. Eager and lazy fallible outputs retain managed ownership. `DuplicationFault` bypasses handlers and testing helpers, including across task observation, aggregation and cancellation cleanup. |
-| R5: managed and native `Uninit[T]` | Implemented for concrete managed storage, compiler-visible runtime-registered schemas, and native factory finalization | Empty managed storage, checked dynamic initialization and replacement, non-consuming `finished?`, consuming `finish`/`finish?`, and cleanup of initialized fields. `uninit[&T]` represents *opaque empty* storage, completed only by a VM-registered trusted native factory; failed native construction returns `ConstructionError` or raises `NativeConstructionFault`. All construction operations require lexical `unsafe`. |
-| R6: broader categories and `std.json` | Category metadata, runtime schema registration and typed JSON decoding implemented | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. `std.json` composes checked object, optional and collection encoders for recursive schemas. Strict parsing and typed decoding reconstruct public storage from compiler-checked constructor layouts. |
+| R5: managed and native `Uninit[T]` | Implemented for concrete managed storage, runtime-registered schemas, and native factory finalization | Empty managed storage, checked dynamic initialization and replacement, non-consuming `finished?`, consuming `finish`/`finish?`, and cleanup of initialized fields. `uninit[&T]` represents *opaque empty* storage, completed only by a VM-registered trusted native factory; `finishWith`/`finishWith?` accept typed factory arguments. Native factory failure returns `ConstructionError` or raises `NativeConstructionFault`. All construction operations require lexical `unsafe`. |
+| R6: broader categories and `std.json` | Category metadata, runtime schema registration, and typed JSON decoding implemented | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. `std.json` composes checked object, optional and collection encoders for recursive schemas. Strict parsing and typed decoding reconstruct public storage from compiler-checked constructor layouts. |
+
+**Reflection v1 scope:** These stages are implemented for concrete owners,
+call-site-specialized generic owners and finite, runtime-distinguishable owner
+alternatives in the checked compilation universe. A generic helper accepting
+`Field[T]` or `Fields[T]` defers field-type evidence, reflective reads and
+iteration until a concrete call site; no unchecked callback is emitted.
+If an owner remains open-ended even after specialization and closed-world
+shape discovery, typed reflection rejects it with a diagnostic. Arbitrary
+future layouts have no statically sound field-result union or set of callbacks;
+the separate `RuntimeType`/`Dynamic` API provides checked late-bound access.
+This distinction is part of the v1 contract, not a missing VM dispatcher.
+Valiance source cannot declare new nominal types while it runs.
 
 ## Supported metadata surface
 
@@ -27,7 +39,8 @@ field's actual type through the existing structural refinement machinery.
 Deferred helpers retain explicit return contracts, including multiple results,
 in their published overloads and callable types. Each concrete specialization
 checks its body against that contract; deferral does not infer or weaken an
-explicit return annotation.
+explicit return annotation. Deferred `Field[T].type`, `owner[Field[T]]` and
+`Fields[T]` iteration work through the same call-site specialization path.
 
 Generic-owner operations require concrete evidence at their call sites. Value-based
 enumeration over `A | B` selects between checked `Fields[A]` and `Fields[B]` layouts,
@@ -96,7 +109,7 @@ solving accepts the union use the shared specialization path.
   [compiler](../../src/valiance/runtime/compiler.py), and
   [VM](../../src/valiance/runtime/vm.py): managed metadata and execution.
 - [Bytecode guide](../Compiler%20Documentation/runtime-codegen-guide.md#bytecode-files):
-  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x42**, with analysed interface schema **11**;
+  portable layout, callback, direct/fallible access, construction and specialization payloads. Current bytecode version is **0x43**, with analysed interface schema **11**;
   older compiled artifacts require recompilation.
 
 ## JSON encoding
@@ -205,6 +218,7 @@ vm.register_reflection_native(
     "&Widget",
     construct=lambda data: FFIHandleValue("&Widget", trusted_create(data["key"])),
     encode=lambda handle: {"key": trusted_lookup(handle)},
+    argument_type="Dict[String, String]",
 )
 handle = vm.construct_reflected("&Widget", {"key": "abc"})
 ```
@@ -222,15 +236,19 @@ lexically unsafe, typed incomplete storage. Native types have no reflected
 fields: `finished?` reports structural completeness, while `finish?` asks the
 registered factory for a value and returns `ConstructionError` if it is missing,
 raises an exception, or returns an invalid/released handle. `finish` raises the
-recoverable `NativeConstructionFault` on factory failure. The factory receives
-`None` when invoked by `finish`/`finish?`; embedding applications requiring
-constructor arguments can supply those through the host's
-`construct_reflected("&Widget", data)` method.
+recoverable `NativeConstructionFault` on factory failure. `finish`/`finish?`
+pass `None` to the factory; **`finishWith`/`finishWith?` pass an ordinary checked
+Valiance argument** as the factory's input. The optional `argument_type` on
+`register_reflection_native` checks that argument against reified runtime
+evidence before invoking the factory; wrong arguments return a construction
+error. Bundle multiple native arguments in a record or dictionary. Unlike overloading the original
+names, these distinct two-input elements respect Valiance's fixed-arity
+overloading invariant.
 
 ```valiance
 unsafe =>
   $builder = uninit[&Widget]
-  $widget = finish? $builder ?!
+  $widget = finishWith?($builder, "abc") ?!
 end
 ```
 
@@ -264,15 +282,54 @@ assert not analyser.diagnostics
 assert vm.run(compile_program(typed)) == [42]
 ```
 
-This is a closed snapshot, not runtime compiler mutation: registering a schema
-**after** compilation does not rewrite checked static types or compiled
-specializations. Without a schema snapshot, newly created types remain
-inspectable through the VM's host reflection APIs, not named source-level types.
+This is a closed snapshot, not runtime compiler mutation: registering a host
+schema **after** compilation does not rewrite checked static types or compiled
+specializations. Valiance source cannot create new nominal types at runtime.
+
+### Existential reflection over existing types
+
+`lookupRuntimeType?` returns a VM-owned `RuntimeType` witness for an existing
+compiled object type or host-registered schema, including a concrete generic
+instantiation such as `ExternalBox[Int]`. The type must have checked storage
+metadata available in the running VM. `runtimeFields?` returns its ordered
+read-only `RuntimeFieldSpec` records (name, type and visibility).
+`constructRuntime?`, `readRuntime?`, `writeRuntime?` and `runtimeTypeOf?`
+use those checked layouts. They require lexical `unsafe`, preserve field
+visibility and declared type checks, and never invent a nominal declaration.
+
+`dynamicBox(value)` accepts a typed value and `dynamicUnbox?[T](box)` verifies
+its reified type before returning `Result[T, ReflectionReadError]`; it cannot
+reinterpret an arbitrary payload. `Dynamic` does not expose its owned payload
+as a public field, and the normal duplication guard remains in force. A
+`RuntimeType` witness belongs to its VM, cannot be forged using an ordinary
+object constructor, and grants neither native pointer access nor unchecked
+field visibility. A registered native witness can be used with
+`constructRuntimeNative?` and a checked `Dynamic` factory argument.
+
+```valiance
+object LiveBox => public $value: Int end
+unsafe =>
+  $schema = lookupRuntimeType?("LiveBox") ?!
+  $box = constructRuntime?($schema, dict{"value" => dynamicBox(8)}) ?!
+  $updated = writeRuntime?($box, "value", dynamicBox(9)) ?!
+  dynamicUnbox?[Int](readRuntime?($updated, "value") ?!) ?!
+end
+# 9
+```
+
+Host applications can register external schemas with generics and defaults
+using `register_reflection_type`, and then compile source against them using
+`reflection_environment()`. Host schemas registered later can be accessed
+through a `RuntimeType` witness and `Dynamic`, but they are **not** new named
+Valiance types in the previously compiled program. The language deliberately
+provides no `runtimeField`, `defineRuntimeType`, or `defineGenericRuntimeType`
+elements. If freely shaped runtime data is required, use a dictionary or a
+separate schema-data abstraction, not a dynamically minted nominal class.
 
 **JSON is a consumer of this shared reflection registry**, not its owner.
 `std.json.decode[T](...)` uses registered native factories when the requested
 `&T` is compiler-known; the host `decode_json` and `encode_json` functions
-consume runtime-defined schema metadata. The earlier
+consume checked host-registered schema metadata. The earlier
 `register_json_type`/`register_json_native` names delegate to these same general
 reflection registrations.
 
@@ -281,12 +338,13 @@ box = vm.decode_json('{"value":42}', "ExternalBox[Int]")
 assert vm.encode_json(box) == '{"value":42}'
 ```
 
-**Boundary:** Compiler-visible runtime-registered types require a schema snapshot
-before static analysis; source cannot mint a new statically named type during
-execution. Registration never causes unchecked bytecode specialization or
-fabrication of native pointers. A source-native `uninit[&T]` requires a no-arg
-registered factory at finalization; native constructors with arguments are
-available through the general host reflection API.
+**Static/dynamic boundary:** Runtime registration cannot retroactively alter
+the compiler's nominal type universe. Static `fields[T]` and `uninit[T]` still
+require a known `T`; host-registered schemas absent from the compilation use
+witnesses and `Dynamic` values instead. Checked specializations never treat a
+late host schema as a fabricated static type.
+Native pointers are never fabricated, and all native finalization remains
+delegated to trusted host factories.
 
 Application schemas compose `encodeObject`, `encodeList`, `encodeDictionary`
 and `encodeOptional` with unary callbacks returning `Result[String, ValueError]`.

@@ -5,16 +5,69 @@ from __future__ import annotations
 import copy
 import unittest
 from itertools import permutations
+from unittest.mock import patch
 
 import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.analysis.calls import CallAnalyser, choose_best_overload
+from valiance.analysis.calls import candidates as call_candidates
 from valiance.parsing import parse
 from valiance.vtypes.symbols import Symbol
 
 
 class CallPlanningBoundaryTests(unittest.TestCase):
     """Verify call planning is owned outside the analyser façade."""
+
+    def test_contextual_modifier_cache_is_limited_to_one_call(self):
+        """Repeated expected signatures reuse work without leaking across calls."""
+        modifier = object()
+        expected = T.Fn((T.Int,), (T.String,))
+        ctx = T.Context()
+        with patch.object(
+            call_candidates, "_compute_contextual_modifier_overloads", return_value=()
+        ) as compute:
+            cache = {}
+            call_candidates._contextual_modifier_overloads(
+                modifier, expected, None, ctx, cache
+            )
+            call_candidates._contextual_modifier_overloads(
+                modifier, expected, None, ctx, cache
+            )
+            self.assertEqual(compute.call_count, 1)
+            call_candidates._contextual_modifier_overloads(
+                modifier, T.Fn((T.String,), (T.String,)), None, ctx, cache
+            )
+            self.assertEqual(compute.call_count, 2)
+            call_candidates._contextual_modifier_overloads(
+                modifier, expected, None, ctx, {}
+            )
+            self.assertEqual(compute.call_count, 3)
+
+    def test_repeated_higher_order_overloads_share_contextual_analysis(self):
+        """Equal callback expectations are analysed once per invocation."""
+        definition = (
+            "define apply(value: Int, f: Function[Int -> Int]) -> Int => "
+            "$value | $f() end\n"
+        )
+        source = definition * 8 + "1 apply: fn => + 1 end"
+        original = call_candidates._compute_contextual_modifier_overloads
+        analyser = Analyser()
+        with patch.object(
+            call_candidates, "_compute_contextual_modifier_overloads", wraps=original
+        ) as compute:
+            analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(compute.call_count, 1)
+
+    def test_successful_element_call_skips_diagnostic_stack_formatting(self):
+        """Only failing or ambiguous overloads need formatted stack details."""
+        analyser = Analyser()
+        with patch(
+            "valiance.analysis.support.analysis_utils._show_stack",
+            side_effect=AssertionError("unexpected diagnostic formatting"),
+        ):
+            analyser.analyse(parse("1 2 +"))
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_json_field_encoder_must_accept_every_declared_field_type(self):
         analyser = Analyser()
@@ -110,6 +163,26 @@ end
         analyser = Analyser()
         analyser.analyse(parse(source + '$pair = Pair(1, "text")\ninspect($pair)'))
         self.assertTrue(analyser.diagnostics)
+
+    def test_generic_field_parameters_specialize_at_the_call_site(self):
+        source = '''
+object Box => public $value: Int end
+define[T] evidence(field: Field[T]) => unsafe => $field.type end end
+define[T] inspect(metadata: Fields[T]) =>
+  unsafe => $metadata foreach(field) => $field.name end end
+end
+define[T] read(owner: T, field: Field[T]) =>
+  unsafe => $owner[$field] end
+end
+$box = Box(7)
+$field = fields[Box]["value"]
+evidence($field)
+inspect(fields[Box])
+read($box, $field)
+'''
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_caller_unsafe_does_not_authorize_generic_helper_reflection(self):
         source = '''

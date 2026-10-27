@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from valiance.analysis import AnalysisBranch, BranchSet, BranchVariables, InputMode
 from valiance.analysis.state import VariableWrite
@@ -62,6 +63,18 @@ class AnalysisStateBoundaryTests(unittest.TestCase):
         """Collection preserves order while removing duplicate branches."""
         branch = AnalysisBranch(input_mode=InputMode.NILADIC)
         self.assertEqual(BranchSet.collect((branch, branch)).branches, (branch,))
+
+    def test_branch_set_collect_handles_single_and_multiple_worlds(self) -> None:
+        """The common single-world path and general deduplication agree."""
+        first = AnalysisBranch().push(Int)
+        second = AnalysisBranch().push(String)
+        self.assertEqual(BranchSet.collect(iter(())).branches, ())
+        with patch.object(AnalysisBranch, "__hash__", side_effect=AssertionError):
+            self.assertIs(BranchSet.collect(iter((first,))).branches[0], first)
+        self.assertEqual(
+            BranchSet.collect(iter((first, second, first))).branches,
+            (first, second),
+        )
 
 
 if __name__ == "__main__":

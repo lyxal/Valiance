@@ -96,7 +96,9 @@ def run_batches(
     started = time.perf_counter()
     env = os.environ.copy()
     root = Path.cwd()
-    pythonpath = [str(root / "src"), str(root)]
+    # Several test modules import shared fixtures (such as ffi_support)
+    # directly from tests/. Parallel workers must match ordinary test discovery.
+    pythonpath = [str(root / "src"), str(root / "tests"), str(root)]
     if env.get("PYTHONPATH"):
         pythonpath.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath)

@@ -88,7 +88,8 @@ from ..state import (
     DiagnosticSeverity, InputMode, VariableWrite,
 )
 from .models import (
-    CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
+    CallCandidate, ContextualModifierCache, ElementArguments,
+    ElementCallPreparation, FunctionAnalysis,
     ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
 )
 
@@ -153,6 +154,7 @@ class _CallArguments:
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
         """Source an element overload's ordinary arguments from the branch stack."""
         sources: list[ElementArguments] = []
+        contextual_cache: ContextualModifierCache = {}
         for overload in overloads:
             for args, popped, ordered_modifiers in _calls._source_element_arguments(
                 branch,
@@ -160,6 +162,7 @@ class _CallArguments:
                 modifiers,
                 self.env.context,
                 analyser=self,
+                contextual_cache=contextual_cache,
             ):
                 sources.append(
                     ElementArguments(
@@ -199,6 +202,9 @@ class _CallArguments:
                 if preparation.branch.terminal:
                     terminal.append(preparation.branch)
                     continue
+                # Explicit argument expressions can introduce distinct scoped
+                # facts, so cache only within this prepared argument branch.
+                contextual_cache: ContextualModifierCache = {}
                 for args, popped, ordered_modifiers in _calls._source_element_arguments(
                     preparation.branch,
                     overload,
@@ -206,6 +212,7 @@ class _CallArguments:
                     self.env.context,
                     preparation.call_arg_order,
                     analyser=self,
+                    contextual_cache=contextual_cache,
                 ):
                     # Explicit argument expressions are evaluated before omitted
                     # operands are sourced from the surrounding stack. In an

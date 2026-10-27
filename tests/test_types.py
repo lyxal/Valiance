@@ -123,6 +123,34 @@ class TypeLibraryTests(unittest.TestCase):
     def test_atomic_marker_normalization_is_idempotent(self):
         self.assertEqual(normalize(Exact(Exact(Int))), Exact(Int))
 
+    def test_normalization_reuses_canonical_types(self):
+        """Common immutable shapes need no replacement after normalization."""
+        types = (
+            Int,
+            V("T"),
+            ExactList(Int),
+            Fn((Int,), (String,)),
+            Row(Foo, Field(Symbol("name"), String)),
+        )
+        for typ in types:
+            with self.subTest(typ=str(typ)):
+                self.assertIs(normalize(typ), typ)
+
+        # Unnormalized wrappers must still be canonicalized recursively.
+        self.assertEqual(normalize(N(Symbol("Some"), Never())), Never())
+
+    def test_row_normalization_still_sorts_and_merges_duplicate_fields(self):
+        """The canonical-row fast path does not skip structural merging."""
+        name, other = Symbol("name"), Symbol("other")
+        raw = T.RowType(
+            Foo,
+            (Field(other, Int), Field(name, String), Field(other, String)),
+        )
+        self.assertEqual(
+            normalize(raw),
+            Row(Foo, Field(name, String), Field(other, U(Int, String))),
+        )
+
     def test_exact_list_union_preserves_different_ranks(self):
         self.assertEqual(
             U(ExactList(Int, 2), ExactList(Int)),

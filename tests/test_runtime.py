@@ -252,6 +252,27 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
 
 class ReflectionRuntimeTests(unittest.TestCase):
+    def test_generic_field_parameters_specialize_for_runtime_execution(self):
+        source = '''
+object Box => public $value: Int end
+define[S] name(type: Type[S]) => typeInfo[S].name end
+define[T] evidence(field: Field[T]) => unsafe => name($field.type) end end
+define[T] inspect(metadata: Fields[T]) =>
+  unsafe => $metadata foreach(field) => $field.name end end
+end
+define[T] read(owner: T, field: Field[T]) =>
+  unsafe => $owner[$field] end
+end
+$box = Box(7)
+$field = fields[Box]["value"]
+evidence($field)
+inspect(fields[Box])
+read($box, $field)
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0], "Int")
+            self.assertEqual(stack[-1], RuntimeNumber(7))
+
     def test_json_default_encoders_preserve_tokens_and_container_structure(self):
         source = r'''
 import {std.json}

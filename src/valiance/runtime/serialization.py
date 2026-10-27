@@ -39,7 +39,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x42
+BYTECODE_VERSION = 0x43
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -254,7 +254,7 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
         if op is OpCode.CONSTRUCT:
             if (not isinstance(argument, tuple) or len(argument) != 4
                     or not isinstance(argument[0], str)
-                    or argument[0] not in {"uninit", "finished?", "finish", "finish?"}
+                    or argument[0] not in {"uninit", "finished?", "finish", "finish?", "finish+args", "finish?+args"}
                     or (argument[2] is not None and (not isinstance(argument[2], str) or not argument[2]))
                     or not isinstance(argument[3], tuple)
                     or not (
@@ -268,6 +268,8 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                     )):
                 raise BytecodeFormatError("invalid reflection construction payload")
             _validate_reflection_fields(argument[1])
+            if argument[0].endswith("+args") and argument[3][0] != "ffi":
+                raise BytecodeFormatError("native constructor arguments require opaque storage")
             if (argument[3][0] == "ffi" and
                     (argument[1].owner != argument[3][1] or argument[1].fields)):
                 raise BytecodeFormatError("native construction must have empty opaque storage")

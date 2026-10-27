@@ -24,14 +24,25 @@ Never traverse `ObjectValue.fields` for JSON without a checked layout, since
 that would expose private storage. Instantiating reified generic field types
 also matters for Boolean tags, including those nested in collections.
 
+# Parallel unittest worker imports
+
+Some test modules import sibling fixtures such as `ffi_support` as top-level
+modules. `tools/test_suite.py` must add both `src/` and `tests/` to worker
+`PYTHONPATH`; otherwise batches fail while the same suites pass under
+`PYTHONPATH=src:tests` directly. Preserve this when changing test runners.
+
 # General host reflection construction
 
 `VirtualMachine.register_reflection_type` registers novel host-runtime managed
 schemas, `construct_reflected` constructs checked occurrences without JSON,
 `reflected_fields` produces ordinary metadata, and `reflected_read`/
-`reflected_write` enforce visibility and type/ownership rules. Compiled `uninit[T]` also accepts native `&T` storage, but `finish` and
-`finish?` require a trusted no-argument VM-local factory and validate its
-returned FFI value. Bytecode serialization must accept only empty native
+`reflected_write` enforce visibility and type/ownership rules. Compiled `uninit[T]` also accepts native `&T` storage. `finish` and
+`finish?` use a trusted no-argument VM-local factory; `finishWith` and
+`finishWith?` pass one typed argument through the same native validation.
+`register_reflection_native(..., argument_type="T")` additionally validates the
+input before calling the trusted factory; native constructor arguments may be
+bundled in a checked record or dictionary.
+Bytecode serialization must accept only empty native
 layouts; native construction failures become `NativeConstructionFault` or
 `ConstructionError`. `reflection_environment()` snapshots VM-registered
 managed schemas into an analyser environment *before* compilation. Execute
@@ -41,8 +52,15 @@ the compile-time type universe.
 optional JSON encoder. Validate the result's exact native type and live handle
 state before exposing it, and never manufacture an FFI address from untrusted
 data. `register_json_type`/`register_json_native` are thin delegates to the
-same VM-local registry, not independent JSON type systems. Source-level new type declarations *during execution* remain unsupported;
-compiler-visible schemas must be registered before analysis.
+same VM-local registry, not independent JSON type systems. Source code cannot
+declare fresh nominal types at runtime. `lookupRuntimeType?` and
+`runtimeTypeOf?` provide VM-owned witnesses for already declared or
+host-registered types; checked construction and access use existential
+`Dynamic` boxes. `dynamicUnbox?[T]` verifies the requested concrete type, and
+witness-based access requires lexical `unsafe`. Never let `Dynamic` hide
+transitive `@nodup` storage from VM duplication checks or accept a witness
+issued by another VM. Late host registration cannot retroactively add static
+types to code that was already compiled.
 
 # Lazy JSON serialization
 

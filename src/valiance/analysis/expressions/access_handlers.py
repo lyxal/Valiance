@@ -478,7 +478,9 @@ def _index_access_node(
         if not self.require_reflection_permission(owner, node):
             return _core.BranchSet()
         if _functions._contains_type_var(owner):
-            self._diagnose("runtime-generic reflective reads are not implemented yet", node)
+            if self.defer_reflection:
+                raise _core.ReflectionSpecializationRequired(owner)
+            self._diagnose("reflective reads require concrete field layout evidence at a call site", node)
             return _core.BranchSet()
         metadata = fields_for_value(owner, self.env)
         result = witness if witness is not None else metadata.value_type

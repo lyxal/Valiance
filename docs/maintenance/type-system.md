@@ -212,6 +212,15 @@ along each traversal path; arguments are checked before cutting a recursive edge
 including edges that expand generic arguments. This query authorizes reflection;
 it neither attempts duplication nor replaces existing duplication checks.
 
+Existing compiled types and host-registered schemas can be accessed through
+VM-bound `RuntimeType` witnesses from `lookupRuntimeType?` or `runtimeTypeOf?`.
+`constructRuntime?` yields existential `Dynamic` values accessed through checked
+runtime operations. `dynamicUnbox?[T]` verifies reified evidence before
+exposing a requested static type. Source code cannot define new nominal types
+at runtime; host registration after compilation cannot retroactively introduce
+a named static `T`. Runtime witness operations require lexical `unsafe`, while
+the VM independently enforces schema identity, field types, and ownership.
+
 `unsafe => ... end` is a lexical permission scope. Its typed body remains explicit
 in `TypedUnsafeNode`, and code generation executes it inline. The analyser restores
 the previous authority after each scope, including failed analysis; helper and
@@ -262,6 +271,11 @@ requiring unresolved owner evidence marks its overload for specialization;
 nonrecursive callers propagate that requirement. Each concrete call retains a
 checked function body on `TypedElementNode.specialization`, including layouts,
 per-field callbacks, lexical permissions and conservative escaping result types.
+This also applies when a helper receives `Field[T]` or `Fields[T]` directly:
+reading a descriptor's `.type`, indexing an owner with it, or iterating the
+metadata waits for a concrete call-site owner. An owner with no finite set of
+checked layouts is intentionally rejected; unchecked runtime layouts must use
+the existential `RuntimeType`/`Dynamic` boundary instead.
 Opened descriptor refinements survive generic helper parameters. Nominal generic
 solving projects a structural row to its nominal base without erasing the row's
 field evidence during body checking.

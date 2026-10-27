@@ -208,45 +208,44 @@ class _ElementCalls:
             candidates = permitted
 
         stack_before = branch.stack
-        modifier_signature_message = self._modifier_signature_message(modifier_args)
-        modifier_mismatch_message = self._modifier_generic_mismatch_message(
-            node,
-            stack_before,
-            overloads,
-            modifier_args,
-        )
-        if node.call_args:
-            call_shape_message = self._explicit_call_shape_message(node, overloads)
-            no_match_message = (
-                f"{call_shape_message}\n"
-                f"{modifier_signature_message}"
-                f"{modifier_mismatch_message}"
-                f"{_utils._show_overload_list(node.name, overloads)}"
-                if call_shape_message is not None
-                else (
+
+        def no_match_message() -> str:
+            """Build detailed overload diagnostics only after selection fails."""
+            modifier_signature = self._modifier_signature_message(modifier_args)
+            modifier_mismatch = self._modifier_generic_mismatch_message(
+                node, stack_before, overloads, modifier_args
+            )
+            overload_list = _utils._show_overload_list(node.name, overloads)
+            if node.call_args:
+                call_shape = self._explicit_call_shape_message(node, overloads)
+                if call_shape is not None:
+                    return (
+                        f"{call_shape}\n{modifier_signature}"
+                        f"{modifier_mismatch}{overload_list}"
+                    )
+                return (
                     f"no overloads for element '{node.name}' match explicit call "
-                    f"syntax\n{modifier_signature_message}"
-                    f"{modifier_mismatch_message}"
-                    f"{_utils._show_overload_list(node.name, overloads)}"
+                    f"syntax\n{modifier_signature}{modifier_mismatch}{overload_list}"
                 )
-            )
-            ambiguous_message = (
-                f"ambiguous overloads for element '{node.name}' "
-                "with explicit call syntax"
-            )
-        else:
-            no_match_message = (
+            message = (
                 f"no overloads for element '{node.name}' match stack "
                 f"{_utils._show_stack(stack_before)}\n"
-                f"{modifier_signature_message}"
-                f"{modifier_mismatch_message}"
-                f"{_utils._show_overload_list(node.name, overloads)}"
+                f"{modifier_signature}{modifier_mismatch}{overload_list}"
             )
             if not candidates:
                 near_miss_help = self._element_near_miss_help(node, branch)
                 if near_miss_help is not None:
-                    no_match_message += f"\nhelp: {near_miss_help}"
-            ambiguous_message = (
+                    message += f"\nhelp: {near_miss_help}"
+            return message
+
+        def ambiguous_message() -> str:
+            """Render the source stack only for genuinely ambiguous overloads."""
+            if node.call_args:
+                return (
+                    f"ambiguous overloads for element '{node.name}' "
+                    "with explicit call syntax"
+                )
+            return (
                 f"ambiguous overloads for element '{node.name}' with stack "
                 f"{_utils._show_stack(stack_before)}"
             )

@@ -1,10 +1,12 @@
 """Tests for the balanced parallel unittest runner."""
 
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
-from tools.test_suite import discover_test_files, partition_test_files
+from tools.test_suite import TestBatch, discover_test_files, partition_test_files, run_batches
 
 
 class ParallelTestSuiteTests(unittest.TestCase):
@@ -35,3 +37,10 @@ class ParallelTestSuiteTests(unittest.TestCase):
     def test_partition_rejects_zero_workers(self):
         with self.assertRaisesRegex(ValueError, "at least 1"):
             partition_test_files((), 0)
+
+    def test_worker_search_path_includes_shared_test_fixtures(self):
+        batch = TestBatch((Path("tests/test_bytecode_serialization.py"),), 1)
+        with patch("tools.test_suite._run_batch", return_value=(1, batch, 0, "")) as worker:
+            self.assertEqual(run_batches((batch,), workers=1, verbose=False, fail_fast=False), 0)
+        search_path = worker.call_args.kwargs["env"]["PYTHONPATH"].split(os.pathsep)
+        self.assertIn(str(Path.cwd() / "tests"), search_path)

@@ -262,6 +262,7 @@ def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _invalid_json_constant(value: str) -> None:
+    """Reject non-JSON numeric constants such as NaN and Infinity."""
     raise _JsonDecodingError(f"Invalid JSON numeric constant {value!r}")
 
 
@@ -424,6 +425,7 @@ def _json_decode_collection(
     value: Any, expected: T.Type, lookup: Any, path: str, depth: int,
     variants: Any, native_decode: Any = None,
 ) -> Any:
+    """Reconstruct nested JSON arrays using the expected typed collection rank."""
     if not isinstance(value, list):
         raise _JsonDecodingError(f"{path}: expected JSON array")
     child_type = _collection_child_type(expected)

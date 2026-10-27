@@ -338,7 +338,9 @@ def _reflective_for_node(
     if not self.require_reflection_permission(owner, node):
         return _core.BranchSet()
     if _functions._contains_type_var(owner):
-        self._diagnose("runtime-generic reflective iteration is not implemented yet", node)
+        if self.defer_reflection:
+            raise _core.ReflectionSpecializationRequired(owner)
+        self._diagnose("reflective iteration requires concrete field layouts at a call site", node)
         return _core.BranchSet()
     metadata = self.env.field_metadata(owner)
     outputs: list[_core.AnalysisBranch] = []

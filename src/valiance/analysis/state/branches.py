@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from itertools import count
+from itertools import chain, count
 from typing import TYPE_CHECKING
 
 import valiance.vtypes as T
@@ -405,10 +405,20 @@ class BranchSet:
     @classmethod
     def collect(cls, branches: Iterable[AnalysisBranch]) -> BranchSet:
         """Flatten, diagnose, and deduplicate a collection of analysis branches."""
-        unique: list[AnalysisBranch] = []
-        seen: dict[AnalysisBranch, int] = {}
+        iterator = iter(branches)
+        first = next(iterator, None)
+        if first is None:
+            return cls()
+        second = next(iterator, None)
+        if second is None:
+            # Hashing a branch walks its entire typed body.  Most nodes leave
+            # just one surviving world, so there is nothing to deduplicate.
+            return cls((first,))
 
-        for branch in branches:
+        unique = [first]
+        seen: dict[AnalysisBranch, int] = {first: 0}
+
+        for branch in chain((second,), iterator):
             if branch in seen:
                 index = seen[branch]
                 unique[index] = unique[index].with_traces(branch)

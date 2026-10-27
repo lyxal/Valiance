@@ -10,6 +10,13 @@ from valiance.asts import FunctionOverloadTyping, TypedFunctionNode, TypedFuncti
 from ..state import AnalysisBranch
 
 
+# Reanalysis results are reusable only while one element call enumerates its
+# overloads; the outer branch and lexical environment are fixed for that call.
+ContextualModifierCache = dict[
+    tuple[int, T.Type], tuple[FunctionOverloadTyping, ...]
+]
+
+
 class ReflectionSpecializationRequired(Exception):
     """Defer a generic body until its reflected owner is concrete."""
 

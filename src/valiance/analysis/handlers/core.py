@@ -509,7 +509,9 @@ def _fields_node(
     if not self.require_reflection_permission(owner, node):
         return _core.BranchSet()
     if _functions._contains_type_var(owner):
-        self._diagnose("runtime-generic field enumeration is not implemented yet", node)
+        if self.defer_reflection:
+            raise _core.ReflectionSpecializationRequired(owner)
+        self._diagnose("field enumeration requires concrete owner evidence at a call site", node)
         return _core.BranchSet()
     from valiance.vtypes.reflection import fields_for_value
     metadata = fields_for_value(owner, self.env) if consumes else self.env.field_metadata(owner)
@@ -534,8 +536,8 @@ def _fields_node(
             or self.env.lookup_variant(item.name) is not None
         ) for item in possibilities
     ):
-        self._diagnose("value field enumeration requires concrete static type evidence; "
-                       "runtime owner selection is not implemented yet", node)
+        self._diagnose("value field enumeration requires a finite set of checked owner layouts; "
+                       "use RuntimeType and Dynamic for late-bound values", node)
         return _core.BranchSet()
     if metadata.alternatives:
         for layout in metadata.alternatives:
@@ -926,12 +928,12 @@ def _call_node(
         candidates=candidates,
         branch=callable_popped,
         node=node,
-        no_match_message=(
+        no_match_message=lambda: (
             f"no overloads for call target {T.show(callable_type)} match stack "
             f"{_utils._show_stack(callable_popped.stack)}\n"
             f"{_utils._show_overload_list(None, overloads)}"
         ),
-        ambiguous_message=(
+        ambiguous_message=lambda: (
             f"ambiguous call target {T.show(callable_type)} with stack "
             f"{_utils._show_stack(callable_popped.stack)}"
         ),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
 from valiance.runtime.runtime_values import ObjectRuntimeType, ObjectValue, PanicSignal, RuntimeNumber
@@ -25,6 +25,25 @@ class UninitValue(ObjectValue, IsolatedResource):
 
 class ReflectionValue(ObjectValue):
     """An ordinary managed metadata value whose public properties are read-only."""
+
+
+@dataclass
+class RuntimeTypeWitness(ObjectValue):
+    """An existential type witness tied to the VM that checked its schema.
+
+    A runtime witness never becomes a compiler-visible nominal declaration.
+    Its registry identity cannot be supplied through Valiance object fields.
+    """
+
+    registry_identity: object | None = field(default=None, compare=False, repr=False)
+
+
+class DynamicValue(ObjectValue):
+    """A checked existential box owning its payload as a managed child value."""
+
+    def __init__(self, payload: object):
+        """Own the payload without exposing its storage as a static field."""
+        super().__init__("Dynamic", {"#value": payload})
 
 
 def make_type_metadata(recipe: tuple):
@@ -152,7 +171,7 @@ def _reflection_value_matches(value: object, expected: object, *, depth: int = 0
     import valiance.vtypes as T
     from valiance.runtime.runtime_values import (
         FFIHandleValue, FFIScalarValue, FFIStructValue, RuntimeNumber, TaggedValue,
-        ObjectValue, is_list_like,
+        ObjectValue, RecordValue, is_list_like,
     )
 
     if depth > 128:
@@ -191,12 +210,25 @@ def _reflection_value_matches(value: object, expected: object, *, depth: int = 0
         if not isinstance(value, (list, tuple)):
             return False
         return all(_reflection_value_matches(item, element_type, depth=depth + 1) for item in value)
+    if isinstance(expected, T.TupleType):
+        return (isinstance(value, tuple) and len(value) == len(expected.params)
+                and all(_reflection_value_matches(item, typ, depth=depth + 1)
+                        for item, typ in zip(value, expected.params, strict=True)))
+    if isinstance(expected, T.RecordType):
+        return (isinstance(value, RecordValue)
+                and set(value) == {field.name.text for field in expected.fields}
+                and all(_reflection_value_matches(value[field.name.text], field.typ, depth=depth + 1)
+                        for field in expected.fields))
     if isinstance(expected, T.UnionType):
         return any(_reflection_value_matches(value, item, depth=depth + 1) for item in expected.items)
     if isinstance(expected, T.NoneTypeNode):
         return value is None or (isinstance(value, ObjectValue) and value.type_name == 'None')
     if isinstance(expected, T.NominalType):
         name = expected.name.text
+        if name == 'Dynamic' and not expected.args:
+            return isinstance(value, DynamicValue)
+        if name == 'RuntimeType' and not expected.args:
+            return isinstance(value, RuntimeTypeWitness)
         if name == 'String':
             return isinstance(value, str)
         if name in {'Int', 'Real', 'Number'}:

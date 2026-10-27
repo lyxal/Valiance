@@ -251,7 +251,10 @@ class _FieldExpressions:
             if write or not self.require_reflection_permission(owner, FieldAccessNode(name)):
                 return None, None
             if name == Symbol("type") and witness is None and _functions._contains_type_var(owner):
-                self._diagnose("runtime-generic field type evidence is not implemented yet",
+                if self.defer_reflection:
+                    from valiance.analysis.calls.models import ReflectionSpecializationRequired
+                    raise ReflectionSpecializationRequired(owner)
+                self._diagnose("field type evidence requires a concrete owner at a call site",
                                FieldAccessNode(name))
                 return None, None
             metadata_types = {

@@ -8,10 +8,105 @@ from valiance.runtime.vm import VirtualMachine
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads
-from valiance.runtime.runtime_values import FFIHandleValue, FFIScalarValue, RuntimeNumber, ObjectValue
+from valiance.runtime.runtime_values import FFIHandleValue, FFIScalarValue, RuntimeNumber, ObjectValue, ObjectRuntimeType, PanicSignal
+from valiance.runtime.reflection import DynamicValue
+from valiance.runtime.vm import _check_duplication_allowed
 
 
 class RuntimeReflectionConstructionTests(unittest.TestCase):
+    def test_host_registered_generic_private_fields_and_typed_failures(self):
+        source = '''unsafe =>
+  $schema = lookupRuntimeType?("Envelope[String]") ?!
+  $value = constructRuntime?($schema, dict{"item" => dynamicBox("Ada")}) ?!
+  $data = readRuntime?($value, "item") ?!
+  $typed = dynamicUnbox?[String]($data) ?!
+  $bad = dynamicUnbox?[Int]($data)
+  [$typed]
+end'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        with VirtualMachine(output=lambda _: None) as vm:
+            vm.register_reflection_type('Envelope', (('item', 'T', 'private'),), generics=('T',))
+            result, = vm.run(loads(dumps(compile_program(typed))))
+            self.assertEqual(list(result), ['Ada'])
+            self.assertEqual(vm.reflected_fields(vm.construct_reflected(
+                'Envelope[String]', {'item': 'Bee'}, unsafe=True,
+            )).fields['#fields'][0].fields['visibility'].fields['name'], 'private')
+        analyser = Analyser()
+        typed = analyser.analyse(parse('unsafe => lookupRuntimeType?("Missing") end'))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        with VirtualMachine(output=lambda _: None) as vm:
+            missing, = vm.run(compile_program(typed))
+            self.assertEqual(missing.type_name, 'ConstructionError')
+        analyser = Analyser()
+        typed = analyser.analyse(parse('dynamicUnbox?[String](dynamicBox(12))'))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        with VirtualMachine(output=lambda _: None) as vm:
+            mismatch, = vm.run(compile_program(typed))
+            self.assertEqual(mismatch.type_name, 'ReflectionReadError')
+
+    def test_runtime_type_witnesses_are_vm_local(self):
+        with VirtualMachine(output=lambda _: None) as first, VirtualMachine(output=lambda _: None) as second:
+            first.register_reflection_type('Box', (('value', 'Int'),))
+            second.register_reflection_type('Box', (('value', 'Int'),))
+            witness = first.runtime_type_witness('Box')
+            with self.assertRaisesRegex(ValueError, 'does not belong'):
+                second._runtime_reflection_action('construct', (witness, {'value': 3}))
+
+    def test_dynamic_box_does_not_hide_nonduplicable_owner(self):
+        protected = ObjectValue('Protected', {}, runtime_type=ObjectRuntimeType(dup_error='not duplicable'))
+        with self.assertRaises(PanicSignal) as raised:
+            _check_duplication_allowed(DynamicValue(protected))
+        self.assertEqual(raised.exception.value.type_name, 'DuplicationFault')
+
+    def test_native_runtime_type_witness_constructs_checked_values(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('''unsafe =>
+  $schema = lookupRuntimeType?("&scalar") ?!
+  $value = constructRuntimeNative?($schema, dynamicBox(17)) ?!
+  dynamicUnbox?[&scalar]($value) ?!
+end'''))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        with VirtualMachine(output=lambda _: None) as vm:
+            vm.register_reflection_native('&scalar', construct=lambda n: FFIScalarValue('&scalar', int(n)))
+            value, = vm.run(loads(dumps(compile_program(typed))))
+            self.assertEqual(value.value, 17)
+
+    def test_compiled_type_supports_checked_existential_reflection(self):
+        source = '''object LiveBox => public $value: Int end
+unsafe =>
+  $schema = lookupRuntimeType?("LiveBox") ?!
+  $initial = constructRuntime?($schema, dict{"value" => dynamicBox(8)}) ?!
+  $old = dynamicUnbox?[Int](readRuntime?($initial, "value") ?!) ?!
+  $new = writeRuntime?($initial, "value", dynamicBox(9)) ?!
+  $witness = runtimeTypeOf?($new) ?!
+  $name = $witness.name
+  $descriptors = runtimeFields?($schema) ?!
+  $updated = dynamicUnbox?[Int](readRuntime?($new, "value") ?!) ?!
+  [$old, $updated]
+end'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        program = compile_program(typed)
+        for executable in (program, loads(dumps(program))):
+            with VirtualMachine(output=lambda _: None) as vm:
+                result, = vm.run(executable)
+                self.assertEqual(list(result), [8, 9])
+                self.assertEqual(vm.reflected_read(vm.construct_reflected('LiveBox', {'value': 11}), 'value'), 11)
+
+    def test_source_cannot_define_new_nominal_types_at_runtime(self):
+        for source in (
+            'unsafe => defineRuntimeType("LiveBox", []) end',
+            'unsafe => defineGenericRuntimeType("Box", ["T"], []) end',
+            'unsafe => runtimeField("value", "Int", "public") end',
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics, source)
+
     def test_dynamic_schema_construction_and_reflected_metadata(self):
         with VirtualMachine(output=lambda _: None) as vm:
             vm.register_reflection_type('RuntimeChild', (
@@ -65,7 +160,7 @@ class RuntimeReflectionConstructionTests(unittest.TestCase):
                 'RuntimeSecret', {'n': 7, 'hidden': 'override'}, unsafe=True,
             )
             self.assertEqual(vm.reflected_read(private, 'hidden', unsafe=True), 'override')
-            with self.assertRaisesRegex(ValueError, 'no runtime-defined'):
+            with self.assertRaisesRegex(ValueError, 'no checked reflection layout'):
                 vm.construct_reflected('Unregistered', {})
             with self.assertRaisesRegex(ValueError, 'no matching registered'):
                 vm.reflected_fields(ObjectValue('RuntimeSecret', {'n': 7}))
@@ -104,6 +199,41 @@ end""")
                     self.assertEqual(ready, 1)
                     self.assertEqual(result.type_name, 'OK')
                     self.assertEqual(result.fields['value'].value, 17)
+
+    def test_source_native_builder_accepts_checked_argument(self):
+        for operation in ('finishWith', 'finishWith?'):
+            with self.subTest(operation=operation):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(
+                    f'unsafe => {operation}(uninit[&scalar], 23) end'
+                ))
+                self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+                program = compile_program(typed)
+                for executable in (program, loads(dumps(program))):
+                    with VirtualMachine(output=lambda _: None) as vm:
+                        vm.register_reflection_native('&scalar', construct=lambda arg: FFIScalarValue('&scalar', int(arg)))
+                        result, = vm.run(executable)
+                        if operation == 'finishWith?':
+                            result = result.fields['value']
+                        self.assertEqual(result.value, 23)
+        analyser = Analyser()
+        analyser.analyse(parse('object Box => public $n: Int end\nunsafe => finishWith?(uninit[Box], 4) end'))
+        self.assertTrue(any('native opaque' in item for item in analyser.diagnostics))
+
+    def test_native_factory_argument_contract_rejects_wrong_value(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('unsafe => finishWith?(uninit[&scalar], "wrong") end'))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        calls = []
+        with VirtualMachine(output=lambda _: None) as vm:
+            vm.register_reflection_native(
+                '&scalar', argument_type='Int',
+                construct=lambda arg: (calls.append(arg), FFIScalarValue('&scalar', int(arg)))[1],
+            )
+            result, = vm.run(loads(dumps(compile_program(typed))))
+            self.assertEqual(result.type_name, 'ConstructionError')
+            self.assertIn('does not match Int', result.fields['message'])
+            self.assertEqual(calls, [])
 
     def test_native_bytecode_rejects_fabricated_fields(self):
         analyser = Analyser()

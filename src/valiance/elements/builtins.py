@@ -789,6 +789,7 @@ class RuntimeContext:
     json_variant_constructors: Callable[[str], tuple[Any, ...]] | None = None
     json_native_decoder: Callable[[str, Any], Any] | None = None
     json_native_encoder: Callable[[Any], Any] | None = None
+    runtime_reflection: Callable[[str, tuple[Any, ...]], Any] | None = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -4069,6 +4070,138 @@ for _operation in ("uninit", "finished?", "finish", "finish?"):
         ),
     )(None)
 
+# Native factories can also receive a checked Valiance argument.  The
+# constructor's result still comes from the trusted VM registration; this
+# overload never interprets the argument as raw native storage.
+for _operation in ("finish", "finish?"):
+    _owner = T.V("Owner")
+    _return = (_owner if _operation == "finish" else
+               T.N(RESULT, _owner, T.N(Symbol("ConstructionError"))))
+    builtin(
+        "finishWith?" if _operation == "finish?" else "finishWith",
+        (T.N(Symbol("Uninit"), _owner), T.V("Argument")), (_return,),
+        param_names=("builder", "argument"), vectorisable=False,
+        reflection_operation=_operation + "+args",
+        documentation=element_documentation(
+            "Finalize native opaque storage with an argument passed to its trusted factory.",
+            parameters=(("builder", "Incomplete native storage."),
+                        ("argument", "Typed constructor argument.")),
+            returns="The native owner, or a ConstructionError for finish?.",
+            category="Reflection",
+            examples=((f'unsafe => {"finishWith?" if _operation == "finish?" else "finishWith"}(uninit[&scalar], 17) end', None),),
+        ),
+    )(None)
+
+
+# Existential reflection works with already declared or host-registered types.
+# It cannot introduce new nominal types into a compiled program.
+_runtime_type = T.N(Symbol("RuntimeType"))
+_runtime_field = T.N(Symbol("RuntimeFieldSpec"))
+_dynamic = T.N(Symbol("Dynamic"))
+
+
+@builtin(
+    "dynamicBox", (T.V("Value"),), (_dynamic,), vectorisable=False,
+    documentation=element_documentation(
+        "Store a Valiance value behind a checked existential dynamic wrapper.",
+        parameters=(("value", "The owned Valiance value."),),
+        returns="A Dynamic box whose payload is not statically accessible.", category="Reflection",
+        examples=(("dynamicBox(42)", None),),
+    ),
+)
+def _dynamic_box(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Keep the original value and its runtime type evidence together."""
+    from valiance.runtime.reflection import DynamicValue
+    return (DynamicValue(args[0]),)
+
+
+@builtin(
+    "dynamicUnbox?", (_dynamic,),
+    (T.N(RESULT, T.V("Value"), T.N(Symbol("ReflectionReadError"))),),
+    vectorisable=False,
+    documentation=element_documentation(
+        "Extract a Dynamic payload only when its reified value satisfies the requested type.",
+        parameters=(("value", "Dynamic box to check."),),
+        returns="A typed result or ReflectionReadError on a type mismatch.", category="Reflection",
+        examples=(("dynamicUnbox?[Int](dynamicBox(42))", None),),
+    ),
+)
+def _dynamic_unbox(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Fail closed when runtime evidence does not match the caller's type."""
+    from valiance.parsing.parser import parse_type
+    from valiance.runtime.reflection import DynamicValue, _reflection_value_matches
+
+    item = args[0]
+    if isinstance(item, DynamicValue) and ctx.type_args:
+        value = item.fields["#value"]
+        if _reflection_value_matches(value, parse_type(ctx.type_args[0])):
+            return (ObjectValue("OK", {"value": value}),)
+    return (ObjectValue("ReflectionReadError", {
+        "reason": "TypeMismatch", "message": "dynamic value does not match the requested type",
+    }),)
+
+
+def _dynamic_reflection_result(args: tuple[Any, ...], ctx: RuntimeContext, operation: str,
+                               error: str) -> tuple[Any, ...]:
+    """Convert ordinary schema errors to Results without masking integrity faults."""
+    from valiance.runtime.runtime_values import PanicSignal
+    if ctx.runtime_reflection is None:
+        return (ObjectValue(error, {"reason": "Unavailable", "message": "runtime reflection is unavailable",
+                                    **({"missing": []} if error == "ConstructionError" else {})}),)
+    try:
+        value = ctx.runtime_reflection(operation, args)
+    except PanicSignal:
+        raise
+    except Exception as failure:
+        return (ObjectValue(error, {
+            "reason": type(failure).__name__, "message": str(failure),
+            **({"missing": []} if error == "ConstructionError" else {}),
+        }),)
+    return (ObjectValue("OK", {"value": value}),)
+
+
+_RUNTIME_REFLECTION_DOC_EXAMPLE = '''object LiveBox => public $value: Int end
+unsafe =>
+  $schema = lookupRuntimeType?("LiveBox") ?!
+  $box = constructRuntime?($schema, dict{"value" => dynamicBox(8)}) ?!
+  $new = writeRuntime?($box, "value", dynamicBox(9)) ?!
+  dynamicUnbox?[Int](readRuntime?($new, "value") ?!) ?!
+end'''
+
+for _name, _params, _returns, _operation, _error in (
+    ("lookupRuntimeType?", (T.String,), _runtime_type, "lookup", "ConstructionError"),
+    ("runtimeFields?", (_runtime_type,), T.ExactList(_runtime_field), "fields", "ReflectionReadError"),
+    ("constructRuntime?", (_runtime_type, T.N(Symbol("Dict"), T.String, _dynamic)), _dynamic, "construct", "ConstructionError"),
+    ("constructRuntimeNative?", (_runtime_type, _dynamic), _dynamic, "native", "ConstructionError"),
+    ("runtimeTypeOf?", (_dynamic,), _runtime_type, "typeOf", "ReflectionReadError"),
+    ("readRuntime?", (_dynamic, T.String), _dynamic, "read", "ReflectionReadError"),
+    ("writeRuntime?", (_dynamic, T.String, _dynamic), _dynamic, "write", "ReflectionWriteError"),
+):
+    def _runtime_action(args: tuple[Any, ...], ctx: RuntimeContext, *, _action=_operation):
+        """Dispatch one checked late-bound operation through the VM registry."""
+        return _dynamic_reflection_result(args, ctx, _action, {
+            "lookup": "ConstructionError", "fields": "ReflectionReadError",
+            "construct": "ConstructionError", "native": "ConstructionError",
+            "typeOf": "ReflectionReadError", "read": "ReflectionReadError",
+            "write": "ReflectionWriteError",
+        }[_action])
+
+    builtin(
+        _name, _params, (T.N(RESULT, _returns, T.N(Symbol(_error))),),
+        vectorisable=False, reflection_operation="dynamic:" + _operation,
+        documentation=element_documentation(
+            "Reflect over existing compiler-declared or host-registered types: " + _operation + ".",
+            parameters=tuple((f"arg{index + 1}", "Checked runtime reflection argument.")
+                             for index in range(len(_params))),
+            returns="A successful checked value or a named reflection error.", category="Reflection",
+            examples=(({
+                "lookup": 'object Box => public $value: Int end\nunsafe => lookupRuntimeType?("Box") end',
+                "native": 'unsafe => constructRuntimeNative?(lookupRuntimeType?("&scalar") ?!, dynamicBox(17)) end',
+                "typeOf": 'object Box => public $value: Int end\nunsafe => runtimeTypeOf?(dynamicBox(Box(42))) end',
+            }.get(_operation, _RUNTIME_REFLECTION_DOC_EXAMPLE), None),),
+        ),
+    )(_runtime_action)
+
 for _error in REFLECTION_ERROR_TYPES:
     def _construct_reflection_error(args, ctx, *, _type_name=_error):
         """Construct a recoverable reflection error with an explicit reason."""
@@ -4112,6 +4245,17 @@ def default_environment() -> T.Environment:
         T.ObjectAttribute(Symbol("reason"), T.String), message_attribute,
         T.ObjectAttribute(Symbol("missing"), T.ExactList(T.String)),
     ))
+    env.define_object(Symbol("RuntimeFieldSpec"), (
+        T.ObjectAttribute(Symbol("name"), T.String),
+        T.ObjectAttribute(Symbol("type"), T.String),
+        T.ObjectAttribute(Symbol("visibility"), T.String),
+    ))
+    env.define_object(Symbol("RuntimeType"), (
+        T.ObjectAttribute(Symbol("name"), T.String),
+    ))
+    # Dynamic's owned payload is deliberately absent from its static fields:
+    # only dynamicUnbox? may recover a typed occurrence after checking it.
+    env.define_object(Symbol("Dynamic"), ())
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))
     env.context.set_generic_variance(
         RESULT,

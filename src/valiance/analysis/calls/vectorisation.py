@@ -572,6 +572,8 @@ def _substitute_overload_ranks(
     ranks: dict[str, int],
 ) -> T.Overload:
     """Substitute overload ranks during static analysis."""
+    if not ranks:
+        return overload
     return _functions._transform_overload_types(
         overload,
         lambda typ: _substitute_rank_values(typ, ranks),

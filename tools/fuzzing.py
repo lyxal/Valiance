@@ -831,6 +831,10 @@ def _valid_bytecode_argument(
     op: OpCode, rng: random.Random, depth: int
 ) -> object:
     """Return a serializer-valid argument for opcodes with constrained payloads."""
+    if op is OpCode.TRY_UNWRAP:
+        # An unwrap may either return locally (True) or propagate normally
+        # (None); arbitrary fuzz values are invalid return policies.
+        return rng.choice((None, True))
     if op is OpCode.MAKE_TYPE_METADATA:
         return ("info", "Int", (("type", ("type", "Int")), ("category", ("text", "primitive"))))
     if op is OpCode.BUILD_RECORD:
@@ -1299,6 +1303,7 @@ def _fuzz_runtime_bytecode(
                     OpCode.CONSTRUCT, OpCode.REFLECT_READ, OpCode.REFLECT_WRITE,
                     OpCode.REFLECT_CALL, OpCode.SPECIALIZE_FUNCTION,
                     OpCode.CONVERSION_MISSING, OpCode.SOURCE_ARGS_BORROW,
+                    OpCode.TRY_UNWRAP,
                     OpCode.VALIDATE_TAG, OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
                     OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
                     OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.MAKE_CLOSED_FUNCTION,

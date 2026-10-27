@@ -50,6 +50,13 @@ ERR = Symbol("Err")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
 INT = Symbol("Int")
+TASK = Symbol("Task")
+
+# These node classes have no normalization rules.  They occur frequently in
+# relation checks, so avoid walking the normalizer's compound-type cases.
+_ATOMIC_TYPES = frozenset(
+    (NeverType, NoneTypeNode, VarType, MetaVarType, TupleType, OverloadSetType)
+)
 
 
 def Never() -> Type:
@@ -331,8 +338,13 @@ def _normalize_exact_list_union(items: set[Type]) -> Type | None:
 
 def normalize(t: Type) -> Type:
     """Canonicalize unions, intersections, nested collections, and wrappers."""
-    if isinstance(t, NominalType) and t.name == Symbol("Task"):
-        return TaskType(tuple(normalize(output) for output in t.args))
+    if type(t) in _ATOMIC_TYPES:
+        return t
+    if isinstance(t, NominalType):
+        if t.name == TASK:
+            return TaskType(tuple(normalize(output) for output in t.args))
+        if not t.args:
+            return t
     if isinstance(t, UnionType):
         # Flattening/deduplication means equality can stay structural. This is
         # also where Never disappears from ordinary unions.
@@ -398,23 +410,25 @@ def normalize(t: Type) -> Type:
             collapsed = collapse_nested_collection(type(t), base, t.rank)
             if collapsed is not None:
                 return normalize(collapsed)
-        return type(t)(base, t.rank)
+        return t if base is t.base else type(t)(base, t.rank)
 
     if isinstance(t, RowType):
-        return type(t)(
-            normalize(t.base),
+        base = normalize(t.base)
+        fields = (
             tuple(RowField(item.name, normalize(item.typ)) for item in t.fields)
-            if isinstance(t, RecordType) else _normalize_row_fields(t.fields),
+            if isinstance(t, RecordType)
+            else _normalize_row_fields(t.fields)
         )
+        return t if base is t.base and fields == t.fields else type(t)(base, fields)
 
     if isinstance(t, FunctionType):
         if t.params is None and t.returns is None:
             return t
-        return Fn(
-            (normalize(p) for p in t.params or ()),
-            (normalize(r) for r in t.returns or ()),
-            t.element_tags,
-        )
+        params = tuple(normalize(p) for p in t.params or ())
+        returns = tuple(normalize(r) for r in t.returns or ())
+        if params == t.params and returns == t.returns:
+            return t
+        return Fn(params, returns, t.element_tags)
 
     if isinstance(t, AnonymousTraitType):
         return AnonymousTraitType(
@@ -451,7 +465,7 @@ def normalize(t: Type) -> Type:
         args = tuple(normalize(arg) for arg in t.args)
         if not isinstance(t, FFINamedType) and t.name == SOME and len(args) == 1 and isinstance(args[0], NeverType):
             return Never()
-        return rebuild_nominal(t, *args)
+        return t if args == t.args else rebuild_nominal(t, *args)
 
     if isinstance(t, TaggedType):
         inner = normalize(t.inner)
@@ -596,9 +610,26 @@ def _is_err_nominal(t: Type) -> bool:
 
 def _normalize_row_fields(fields: tuple[RowField, ...]) -> tuple[RowField, ...]:
     """Normalize row fields for type construction and display."""
-    merged: dict[Symbol, Type] = {}
+    # Most structural rows are already in canonical declaration order.  Avoid
+    # rebuilding and sorting them on each type-relation query.
+    normalized: list[RowField] = []
+    ordered_unique = True
+    unchanged = True
+    previous_name: Symbol | None = None
     for field in fields:
         typ = normalize(field.typ)
+        normalized.append(field if typ is field.typ else RowField(field.name, typ))
+        if typ is not field.typ:
+            unchanged = False
+        if previous_name is not None and previous_name >= field.name:
+            ordered_unique = False
+        previous_name = field.name
+    if ordered_unique:
+        return fields if unchanged else tuple(normalized)
+
+    merged: dict[Symbol, Type] = {}
+    for field in normalized:
+        typ = field.typ
         previous = merged.get(field.name)
         merged[field.name] = typ if previous is None else U(previous, typ)
     return tuple(RowField(name, typ) for name, typ in sorted(merged.items()))
@@ -625,10 +656,18 @@ def collapse_nested_collection(
 
 def same(a: Type, b: Type) -> bool:
     """Return canonical equality, including alpha-equivalent local generics."""
+    if a is b or a == b:
+        return True
     left = normalize(a)
     right = normalize(b)
     if left == right:
         return True
+    # Renaming locally bound generic variables cannot change the root node
+    # kind or the name of a nominal constructor.
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, NominalType) and left.name != right.name:
+        return False
     return _alpha_canonicalize(left) == _alpha_canonicalize(right)
 
 
