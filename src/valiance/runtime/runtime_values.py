@@ -581,6 +581,9 @@ class ObjectRuntimeType:
         tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]], ...
     ] = ()
     field_order: tuple[str, ...] = ()
+    # Trusted constructor layout: field name, declared visibility, and type.
+    json_fields: tuple[tuple[str, str, str | None], ...] | None = None
+    json_generics: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)

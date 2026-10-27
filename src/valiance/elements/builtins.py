@@ -784,6 +784,8 @@ class RuntimeContext:
     )
     index_get: Callable[[Any, Any, bool], Any] | None = None
     index_set: Callable[[Any, Any, Any, bool], Any] | None = None
+    json_constructor: Callable[[str], Any | None] | None = None
+    json_variant_constructors: Callable[[str], tuple[Any, ...]] | None = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -3101,7 +3103,7 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "take",
     (T.ExactList(T.TypeVariable("Item")), T.Int),
-    (T.ExactList(T.TypeVariable("Item")),),
+    (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
 )
 def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `take` built-in runtime overload."""

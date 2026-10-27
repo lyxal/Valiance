@@ -270,6 +270,260 @@ json.encode(\None) ?!
                 '{"number":42,"text":"Ada"}', 'true', 'null',
             ])
 
+    def test_json_encode_serializes_nested_objects_without_a_callback(self):
+        source = r'''
+import {std.json}
+object Child => public $value: Int end
+object Owner =>
+  public $name: String
+  private $secret: String
+  readable $enabled: #boolean Int
+  public $child: Child
+  public $flags: #boolean+ Int+
+  public $settings: Dict[String, #boolean Int]
+end
+json.encode(Owner("Ada\"\\", "hidden", true, Child(7), [true, false], dict{"ok" => true})) ?!
+json.encode(record{child => Child(3), absent => \None, empty => record{}}) ?!
+json.encode([[true, false], [false, true]]) ?!
+json.encode(Some(true)) ?!
+json.encode(12345678901234567890.123456789) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [
+                r'{"name":"Ada\"\\","enabled":true,"child":{"value":7},"flags":[true,false],"settings":{"ok":true}}',
+                '{"child":{"value":3},"absent":null,"empty":{}}',
+                '[[true,false],[false,true]]', 'true',
+                '12345678901234567890.123456789',
+            ])
+
+    def test_json_encode_propagates_failures_and_does_not_expose_private_fields(self):
+        source = '''
+import {std.json}
+@nodup("protected") object Protected => end
+object Child => public $value: Int end
+object Owner =>
+  public $before: String
+  private $secret: Child
+  public $bad: Number
+end
+json.encode(Protected)
+json.encode(Owner("visible", Child(7), 1i2))
+json.encode([Child(1)])
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([item.type_name for item in stack[:2]], [
+                'ValueError', 'ValueError',
+            ])
+            self.assertEqual([item.fields['message'] for item in stack[:2]], [
+                'Protected values cannot be JSON encoded',
+                'JSON numbers must be real',
+            ])
+            self.assertEqual(stack[2], '[{"value":1}]')
+
+    def test_json_encode_recurses_through_managed_collection_and_optional_payloads(self):
+        source = r'''
+import {std.json}
+object Child =>
+  private $secret: String
+  readable $enabled: #boolean Int
+  public $number: Int
+end
+object[T] Box => public $value: T end
+object Owner =>
+  public $items: Child+
+  public $lookup: Dict[String, Child?]
+end
+variant Tree =>
+  Leaf => public $value: Int end
+  Branch => public $children: Tree+ end
+end
+json.encode([Child("hidden", true, 1), Child("private", false, 2)]) ?!
+json.encode(dict{"items" => [Some(Child("hidden", true, 3)), \None]}) ?!
+json.encode(Some(Child("hidden", false, 4))) ?!
+json.encode([Some(Child("hidden", true, 5)), \None]) ?!
+json.encode(Owner([Child("hidden", true, 6)], dict{"one" => Some(Child("hidden", false, 7)), "missing" => \None})) ?!
+json.encode([Box(true), Box(false)]) ?!
+json.encode([Box(dict{"enabled" => true})]) ?!
+json.encode([Tree.Branch([Tree.Leaf(8)])]) ?!
+json.encode([record{child => Child("hidden", true, 9)}]) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [
+                '[{"enabled":true,"number":1},{"enabled":false,"number":2}]',
+                '{"items":[{"enabled":true,"number":3},null]}',
+                '{"enabled":false,"number":4}',
+                '[{"enabled":true,"number":5},null]',
+                '{"items":[{"enabled":true,"number":6}],"lookup":{"one":{"enabled":false,"number":7},"missing":null}}',
+                '[{"value":true},{"value":false}]',
+                '[{"value":{"enabled":true}}]',
+                '[{"children":[{"value":8}]}]',
+                '[{"child":{"enabled":true,"number":9}}]',
+            ])
+
+    def test_json_encode_rejects_unsupported_nested_values_without_leaking_fields(self):
+        source = '''
+import {std.json}
+object Child =>
+  private $secret: Number
+  public $value: Number
+end
+object Hidden => private $secret: Number end
+json.encode([Child(1i9, 2i3)])
+json.encode(dict{"private" => Hidden(1i9)})
+json.encode(Some(Child(1i9, 2i3)))
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([getattr(item, 'type_name', None) for item in stack],
+                             ['ValueError', None, 'ValueError'])
+            self.assertEqual(stack[0].fields['message'], 'JSON numbers must be real')
+            self.assertEqual(stack[1], '{"private":{}}')
+            self.assertEqual(stack[2].fields['message'], 'JSON numbers must be real')
+
+    def test_json_encode_evaluates_finite_lazy_lists_at_any_depth(self):
+        source = r'''
+import {std.json}
+object Child =>
+  private $secret: String
+  readable $enabled: #boolean Int
+  public $number: Int
+end
+object Owner =>
+  public $items: Int+
+  public $children: Child+
+end
+$nums = range(1, 3)
+json.encode($nums) ?!
+json.encode($nums) ?!
+json.encode([range(1, 2), range(3, 4)]) ?!
+json.encode(dict{"nums" => range(5, 6)}) ?!
+json.encode(Some(range(7, 8))) ?!
+json.encode(record{rows => range(9, 10)}) ?!
+json.encode(range(1, 2) map: fn(n: Int) => Child("secret", true, $n) end) ?!
+json.encode(Owner(range(1, 2), range(3, 4) map: fn(n: Int) => Child("secret", false, $n) end)) ?!
+json.encode(range(1, 3) map: fn(n: Int) => $n % 2 == 0 end) ?!
+json.encode(range(1, 3) | 0 take) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack, [
+                '[1,2,3]', '[1,2,3]',
+                '[[1,2],[3,4]]', '{"nums":[5,6]}', '[7,8]',
+                '{"rows":[9,10]}',
+                '[{"enabled":true,"number":1},{"enabled":true,"number":2}]',
+                '{"items":[1,2],"children":[{"enabled":false,"number":3},{"enabled":false,"number":4}]}',
+                '[false,true,false]', '[]',
+            ])
+
+    def test_json_encode_rejects_infinite_lazy_lists_and_bad_lazy_elements(self):
+        source = r'''
+import {std.json}
+$infinite = 1 unfold (true) -> (n: Int) => $n + 1 end
+json.encode($infinite)
+json.encode(dict{"infinite" => $infinite})
+json.encode(range(1, 2) map: fn(n: Int) => 1i2 end)
+json.encode($infinite | 3 take) ?!
+json.encode($infinite | 0 take) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([item.type_name for item in stack[:3]], [
+                'ValueError', 'ValueError', 'ValueError',
+            ])
+            self.assertEqual([item.fields['message'] for item in stack[:3]], [
+                'Infinite JSON lists cannot be encoded',
+                'Infinite JSON lists cannot be encoded',
+                'JSON numbers must be real',
+            ])
+            self.assertEqual(stack[3:], ['[1,2,3]', '[]'])
+
+    def test_json_decode_reconstructs_nested_typed_objects_and_collections(self):
+        source = r'''
+import {std.json}
+object Child =>
+  public $value: Int
+  public $active: #boolean Int
+end
+object[T] Box => public $value: T end
+object Owner =>
+  public $children: Child+
+  public $lookup: Dict[String, Child?]
+  private $secret: String = "hidden"
+end
+$owner = json.decode[Owner]("{\"children\":[{\"value\":1,\"active\":true}],\"lookup\":{\"one\":{\"value\":2,\"active\":false},\"missing\":null}}") ?!
+json.encode($owner) ?!
+$boxed = json.decode[Box[Child]]("{\"value\":{\"value\":3,\"active\":true}}") ?!
+json.encode($boxed) ?!
+$flags: #boolean+ Int+ = json.decode[#boolean+ Int+]("[true,false,true]") ?!
+json.encode($flags) ?!
+json.encode(json.decode[Dict[String, Int+]]("{\"items\":[1,2,3]}") ?!) ?!
+json.decode[record(.name: String, .age: Int)]("{\"name\":\"Ada\",\"age\":37}") ?!
+json.decode[Int?]("3")
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[:4], [
+                '{"children":[{"value":1,"active":true}],"lookup":{"one":{"value":2,"active":false},"missing":null}}',
+                '{"value":{"value":3,"active":true}}',
+                '[true,false,true]', '{"items":[1,2,3]}',
+            ])
+            self.assertIsInstance(stack[4], RecordValue)
+            self.assertEqual(stack[4], {"age": RuntimeNumber(37), "name": "Ada"})
+            self.assertEqual(stack[5].type_name, 'Some')
+            self.assertEqual(stack[5].fields['value'], 3)
+
+    def test_json_decode_rejects_invalid_shapes_and_preserves_exact_numbers(self):
+        source = r'''
+import {std.json}
+object Child =>
+  public $value: Int
+  private $secret: String
+end
+json.decode[Child]("{\"value\":1}")
+json.decode[Child]("{\"value\":1,\"secret\":\"x\"}")
+json.decode[Child]("{\"value\":1,\"value\":2}")
+json.decode[Child]("{\"value\":1,\"extra\":2}")
+json.decode[Child]("{\"value\":\"bad\"}")
+json.decode[Int]("1.5")
+json.decode[Int+]("{\"not\":\"an array\"}")
+json.decode[String]("no JSON")
+json.decode[Number]("NaN")
+json.decode[Number]("1.23456789012345678901234567890e3") ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual([item.type_name for item in stack[:9]], ['ValueError'] * 9)
+            self.assertIn('private field', stack[0].fields['message'])
+            self.assertIn('unexpected JSON fields', stack[1].fields['message'])
+            self.assertIn('Duplicate JSON key', stack[2].fields['message'])
+            self.assertIn('unexpected JSON fields', stack[3].fields['message'])
+            self.assertIn('expected JSON number', stack[4].fields['message'])
+            self.assertIn('integral', stack[5].fields['message'])
+            self.assertIn('expected JSON array', stack[6].fields['message'])
+            self.assertIn('Expecting value', stack[7].fields['message'])
+            self.assertIn('Invalid JSON numeric constant', stack[8].fields['message'])
+            self.assertEqual(str(stack[9]), '1234.5678901234567890123456789')
+
+    def test_json_decode_selects_unique_variant_cases_and_rejects_ambiguity(self):
+        source = r'''
+import {std.json}
+variant Tree =>
+  Leaf => public $value: Int end
+  Branch => public $children: Tree+ end
+end
+variant Ambiguous =>
+  First => public $value: Int end
+  Second => public $value: Int end
+end
+json.decode[Tree]("{\"value\":8}") ?!
+json.decode[Tree]("{\"children\":[{\"value\":2}]}") ?!
+json.decode[Tree]("{\"unknown\":1}")
+json.decode[Ambiguous]("{\"value\":1}")
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0].type_name, 'Tree.Leaf')
+            self.assertEqual(stack[0].fields['value'], 8)
+            self.assertEqual(stack[1].type_name, 'Tree.Branch')
+            self.assertEqual(stack[1].fields['children'][0].type_name, 'Tree.Leaf')
+            self.assertEqual([item.type_name for item in stack[2:]], ['ValueError', 'ValueError'])
+            self.assertIn('does not match', stack[2].fields['message'])
+            self.assertIn('ambiguous', stack[3].fields['message'])
+
     def test_json_object_codec_uses_readable_fields_and_skips_private_values(self):
         source = '''
 import {std.json}

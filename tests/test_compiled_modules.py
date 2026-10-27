@@ -32,6 +32,11 @@ class CompiledModuleTests(unittest.TestCase):
             typed = analyser.analyse(parse('''
 import {std.json}
 object Node => public $next: Node? end
+object Child =>
+  public $enabled: #boolean Int
+  private $secret: String
+end
+object Plain => public $value: Int end
 @recursive
 define encodeNode(value: Node) -> Result[String, ValueError] =>
   $recur = $this
@@ -40,13 +45,22 @@ define encodeNode(value: Node) -> Result[String, ValueError] =>
   end)
 end
 json.encode(dict{"number" => 42, "text" => "Ada"}) ?!
+json.encode(record{number => 42, values => [true, false]}) ?!
+json.encode(dict{"children" => [Child(true, "hidden")]}) ?!
+json.encode(dict{"children" => range(1, 2) map: fn(n: Int) => Child(true, "hidden") end}) ?!
+json.encode((1 unfold (true) -> (n: Int) => $n + 1 end) | 2 take) ?!
 encodeNode(Node(Some(Node(\\None)))) ?!
+json.encode(json.decode[Plain]("{\\\"value\\\":17}") ?!) ?!
 '''))
             self.assertEqual(analyser.diagnostics, [])
             for optimize in (False, True):
                 program = compile_program(typed, optimize=optimize)
                 self.assertEqual(run(loads(dumps(program))), [
-                    '{"number":42,"text":"Ada"}', '{"next":{"next":null}}',
+                     '{"number":42,"text":"Ada"}',
+                    '{"number":42,"values":[true,false]}',
+                    '{"children":[{"enabled":true}]}',
+                    '{"children":[{"enabled":true},{"enabled":true}]}',
+                    '[1,2]', '{"next":{"next":null}}', '{"value":17}',
                 ])
 
     def test_recursive_reflection_specializes_from_source_free_modules(self):

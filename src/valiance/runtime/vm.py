@@ -705,6 +705,7 @@ class VirtualMachine:
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
         ] = {}
+        self.json_constructors: dict[str, ObjectConstructorValue] = {}
         self.globals = {
             name: BuiltinValue(
                 element,
@@ -717,12 +718,23 @@ class VirtualMachine:
                     prepare_call=self.prepare_call,
                     index_get=self._builtin_index_get,
                     index_set=self._builtin_index_set,
+                    json_constructor=self._json_constructor,
+                    json_variant_constructors=self._json_variant_constructors,
                 ),
             )
             for name, element in (
                 runtime_elements() | runtime_stdlib_elements()
             ).items()
         }
+
+    def _json_constructor(self, name: str) -> ObjectConstructorValue | None:
+        """Resolve constructor-checked JSON metadata in this VM instance."""
+        return self.json_constructors.get(name)
+
+    def _json_variant_constructors(self, name: str) -> tuple[ObjectConstructorValue, ...]:
+        """Enumerate registered cases of one statically requested variant."""
+        return tuple(constructor for candidate, constructor in self.json_constructors.items()
+                     if candidate.startswith(name + "."))
 
     def __deepcopy__(self, memo: dict[int, object]) -> "VirtualMachine":
         """Copy VM language state while creating fresh scheduler resources."""
@@ -3426,16 +3438,16 @@ class VirtualMachine:
                                     _closure_locals(frame),
                                 )
                             )
-                            frame.stack.append(
-                                ObjectConstructorValue(
-                                    constructor.type_name,
-                                    constructor.fields,
-                                    constructor.required,
-                                    dict(constructor.defaults),
-                                    _object_runtime_type(constructor.runtime_metadata),
-                                    initializer,
-                                )
+                            constructed = ObjectConstructorValue(
+                                constructor.type_name,
+                                constructor.fields,
+                                constructor.required,
+                                dict(constructor.defaults),
+                                _object_runtime_type(constructor.runtime_metadata),
+                                initializer,
                             )
+                            self.json_constructors[constructor.type_name] = constructed
+                            frame.stack.append(constructed)
                         case OpCode.MAKE_ENUM_MEMBER:
                             enum_name, member_name, value = instruction.arg
                             fields = {"name": member_name}
@@ -5880,8 +5892,23 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
     """Decode lifecycle metadata, including declaration-order field names."""
     if value is None:
         return None
-    if not isinstance(value, tuple) or len(value) not in {5, 8, 9, 10}:
+    if not isinstance(value, tuple) or len(value) not in {5, 8, 9, 10, 12}:
         raise RuntimeError(f"invalid object runtime metadata {value!r}")
+    json_fields: tuple[tuple[str, str, str | None], ...] | None = None
+    json_generics: tuple[str, ...] = ()
+    if len(value) == 12:
+        raw_fields, raw_generics = value[-2:]
+        if (not isinstance(raw_fields, tuple) or any(
+            not isinstance(entry, tuple) or len(entry) != 3
+            or not isinstance(entry[0], str)
+            or entry[1] not in ("public", "readable", "private")
+            or (entry[2] is not None and not isinstance(entry[2], str))
+            for entry in raw_fields
+        )):
+            raise RuntimeError(f"invalid JSON field metadata {raw_fields!r}")
+        json_fields = raw_fields
+        json_generics = _runtime_string_tuple(raw_generics, "JSON generic parameters")
+        value = value[:-2]
     has_field_order = len(value) == 10
     offset = 1 if has_field_order else 0
     field_order = (
@@ -5968,6 +5995,8 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         type_facts=type_facts,
         generic_supertypes=generic_supertypes,
         field_order=field_order,
+        json_fields=json_fields,
+        json_generics=json_generics,
     )
 
 def _runtime_string_tuple(value: object, description: str) -> tuple[str, ...]:

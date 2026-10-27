@@ -14,7 +14,7 @@ some infrastructure does not mean earlier stages are complete.
 | R3: dynamic selection, reads and writes | Lookup, direct access and fallible access implemented | String indexing always performs dynamic metadata lookup; missing names raise `KeyFault`. `field?` returns an optional descriptor. Direct and fallible reads retain exact callback types and conservative dynamic unions. Direct writes and non-consuming `write?` use checked destination compatibility without invoking conversions. `read?` and `write?` return ordinary Results with named reflection errors. Explicit descriptor-directed `to` and `to?` conversions use checked ordinary providers and exact runtime target selection. |
 | R4: permission and ownership integrity | Direct and fallible access contracts implemented | Lexical `unsafe` and conservative transitive `@nodup` checks gate metadata and value access. Descriptors carry no authority or owner instance. Access validates identity before visibility; writes check types last. Fallible writes preserve the original owner on success and failure and discard rejected replacements normally. Eager and lazy fallible outputs retain managed ownership. `DuplicationFault` bypasses handlers and testing helpers, including across task observation, aggregation and cancellation cleanup. |
 | R5: managed `Uninit[T]` | Implemented for concrete managed object layouts and generic call sites | Empty storage, checked dynamic initialization and replacement, non-consuming `finished?`, consuming `finish`/`finish?`, and cleanup of initialized fields. All construction operations require lexical `unsafe`. Native/opaque storage remains unsupported. |
-| R6: broader categories and `std.json` | Category metadata and JSON encoding implemented; decoding pending | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. `std.json` composes checked object, optional and collection encoders for recursive schemas. Parsing and typed decoding are not yet exposed. |
+| R6: broader categories and `std.json` | Category metadata and typed JSON decoding implemented | `typeInfo[T]`, `alternatives[T]`, and `cases[T]` expose exact category evidence for compound types, collections, functions, tasks, tags, enums and resources. `std.json` composes checked object, optional and collection encoders for recursive schemas. Strict parsing and typed decoding reconstruct public storage from compiler-checked constructor layouts. |
 
 ## Supported metadata surface
 
@@ -101,11 +101,67 @@ solving accepts the union use the shared specialization path.
 
 ## JSON encoding
 
-`std.json.encode(value)` returns `Result[String, ValueError]`. Default encoders
-cover strings, exact real numbers, Booleans, absence, present optional values,
-finite lists and String-keyed dictionaries whose leaves have default encoders.
-Complex numbers return `ValueError`; numeric formatting never rounds through a
-host float. Strings use JSON escaping, including Unicode and control codes.
+`std.json.encode(value)` returns `Result[String, ValueError]` and accepts
+JSON-compatible values without a field callback: strings, exact real numbers,
+Booleans, absence and present optionals, finite lists, String-keyed dictionaries,
+and managed objects and records. Complex numbers return `ValueError`; numeric
+formatting never rounds through a host float. Strings use JSON escaping,
+including Unicode and control codes. The automatic encoder
+recursively visits the public and readable fields of nested objects, preserving
+declaration order while excluding private values. The same entry point accepts
+primitive values, String-keyed dictionaries, finite eager or lazy lists, and
+optional values containing JSON-compatible scalar and collection data. Exact numeric
+formatting and tag-aware Boolean encoding are retained through collection
+nesting. The result is still `Result[String, ValueError]`, including for unsupported
+values, complex numbers, and protected owners. Managed objects stored inside
+lists, dictionaries, optionals or other managed objects are automatically
+serialized to arbitrary nesting depth. Constructor-checked runtime metadata
+preserves the declaring field order, visibility and type information even
+when object values appear inside collection storage. The native traversal
+only reads public and readable fields from that metadata and refuses managed
+values whose checked metadata is unavailable. Finite lazy lists are consumed
+on demand (and replayable across encodings); explicitly infinite lists return
+`ValueError`. Since an untagged lazy iterator cannot generally be proven finite,
+only pass known-terminating lazy collections or limit them with `take` first.
+`take` marks its output as non-infinite, including when its source is infinite.
+
+```valiance
+import {std.json}
+object Person =>
+  public $name: String
+  private $token: String
+  public $active: #boolean Int
+end
+json.encode(Person("Ada", "secret", true)) | ?!
+# {"name":"Ada","active":true}
+```
+
+`std.json.decode[T](text)` returns `Result[T, ValueError]`, decoding strict JSON
+into an explicitly selected Valiance type. The decoder supports strings, exact
+numbers, Boolean tags, records, eager lists (including multidimensional lists),
+String-keyed dictionaries, optionals, and generic managed objects recursively.
+Only checked runtime constructors may be used; field names and values must
+match their declared types. Public and readable fields are decoded, private
+fields are filled only from declared defaults, and arbitrary extra fields or
+ambiguous duplicate JSON keys are rejected. Missing required fields, invalid
+number formats, wrong JSON shapes, and unsupported target types return
+`ValueError` with a path indicating the failure. Union variants are selected
+only when their constructor field layouts uniquely identify one case; ambiguous
+cases return `ValueError`. Explicit object initializer methods are not invoked:
+those objects are rejected rather than bypassing constructor invariants. Array
+values are materialized eagerly (JSON does not preserve lazy evaluation plans).
+
+```valiance
+import {std.json}
+object Person =>
+  public $name: String
+  public $age: Int
+  private $token: String = ""
+end
+$person = json.decode[Person]("{\"name\":\"Ada\",\"age\":37}") ?!
+json.encode($person) ?!
+# {"name":"Ada","age":37}
+```
 
 Application schemas compose `encodeObject`, `encodeList`, `encodeDictionary`
 and `encodeOptional` with unary callbacks returning `Result[String, ValueError]`.
@@ -252,6 +308,4 @@ primitive and container values, error propagation and source-free modules.
 Explicitly typed recursive reflection is supported through `this`,
 including reflective callbacks, captured closures, finite union dispatch and
 source-free helpers. Invalid specialized match branches reject the whole body.
-The remaining JSON integration is parsing and typed decoding with managed
-construction. Native/opaque storage construction and runtime-defined novel
-types remain unsupported.
+Native/opaque storage construction and runtime-defined novel types remain unsupported.

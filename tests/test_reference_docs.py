@@ -35,8 +35,11 @@ class ReferenceDocumentationTests(unittest.TestCase):
         references = {reference.qualified_name: reference for reference in collect_stdlib_references()}
         self.assertNotIn('std.json.quote', references)
         self.assertNotIn('std.json.number', references)
+        self.assertNotIn('std.json.encodeDynamic', references)
+        self.assertNotIn('std.json.encodeAny', references)
         encode = references['std.json.encode']
-        self.assertGreater(len({item.summary for item in encode.overload_documentation}), 1)
+        self.assertEqual(len(encode.overload_documentation), 1)
+        self.assertIn("managed objects", encode.overload_documentation[0].summary.lower())
         self.assertTrue(all(item.examples for item in encode.overload_documentation))
 
     def test_every_reference_overload_has_an_example(self):

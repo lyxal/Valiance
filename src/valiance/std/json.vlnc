@@ -1,4 +1,4 @@
-#? JSON encoders with checked callbacks for application-defined schemas.
+#? JSON encoding for managed data and checked application-defined codecs.
 
 define managedCategory(category: String) -> #boolean Int =>
   $category match =>
@@ -104,71 +104,47 @@ public define[T] encodeOptional(value: T?, encodePayload: Function[T -> Result[S
   end
 end
 
-#?? Encode a list whose leaves have default JSON encoders.
-#?? @param value List to serialize.
-#?? @returns JSON array text, or the first child error.
-#?? @example import {std.json} json.encode([2, 3]) | ?!
-public define[T] encode(value: T+) -> Result[String, ValueError] =>
-  $protected = typeInfo[T].protected
-  if $protected != 0 => return ValueError("Protected values cannot be JSON encoded") end
+#?? Encode JSON-compatible values, including managed objects, without callbacks.
+#??
+#?? Nested objects and JSON-compatible scalar, finite eager or lazy list,
+#?? dictionary and optional values are handled automatically. Private fields
+#?? are excluded. Finite lazy lists are evaluated as needed, including nested
+#?? lazies; explicitly infinite lists return ValueError.
+#?? Managed objects nested at any depth inside lists, String-keyed
+#?? dictionaries, and optionals use constructor-checked field visibility.
+#?? Protected and unsupported values return ValueError.
+#?? @param value Value to serialize.
+#?? @returns JSON text or the first ValueError.
+#?? @example import {std.json} json.encode(record{name => "Ada"}) | ?!
+@recursive
+public define[T] encode(value: T) -> Result[String, ValueError] =>
+  $info = typeInfo[T]
+  if $info.protected != 0 => return ValueError("Protected values cannot be JSON encoded") end
+  if managedType($info.type) == false => return std.json.encodeDynamic($value, $info.name) end
   $parts: String+ = []
-  $value foreach(item) =>
-    $text = encode($item) ?
-    $parts := append($parts, $text)
-  end
-  "[" + join($parts, ",") + "]"
-end
-
-#?? Encode a String-keyed dictionary whose values have default encoders.
-#?? @param value Dictionary to serialize.
-#?? @returns JSON object text, or the first child error.
-#?? @example import {std.json} json.encode(dict{"age" => 42}) | ?!
-public define[T] encode(value: Dict[String, T]) -> Result[String, ValueError] =>
-  $protected = typeInfo[T].protected
-  if $protected != 0 => return ValueError("Protected values cannot be JSON encoded") end
-  $parts: String+ = []
-  $value foreach(key, item) =>
-    $text = encode($item) ?
-    $parts := append($parts, std.json.quote($key) + ":" + $text)
+  unsafe =>
+    $value fields foreach(field) =>
+      if $field.visibility.name != "private" =>
+        $text = encode($value[$field]) ?
+        $parts := append($parts, std.json.quote($field.name) + ":" + $text)
+      end
+    end
   end
   "{" + join($parts, ",") + "}"
 end
 
-#?? Encode a present value with its default JSON encoder.
-#?? @param value Present optional value.
-#?? @returns JSON text, or the payload error.
-#?? @example import {std.json} json.encode(Some(2)) | ?!
-public define[T] encode(value: Some[T]) -> Result[String, ValueError] =>
-  $protected = typeInfo[T].protected
-  if $protected != 0 => return ValueError("Protected values cannot be JSON encoded") end
-  $value match =>
-    as :Some[T](payload) => encode($payload)
-    _ => ValueError("Expected a present JSON payload")
-  end
+#?? Decode strict JSON into a checked Valiance type.
+#??
+#?? The caller selects a target type with decode[Type](text). Numbers retain
+#?? exact decimal precision, and nested arrays, records, dictionaries, optionals,
+#?? generic objects, and unambiguous variants are reconstructed recursively.
+#?? Required public/readable fields must be present; private fields need declared
+#?? defaults. Extra or duplicate keys, wrong shapes, invalid JSON, protected
+#?? owners, and objects with custom initializers return ValueError. JSON arrays
+#?? are decoded eagerly rather than as lazy evaluation plans.
+#?? @param text JSON string to decode.
+#?? @returns A typed value or ValueError.
+#?? @example import {std.json} json.decode[Int]("42") | ?!
+public define[T] decode(text: String) -> Result[T, ValueError] =>
+  std.json.decodeDynamic($text, typeInfo[T].name)
 end
-
-#?? Encode absence as JSON null.
-#?? @param value Absent value.
-#?? @returns The JSON null token.
-#?? @example import {std.json} json.encode(\None) | ?!
-public define encode(value: None) -> Result[String, ValueError] => "null" end
-
-#?? Encode a real number exactly; complex numbers return ValueError.
-#?? @param value Number to serialize.
-#?? @returns A JSON number token, or ValueError.
-#?? @example import {std.json} json.encode(42) | ?!
-public define encode(value: Number) -> Result[String, ValueError] => std.json.number($value) end
-
-#?? Encode a Boolean as JSON true or false.
-#?? @param value Boolean to serialize.
-#?? @returns A JSON Boolean token.
-#?? @example import {std.json} json.encode(true) | ?!
-public define encode(value: #boolean Int) -> Result[String, ValueError] =>
-  if $value => "true" else => "false" end
-end
-
-#?? Encode a String with JSON escaping.
-#?? @param value String to serialize.
-#?? @returns A complete JSON string token.
-#?? @example import {std.json} json.encode("Ada") | ?!
-public define encode(value: String) -> Result[String, ValueError] => std.json.quote($value) end

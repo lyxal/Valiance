@@ -345,8 +345,11 @@ class _Compiler:
         self,
         name: str,
         lifecycle: tuple[object, ...],
+        *,
+        fields: tuple[ObjectFieldNode, ...] = (),
+        generics: tuple[Symbol, ...] = (),
     ) -> tuple[object, ...]:
-        """Attach closed-world nominal facts to one constructor."""
+        """Attach closed-world nominal and JSON field facts to one constructor."""
         accepted, variances = self.runtime_type_facts.get(name, ((name,), ()))
         registry = tuple(
             (fact_name, fact[0], fact[1],
@@ -359,6 +362,9 @@ class _Compiler:
             variances,
             registry,
             self.runtime_supertype_templates.get(name, ()),
+            tuple((field.name.text, field.access.text,
+                   None if field.typ is None else str(field.typ)) for field in fields),
+            tuple(generic.text for generic in generics),
         )
 
     def compile_function(
@@ -1325,6 +1331,8 @@ class _Compiler:
                             node.definitions,
                             tuple(field.name.text for field in node.fields),
                         ),
+                        fields=node.fields,
+                        generics=node.generics,
                     )
                     self.object_constructor(
                         type_name,
@@ -1378,6 +1386,8 @@ class _Compiler:
                             member.definitions,
                             tuple(field.name.text for field in member.fields),
                         ),
+                        fields=member.fields,
+                        generics=node.generics,
                     )
                     self.object_constructor(
                         runtime_name,
@@ -3084,6 +3094,7 @@ def _object_runtime_metadata(
         dup_error,
         mustcall_mode,
         mustcall_methods,
+        field_order,
     )
 
 

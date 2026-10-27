@@ -1230,6 +1230,18 @@ serialization, and is available to optimized and unoptimized execution alike.
 The VM still supports legacy metadata without an explicit field order, where it
 uses reverse runtime insertion order as a compatibility fallback.
 
+Constructor metadata also includes each field's name, declared visibility and
+source type, together with the owner's generic parameter names. `std.json.encode`
+uses this trusted layout to serialize managed values inside lists, dictionaries
+and optionals without reading private storage. The runtime instantiates declared
+field types from the value's reified generic arguments to preserve tags such as
+`#boolean` within nested containers. Constructors from older bytecode without a
+JSON layout are not inspected by the native serializer.
+Finite `LazyList` values share the same checked JSON traversal as eager lists:
+items are requested through the replay cache, preserving nested field metadata
+and collection tags. Explicitly infinite lists are rejected before iteration;
+`take` produces non-infinite type evidence for bounded prefixes.
+
 ### Destructor receiver escapes are rejected statically
 
 `analysis/contracts/destructor_borrows.py` gives destructor `$self` and every
