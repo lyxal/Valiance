@@ -273,7 +273,7 @@ class SourceQueries:
         else:
             try:
                 program = parse(source)
-            except LexError, ParseError, ParseErrors:
+            except (LexError, ParseError, ParseErrors):
                 return ""
         declaration = _definition_at_lsp_start(
             source, program, location["range"]["start"]
@@ -312,7 +312,7 @@ class SourceQueries:
                         source = self.documents.get(source_uri)
                         if source is None:
                             source = self._source_text(source_file)
-                    except ModuleLoadError, OSError:
+                    except (ModuleLoadError, OSError):
                         continue
                     documented = self._documented_overloads(source, imported_name)
                     matched = _match_overload_docs((selected,), documented)
@@ -380,7 +380,7 @@ class SourceQueries:
                 return None
         try:
             program = parse(source)
-        except LexError, ParseError, ParseErrors:
+        except (LexError, ParseError, ParseErrors):
             return None
         start = location["range"]["start"]
         declaration = _definition_at_lsp_start(source, program, start)

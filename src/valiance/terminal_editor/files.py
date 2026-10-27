@@ -259,7 +259,7 @@ class EditorPreferences:
                     for value in history
                     if isinstance(value, str) and value.strip()
                 ][-500:]
-        except OSError, ValueError:
+        except (OSError, ValueError):
             pass
         return preferences
 

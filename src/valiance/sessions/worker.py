@@ -344,7 +344,7 @@ class SessionWorker:
                     "closed",
                 }:
                     self.busy = False
-        except EOFError, BrokenPipeError:
+        except (EOFError, BrokenPipeError):
             if self.ready or self.busy:
                 result.append(WorkerEvent("closed", "Session worker exited"))
             self.ready = False

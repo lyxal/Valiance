@@ -158,6 +158,7 @@ class _BuiltinLookup:
     """Resolve each intrinsic signature once within an optimisation pass."""
 
     def __init__(self) -> None:
+        """Create a lookup cache scoped to one optimisation pass."""
         self._elements: dict[str, BuiltinElement] | None = None
         self._overloads: dict[tuple[str, str], BuiltinOverload | None] = {}
 
@@ -745,6 +746,7 @@ class NumericSpecializationPass(FunctionOptimizationPass):
     name = "numeric-specialization"
 
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
+        """Specialise verified scalar arithmetic calls without changing dispatch."""
         from valiance.elements.builtins import _minus, _multiply, _plus
 
         operations = {"+": _plus, "-": _minus, "*": _multiply}
