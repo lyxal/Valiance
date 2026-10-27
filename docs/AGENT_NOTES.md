@@ -31,6 +31,19 @@ modules. `tools/test_suite.py` must add both `src/` and `tests/` to worker
 `PYTHONPATH`; otherwise batches fail while the same suites pass under
 `PYTHONPATH=src:tests` directly. Preserve this when changing test runners.
 
+# Block lints and compilation-scoped builtins
+
+Block lint rules may receive hundreds of statements. Collect read/write facts
+once per block rather than recursively searching prefixes for every variable;
+the variable-use rules deliberately ignore reads inside nested `FunctionNode`
+bodies. Preserve that scope boundary when changing their traversal.
+
+The builtin catalogue can change between compiler invocations. Reuse a lookup
+snapshot within an individual `_Compiler` or optimisation pass, but never cache
+it globally across separate compilations. Tests exercise dynamic registrations
+and implementation identities; a stale catalogue can silently link the wrong
+builtin even when the source name is unchanged.
+
 # General host reflection construction
 
 `VirtualMachine.register_reflection_type` registers novel host-runtime managed

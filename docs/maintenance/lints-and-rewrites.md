@@ -247,18 +247,31 @@ The default pipeline is deliberately a sequence of small passes:
 - `ConstantFoldingOptimizationPass` evaluates serialisable literal tuples,
   interpolated strings, and a whitelist of pure resolved built-ins. It does not
   fold names rebound anywhere in the program, vectorised calls, or calls that
-  require runtime services.
+  require runtime services. Straight-line functions collapse newly exposed
+  literal expressions in one forward traversal. Functions with control flow
+  retain the target-aware iterative rewriter so a jump or handler entry cannot
+  be silently removed.
 - `SmallFunctionInliningPass` inlines zero-argument constant functions below a
   configurable bytecode-size threshold. The deliberately narrow initial policy
   avoids changing captures, locals, tags, ownership, recursion, or stack-input
-  behaviour.
+  behaviour. It also inlines statically linked scalar-parameter functions that
+  return constants or forward a single scalar argument, but only when every
+  call input is an immediate lifecycle-trivial constant and the declaration's
+  implementation identity, return count, and ownership evidence agree.
 - `BytecodePeepholeOptimizationPass` removes dead scalar `PUSH_CONST`/`POP`
-  pairs and resolves literal conditional branches, including statically tagged
-  Boolean results.
+  pairs and complete scalar push runs consumed by `POP_N`, and resolves literal
+  conditional branches, including statically tagged Boolean results. These
+  removals never cross incoming branch or handler targets.
+- `PopNOptimizationPass` combines adjacent pops without replacing an isolated
+  `POP` with a slower counted pop. Counts and scalar release semantics remain
+  unchanged.
 - `StackShuffleOptimizationPass` canonicalises shuffle labels, removes proven
   identity/empty shuffles, removes copied values immediately popped, and
   composes adjacent physical-stack permutations. It retains shuffles that could
-  source values from the conceptual cycling stack.
+  source values from the conceptual cycling stack. Functions with no shuffles
+  skip stack-depth analysis entirely; functions with shuffles share one
+  jump-target set between stack-depth analysis and rewriting, recomputing it
+  after any instruction changes.
 - `ControlFlowOptimizationPass` threads unconditional jump chains, removes
   unreachable instructions and next-instruction jumps, and retargets `JUMP`,
   conditional/match jumps, and `TRY_BEGIN` handlers after instruction removal.
@@ -267,6 +280,15 @@ Constant folding runs again after inlining so newly exposed literals can be
 collapsed. A pass must preserve stack effects, selected overloads, element/data
 tags, panics, ownership, source-visible evaluation order, and serialization. It
 must not parse lint messages or rediscover facts that belong to analysis.
+Function-local passes preserve the identity of unchanged immutable instructions,
+literal tuples, and nested payloads; functions and programs are rebuilt only
+when a pass changes them. The pipeline compares changed instruction trees
+against the same initial concurrency-barrier signature. A pass returning the
+same immutable main tree needs no repeated traversal, while every changed tree
+still receives the full barrier-order check.
+Selected built-in overload facts are cached only within an individual
+optimisation pass, never process-wide: subsequent compilation runs must still
+observe updated built-in registries and selected implementation identities.
 
 Every optimisation family has three test layers: focused bytecode/unit tests in
 `tests/test_optimizer.py`, differential generated cases in the `optimizer` fuzz

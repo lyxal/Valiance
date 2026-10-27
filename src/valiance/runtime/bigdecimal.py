@@ -22,10 +22,15 @@ class BigDecimal:
     def __post_init__(self):
         """Normalize the BigDecimal by removing trailing zeros from the coefficient."""
         if self.coefficient == 0:
-            object.__setattr__(self, "exponent", 0)
+            if self.exponent != 0:
+                object.__setattr__(self, "exponent", 0)
             return
 
         coefficient = self.coefficient
+        if coefficient % 10:
+            # Most intermediate arithmetic results are already canonical;
+            # their frozen dataclass fields need no further writes.
+            return
         exponent = self.exponent
 
         while coefficient % 10 == 0:
@@ -188,9 +193,13 @@ class BigDecimal:
 
     def __mod__(self, other: BigDecimal) -> BigDecimal:
         """Return the modulus of two BigDecimal numbers."""
-        quotient = self.floor_div(other)
-
-        return self - (other * BigDecimal.from_int(quotient))
+        # The exact remainder needs only one integer modulo after the decimal
+        # scales have been aligned.  Constructing a quotient and multiplying
+        # it back into a BigDecimal allocates several temporary numbers.
+        if self.exponent == other.exponent:
+            return BigDecimal(self.coefficient % other.coefficient, self.exponent)
+        dividend, divisor = self._align(other)
+        return BigDecimal(dividend % divisor, min(self.exponent, other.exponent))
 
     # ---------- conversion ----------
 

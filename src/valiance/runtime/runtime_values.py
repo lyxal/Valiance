@@ -228,6 +228,17 @@ class PlannedLazyList(LazyList):
         if any(stage.empty_without_source for stage in self.stages):
             # A zero-length prefix must not pull even one source item.
             return
+        if len(operations) == 1:
+            # A single stage is common for map/filter/take. Avoid the nested
+            # stage loop while retaining the stage's own stop signal.
+            operation = operations[0]
+            for source_item in self.source:
+                keep, item, stop = operation(source_item)
+                if keep:
+                    yield item
+                if stop:
+                    return
+            return
         for source_item in self.source:
             item = source_item
             stop_after_item = False
@@ -265,15 +276,24 @@ class PlannedLazyList(LazyList):
         reducer: Callable[[Any, Any], Any],
     ) -> Any:
         """Drive every pipeline stage and one terminal reducer in one loop."""
-        return self.run_terminal(PipelineTerminal.reducing(initial, reducer))
+        result = initial
+        for item in self:
+            result = reducer(result, item)
+        return result
 
     def count_terminal(self) -> int:
         """Count values surviving every pipeline stage without materializing them."""
-        return self.reduce_terminal(0, lambda count, _item: count + 1)
+        count = 0
+        for _ in self:
+            count += 1
+        return count
 
     def sum_terminal(self, zero: Any) -> Any:
         """Fuse this pipeline with numeric summation in one loop."""
-        return self.reduce_terminal(zero, lambda total, item: total + item)
+        total = zero
+        for item in self:
+            total = total + item
+        return total
 
 
 
@@ -943,6 +963,14 @@ class RuntimeNumber:
 
     # ---------- construction ----------
 
+    @staticmethod
+    def _from_components(real: BigDecimal, imag: BigDecimal = ZERO) -> RuntimeNumber:
+        """Build an arithmetic result whose decimal components are already checked."""
+        value = object.__new__(RuntimeNumber)
+        value.real = real
+        value.imag = imag
+        return value
+
     @classmethod
     def from_value(cls, value: object):
         """Construct a runtime number from a value of any supported type."""
@@ -1038,12 +1066,10 @@ class RuntimeNumber:
         """Add this runtime number to another value."""
         other = RuntimeNumber.from_value(other)
         if self.imag.is_zero() and other.imag.is_zero():
-            return RuntimeNumber(self.real + other.real)
-        return RuntimeNumber(
-            (
-                self.real + other.real,
-                self.imag + other.imag,
-            )
+            return RuntimeNumber._from_components(self.real + other.real)
+        return RuntimeNumber._from_components(
+            self.real + other.real,
+            self.imag + other.imag,
         )
 
     def __radd__(self, other):
@@ -1054,8 +1080,10 @@ class RuntimeNumber:
         """Subtract another value from this runtime number."""
         other = RuntimeNumber.from_value(other)
         if self.imag.is_zero() and other.imag.is_zero():
-            return RuntimeNumber(self.real - other.real)
-        return RuntimeNumber((self.real - other.real, self.imag - other.imag))
+            return RuntimeNumber._from_components(self.real - other.real)
+        return RuntimeNumber._from_components(
+            self.real - other.real, self.imag - other.imag,
+        )
 
     def __rsub__(self, other):
         """Subtract this runtime number from another value."""
@@ -1065,12 +1093,10 @@ class RuntimeNumber:
         """Multiply this runtime number by another value."""
         other = RuntimeNumber.from_value(other)
         if self.imag.is_zero() and other.imag.is_zero():
-            return RuntimeNumber(self.real * other.real)
-        return RuntimeNumber(
-            (
-                self.real * other.real - self.imag * other.imag,
-                self.real * other.imag + self.imag * other.real,
-            )
+            return RuntimeNumber._from_components(self.real * other.real)
+        return RuntimeNumber._from_components(
+            self.real * other.real - self.imag * other.imag,
+            self.real * other.imag + self.imag * other.real,
         )
 
     def __rmul__(self, other):
@@ -1206,7 +1232,7 @@ class RuntimeNumber:
         if not self.imag.is_zero() or not other.imag.is_zero():
             raise TypeError("Modulo is only defined for real numbers")
 
-        return RuntimeNumber(self.real % other.real)
+        return RuntimeNumber._from_components(self.real % other.real)
 
     def __rmod__(self, other):
         """Return the modulus of another value and this runtime number."""

@@ -18,6 +18,7 @@ import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from valiance.analysis import Analyser
 from valiance.main import main
@@ -27,6 +28,7 @@ from valiance.runtime import (
     ConstantFoldingOptimizationPass,
     ExplicitArgumentOptimizationPass,
     FunctionOptimizationPass,
+    OptimizationError,
     OptimizationPipeline,
     SmallFunctionInliningPass,
     StackShuffleOptimizationPass,
@@ -48,6 +50,7 @@ from valiance.runtime.bytecode import (
     VectorExtensionReference,
 )
 from valiance.runtime.runtime_values import RuntimeNumber
+from valiance.runtime.optimizer import NumericSpecializationPass, PopNOptimizationPass
 
 
 @dataclass
@@ -69,6 +72,322 @@ class _RenameProgramPass:
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_guarded_numeric_opcode_matches_generic_and_round_trips(self):
+        """Only numeric overloads with unmodified contracts receive this opcode."""
+        for operation in ("+", "-", "*"):
+            with self.subTest(operation=operation):
+                ref = ResolvedElementReference(
+                    operation, _intrinsic_id(operation, ("Number", "Number"))
+                )
+                instructions = (
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("7.25")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("-2")),
+                    Instruction(OpCode.CALL_RESOLVED_ELEMENT, ref),
+                    Instruction(OpCode.RETURN),
+                )
+                original = Program(FunctionCode(instructions, name="main"))
+                specialized = NumericSpecializationPass().optimize(original)
+                self.assertEqual(specialized.main.instructions[2].op, OpCode.CALL_NUMERIC)
+                expected = run(original)
+                self.assertEqual(run(specialized), expected)
+                self.assertEqual(run(loads(dumps(specialized))), expected)
+
+        string_ref = ResolvedElementReference(
+            "+", _intrinsic_id("+", ("String", "String"))
+        )
+        string_prog = Program(FunctionCode((
+            Instruction(OpCode.PUSH_CONST, "x"),
+            Instruction(OpCode.PUSH_CONST, "y"),
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT, string_ref),
+            Instruction(OpCode.RETURN),
+        )))
+        self.assertIs(NumericSpecializationPass().optimize(string_prog), string_prog)
+
+        numeric_ref = ResolvedElementReference(
+            "+", _intrinsic_id("+", ("Number", "Number")),
+            vectorised=True,
+        )
+        vectorised = Program(FunctionCode((
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT, numeric_ref),
+        )))
+        self.assertIs(NumericSpecializationPass().optimize(vectorised), vectorised)
+
+    def test_numeric_opcode_version_and_previous_bytecode_compatibility(self):
+        """New binaries signal their format, but previous bytecode remains readable."""
+        from valiance.runtime.serialization import BYTECODE_VERSION
+
+        self.assertEqual(BYTECODE_VERSION, 0x44)
+        old_style = Program(FunctionCode((
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
+            Instruction(OpCode.RETURN),
+        )))
+        current_bytes = dumps(old_style)
+        prior_bytes = current_bytes[:6] + bytes((0x43,)) + current_bytes[7:]
+        self.assertEqual(loads(prior_bytes), old_style)
+
+    def test_numeric_opcode_falls_back_when_binding_or_stack_is_unusual(self):
+        """A replaced global or cyclic argument keeps generic call behaviour."""
+        from valiance.runtime.vm import VirtualMachine, _Frame
+
+        reference = ResolvedElementReference(
+            "+", _intrinsic_id("+", ("Number", "Number"))
+        )
+        vm = VirtualMachine()
+        frame = _Frame([RuntimeNumber(2), RuntimeNumber(3)], {}, vm.globals)
+        vm._call_numeric_specialized(frame, reference)  # Populate cache, generic call.
+        self.assertEqual(frame.stack, [RuntimeNumber(5)])
+        frame.stack = [RuntimeNumber(2), RuntimeNumber(3)]
+        vm._call_numeric_specialized(frame, reference)  # Cached numeric fast path.
+        self.assertEqual(frame.stack, [RuntimeNumber(5)])
+
+        # A numeric-looking call isn't allowed to bypass an overridden binding.
+        vm.globals["+"] = RuntimeNumber(99)
+        frame.stack = [RuntimeNumber(2), RuntimeNumber(3)]
+        vm._call_numeric_specialized(frame, reference)
+        self.assertEqual(frame.stack, [RuntimeNumber(2), RuntimeNumber(3), RuntimeNumber(99)])
+
+        # Physical-stack underflow must still source conceptual cycle arguments.
+        other_vm = VirtualMachine()
+        cycle = _Frame([], {}, other_vm.globals, cycle_values=(RuntimeNumber(4), RuntimeNumber(6)))
+        other_vm._call_numeric_specialized(cycle, reference)
+        self.assertEqual(cycle.stack, [RuntimeNumber(10)])
+
+    def test_codegen_reuses_builtin_catalogue_within_each_compilation(self):
+        """A compilation shares lookups but later compiles refresh registrations."""
+        analyser = Analyser()
+        typed = analyser.analyse(parse("1 2 +\n3 4 +"))
+        self.assertFalse(analyser.diagnostics)
+        with patch(
+            "valiance.runtime.compiler.runtime_elements",
+            wraps=runtime_elements,
+        ) as catalogue:
+            first = compile_program(typed, optimize=False)
+            second = compile_program(typed, optimize=False)
+        self.assertEqual(catalogue.call_count, 2)
+        self.assertEqual(run(first), run(second))
+
+    def test_single_pop_remains_scalar_while_adjacent_pops_combine(self):
+        scalar = Instruction(OpCode.PUSH_CONST, RuntimeNumber(4))
+        pop = Instruction(OpCode.POP)
+        original = Program(FunctionCode(
+            (scalar, pop, Instruction(OpCode.RETURN)), name="main"
+        ))
+        pass_only = OptimizationPipeline((PopNOptimizationPass(),))
+
+        self.assertIs(pass_only.optimize(original), original)
+        self.assertEqual(run(original), [])
+
+        paired = Program(FunctionCode(
+            (scalar, scalar, pop, pop, Instruction(OpCode.RETURN)), name="main"
+        ))
+        combined = pass_only.optimize(paired)
+        self.assertEqual(combined.main.instructions[2], Instruction(OpCode.POP_N, 2))
+        self.assertEqual(run(combined), run(paired))
+        self.assertEqual(run(loads(dumps(combined))), [])
+    def test_linear_constant_chain_folds_and_serializes(self):
+        plus = ResolvedElementReference(
+            "+", _intrinsic_id("+", ("Number", "Number"))
+        )
+        instructions = [
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(1)),
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(2)),
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT, plus),
+        ]
+        for _ in range(50):
+            instructions.extend((
+                Instruction(OpCode.PUSH_CONST, RuntimeNumber(1)),
+                Instruction(OpCode.CALL_RESOLVED_ELEMENT, plus),
+            ))
+        instructions.append(Instruction(OpCode.RETURN))
+        program = Program(FunctionCode(tuple(instructions), name="main"))
+
+        with patch(
+            "valiance.elements.builtins.runtime_elements",
+            return_value=runtime_elements(),
+        ) as catalogue:
+            optimized = OptimizationPipeline(
+                (ConstantFoldingOptimizationPass(),)
+            ).optimize(program)
+
+        self.assertEqual(catalogue.call_count, 1)
+        self.assertEqual(
+            optimized.main.instructions,
+            (Instruction(OpCode.PUSH_CONST, RuntimeNumber(53)), Instruction(OpCode.RETURN)),
+        )
+        self.assertEqual(run(optimized), run(program))
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber(53)])
+
+    def test_inline_literal_scalar_calls_to_constant_and_identity_functions(self):
+        sources = (
+            ("define always(n: Int) -> Int => 42 end\n3 always", RuntimeNumber(42), "always"),
+            ("define same(n: Int) -> Int => $n end\n8 same", RuntimeNumber(8), "same"),
+        )
+        for source, expected, name in sources:
+            with self.subTest(name=name):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                original = compile_program(typed, optimize=False)
+                optimized = compile_program(typed)
+
+                self.assertTrue(any(
+                    instruction.op is OpCode.CALL_RESOLVED_ELEMENT
+                    and instruction.arg.name == name
+                    for instruction in original.main.instructions
+                ))
+                self.assertFalse(any(
+                    instruction.op is OpCode.CALL_RESOLVED_ELEMENT
+                    and instruction.arg.name == name
+                    for instruction in optimized.main.instructions
+                ))
+                self.assertEqual(run(original), [expected])
+                self.assertEqual(run(optimized), [expected])
+                self.assertEqual(run(loads(dumps(optimized))), [expected])
+
+    def test_constant_folding_preserves_a_branch_into_literal_inputs(self):
+        plus = ResolvedElementReference(
+            "+", _intrinsic_id("+", ("Number", "Number"))
+        )
+        program = Program(FunctionCode((
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(1)),
+            Instruction(OpCode.JUMP, 3),
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(99)),
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(2)),
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT, plus),
+            Instruction(OpCode.RETURN),
+        ), name="main"))
+
+        optimized = OptimizationPipeline(
+            (ConstantFoldingOptimizationPass(),)
+        ).optimize(program)
+
+        self.assertEqual(run(optimized), [RuntimeNumber(3)])
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber(3)])
+
+    def test_builtin_lookup_cache_does_not_survive_another_compilation(self):
+        plus = ResolvedElementReference(
+            "+", _intrinsic_id("+", ("Number", "Number"))
+        )
+        program = Program(FunctionCode((
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(2)),
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT, plus),
+            Instruction(OpCode.RETURN),
+        ), name="main"))
+        folding = ConstantFoldingOptimizationPass()
+
+        with patch(
+            "valiance.elements.builtins.runtime_elements",
+            return_value=runtime_elements(),
+        ):
+            folded = folding.optimize(program)
+        with patch("valiance.elements.builtins.runtime_elements", return_value={}):
+            unchanged = folding.optimize(program)
+
+        self.assertEqual(
+            folded.main.instructions[0],
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(5)),
+        )
+        self.assertIs(unchanged, program)
+
+    def test_shuffle_pass_skips_stack_analysis_when_no_shuffle_exists(self):
+        program = Program(FunctionCode((
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber(2)),
+            Instruction(OpCode.RETURN),
+        ), name="main"))
+        with patch(
+            "valiance.runtime.optimizer._guaranteed_stack_depths",
+            side_effect=AssertionError("unnecessary stack-depth analysis"),
+        ):
+            optimized = OptimizationPipeline(
+                (StackShuffleOptimizationPass(),)
+            ).optimize(program)
+        self.assertIs(optimized, program)
+
+    def test_unchanged_optimisation_preserves_program_and_literal_identity(self):
+        literal = ((RuntimeNumber(1), RuntimeNumber(2)), ("a", "b"))
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.PUSH_CONST, literal), Instruction(OpCode.RETURN)),
+                name="main",
+            )
+        )
+
+        optimized = OptimizationPipeline(
+            (ConstantFoldingOptimizationPass(), BytecodePeepholeOptimizationPass())
+        ).optimize(program)
+
+        self.assertIs(optimized, program)
+        self.assertIs(optimized.main.instructions[0].arg, literal)
+
+    def test_changed_function_still_checks_concurrency_barriers(self):
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.CANCEL_POLL), Instruction(OpCode.RETURN)),
+                name="main",
+            )
+        )
+
+        @dataclass
+        class RemoveBarrier:
+            name: str = "unsafe-barrier-removal"
+
+            def optimize(self, candidate: Program) -> Program:
+                return Program(
+                    replace(candidate.main, instructions=(Instruction(OpCode.RETURN),)),
+                    candidate.tag_parents,
+                )
+
+        with self.assertRaisesRegex(OptimizationError, "changed concurrency barrier"):
+            OptimizationPipeline((RemoveBarrier(),)).optimize(program)
+
+    def test_peephole_eliminates_scalar_pushes_consumed_by_pop_n(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber(10)),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber(11)),
+                    Instruction(OpCode.POP_N, 2),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber(42)),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="main",
+            )
+        )
+
+        optimized = OptimizationPipeline(
+            (BytecodePeepholeOptimizationPass(),)
+        ).optimize(program)
+
+        self.assertEqual(
+            optimized.main.instructions,
+            (Instruction(OpCode.PUSH_CONST, RuntimeNumber(42)), Instruction(OpCode.RETURN)),
+        )
+        self.assertEqual(run(optimized), run(program))
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber(42)])
+
+    def test_pop_n_peephole_does_not_cross_an_incoming_jump(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber(5)),
+                    Instruction(OpCode.JUMP, 3),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber(99)),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber(6)),
+                    Instruction(OpCode.POP_N, 2),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="main",
+            )
+        )
+
+        optimized = OptimizationPipeline(
+            (BytecodePeepholeOptimizationPass(),)
+        ).optimize(program)
+
+        self.assertIn(Instruction(OpCode.POP_N, 2), optimized.main.instructions)
+        self.assertEqual(run(optimized), run(program))
+
     def test_compile_optimizes_by_default_and_supports_opt_out(self):
         source = """
 $value = fn -> Number =>
@@ -181,7 +500,7 @@ $value()
         )
         seen: list[str | None] = []
 
-        OptimizationPipeline((_RecordingPass(seen),)).optimize(program)
+        unchanged = OptimizationPipeline((_RecordingPass(seen),)).optimize(program)
 
         self.assertEqual(
             seen,
@@ -194,6 +513,11 @@ $value()
                 "main",
             ],
         )
+        self.assertIs(unchanged.main, program.main)
+        for original, preserved in zip(
+            program.main.instructions, unchanged.main.instructions, strict=True
+        ):
+            self.assertIs(preserved, original)
 
     def test_explicit_argument_pass_materializes_scalar_cycle_inputs(self):
         source = """

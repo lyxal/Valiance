@@ -25,6 +25,9 @@ from valiance.elements.builtins import (
     BuiltinOverload,
     RuntimeContext,
     runtime_elements,
+    _minus,
+    _multiply,
+    _plus,
 )
 from valiance.runtime.bytecode import (
     FunctionCode,
@@ -93,6 +96,9 @@ from valiance.vtypes import (
     Variance,
     normalize,
 )
+
+
+_NUMERIC_INTRINSIC_IMPLEMENTATIONS = {"+": _plus, "-": _minus, "*": _multiply}
 
 
 class RuntimeError(_py_builtins.RuntimeError):
@@ -708,6 +714,10 @@ class VirtualMachine:
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
         ] = {}
+        self._resolved_function_cache: dict[
+            int,
+            tuple[ResolvedElementReference, FunctionCode],
+        ] = {}
         # Shared reflection registry: the JSON decoder consults these layouts too.
         self._reflection_constructors: dict[str, ObjectConstructorValue] = {}
         self._runtime_reflection_types: set[str] = set()
@@ -715,28 +725,27 @@ class VirtualMachine:
         self._reflection_native_encoders: dict[str, Callable[[Any], Any]] = {}
         self._reflection_native_argument_types: dict[str, str] = {}
         self._reflection_identity = object()
+        # Each element invokes the same VM services. The immutable context can
+        # be shared instead of allocating a new set of bound methods for every
+        # built-in during startup.
+        runtime_context = RuntimeContext(
+            self.output,
+            self.call_value,
+            self.format_value,
+            self.call_value_overload,
+            test_predicate=self.test_predicate,
+            prepare_call=self.prepare_call,
+            index_get=self._builtin_index_get,
+            index_set=self._builtin_index_set,
+            json_constructor=self._json_constructor,
+            json_variant_constructors=self._json_variant_constructors,
+            json_native_decoder=self._json_native_decode,
+            json_native_encoder=self._json_native_encode,
+            runtime_reflection=self._runtime_reflection_action,
+        )
         self.globals = {
-            name: BuiltinValue(
-                element,
-                RuntimeContext(
-                    self.output,
-                    self.call_value,
-                    self.format_value,
-                    self.call_value_overload,
-                    test_predicate=self.test_predicate,
-                    prepare_call=self.prepare_call,
-                    index_get=self._builtin_index_get,
-                    index_set=self._builtin_index_set,
-                    json_constructor=self._json_constructor,
-                    json_variant_constructors=self._json_variant_constructors,
-                    json_native_decoder=self._json_native_decode,
-                    json_native_encoder=self._json_native_encode,
-                    runtime_reflection=self._runtime_reflection_action,
-                ),
-            )
-            for name, element in (
-                runtime_elements() | runtime_stdlib_elements()
-            ).items()
+            name: BuiltinValue(element, runtime_context)
+            for name, element in (runtime_elements() | runtime_stdlib_elements()).items()
         }
 
     def _json_constructor(self, name: str) -> ObjectConstructorValue | None:
@@ -1554,7 +1563,7 @@ class VirtualMachine:
                 if count:
                     del stack[-count:]
                 stack.append(("aggregate", items))
-            elif op is OpCode.CALL_RESOLVED_ELEMENT:
+            elif op in {OpCode.CALL_RESOLVED_ELEMENT, OpCode.CALL_NUMERIC}:
                 reference = instruction.arg
                 if not isinstance(reference, ResolvedElementReference):
                     return None
@@ -1891,7 +1900,7 @@ class VirtualMachine:
                 if not isinstance(candidate, BuiltinValue):
                     return None
                 pending_builtin = candidate
-            elif instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
+            elif instruction.op in {OpCode.CALL_RESOLVED_ELEMENT, OpCode.CALL_NUMERIC}:
                 reference = instruction.arg
                 if not isinstance(reference, ResolvedElementReference):
                     return None
@@ -2112,7 +2121,7 @@ class VirtualMachine:
                 operations.append(("const", instruction.arg))
                 stack_depth += 1
                 continue
-            if instruction.op is not OpCode.CALL_RESOLVED_ELEMENT:
+            if instruction.op not in {OpCode.CALL_RESOLVED_ELEMENT, OpCode.CALL_NUMERIC}:
                 return None
             reference = instruction.arg
             if not isinstance(reference, ResolvedElementReference):
@@ -2205,7 +2214,7 @@ class VirtualMachine:
         if len(instructions) < arity + 2 or instructions[-1].op is not OpCode.RETURN:
             return None
         call = instructions[-2]
-        if call.op is not OpCode.CALL_RESOLVED_ELEMENT:
+        if call.op not in {OpCode.CALL_RESOLVED_ELEMENT, OpCode.CALL_NUMERIC}:
             return None
         reference = call.arg
         if not isinstance(reference, ResolvedElementReference):
@@ -2258,15 +2267,31 @@ class VirtualMachine:
         implementation = overload.implementation
         context = builtin.context
 
-        def invoke_builtin(*args: Any) -> tuple[Any, ...]:
-            """Invoke the selected built-in without a wrapper function frame."""
-            if any(is_list_like(arg) for arg in args):
-                return tuple(self.call_value(value, list(args)))
-            call_args = tuple(
-                args[payload] if kind == "arg" else payload
-                for kind, payload in operands
-            )
-            return implementation(overload.runtime_arguments(call_args), context)
+        direct_arguments = tuple(operands) == tuple(
+            ("arg", index) for index in range(arity)
+        )
+        if direct_arguments and arity == 1:
+            def invoke_builtin(*args: Any) -> tuple[Any, ...]:
+                """Invoke a unary scalar leaf without repacking its argument."""
+                if is_list_like(args[0]):
+                    return tuple(self.call_value(value, list(args)))
+                return implementation(overload.runtime_arguments(args), context)
+        elif direct_arguments and arity == 2:
+            def invoke_builtin(*args: Any) -> tuple[Any, ...]:
+                """Invoke a binary scalar leaf without rebuilding its operands."""
+                if is_list_like(args[0]) or is_list_like(args[1]):
+                    return tuple(self.call_value(value, list(args)))
+                return implementation(overload.runtime_arguments(args), context)
+        else:
+            def invoke_builtin(*args: Any) -> tuple[Any, ...]:
+                """Invoke wrappers with reordered parameters or literals."""
+                if any(is_list_like(arg) for arg in args):
+                    return tuple(self.call_value(value, list(args)))
+                call_args = tuple(
+                    args[payload] if kind == "arg" else payload
+                    for kind, payload in operands
+                )
+                return implementation(overload.runtime_arguments(call_args), context)
 
         return PreparedCall(arity, multiplicity, "resolved-builtin", invoke_builtin)
 
@@ -2381,7 +2406,7 @@ class VirtualMachine:
                         if label is not None
                     }
                     stack[-width:] = [labelled[label] for label in poststack]
-            elif op is OpCode.CALL_RESOLVED_ELEMENT:
+            elif op in {OpCode.CALL_RESOLVED_ELEMENT, OpCode.CALL_NUMERIC}:
                 reference = instruction.arg
                 if not isinstance(reference, ResolvedElementReference):
                     return None
@@ -2510,13 +2535,30 @@ class VirtualMachine:
                         return evaluate_fused_search
                 operands = tuple(compile_expression(item) for item in arguments)
 
-                def evaluate_call(argument: Any) -> Any:
-                    """Evaluate one compiled symbolic scalar call."""
-                    values = tuple(evaluate(argument) for evaluate in operands)
-                    result = implementation(overload.runtime_arguments(values), context)
-                    if len(result) != 1:
-                        raise RuntimeError("prepared expression call must return one value")
-                    return result[0]
+                if len(operands) == 1:
+                    def evaluate_call(argument: Any) -> Any:
+                        """Evaluate a unary symbolic call without a generator."""
+                        values = (operands[0](argument),)
+                        result = implementation(overload.runtime_arguments(values), context)
+                        if len(result) != 1:
+                            raise RuntimeError("prepared expression call must return one value")
+                        return result[0]
+                elif len(operands) == 2:
+                    def evaluate_call(argument: Any) -> Any:
+                        """Evaluate ordered binary operands without a generator."""
+                        values = (operands[0](argument), operands[1](argument))
+                        result = implementation(overload.runtime_arguments(values), context)
+                        if len(result) != 1:
+                            raise RuntimeError("prepared expression call must return one value")
+                        return result[0]
+                else:
+                    def evaluate_call(argument: Any) -> Any:
+                        """Evaluate one general compiled symbolic scalar call."""
+                        values = tuple(evaluate(argument) for evaluate in operands)
+                        result = implementation(overload.runtime_arguments(values), context)
+                        if len(result) != 1:
+                            raise RuntimeError("prepared expression call must return one value")
+                        return result[0]
 
                 return evaluate_call
             raise RuntimeError(f"unknown prepared expression node {kind!r}")
@@ -3643,10 +3685,12 @@ class VirtualMachine:
                                 raise RuntimeError(
                                     f"native call {ref.library}:{ref.symbol} failed: {exc}"
                                 ) from exc
-                        case OpCode.CALL_RESOLVED_ELEMENT:
+                        case OpCode.CALL_RESOLVED_ELEMENT | OpCode.CALL_NUMERIC:
                             try:
-                                request = self._call_resolved_element(
-                                    frame, instruction.arg
+                                request = (
+                                    self._call_numeric_specialized(frame, instruction.arg)
+                                    if instruction.op is OpCode.CALL_NUMERIC
+                                    else self._call_resolved_element(frame, instruction.arg)
                                 )
                                 if request is not None:
                                     activation.pending_call = request
@@ -4847,6 +4891,60 @@ class VirtualMachine:
             if release_callee:
                 _release_value(callee, self)
 
+    def _call_numeric_specialized(
+        self,
+        frame: _Frame,
+        reference: object,
+    ) -> _FunctionCallRequest | None:
+        """Execute a proven scalar numeric call or fall back to normal linking.
+
+        Keeping the original reference permits runtime rebinding, changes to
+        builtin registrations, and conceptual stack cycling to retain their
+        exact original behaviour. The fast path only consumes two ordinary
+        immutable numbers from the physical stack.
+        """
+        if isinstance(reference, ResolvedElementReference):
+            cached = self._resolved_builtin_cache.get(id(reference))
+            if (
+                cached is not None
+                and cached[0] is reference
+                and reference.name not in frame.locals
+                and frame.globals.get(reference.name) is cached[1]
+                and cached[2].implementation is _NUMERIC_INTRINSIC_IMPLEMENTATIONS.get(reference.name)
+                and cached[2].ownership_trivial
+                and not cached[2].runtime_return_tags
+                and len(frame.stack) >= 2
+                and isinstance(frame.stack[-2], RuntimeNumber)
+                and isinstance(frame.stack[-1], RuntimeNumber)
+                and not reference.vectorised
+                and reference.extension is None
+                and not reference.static_values
+                and not reference.type_args
+                and reference.dispatch_kind == DispatchKind.STATIC
+                and reference.arity_override is None
+                and reference.consumed_override is None
+                and not reference.return_collection_ranks
+                and not reference.return_tags
+                and not reference.return_tag_specs
+                and not reference.structural_witnesses
+                and not reference.callable_witnesses
+            ):
+                left, right = frame.stack[-2], frame.stack[-1]
+                try:
+                    if reference.name == "+":
+                        result = left + right
+                    elif reference.name == "-":
+                        result = left - right
+                    else:
+                        result = left * right
+                except _py_builtins.RuntimeError as exc:
+                    raise _with_call_detail(
+                        exc, f"element '{cached[1].element.name}'", (left, right),
+                    ) from exc
+                frame.stack[-2:] = [result]
+                return None
+        return self._call_resolved_element(frame, reference)
+
     def _call_resolved_element(
         self,
         frame: _Frame,
@@ -4890,6 +4988,24 @@ class VirtualMachine:
                 callable_witnesses=reference.callable_witnesses,
             )
             return None
+        if reference.dispatch_kind is DispatchKind.STATIC:
+            cached_function = self._resolved_function_cache.get(cache_key)
+            if (
+                cached_function is not None
+                and cached_function[0] is reference
+                and reference.name not in frame.locals
+            ):
+                # Keep only immutable compiled code in the cache. Retaining a
+                # FunctionValue would prolong the lifetime of its captured
+                # resources after a global binding changes.
+                current_function = frame.globals.get(reference.name)
+                if (
+                    isinstance(current_function, FunctionValue)
+                    and current_function.code is cached_function[1]
+                ):
+                    return self._call_resolved_function_value(
+                        current_function, frame, reference, validated_static=True
+                    )
         value = _load_name(reference.name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
             overload = _linked_builtin_overload(value, reference)
@@ -4923,7 +5039,15 @@ class VirtualMachine:
             )
             return None
         if isinstance(value, FunctionValue):
-            return self._call_resolved_function_value(value, frame, reference)
+            request = self._call_resolved_function_value(value, frame, reference)
+            if (
+                reference.dispatch_kind is DispatchKind.STATIC
+                and reference.implementation_id is not None
+                and reference.name not in frame.locals
+                and frame.globals.get(reference.name) is value
+            ):
+                self._resolved_function_cache[cache_key] = (reference, value.code)
+            return request
         if isinstance(value, OverloadedFunctionValue):
             return self._call_resolved_overloaded_function(value, frame, reference)
         if isinstance(value, ObjectConstructorValue):
@@ -4948,13 +5072,18 @@ class VirtualMachine:
         value: FunctionValue,
         frame: _Frame,
         reference: ResolvedElementReference,
+        *,
+        validated_static: bool = False,
     ) -> _FunctionCallRequest | None:
         """Invoke resolved function value during VM execution."""
         if (
             reference.dispatch_kind == DispatchKind.STATIC
             and reference.implementation_id is not None
         ):
-            if value.code.implementation_id != reference.implementation_id:
+            if (
+                not validated_static
+                and value.code.implementation_id != reference.implementation_id
+            ):
                 raise RuntimeError(
                     f"static function '{reference.name}' cannot link declaration "
                     f"{reference.implementation_id!r} "
@@ -5429,7 +5558,7 @@ class VirtualMachine:
                 }:
                     direct_leaf = False
                     break
-                if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
+                if instruction.op in {OpCode.CALL_RESOLVED_ELEMENT, OpCode.CALL_NUMERIC}:
                     reference = instruction.arg
                     if (
                         not isinstance(reference, ResolvedElementReference)
@@ -9073,6 +9202,11 @@ def _truthy(value: Any) -> bool:
     """Return the Boolean result of truthy during virtual-machine execution."""
     if isinstance(value, TaggedValue):
         value = value.value
+    if type(value) is RuntimeNumber:
+        # Comparing against the Python integer 0 would construct a temporary
+        # RuntimeNumber and BigDecimal.  Check both components so a purely
+        # imaginary nonzero value retains its original truth semantics.
+        return not (value.real.is_zero() and value.imag.is_zero())
     return value is not None and value != 0
 
 

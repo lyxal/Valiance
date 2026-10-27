@@ -41,6 +41,41 @@ class AnalysisStateBoundaryTests(unittest.TestCase):
         self.assertEqual(refined.typed_body[0].body[0].typ, Int)
         self.assertEqual(scope.body[0].typ, variable)
 
+    def test_unaffected_typed_subtrees_are_reused_during_refinement(self):
+        """Refining an unrelated generic preserves immutable typed-AST prefixes."""
+        from valiance.asts import GetVariableNode, ListLiteralNode, TypedLiteralNode, TypedNode
+        from valiance.vtypes import V
+
+        raw = GetVariableNode(Symbol("value"))
+        checked = TypedNode(raw, Int)
+        literal = TypedLiteralNode(ListLiteralNode(((raw,),)), Int, ((checked,),))
+        original = AnalysisBranch(typed_body=(checked, literal))
+
+        unchanged = original.refine_type(V("Other"), String)
+        self.assertIs(unchanged.typed_body, original.typed_body)
+        self.assertIs(unchanged.typed_body[1], literal)
+
+        changed = original.refine_type(Int, String)
+        self.assertEqual(changed.typed_body[0].typ, String)
+        self.assertEqual(changed.typed_body[1].items[0][0].typ, String)
+        self.assertEqual(original.typed_body[1].items[0][0].typ, Int)
+
+    def test_plain_literal_scope_does_not_copy_relation_context(self):
+        """Literal-only nested blocks cannot mutate relation or import facts."""
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.vtypes.context import Context
+
+        analyser = Analyser()
+        outer = analyser.env
+        with patch.object(Context, "copy", side_effect=AssertionError("copied context")):
+            branches = analyser.analyse_scoped_block(
+                BranchSet((AnalysisBranch(),)), tuple(parse('1 "two"'))
+            )
+        self.assertTrue(branches)
+        self.assertIs(analyser.env, outer)
+        self.assertEqual(len(next(iter(branches)).typed_body), 2)
+
     def test_branch_stack_transformations_are_immutable(self) -> None:
         """Pushing and popping return new branches without changing the input."""
         branch = AnalysisBranch()

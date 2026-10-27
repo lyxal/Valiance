@@ -8,6 +8,7 @@ import importlib
 import pkgutil
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 import valiance.vtypes as T
@@ -248,12 +249,22 @@ def install_native_default_dependencies(env: T.Environment, definitions: tuple[o
 
 def runtime_stdlib_elements() -> dict[str, BuiltinElement]:
     """Return every Python-backed stdlib function for the VM's runtime globals."""
+    # Resolve exports afresh so dynamically installed or patched native modules
+    # remain visible. Only the immutable wrapper construction is memoized.
+    return dict(_runtime_stdlib_catalogue(tuple(_all_native_modules().items())))
+
+
+@lru_cache(maxsize=8)
+def _runtime_stdlib_catalogue(
+    exports: tuple[tuple[str, tuple[NativeFunction, ...]], ...],
+) -> tuple[tuple[str, BuiltinElement], ...]:
+    """Reuse native wrappers while preserving independent VM globals."""
     result: dict[str, BuiltinElement] = {}
-    for module_name, functions in _all_native_modules().items():
+    for module_name, functions in exports:
         for function in functions:
             element = _runtime_element(module_name, function)
             result[element.name.dotted()] = element
-    return result
+    return tuple(result.items())
 
 
 def native_stdlib_functions() -> dict[str, tuple[NativeFunction, ...]]:

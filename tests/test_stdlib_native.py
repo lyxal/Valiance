@@ -9,6 +9,7 @@ from valiance.elements.stdlib_native import (
     attach_native_object_elements,
     native_function,
     native_module_exports,
+    runtime_stdlib_elements,
 )
 from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
@@ -90,6 +91,38 @@ class NativeObjectElementTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "owner.*Box"):
                 attach_native_object_elements([], "native_test")
+
+    def test_native_runtime_catalogue_reuses_wrappers_with_fresh_dicts(self):
+        exports = {"native_test": (self.function,)}
+        with patch(
+            "valiance.elements.stdlib_native._all_native_modules",
+            return_value=exports,
+        ):
+            first = runtime_stdlib_elements()
+            second = runtime_stdlib_elements()
+
+        name = "std.native_test.double"
+        self.assertIsNot(first, second)
+        self.assertIs(first[name], second[name])
+        first.clear()
+        self.assertIn(name, second)
+
+    def test_native_runtime_catalogue_rebuilds_for_changed_exports(self):
+        replacement = native_function(
+            "replacement", (), (T.Number,), _double,
+        )
+        with patch(
+            "valiance.elements.stdlib_native._all_native_modules",
+            side_effect=[
+                {"native_test": (self.function,)},
+                {"native_test": (self.function, replacement)},
+            ],
+        ):
+            first = runtime_stdlib_elements()
+            second = runtime_stdlib_elements()
+
+        self.assertNotIn("std.native_test.replacement", first)
+        self.assertIn("std.native_test.replacement", second)
 
 
 if __name__ == "__main__":

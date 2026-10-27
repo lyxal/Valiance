@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import fields, is_dataclass, replace
+from functools import lru_cache
 from typing import cast
 
 import valiance.vtypes as T
@@ -157,12 +158,17 @@ def _refine_typed_body(
     new: T.Type,
 ) -> tuple[TypedNode, ...]:
     """Refine typed body during static analysis."""
-    return tuple(_refine_typed_node(node, old, new) for node in typed_body)
+    refined = tuple(_refine_typed_node(node, old, new) for node in typed_body)
+    if all(updated is original for updated, original in zip(refined, typed_body)):
+        return typed_body
+    return refined
 
 
 def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
     """Refine typed node during static analysis."""
     typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
+    if type(typed_node) is TypedNode and typ is typed_node.typ:
+        return typed_node
     if isinstance(typed_node, TypedDescriptorConversionNode):
         return replace(typed_node, typ=typ,
                        target_body=_refine_typed_body(typed_node.target_body, old, new),
@@ -214,10 +220,16 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.dispatch_plan,
         )
     if isinstance(typed_node, TypedLiteralNode):
+        items = tuple(_refine_typed_body(item, old, new) for item in typed_node.items)
+        if typ is typed_node.typ and all(
+            updated is original
+            for updated, original in zip(items, typed_node.items, strict=True)
+        ):
+            return typed_node
         return TypedLiteralNode(
             typed_node.node,
             typ,
-            tuple(_refine_typed_body(item, old, new) for item in typed_node.items),
+            items,
         )
     if isinstance(typed_node, TypedSpawnNode):
         callable_type = (
@@ -465,12 +477,18 @@ def _refine_typed_extension(
     )
 
 
+@lru_cache(maxsize=8192)
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     """Refine type during static analysis."""
     typ = T.normalize(typ)
     new = _erase_absent_tag_requirements(new)
     if T.same(typ, old):
         return new
+    if isinstance(typ, T.NominalType) and not typ.args:
+        # A leaf nominal has no nested type variables to refine.  Rebuilding
+        # it would allocate an equal-but-distinct type and force rebuilding
+        # every typed node and enclosing literal that holds it.
+        return typ
     if isinstance(typ, T.AnonymousTraitType):
         return T.AnonymousTrait(
             typ.generics,
@@ -494,6 +512,7 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     )
 
 
+@lru_cache(maxsize=8192)
 def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     """Refine a function-input fact while preserving negative tag constraints."""
     typ = T.normalize(typ)

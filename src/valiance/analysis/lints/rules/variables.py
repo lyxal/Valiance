@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import fields, is_dataclass
 
 import valiance.vtypes as T
@@ -66,22 +67,37 @@ def captured_variable_write(context: NodeLintContext):
 
 def constants_never_reassigned(context: BlockLintContext):
     """Suggest const for a mutable binding written exactly once in this block."""
-    candidates = tuple(
-        write
-        for index, node in enumerate(context.nodes)
+    if not any(
+        not _is_internal_name(write.name)
+        for node in context.nodes
         for write in _direct_writes(node)
-        if not _is_internal_name(write.name)
-        and not _reads_name(context.nodes[:index], write.name)
-    )
-    all_writes = tuple(_nested_writes(context.nodes))
+    ):
+        # Pure expressions and most function bodies have no candidate writes.
+        # Avoid traversing those ASTs just to build unused read facts.
+        return ()
+    # Collect read facts once instead of walking the entire prefix separately
+    # for every binding. Nested functions are excluded from these facts, just
+    # as they are from the recursive write search below.
+    preceding_reads: set[object] = set()
+    candidates = []
+    for node in context.nodes:
+        candidates.extend(
+            write
+            for write in _direct_writes(node)
+            if not _is_internal_name(write.name)
+            and write.name not in preceding_reads
+        )
+        preceding_reads.update(_read_names(node))
+
+    write_counts = Counter(write.name for write in _nested_writes(context.nodes))
     findings = []
     for assignment in candidates:
         name = assignment.name
         if assignment.constant:
             continue
-        if sum(write.name == name for write in all_writes) != 1:
+        if write_counts[name] != 1:
             continue
-        if not _reads_name(context.nodes, name):
+        if name not in preceding_reads:
             continue
         findings.append(
             finding(
@@ -146,3 +162,19 @@ def _reads_name(values: object, name: object) -> bool:
     if isinstance(values, (tuple, list)):
         return any(_reads_name(value, name) for value in values)
     return False
+
+
+def _read_names(values: object):
+    """Yield reads in one AST subtree without entering nested function bodies."""
+    if isinstance(values, FunctionNode):
+        return
+    if isinstance(values, GetVariableNode):
+        yield values.name
+        return
+    if isinstance(values, ASTNode) and is_dataclass(values):
+        for field in fields(values):
+            if field.name != "location":
+                yield from _read_names(getattr(values, field.name))
+    elif isinstance(values, (tuple, list)):
+        for value in values:
+            yield from _read_names(value)

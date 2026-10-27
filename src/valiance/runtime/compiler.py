@@ -8,7 +8,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Iterator, NoReturn
 
 import valiance.analysis.contracts.where_clauses as static_where
-from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
+from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement, runtime_elements
 from valiance.vtypes.identities import constructor_implementation_id, overload_implementation_id
 from valiance.asts import (
     TypedFunctionDispatchNode,
@@ -204,6 +204,19 @@ class _Compiler:
         self._assignment_materializations: dict[int, str] = {}
         self._forwarded_rebinding_nodes: set[int] = set()
         self._literal_storage: str | None = None
+        self._builtin_elements: dict[str, BuiltinElement] | None = None
+
+    def _runtime_elements(self) -> dict[str, BuiltinElement]:
+        """Snapshot dynamic built-ins once for this compiler instance."""
+        if self._builtin_elements is None:
+            self._builtin_elements = runtime_elements()
+        return self._builtin_elements
+
+    def _resolved_element_reference(
+        self, node: TypedNode | None,
+    ) -> ResolvedElementReference | None:
+        """Lower a call with the current compilation's builtin catalogue."""
+        return _resolved_element_reference(node, self._runtime_elements())
 
     def prepare_runtime_type_facts(
         self,
@@ -854,7 +867,7 @@ class _Compiler:
                             tuple(_symbol_runtime_name(name) if name is not None else None
                                   for name in specialization.runtime_names),
                         ))
-                        reference = _resolved_element_reference(typed_node)
+                        reference = self._resolved_element_reference(typed_node)
                         self.emit(OpCode.CALL, replace(
                             reference, implementation_id=specialization.dispatch_plan.branches[0].implementation_id,
                             vectorised=specialization.vectorised,
@@ -882,7 +895,7 @@ class _Compiler:
                             hidden_count = (len(static_values) if name.text == "call"
                                             else len(typed_node.overload.runtime_static_values))
                             reference = replace(
-                                _resolved_element_reference(typed_node),
+                                self._resolved_element_reference(typed_node),
                                 vectorised=vectorised,
                                 vectorised_depths=(*depths, *(0 for _ in range(hidden_count))) if vectorised else (),
                                 vectorised_target_ranks=(*target_ranks, *(None for _ in range(hidden_count))) if vectorised else (),
@@ -891,7 +904,7 @@ class _Compiler:
                             )
                         self.emit(OpCode.CALL, reference)
                     return
-                resolved = _resolved_element_reference(typed_node)
+                resolved = self._resolved_element_reference(typed_node)
                 if resolved is None:
                     self.emit(
                         OpCode.LOAD_ELEMENT,
@@ -1530,7 +1543,7 @@ class _Compiler:
                 for param in definition.function.params or ()
             ),
         )
-        if runtime_definition_name not in runtime_elements():
+        if runtime_definition_name not in self._runtime_elements():
             self.emit(
                 OpCode.MAKE_FUNCTION,
                 _compile_function_node(
@@ -1654,7 +1667,7 @@ class _Compiler:
             OpCode.CALL_RESOLVED_ELEMENT,
             ResolvedElementReference(
                 "call",
-                runtime_elements()["call"].definitions[0].signature.implementation_id,
+                self._runtime_elements()["call"].definitions[0].signature.implementation_id,
                 vectorised=vectorised,
                 vectorised_depths=(*applied.vectorised_depths, 0),
                 vectorised_target_ranks=(
@@ -1693,7 +1706,7 @@ class _Compiler:
             for index, provider in enumerate(typed_node.providers):
                 self.emit(OpCode.LOAD_VAR, selectors[index])
                 self.emit(OpCode.LOAD_VAR, replacement)
-                resolved = _resolved_element_reference(provider)
+                resolved = self._resolved_element_reference(provider)
                 if resolved is None:
                     raise CompileError("custom updater is missing resolved call metadata")
                 self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
@@ -1702,7 +1715,7 @@ class _Compiler:
         for index, provider in enumerate(typed_node.providers):
             self.emit(OpCode.LOAD_VAR, receiver)
             self.emit(OpCode.LOAD_VAR, selectors[index])
-            resolved = _resolved_element_reference(provider)
+            resolved = self._resolved_element_reference(provider)
             if resolved is None:
                 raise CompileError("custom indexer is missing resolved call metadata")
             self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
@@ -3151,6 +3164,7 @@ def _symbol_runtime_name(symbol: Symbol) -> str:
 
 def _resolved_element_reference(
     node: TypedNode | None,
+    elements: dict[str, BuiltinElement],
 ) -> ResolvedElementReference | None:
     """Compute resolved element reference during typed-AST bytecode lowering."""
     if not isinstance(node, TypedElementNode):
@@ -3163,7 +3177,7 @@ def _resolved_element_reference(
     source_runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
     if node.implementation_id is None and (
         not node.overload.overload.is_structural_requirement
-        or source_runtime_name in runtime_elements()
+        or source_runtime_name in elements
     ):
         return None
     runtime_name = _symbol_runtime_name(
@@ -3179,7 +3193,6 @@ def _resolved_element_reference(
         if isinstance(returned, NominalType) and returned.args
         else ()
     )
-    elements = runtime_elements()
     element = elements.get(source_runtime_name)
     definition = None
     if element is not None:

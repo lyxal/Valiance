@@ -1316,6 +1316,12 @@ fields are:
 
 The record is immutable. Handlers return replacements rather than mutating
 shared state.
+Refinement preserves the identity of unchanged leaf types and typed-AST
+subtrees, so repeated generic substitutions do not recreate unaffected literal
+prefixes. Nested blocks normally copy the mutable type-relation context to
+isolate declarations. A block containing only plain number/string literals
+can reuse the parent context and import facts because those handlers cannot
+mutate either; introducing another shortcut requires the same proof.
 
 A `BranchSet` is simply a tuple of possible branches with collection and
 deduplication helpers.

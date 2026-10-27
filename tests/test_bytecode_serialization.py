@@ -728,7 +728,7 @@ nameOf($field)
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x43"))
+        self.assertTrue(data.startswith(b"VLNCBC\x44"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

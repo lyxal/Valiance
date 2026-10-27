@@ -128,6 +128,17 @@ class BuiltinLintRuleTests(unittest.TestCase):
         """A binding with one write and a later read can be constant."""
         self.assertIn("constant-never-reassigned", self._codes("$x = 1\n$x 2 +"))
 
+    def test_many_unrelated_bindings_do_not_repeat_constant_lints(self) -> None:
+        """A large block lints only the binding actually read later."""
+        source = "\n".join(f"$value{i} = {i}" for i in range(64))
+        codes = self._codes(source + "\n$value63")
+        self.assertEqual(codes.count("constant-never-reassigned"), 1)
+
+    def test_multiple_writes_do_not_produce_constant_lint(self) -> None:
+        """Counting writes across a block still recognises reassignment."""
+        codes = self._codes("$value = 1\n$value = 2\n$value")
+        self.assertNotIn("constant-never-reassigned", codes)
+
     def test_grouped_index_update_does_not_lint_internal_receiver(self) -> None:
         """Compiler-generated receiver storage must not produce user lints."""
         source = "[3, 5, 4, 2]\n$[0:1] := /: *"

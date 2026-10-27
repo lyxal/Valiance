@@ -6,7 +6,10 @@ from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from valiance.elements.builtins import BuiltinElement, BuiltinOverload
 
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
@@ -86,10 +89,8 @@ class FunctionOptimizationPass:
 
     def optimize(self, program: Program) -> Program:
         """Optimise every nested function in a compiled program."""
-        return Program(
-            self._optimize_nested_function(program.main),
-            program.tag_parents,
-        )
+        main = self._optimize_nested_function(program.main)
+        return program if main is program.main else Program(main, program.tag_parents)
 
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
         """Return an optimised replacement for one function body."""
@@ -97,17 +98,20 @@ class FunctionOptimizationPass:
 
     def _optimize_nested_function(self, function: FunctionCode) -> FunctionCode:
         """Optimise nested functions before rewriting their containing function."""
-        instructions = tuple(
-            Instruction(
-                instruction.op,
-                _map_nested_functions(
-                    instruction.arg,
-                    self._optimize_nested_function,
-                ),
+        instructions = []
+        changed = False
+        for instruction in function.instructions:
+            arg = _map_nested_functions(
+                instruction.arg, self._optimize_nested_function
             )
-            for instruction in function.instructions
+            if arg is instruction.arg:
+                instructions.append(instruction)
+            else:
+                changed = True
+                instructions.append(Instruction(instruction.op, arg))
+        current = (
+            replace(function, instructions=tuple(instructions)) if changed else function
         )
-        current = replace(function, instructions=instructions)
         optimized = self.optimize_function(current)
         if not isinstance(optimized, FunctionCode):
             raise OptimizationError(
@@ -125,15 +129,21 @@ class OptimizationPipeline:
     def optimize(self, program: Program) -> Program:
         """Run every configured pass in order over a compiled program."""
         current = program
+        barriers = _concurrency_barrier_signature(current)
         for optimization_pass in self.passes:
-            barriers = _concurrency_barrier_signature(current)
-            current = optimization_pass.optimize(current)
+            previous = current
+            current = optimization_pass.optimize(previous)
             if not isinstance(current, Program):
                 raise OptimizationError(
                     f"optimisation pass {optimization_pass.name!r} did not return "
                     "Program"
                 )
-            if _concurrency_barrier_signature(current) != barriers:
+            # FunctionCode and its instruction tree are immutable. When a pass
+            # retains that tree, no concurrency opcode could have changed.
+            if (
+                current.main is not previous.main
+                and _concurrency_barrier_signature(current) != barriers
+            ):
                 raise OptimizationError(
                     f"optimisation pass {optimization_pass.name!r} changed "
                     "concurrency barrier order, payload, or nesting"
@@ -142,6 +152,35 @@ class OptimizationPipeline:
 
 
 _SCALAR_PARAMETER_DISPATCH_TYPES = frozenset({"Number", "Real", "Int", "String"})
+
+
+class _BuiltinLookup:
+    """Resolve each intrinsic signature once within an optimisation pass."""
+
+    def __init__(self) -> None:
+        self._elements: dict[str, BuiltinElement] | None = None
+        self._overloads: dict[tuple[str, str], BuiltinOverload | None] = {}
+
+    def overload(self, name: str, identity: str | None) -> BuiltinOverload | None:
+        """Find exactly one native implementation without retaining stale registries."""
+        if not isinstance(name, str) or not isinstance(identity, str):
+            return None
+        key = name, identity
+        if key not in self._overloads:
+            if self._elements is None:
+                from valiance.elements.builtins import runtime_elements
+
+                self._elements = runtime_elements()
+            element = self._elements.get(name)
+            matches = (
+                tuple(
+                    definition for definition in element.definitions
+                    if definition.signature.implementation_id == identity
+                )
+                if element is not None else ()
+            )
+            self._overloads[key] = matches[0] if len(matches) == 1 else None
+        return self._overloads[key]
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,9 +221,10 @@ class ExplicitArgumentOptimizationPass(FunctionOptimizationPass):
         cycle_index = 0
         cycle_remaining = len(function.params)
         replacements: list[_Replacement] = []
+        lookup = _BuiltinLookup()
         for index, instruction in enumerate(function.instructions):
             if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
-                shape = _resolved_builtin_shape(instruction.arg)
+                shape = _resolved_builtin_shape(instruction.arg, lookup)
                 if shape is None:
                     return function
                 arity, returns, ownership_trivial = shape
@@ -255,36 +295,50 @@ class ConstantFoldingOptimizationPass(FunctionOptimizationPass):
     def optimize(self, program: Program) -> Program:
         """Fold constants while respecting names bound anywhere in the program."""
         shadowed = _collect_bound_names(program.main)
+        lookup = _BuiltinLookup()
 
         def transform(function: FunctionCode) -> FunctionCode:
             """Recursively fold one function with program-wide binding facts."""
-            instructions = tuple(
-                Instruction(
-                    instruction.op,
-                    _map_nested_functions(instruction.arg, transform),
-                )
-                for instruction in function.instructions
-            )
+            rewritten: list[Instruction] = []
+            changed = False
+            for instruction in function.instructions:
+                arg = _map_nested_functions(instruction.arg, transform)
+                if arg is instruction.arg:
+                    rewritten.append(instruction)
+                else:
+                    changed = True
+                    rewritten.append(Instruction(instruction.op, arg))
             return self._optimize_with_shadowed(
-                replace(function, instructions=instructions),
+                replace(function, instructions=tuple(rewritten)) if changed else function,
                 shadowed,
+                lookup,
             )
 
-        return Program(transform(program.main), program.tag_parents)
+        main = transform(program.main)
+        return program if main is program.main else Program(main, program.tag_parents)
 
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
         """Fold constants in one independently supplied function."""
-        return self._optimize_with_shadowed(function, _collect_bound_names(function))
+        return self._optimize_with_shadowed(
+            function, _collect_bound_names(function), _BuiltinLookup()
+        )
 
     def _optimize_with_shadowed(
         self,
         function: FunctionCode,
         shadowed: set[str],
+        lookup: _BuiltinLookup,
     ) -> FunctionCode:
         """Fold one function with a closed set of potentially rebound names."""
         instructions = function.instructions
+        if not _contains_control_flow(instructions):
+            folded = _constant_fold_straight_line(instructions, shadowed, lookup)
+            return (
+                function if folded is instructions
+                else replace(function, instructions=folded)
+            )
         while True:
-            folded = _constant_fold_once(instructions, shadowed)
+            folded = _constant_fold_once(instructions, shadowed, lookup)
             if folded == instructions:
                 return (
                     function
@@ -311,6 +365,7 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
 
         store_counts: dict[str, int] = {}
         candidates: dict[str, tuple[int, tuple[Instruction, ...], str | None]] = {}
+        scalar_candidates: dict[str, tuple[int, FunctionCode]] = {}
         instructions = function.instructions
         for index, instruction in enumerate(instructions):
             if instruction.op is OpCode.STORE_VAR and isinstance(instruction.arg, str):
@@ -329,6 +384,10 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
                 if body is not None:
                     candidates[instructions[index + 1].arg] = (
                         index + 1, body, instruction.arg.implementation_id
+                    )
+                if instruction.arg.params:
+                    scalar_candidates[instructions[index + 1].arg] = (
+                        index + 1, instruction.arg
                     )
 
         replacements: list[_Replacement] = []
@@ -353,19 +412,39 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
             if not _simple_zero_argument_reference(reference):
                 continue
             candidate = candidates.get(reference.name)
-            if candidate is None or store_counts.get(reference.name) != 1:
+            if store_counts.get(reference.name) != 1:
                 continue
-            definition_index, body, implementation_id = candidate
-            if definition_index >= index or reference.name in function.params:
+            if reference.name in function.params:
                 continue
+            if candidate is not None:
+                definition_index, body, implementation_id = candidate
+                if (
+                    definition_index < index
+                    and reference.implementation_id == implementation_id
+                ):
+                    replacements.append(_Replacement(index, 1, body))
+                    continue
+            scalar_candidate = scalar_candidates.get(reference.name)
             if (
-                reference.implementation_id is not None
-                and reference.implementation_id != implementation_id
+                scalar_candidate is None
+                or reference.structural_witnesses
+                or reference.callable_witnesses
+                or reference.union_dispatch_plan
             ):
-                # An inliner cannot replace a statically linked call with
-                # another declaration just because their names coincide.
                 continue
-            replacements.append(_Replacement(index, 1, body))
+            definition_index, callee = scalar_candidate
+            arity = len(callee.params)
+            if (
+                definition_index >= index
+                or reference.implementation_id != callee.implementation_id
+                or index < arity
+            ):
+                continue
+            body = _scalar_inline_body(
+                callee, instructions[index - arity:index], self.max_bytecode_size
+            )
+            if body is not None:
+                replacements.append(_Replacement(index - arity, arity + 1, body))
 
         if not replacements:
             return function
@@ -406,7 +485,9 @@ class PopNOptimizationPass(FunctionOptimizationPass):
                 else:
                     break
                 index += 1
-            if index - start > 1 or instructions[start].op is OpCode.POP:
+            # A lone POP has cheaper VM dispatch than POP_N(1), which must
+            # resolve a count and build a temporary list before releasing it.
+            if index - start > 1:
                 replacement = (
                     ()
                     if count == 0
@@ -436,6 +517,26 @@ class BytecodePeepholeOptimizationPass(FunctionOptimizationPass):
             replacements: list[_Replacement] = []
             index = 0
             while index < len(instructions):
+                current = instructions[index]
+                if (
+                    current.op is OpCode.POP_N
+                    and isinstance(current.arg, int)
+                    and not isinstance(current.arg, bool)
+                    and current.arg >= 0
+                ):
+                    count = current.arg
+                    start = index - count
+                    if start >= 0 and all(
+                        instruction.op is OpCode.PUSH_CONST
+                        and _is_scalar_constant(instruction.arg)
+                        for instruction in instructions[start:index]
+                    ):
+                        # Every consumed value was just pushed and requires no
+                        # lifecycle handling. The shared rewriter rejects the
+                        # simplification if a branch enters its interior.
+                        replacements.append(_Replacement(start, count + 1, ()))
+                        index += 1
+                        continue
                 if index + 1 < len(instructions):
                     first = instructions[index]
                     second = instructions[index + 1]
@@ -512,12 +613,21 @@ class StackShuffleOptimizationPass(FunctionOptimizationPass):
 
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
         """Simplify stack shuffles when the physical stack depth proves safety."""
+        if not any(
+            instruction.op is OpCode.STACK_SHUFFLE
+            for instruction in function.instructions
+        ):
+            return function
         instructions = tuple(
             _canonicalize_shuffle_instruction(instruction)
             for instruction in function.instructions
         )
+        lookup = _BuiltinLookup()
         while True:
-            depths = _guaranteed_stack_depths(instructions)
+            targets = _control_flow_targets(instructions)
+            depths = _guaranteed_stack_depths(
+                instructions, targets=targets, lookup=lookup
+            )
             replacements: list[_Replacement] = []
             index = 0
             while index < len(instructions):
@@ -592,7 +702,7 @@ class StackShuffleOptimizationPass(FunctionOptimizationPass):
                 if instructions == function.instructions:
                     return function
                 return replace(function, instructions=instructions)
-            rewritten = _rewrite_ranges(instructions, replacements)
+            rewritten = _rewrite_ranges(instructions, replacements, targets=targets)
             if rewritten == instructions:
                 return replace(function, instructions=instructions)
             instructions = rewritten
@@ -623,6 +733,66 @@ class ControlFlowOptimizationPass(FunctionOptimizationPass):
             instructions = simplified
 
 
+class NumericSpecializationPass(FunctionOptimizationPass):
+    """Emit a guarded scalar opcode for statically identified numeric operators.
+
+    The VM still checks the bound implementation, argument representation and
+    stack shape before using the fast path; all other cases use the original
+    resolved-call semantics. Run this pass last so existing optimisations
+    continue to see ordinary resolved calls.
+    """
+
+    name = "numeric-specialization"
+
+    def optimize_function(self, function: FunctionCode) -> FunctionCode:
+        from valiance.elements.builtins import _minus, _multiply, _plus
+
+        operations = {"+": _plus, "-": _minus, "*": _multiply}
+        lookup = _BuiltinLookup()
+        rewritten = None
+        for index, instruction in enumerate(function.instructions):
+            if instruction.op is not OpCode.CALL_RESOLVED_ELEMENT:
+                continue
+            reference = instruction.arg
+            if not isinstance(reference, ResolvedElementReference):
+                continue
+            implementation = operations.get(reference.name)
+            if implementation is None or (
+                reference.vectorised
+                or reference.extension is not None
+                or reference.static_values
+                or reference.type_args
+                or reference.dispatch_kind != DispatchKind.STATIC
+                or reference.arity_override is not None
+                or reference.consumed_override is not None
+                or reference.return_collection_ranks
+                or reference.return_tags
+                or reference.return_tag_specs
+                or reference.structural_witnesses
+                or reference.callable_witnesses
+            ):
+                continue
+            overload = lookup.overload(reference.name, reference.implementation_id)
+            if (
+                overload is None
+                or overload.implementation is not implementation
+                or len(overload.signature.params) != 2
+                or len(overload.signature.returns) != 1
+                or not overload.ownership_trivial
+                or overload.runtime_return_tags
+                or any(str(param) not in {"Int", "Real", "Number"}
+                       for param in overload.signature.params)
+            ):
+                continue
+            if rewritten is None:
+                rewritten = list(function.instructions)
+            rewritten[index] = Instruction(OpCode.CALL_NUMERIC, reference)
+        return (
+            replace(function, instructions=tuple(rewritten))
+            if rewritten is not None else function
+        )
+
+
 DEFAULT_OPTIMIZATION_PIPELINE = OptimizationPipeline(
     (
         ExplicitArgumentOptimizationPass(),
@@ -633,6 +803,7 @@ DEFAULT_OPTIMIZATION_PIPELINE = OptimizationPipeline(
         PopNOptimizationPass(),
         StackShuffleOptimizationPass(),
         ControlFlowOptimizationPass(),
+        NumericSpecializationPass(),
     )
 )
 
@@ -661,39 +832,70 @@ def _map_nested_functions(
     if isinstance(value, FunctionCode):
         return transform(value)
     if isinstance(value, FunctionSpecializationReference):
-        return replace(value, overloads=tuple(
-            (original, identity, transform(code) if code is not None else None, static_values)
+        overloads = tuple(
+            (
+                original,
+                identity,
+                transform(code) if code is not None else None,
+                static_values,
+            )
             for original, identity, code, static_values in value.overloads
-        ))
-    if isinstance(value, FunctionSetCode):
-        return replace(
-            value,
-            overloads=tuple(transform(overload) for overload in value.overloads),
         )
+        if all(
+            updated[2] is original[2]
+            for updated, original in zip(overloads, value.overloads, strict=True)
+        ):
+            return value
+        return replace(value, overloads=overloads)
+    if isinstance(value, FunctionSetCode):
+        overloads = tuple(transform(overload) for overload in value.overloads)
+        if all(
+            updated is original
+            for updated, original in zip(overloads, value.overloads, strict=True)
+        ):
+            return value
+        return replace(value, overloads=overloads)
     if isinstance(value, ObjectConstructorReference):
-        return replace(
-            value,
-            initializer=_map_nested_functions(value.initializer, transform),
+        initializer = _map_nested_functions(value.initializer, transform)
+        return (
+            value if initializer is value.initializer else
+            replace(value, initializer=initializer)
         )
     if isinstance(value, ResolvedElementReference):
-        return replace(
-            value,
-            extension=_map_nested_functions(value.extension, transform),
+        extension = _map_nested_functions(value.extension, transform)
+        return (
+            value if extension is value.extension else
+            replace(value, extension=extension)
         )
     if isinstance(value, VectorExtensionReference):
-        return replace(
-            value,
-            default=_map_nested_functions(value.default, transform),
-            rules=tuple(_map_nested_functions(rule, transform) for rule in value.rules),
-            selector=_map_nested_functions(value.selector, transform),
-        )
+        default = _map_nested_functions(value.default, transform)
+        rules = tuple(_map_nested_functions(rule, transform) for rule in value.rules)
+        selector = _map_nested_functions(value.selector, transform)
+        if (
+            default is value.default
+            and selector is value.selector
+            and all(new is old for new, old in zip(rules, value.rules, strict=True))
+        ):
+            return value
+        return replace(value, default=default, rules=rules, selector=selector)
     if isinstance(value, ExtensionRuleReference):
-        return replace(
-            value,
-            function=_map_nested_functions(value.function, transform),
+        function = _map_nested_functions(value.function, transform)
+        return (
+            value if function is value.function else
+            replace(value, function=function)
         )
     if isinstance(value, tuple):
-        return tuple(_map_nested_functions(item, transform) for item in value)
+        # Literal tuples and scalar metadata never carry FunctionCode. Avoid
+        # reconstructing their elements on every pass and barrier check.
+        if all(
+            item is None or isinstance(item, (str, int, float, bytes, RuntimeNumber))
+            for item in value
+        ):
+            return value
+        mapped = tuple(_map_nested_functions(item, transform) for item in value)
+        if all(new is old for new, old in zip(mapped, value, strict=True)):
+            return value
+        return mapped
     return value
 
 
@@ -737,6 +939,7 @@ def _collect_bound_names_from_value(value: object, names: set[str]) -> None:
 def _constant_fold_once(
     instructions: tuple[Instruction, ...],
     shadowed: set[str],
+    lookup: _BuiltinLookup,
 ) -> tuple[Instruction, ...]:
     """Perform one non-overlapping sweep of constant folds."""
     replacements: list[_Replacement] = []
@@ -744,7 +947,7 @@ def _constant_fold_once(
     while index < len(instructions):
         instruction = instructions[index]
         if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
-            folded = _fold_resolved_call(instructions, index, shadowed)
+            folded = _fold_resolved_call(instructions, index, shadowed, lookup)
             if folded is not None:
                 replacements.append(folded)
                 index += 1
@@ -767,10 +970,36 @@ def _constant_fold_once(
     return _rewrite_ranges(instructions, replacements)
 
 
-def _fold_resolved_call(
+def _constant_fold_straight_line(
     instructions: tuple[Instruction, ...],
+    shadowed: set[str],
+    lookup: _BuiltinLookup,
+) -> tuple[Instruction, ...]:
+    """Fold newly exposed literal tails in one forward sweep without rescans."""
+    output: list[Instruction] = []
+    changed = False
+    for instruction in instructions:
+        output.append(instruction)
+        index = len(output) - 1
+        folded: _Replacement | None = None
+        if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
+            folded = _fold_resolved_call(output, index, shadowed, lookup)
+        elif instruction.op is OpCode.BUILD_TUPLE:
+            folded = _fold_tuple_builder(output, index)
+        elif instruction.op is OpCode.BUILD_STRING:
+            folded = _fold_string_builder(output, index)
+        if folded is not None:
+            del output[folded.start:]
+            output.extend(folded.instructions)
+            changed = True
+    return tuple(output) if changed else instructions
+
+
+def _fold_resolved_call(
+    instructions: tuple[Instruction, ...] | list[Instruction],
     call_index: int,
     shadowed: set[str],
+    lookup: _BuiltinLookup,
 ) -> _Replacement | None:
     """Fold one pure resolved call whose complete input is literal bytecode."""
     reference = instructions[call_index].arg
@@ -781,20 +1010,10 @@ def _fold_resolved_call(
     if not _simple_resolved_reference(reference):
         return None
 
-    from valiance.elements.builtins import RuntimeContext, runtime_elements
+    from valiance.elements.builtins import RuntimeContext
 
-    element = runtime_elements().get(reference.name)
-    if element is None:
-        return None
-    if reference.implementation_id is not None:
-        matches = tuple(
-            candidate for candidate in element.definitions
-            if candidate.signature.implementation_id == reference.implementation_id
-        )
-        if len(matches) != 1:
-            return None
-        overload = matches[0]
-    else:
+    overload = lookup.overload(reference.name, reference.implementation_id)
+    if overload is None:
         return None
     if overload.implementation is None or not overload.ownership_trivial:
         return None
@@ -931,27 +1150,20 @@ def _simple_zero_argument_reference(value: object) -> bool:
     )
 
 
-def _resolved_builtin_shape(value: object) -> tuple[int, int, bool] | None:
+def _resolved_builtin_shape(
+    value: object,
+    lookup: _BuiltinLookup | None = None,
+) -> tuple[int, int, bool] | None:
     """Return arity, return count, and lifecycle triviality for one builtin call."""
     if not isinstance(value, ResolvedElementReference):
         return None
     if not _simple_resolved_reference(value):
         return None
 
-    from valiance.elements.builtins import runtime_elements
-
-    element = runtime_elements().get(value.name)
-    if element is None:
-        return None
-    if value.implementation_id is not None:
-        matches = tuple(
-            definition for definition in element.definitions
-            if definition.signature.implementation_id == value.implementation_id
-        )
-        if len(matches) != 1:
-            return None
-        overload = matches[0]
-    else:
+    overload = (lookup if lookup is not None else _BuiltinLookup()).overload(
+        value.name, value.implementation_id
+    )
+    if overload is None:
         return None
     if overload.implementation is None:
         return None
@@ -1015,6 +1227,57 @@ def _constant_inline_body(
     ):
         return None
     return body
+
+
+def _scalar_inline_body(
+    function: FunctionCode,
+    arguments: tuple[Instruction, ...],
+    maximum: int,
+) -> tuple[Instruction, ...] | None:
+    """Inline a literal scalar call that cannot observe parameter-frame effects."""
+    arity = len(function.params)
+    body = function.instructions[:-1]
+    if (
+        not arity
+        or len(arguments) != arity
+        or not function.cycle_params
+        or function.accepts_stack_inputs
+        or function.element_tags
+        or function.recursive
+        or function.multi
+        or function.requires_specialization
+        or function.generic_type_parameters
+        or function.structural_parameters
+        or len(function.dispatch_types) != arity
+        or any(typ not in _SCALAR_PARAMETER_DISPATCH_TYPES
+               for typ in function.dispatch_types)
+        or (function.param_collection_ranks and
+            (len(function.param_collection_ranks) != arity
+             or any(rank != 0 for rank in function.param_collection_ranks)))
+        or any(function.return_tags)
+        or function.return_collection_ranks
+        or function.return_count != len(body)
+        or len(function.instructions) > maximum
+        or not body
+        or function.instructions[-1].op is not OpCode.RETURN
+        or any(instruction.op is not OpCode.PUSH_CONST
+               or not _is_scalar_constant(instruction.arg)
+               for instruction in arguments)
+    ):
+        return None
+    if all(instruction.op is OpCode.PUSH_CONST
+           and _is_serializable_constant(instruction.arg)
+           for instruction in body):
+        return body if all(effect is None for effect in function.occurrence_effects) else None
+    if (
+        arity == 1
+        and len(body) == 1
+        and body[0].op is OpCode.LOAD_VAR_FORWARD
+        and body[0].arg == function.params[0]
+        and function.occurrence_effects == (0,)
+    ):
+        return arguments
+    return None
 
 
 def _is_scalar_constant(value: object) -> bool:
@@ -1178,16 +1441,20 @@ def _canonicalize_shuffle_instruction(instruction: Instruction) -> Instruction:
 
 def _guaranteed_stack_depths(
     instructions: tuple[Instruction, ...],
+    *,
+    targets: set[int] | None = None,
+    lookup: _BuiltinLookup | None = None,
 ) -> tuple[int, ...]:
     """Compute a conservative physical-stack lower bound before each opcode."""
-    targets = _control_flow_targets(instructions)
+    if targets is None:
+        targets = _control_flow_targets(instructions)
     depths: list[int] = []
     depth = 0
     for index, instruction in enumerate(instructions):
         if index and index in targets:
             depth = 0
         depths.append(depth)
-        depth = _minimum_depth_after(instruction, depth)
+        depth = _minimum_depth_after(instruction, depth, lookup)
         if instruction.op in {
             OpCode.JUMP,
             OpCode.RETURN,
@@ -1200,13 +1467,17 @@ def _guaranteed_stack_depths(
     return tuple(depths)
 
 
-def _minimum_depth_after(instruction: Instruction, depth: int) -> int:
+def _minimum_depth_after(
+    instruction: Instruction,
+    depth: int,
+    lookup: _BuiltinLookup | None = None,
+) -> int:
     """Return a conservative physical-stack lower bound after one opcode."""
     exact = _exact_straight_line_depth(instruction, depth)
     if exact is not None:
         return max(0, exact)
     if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
-        shape = _resolved_builtin_shape(instruction.arg)
+        shape = _resolved_builtin_shape(instruction.arg, lookup)
         if shape is None:
             return 0
         arity, returns, _trivial = shape
@@ -1228,12 +1499,15 @@ def _minimum_depth_after(instruction: Instruction, depth: int) -> int:
 def _rewrite_ranges(
     instructions: tuple[Instruction, ...],
     replacements: list[_Replacement],
+    *,
+    targets: set[int] | None = None,
 ) -> tuple[Instruction, ...]:
     """Apply non-overlapping rewrites and retarget absolute control-flow offsets."""
     if not replacements:
         return instructions
     instruction_count = len(instructions)
-    targets = _control_flow_targets(instructions)
+    if targets is None:
+        targets = _control_flow_targets(instructions)
     accepted: list[_Replacement] = []
     occupied_until = 0
     for replacement in sorted(replacements, key=lambda item: item.start):

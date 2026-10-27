@@ -35,6 +35,7 @@ class OpCode(Enum):
     APPLY_DISPATCH_PLAN = "apply_dispatch_plan"
     CALL = "call"
     CALL_RESOLVED_ELEMENT = "call_resolved_element"
+    CALL_NUMERIC = "call_numeric"
     CALL_NATIVE = "call_native"
     CHECK_CAST = "check_cast"
     TRY_CAST = "try_cast"

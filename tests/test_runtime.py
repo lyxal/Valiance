@@ -44,8 +44,10 @@ from valiance.runtime.vm import (
     _retain_runtime_reference,
     _run_object_cleanup,
     _set_field,
+    _truthy,
 )
 from valiance.runtime.runtime_values import (
+    BorrowedValue,
     DictValue,
     LazyList,
     ListValue,
@@ -55,10 +57,12 @@ from valiance.runtime.runtime_values import (
     PlannedLazyList,
     PipelineTerminal,
     RuntimeNumber,
+    TaggedValue,
     FFIScalarValue,
     RecordValue,
     format_runtime_value,
 )
+from valiance.runtime.bigdecimal import BigDecimal
 
 
 def _reorder_implementations(value):
@@ -3287,6 +3291,46 @@ print $resource.value
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_static_function_call_cache_revalidates_mutated_closure_code(self):
+        source = """\
+define plusOne(n: Int) -> Int => $n 1 + end
+define invoke(n: Int) -> Int => $n plusOne end
+1 invoke
+2 invoke
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        with VirtualMachine(output=lambda _value: None) as machine:
+            self.assertEqual(machine.run(program), [RuntimeNumber(2), RuntimeNumber(3)])
+            self.assertTrue(machine._resolved_function_cache)
+            reference = next(
+                candidate[0]
+                for candidate in machine._resolved_function_cache.values()
+                if candidate[0].name == "plusOne"
+            )
+            closure = machine.globals["plusOne"]
+            self.assertIsInstance(closure, FunctionValue)
+            closure.code = replace(closure.code, implementation_id="replaced:plusOne")
+            call_only = Program(FunctionCode((
+                Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
+                Instruction(OpCode.CALL_RESOLVED_ELEMENT, reference),
+                Instruction(OpCode.RETURN),
+            ), name="main"))
+            with self.assertRaisesRegex(RuntimeError, "different implementation identity"):
+                machine.run(call_only)
+
+    def test_vm_shares_immutable_runtime_context_only_within_one_instance(self):
+        with VirtualMachine(output=lambda _value: None) as first:
+            with VirtualMachine(output=lambda _value: None) as second:
+                contexts = {id(value.context) for value in first.globals.values()}
+                self.assertEqual(len(contexts), 1)
+                self.assertNotEqual(
+                    next(iter(first.globals.values())).context,
+                    next(iter(second.globals.values())).context,
+                )
+
     def test_duplication_fault_bypasses_explicit_and_catch_all_handlers(self):
         for handler in ('DuplicationFault', ''):
             source = f'''
@@ -3622,6 +3666,85 @@ end
         self.assertEqual(execute("*(+(1, 2), 3)"), [RuntimeNumber("9")])
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [RuntimeNumber("21")])
         self.assertEqual(execute("5 -(2, _)"), [RuntimeNumber("-3")])
+
+    def test_builtin_argument_projection_reuses_plain_scalar_arguments(self):
+        """Scalar fast paths preserve wrapper checks and malformed-arity errors."""
+        overload = next(
+            definition for definition in runtime_elements()["+"].definitions
+            if tuple(str(typ) for typ in definition.signature.params) == ("Int", "Int")
+        )
+        first, second = RuntimeNumber(3), RuntimeNumber(4)
+        plain = (first, second)
+        self.assertIs(overload.runtime_arguments(plain), plain)
+
+        wrapped = (TaggedValue(first), BorrowedValue(second))
+        projected = overload.runtime_arguments(wrapped)
+        self.assertIs(projected[0], first)
+        self.assertIs(projected[1], second)
+        with self.assertRaises(ValueError):
+            overload.runtime_arguments((first,))
+
+    def test_numeric_vm_truthiness_skips_temporary_zero_comparisons(self):
+        for literal, expected in (
+            ("0", False), ("0.0", False), ("-2", True),
+            ("0i1", True), ("0i0", False), ("3i-4", True),
+        ):
+            with self.subTest(literal=literal):
+                value = RuntimeNumber(literal)
+                self.assertEqual(_truthy(value), expected)
+                self.assertEqual(_truthy(TaggedValue(value)), expected)
+
+    def test_arithmetic_results_preserve_canonical_decimal_components(self):
+        """The arithmetic construction path retains real and complex values."""
+        left, right = RuntimeNumber("12.30"), RuntimeNumber("0.70")
+        self.assertEqual(left + right, RuntimeNumber("13"))
+        self.assertEqual(left - right, RuntimeNumber("11.6"))
+        self.assertEqual(left * right, RuntimeNumber("8.61"))
+        self.assertEqual(left % right, RuntimeNumber("0.4"))
+
+        complex_left = RuntimeNumber((BigDecimal(2), BigDecimal(3)))
+        complex_right = RuntimeNumber((BigDecimal(4), BigDecimal(5)))
+        self.assertEqual(complex_left + complex_right, RuntimeNumber("6i8"))
+        self.assertEqual(complex_left - complex_right, RuntimeNumber("-2i-2"))
+        self.assertEqual(complex_left * complex_right, RuntimeNumber("-7i22"))
+        self.assertEqual(BigDecimal(0, -7), BigDecimal(0))
+        self.assertEqual(BigDecimal(120, -1), BigDecimal(12))
+
+    def test_modulo_preserves_exact_decimal_and_negative_divisor_semantics(self):
+        """Optimised remainders agree with floor division at every decimal scale."""
+        cases = (
+            ("7", "3", "1"),
+            ("-7", "3", "2"),
+            ("7", "-3", "-2"),
+            ("-7", "-3", "-1"),
+            ("7.5", "2", "1.5"),
+            ("-7.5", "2", "0.5"),
+            ("7", "-2.5", "-0.5"),
+            ("12345678901234567890123456789.125", "0.75", "0.125"),
+        )
+        for dividend, divisor, expected in cases:
+            with self.subTest(dividend=dividend, divisor=divisor):
+                self.assertEqual(
+                    RuntimeNumber(dividend) % RuntimeNumber(divisor),
+                    RuntimeNumber(expected),
+                )
+                self.assertEqual(
+                    execute(f"{dividend} {divisor} %"),
+                    [RuntimeNumber(expected)],
+                )
+        with self.assertRaises(ZeroDivisionError):
+            RuntimeNumber("1.5") % RuntimeNumber("0")
+
+        for left_coefficient in (-12345, -17, 0, 17, 12345):
+            for right_coefficient in (-21, -3, 3, 21):
+                for left_exponent in (-3, 0, 2):
+                    for right_exponent in (-2, 0, 4):
+                        left = BigDecimal(left_coefficient, left_exponent)
+                        right = BigDecimal(right_coefficient, right_exponent)
+                        expected = left - right * BigDecimal.from_int(
+                            left.floor_div(right)
+                        )
+                        self.assertEqual(left % right, expected)
 
     def test_real_valued_scientific_exponent_executes_as_one_literal(self):
         result = execute("1.3e5.2")
@@ -4064,6 +4187,49 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
 
         self.assertEqual(planned.run_terminal(terminal), RuntimeNumber(4))
         self.assertEqual(consumed, [1, 2, 3, 4])
+
+    def test_single_stage_pipeline_honours_stop_on_a_discarded_item(self):
+        pulled: list[int] = []
+
+        def source():
+            for number in range(5):
+                pulled.append(number)
+                yield number
+
+        stage = LazyPipelineStage(
+            "discard-and-stop",
+            lambda: lambda value: (False, value, value == 2),
+        )
+        planned = PlannedLazyList(source(), (stage,))
+
+        self.assertEqual(list(planned), [])
+        self.assertEqual(pulled, [0, 1, 2])
+        self.assertEqual(list(planned), [])
+
+    def test_pipeline_terminals_replay_cache_without_repeat_side_effects(self):
+        mapped: list[int] = []
+
+        def track(value):
+            mapped.append(value)
+            return value * 2
+
+        planned = PlannedLazyList(
+            iter(range(1, 5)),
+            (LazyPipelineStage.mapping(track),),
+        )
+
+        self.assertEqual(planned.count_terminal(), 4)
+        self.assertEqual(planned.sum_terminal(10), 30)
+        self.assertEqual(planned.reduce_terminal([], lambda acc, item: [*acc, item]),
+                         [2, 4, 6, 8])
+        self.assertEqual(mapped, [1, 2, 3, 4])
+
+    def test_sum_terminal_does_not_mutate_initial_accumulator(self):
+        initial: list[int] = []
+        planned = PlannedLazyList(iter(([1], [2])), ())
+
+        self.assertEqual(planned.sum_terminal(initial), [1, 2])
+        self.assertEqual(initial, [])
 
     def test_vector_membership_preparation_is_operand_order_invariant(self):
         sources = (

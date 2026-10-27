@@ -62,6 +62,7 @@ from valiance.asts import (
     MatchCaseNode,
     MatchNode,
     MatchPatternNode,
+    NumberLiteralNode,
     ObjectNode,
     TagDeclarationNode,
     ElementTagDeclarationNode,
@@ -69,6 +70,7 @@ from valiance.asts import (
     OrPatternNode,
     PopNNode,
     SourceLocation,
+    StringLiteralNode,
     TraitRequirementNode,
     TryHandlerNode,
     TryNode,
@@ -879,6 +881,18 @@ class Analyser:
         nodes: tuple[ASTNode, ...],
     ) -> BranchSet:
         """Analyse a nested block with declarations local to that block."""
+        if all(isinstance(node, (NumberLiteralNode, StringLiteralNode)) for node in nodes):
+            # Plain literals cannot declare names or change type relations.
+            # They still receive a lexical frame, but may share its immutable
+            # parent relation facts and import state without copying either.
+            outer = self.env
+            self.env = outer.child_scope()
+            self._scope_depth += 1
+            try:
+                return self.analyse_block(initial, nodes)
+            finally:
+                self._scope_depth -= 1
+                self.env = outer
         outer = self.env
         imported_sources = self._imported_definition_sources.copy()
         overload_sources = self._imported_overload_sources.copy()

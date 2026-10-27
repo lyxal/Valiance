@@ -23,6 +23,7 @@ from valiance.runtime.reflection import ReflectionValue, find_field, copy_field_
 from valiance.elements.documentation import ElementDocumentation, ExampleInputs, element_documentation
 from valiance.asts import ElementNode, GetVariableNode, SetVariableNode
 from valiance.runtime.runtime_values import (
+    BorrowedValue,
     LazyList,
     ListValue,
     LazyPipelineStage,
@@ -36,6 +37,7 @@ from valiance.runtime.runtime_values import (
     runtime_collection_rank,
     unwrap_runtime_value,
     RuntimeNumber,
+    TaggedValue,
     FFIBufferValue,
     FFIScalarValue,
 )
@@ -914,6 +916,22 @@ class BuiltinOverload:
         """Project arguments into the representations expected by this overload."""
         if self.signature.call_site_body is not None:
             return args
+        # The overwhelmingly common scalar calls already have plain values.
+        # Reuse their tuple instead of invoking the unwrapping machinery and
+        # allocating a replacement on every invocation.  Wrapped values still
+        # follow the normal per-parameter passthrough policy below.
+        count = len(args)
+        if count == len(self.runtime_argument_passthrough):
+            if count == 0:
+                return args
+            if count == 1 and not isinstance(args[0], (TaggedValue, BorrowedValue)):
+                return args
+            if (
+                count == 2
+                and not isinstance(args[0], (TaggedValue, BorrowedValue))
+                and not isinstance(args[1], (TaggedValue, BorrowedValue))
+            ):
+                return args
         return tuple(
             argument if passthrough else unwrap_runtime_value(argument)
             for argument, passthrough in zip(
@@ -1865,10 +1883,8 @@ def _runtime_callable_value(value: Any) -> bool:
 
 def _wrapping_mod(a: RuntimeNumber, b: RuntimeNumber) -> RuntimeNumber:
     """Return modulo wrapped to the divisor's sign."""
-    remainder = a % b
-    if remainder and (remainder < 0) != (b < 0):
-        remainder += b
-    return remainder
+    # BigDecimal's floor-division remainder already has the divisor's sign.
+    return a % b
 
 
 @builtin(

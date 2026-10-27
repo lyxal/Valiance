@@ -1372,6 +1372,28 @@ return types are ownership-trivial. Resolved call sites additionally cache the
 validated built-in/overload pair while guarding against local shadowing or a
 replaced global. Do not move these decisions back into the per-call path.
 
+Repeated static calls to source-defined functions can also reuse a validated
+function link. This cache is guarded by the exact instruction-reference object,
+absence of local shadowing, the active global binding, and the same immutable
+`FunctionCode` object. Replacing a global or swapping a closure's code falls
+back to the regular implementation-identity check; a cache hit must never turn
+a previously rejected call into a valid call. The cache retains compiled code,
+not a closure that could keep captured resources alive after rebinding.
+
+Argument projection reuses already-plain scalar tuples for common unary and
+binary calls, but still unwraps tagged or borrowed values according to the
+selected signature's passthrough rules. VM Boolean branches check both real
+and imaginary numeric components directly; checking against a newly constructed
+numeric zero would waste allocations and incorrectly treating an imaginary-only
+value as false would change its meaning.
+
+VM construction creates one immutable `RuntimeContext` for all of that VM's
+runtime globals. Native standard-library elements are cached by their current
+module exports, so repeated VM instances reuse their immutable overload wrappers
+without hiding newly registered native functions. The returned catalogue mapping
+remains independent for each VM; the callable services in its shared context
+always bind to that specific VM.
+
 Decimal arithmetic first uses the active context when it is already sufficient
 for an exact result, then expands precision and exponent bounds only when
 needed. Any faster arithmetic path must retain the arbitrary-precision tests; a
@@ -2003,6 +2025,13 @@ and first-value termination use this shared protocol. `head` terminates planned
 pipelines after the first produced value. Stateful `drop` joins `take` as a
 composable stage with fresh iterator-local state, allowing map/filter/drop/take
 pipelines to remain one source traversal.
+
+Single-stage pipelines use a direct iterator loop but still honour a stage's
+keep/drop and stop signals, including an early stop on a discarded value.
+`count_terminal`, `sum_terminal`, and `reduce_terminal` run their accumulators
+directly without creating a generic terminal state machine for every call or a
+`(result, stop)` pair for every element. They traverse the normal replay cache,
+so repeated terminal consumers do not rerun source transformations.
 
 `VirtualMachine(collect_optimization_stats=True)` enables debug-only counters for
 prepared-plan creation, reuse, and selected strategies. Counters are absent by
