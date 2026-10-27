@@ -646,9 +646,15 @@ class _CallSelection:
                 return None
             storage = T.normalize(owner)
             definition = self.env.lookup_object(storage.name) if isinstance(storage, T.NominalType) else None
-            if (definition is None or isinstance(storage, T.FFINamedType)
-                    or len(storage.args) != len(definition.generics)):
-                self._diagnose("managed construction requires a concrete managed object type", node)
+            if isinstance(storage, T.FFINamedType):
+                # Native storage has no language-visible fields.  The builder is
+                # finalized through a VM-registered trusted native factory;
+                # neither the compiler nor the VM fabricates an FFI pointer.
+                if storage.args:
+                    self._diagnose("native construction requires a concrete FFI type", node)
+                    return None
+            elif definition is None or len(storage.args) != len(definition.generics):
+                self._diagnose("construction requires a concrete managed object or native type", node)
                 return None
             reflection_access = TypedConstructionNode(
                 node, candidate.applied.actual_returns[0], self.env.field_metadata(owner),

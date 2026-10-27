@@ -524,6 +524,139 @@ json.decode[Ambiguous]("{\"value\":1}")
             self.assertIn('does not match', stack[2].fields['message'])
             self.assertIn('ambiguous', stack[3].fields['message'])
 
+    def test_json_native_adapters_round_trip_through_typed_program(self):
+        from valiance.runtime.runtime_values import FFIHandleValue
+        source = r'''
+import {std.json}
+json.encode(json.decode[&Counter]("{\"id\":7}") ?!) ?!
+json.decode[&Counter]("{\"id\":0}")
+json.decode[&Other]("{\"id\":8}")
+json.decode[&Counter]("{\"id\":9}")
+json.decode[&Counter]("{}")
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        for optimized in (False, True):
+            compiled = loads(dumps(compile_program(typed, optimize=optimized)))
+            vm = VirtualMachine(output=lambda _: None)
+            try:
+                vm.register_json_native(
+                    "&Counter",
+                    decode=lambda data: FFIHandleValue("&Counter", int(data["id"])),
+                    encode=lambda handle: {"id": handle.address},
+                )
+                stack = vm.run(compiled)
+                self.assertEqual(stack[0], '{"id":7}')
+                self.assertEqual([item.type_name for item in stack[1:]],
+                                 ['ValueError', 'ValueError', '&Counter', 'ValueError'])
+                self.assertIn('non-null', stack[1].fields['message'])
+                self.assertIn('No JSON adapter', stack[2].fields['message'])
+                self.assertEqual(stack[3].address, 9)
+                self.assertIn('native JSON factory failed', stack[4].fields['message'])
+                stack[3].request_destroy()
+                with self.assertRaisesRegex(ValueError, 'Released native'):
+                    vm.encode_json(stack[3])
+            finally:
+                vm.close()
+
+    def test_json_runtime_registered_novel_types_and_nested_native_storage(self):
+        from valiance.runtime.runtime_values import FFIHandleValue
+        vm = VirtualMachine(output=lambda _: None)
+        try:
+            vm.register_json_native(
+                '&Widget',
+                decode=lambda obj: FFIHandleValue('&Widget', int(obj['id'])),
+                encode=lambda handle: {'id': handle.address},
+            )
+            vm.register_json_type('DynamicChild', (('label', 'String'), ('enabled', '#boolean Int')))
+            vm.register_json_type(
+                'DynamicBox', (('item', 'T'), ('secret', 'String', 'private')),
+                generics=('T',), defaults={'secret': 'hidden'},
+            )
+            box = vm.decode_json('{"item":{"label":"Ada","enabled":true}}',
+                                 'DynamicBox[DynamicChild]')
+            self.assertEqual(box.fields['secret'], 'hidden')
+            self.assertEqual(vm.encode_json(box),
+                             '{"item":{"label":"Ada","enabled":true}}')
+            with self.assertRaisesRegex(ValueError, 'unexpected JSON fields'):
+                vm.decode_json('{"item":3,"secret":"injected"}', 'DynamicBox[Int]')
+            vm.register_json_type('DynamicBag', (
+                ('child', 'DynamicChild'),
+                ('widgets', '&Widget+'),
+                ('lookup', 'Dict[String, DynamicChild?]'),
+            ))
+            text = ('{"child":{"label":"Ada","enabled":true},'
+                    '"widgets":[{"id":1},{"id":2}],'
+                    '"lookup":{"one":{"label":"Bee","enabled":false},"two":null}}')
+            bag = vm.decode_json(text, 'DynamicBag')
+            self.assertEqual(bag.type_name, 'DynamicBag')
+            self.assertEqual(vm.encode_json(bag), text)
+            self.assertEqual(bag.fields['widgets'][1].address, 2)
+            self.assertEqual(bag.fields['lookup']['one'].type_name, 'Some')
+            for input_text, message in (
+                ('{"child":{},"widgets":[],"lookup":{}}', 'required field'),
+                ('{"child":{"label":"Ada","enabled":4},"widgets":[],"lookup":{}}',
+                 'expected JSON Boolean'),
+                ('{"child":{"label":"Ada","enabled":true},"widgets":[{"id":0}],"lookup":{}}',
+                 'non-null'),
+                ('{"child":{"label":"Ada","enabled":true},"widgets":[],"lookup":{},"private":8}',
+                 'unexpected JSON fields'),
+            ):
+                with self.subTest(input_text=input_text):
+                    with self.assertRaisesRegex(ValueError, message):
+                        vm.decode_json(input_text, 'DynamicBag')
+            with self.assertRaisesRegex(ValueError, 'already registered'):
+                vm.register_json_type('DynamicChild', (('label', 'Int'),))
+            with self.assertRaisesRegex(ValueError, 'Duplicate'):
+                vm.register_json_type('OtherType', (('id', 'Int'), ('id', 'String')))
+            with self.assertRaisesRegex(ValueError, 'already registered'):
+                vm.register_json_native('&Widget', decode=lambda v: v, encode=lambda v: v)
+        finally:
+            vm.close()
+
+    def test_json_native_copied_scalar_and_struct_adapters(self):
+        from valiance.runtime.runtime_values import FFIScalarValue, FFIStructValue
+        vm = VirtualMachine(output=lambda _: None)
+        try:
+            vm.register_json_native(
+                '&scalar', decode=lambda data: FFIScalarValue('&scalar', int(data)),
+                encode=lambda scalar: scalar.value,
+            )
+            vm.register_json_native(
+                '&Point',
+                decode=lambda data: FFIStructValue('&Point', tuple(data.items())),
+                encode=lambda point: dict(point.fields),
+            )
+            scalar = vm.decode_json('7', '&scalar')
+            point = vm.decode_json('{"x":1.250,"y":2}', '&Point')
+            self.assertEqual(vm.encode_json(scalar), '7')
+            self.assertEqual(vm.encode_json(point), '{"x":1.250,"y":2}')
+            vm.register_json_type('NativeContainer', (
+                ('point', '&Point'), ('scalar', '&scalar'),
+            ))
+            value = vm.decode_json('{"point":{"x":3,"y":4},"scalar":5}',
+                                   'NativeContainer')
+            self.assertEqual(vm.encode_json(value),
+                             '{"point":{"x":3,"y":4},"scalar":5}')
+        finally:
+            vm.close()
+
+    def test_json_native_factory_cannot_forge_incorrect_handle_types(self):
+        from valiance.runtime.runtime_values import FFIHandleValue
+        vm = VirtualMachine(output=lambda _: None)
+        try:
+            vm.register_json_native(
+                '&Expected', decode=lambda obj: FFIHandleValue('&Other', 12),
+                encode=lambda handle: {'id': handle.address},
+            )
+            with self.assertRaisesRegex(ValueError, 'invalid &Expected handle'):
+                vm.decode_json('{}', '&Expected')
+            with self.assertRaisesRegex(ValueError, 'No JSON adapter'):
+                vm.encode_json(FFIHandleValue('&Unregistered', 3))
+        finally:
+            vm.close()
+
     def test_json_object_codec_uses_readable_fields_and_skips_private_values(self):
         source = '''
 import {std.json}

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import builtins as _py_builtins
 import copy
-from valiance.runtime.reflection import UninitValue, ReflectionValue, make_fields_value, lookup_field, validate_field
+from valiance.runtime.reflection import (
+    UninitValue, ReflectionValue, make_fields_value, lookup_field, validate_field,
+    checked_native_value, construct_runtime_object,
+)
 import ctypes
 from threading import Event, Lock, get_ident
 import re
@@ -705,7 +708,11 @@ class VirtualMachine:
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
         ] = {}
-        self.json_constructors: dict[str, ObjectConstructorValue] = {}
+        # Shared reflection registry: the JSON decoder consults these layouts too.
+        self._reflection_constructors: dict[str, ObjectConstructorValue] = {}
+        self._runtime_reflection_types: set[str] = set()
+        self._reflection_native_factories: dict[str, Callable[[Any], Any]] = {}
+        self._reflection_native_encoders: dict[str, Callable[[Any], Any]] = {}
         self.globals = {
             name: BuiltinValue(
                 element,
@@ -720,6 +727,8 @@ class VirtualMachine:
                     index_set=self._builtin_index_set,
                     json_constructor=self._json_constructor,
                     json_variant_constructors=self._json_variant_constructors,
+                    json_native_decoder=self._json_native_decode,
+                    json_native_encoder=self._json_native_encode,
                 ),
             )
             for name, element in (
@@ -729,12 +738,276 @@ class VirtualMachine:
 
     def _json_constructor(self, name: str) -> ObjectConstructorValue | None:
         """Resolve constructor-checked JSON metadata in this VM instance."""
-        return self.json_constructors.get(name)
+        return self._reflection_constructors.get(name)
 
     def _json_variant_constructors(self, name: str) -> tuple[ObjectConstructorValue, ...]:
         """Enumerate registered cases of one statically requested variant."""
-        return tuple(constructor for candidate, constructor in self.json_constructors.items()
+        return tuple(constructor for candidate, constructor in self._reflection_constructors.items()
                      if candidate.startswith(name + "."))
+
+    def register_reflection_native(
+        self, ffi_type: str, *, construct: Callable[[Any], Any],
+        encode: Callable[[Any], Any] | None = None,
+    ) -> None:
+        """Register a trusted *general reflection* constructor for a native type.
+
+        Only the host may create an FFI value. The callback must return the
+        requested native type, and opaque handles must be live. An optional
+        representation encoder also makes this type usable by std.json.
+        """
+        from valiance.parsing.parser import parse_type
+        import valiance.vtypes as T
+
+        parsed = parse_type(ffi_type)
+        if not isinstance(parsed, T.FFINamedType) or str(parsed) != ffi_type:
+            raise ValueError("Native reflection constructors require an exact &Type name")
+        if not callable(construct) or (encode is not None and not callable(encode)):
+            raise TypeError("Native reflection callbacks must be callable")
+        if ffi_type in self._reflection_native_factories:
+            raise ValueError(f"Native reflection constructor already registered for {ffi_type}")
+        self._reflection_native_factories[ffi_type] = construct
+        if encode is not None:
+            self._reflection_native_encoders[ffi_type] = encode
+
+    def construct_reflected(self, target_type: str, value: Any = None, *,
+                            unsafe: bool = False) -> Any:
+        """Construct registered managed or FFI storage from already-typed host data.
+
+        A native type requires a registered trusted factory. For managed types,
+        values are field mappings checked against the runtime schema, including
+        generic substitutions and private-field access. No JSON is involved.
+        """
+        from valiance.parsing.parser import parse_type
+        import valiance.vtypes as T
+
+        parsed = parse_type(target_type)
+        if isinstance(parsed, T.FFINamedType):
+            if unsafe:
+                raise ValueError("unsafe cannot bypass native factory validation")
+            factory = self._reflection_native_factories.get(target_type)
+            if factory is None:
+                raise ValueError(f"no registered native reflection constructor for {target_type}")
+            result = factory(value)
+            return checked_native_value(target_type, result)
+        if not isinstance(parsed, T.NominalType):
+            raise ValueError(f"cannot construct non-nominal type {target_type}")
+        constructor = self._reflection_constructors.get(parsed.name.text)
+        if constructor is None or constructor.type_name not in self._runtime_reflection_types:
+            raise ValueError(f"no runtime-defined reflection type {target_type}")
+        if not isinstance(value, dict):
+            raise ValueError("managed reflection construction requires a field mapping")
+        return construct_runtime_object(constructor, target_type, value, unsafe=unsafe)
+
+    def reflected_fields(self, value: Any) -> ReflectionValue:
+        """Return reflection descriptors for a host-created managed object."""
+        from valiance.runtime.bytecode import ReflectionFieldReference, ReflectionFieldsReference
+
+        if not isinstance(value, ObjectValue) or value.type_name not in self._runtime_reflection_types:
+            raise ValueError("runtime reflection fields require a registered managed value")
+        constructor = self._reflection_constructors.get(value.type_name)
+        runtime = None if constructor is None else constructor.runtime_type
+        if runtime is None or value.runtime_type is not runtime or runtime.json_fields is None:
+            raise ValueError("value has no matching registered reflection layout")
+        from valiance.parsing.parser import parse_type
+        from valiance.runtime.reflection import _instantiate_runtime_type
+        parsed = parse_type(value.type_name + ('[' + ','.join(value.type_args) + ']' if value.type_args else ''))
+        args = dict(zip(runtime.json_generics, parsed.args, strict=True))
+        layout = ReflectionFieldsReference(
+            str(parsed), tuple(ReflectionFieldReference(
+                key, str(_instantiate_runtime_type(parse_type(declaration), args)), visibility
+            ) for key, visibility, declaration in runtime.json_fields)
+        )
+        return make_fields_value(layout)
+
+    def reflected_read(self, value: Any, field: str, *, unsafe: bool = False) -> Any:
+        """Read registered runtime storage using the same visibility boundary."""
+        if not isinstance(field, str):
+            raise TypeError("reflection field name must be a string")
+        self.reflected_fields(value)  # Confirm this value belongs to this VM registry.
+        metadata = value.runtime_type
+        entry = next((item for item in metadata.json_fields if item[0] == field), None)
+        if entry is None:
+            raise KeyError(field)
+        if entry[1] == 'private' and not unsafe:
+            raise ValueError(f"field {field!r} requires unsafe reflection")
+        return value.fields[field]
+
+    def reflected_write(self, value: Any, field: str, replacement: Any, *,
+                        unsafe: bool = False) -> ObjectValue:
+        """Return a checked reconstructed version of a runtime-defined object.
+
+        The original remains intact; existing VM duplication/ownership rules
+        apply to the unchanged field values in the new owner.
+        """
+        from valiance.parsing.parser import parse_type
+        from valiance.runtime.reflection import _instantiate_runtime_type, _reflection_value_matches
+
+        self.reflected_fields(value)
+        runtime = value.runtime_type
+        entry = next((item for item in runtime.json_fields if item[0] == field), None)
+        if entry is None:
+            raise KeyError(field)
+        _, visibility, declaration = entry
+        if visibility != 'public' and not unsafe:
+            raise ValueError(f"field {field!r} requires unsafe reflection for writes")
+        if declaration is None:
+            raise ValueError(f"no checked field type for {field!r}")
+        args = dict(zip(runtime.json_generics, map(parse_type, value.type_args), strict=True))
+        expected = _instantiate_runtime_type(parse_type(declaration), args)
+        if not _reflection_value_matches(replacement, expected):
+            raise ValueError(f"field {field!r} does not match {expected}")
+        return _set_field(value, field, replacement, vm=self, preserve_receiver=True)
+
+    def register_reflection_type(
+        self, name: str, fields: tuple[tuple[str, str] | tuple[str, str, str], ...], *,
+        defaults: dict[str, Any] | None = None, generics: tuple[str, ...] = (),
+    ) -> None:
+        """Register a new runtime managed type independently of JSON decoding.
+
+        Registered values carry reflection-visible field types and order, but
+        are not automatically new compiler-visible Valiance nominal types.
+        """
+        from valiance.parsing.parser import parse_type
+        import valiance.vtypes as T
+
+        parsed = parse_type(name)
+        if (not isinstance(parsed, T.NominalType)
+                or isinstance(parsed, T.FFINamedType) or parsed.args
+                or str(parsed) != name or name in {"Int", "Real", "Number", "String", "Some", "None", "Dict", "ValueError"}):
+            raise ValueError("Runtime reflection types need a non-generic nominal type name")
+        if name in self._reflection_constructors:
+            raise ValueError(f"Reflection type already registered for {name}")
+        if len(set(generics)) != len(generics) or any(
+            not isinstance(item, str) or not item.isidentifier() for item in generics
+        ):
+            raise ValueError("Generic parameters must be distinct identifiers")
+        names: set[str] = set()
+        layout: list[tuple[str, str, str]] = []
+        for declaration in fields:
+            if len(declaration) not in (2, 3):
+                raise ValueError("Reflection fields require name, type, and optional visibility")
+            key, type_name = declaration[:2]
+            visibility = declaration[2] if len(declaration) == 3 else "public"
+            if visibility not in {"public", "readable", "private"}:
+                raise ValueError(f"Unsupported reflection field visibility {visibility!r}")
+            if not isinstance(key, str) or not key or key in names:
+                raise ValueError(f"Duplicate or empty reflection field {key!r}")
+            if not isinstance(type_name, str):
+                raise TypeError("Reflection field types must be checked type names")
+            parse_type(type_name)
+            names.add(key)
+            layout.append((key, visibility, type_name))
+        supplied_defaults = {} if defaults is None else dict(defaults)
+        if set(supplied_defaults) - names:
+            raise ValueError("Reflection defaults must name declared fields")
+        metadata = ObjectRuntimeType(
+            field_order=tuple(key for key, _, _ in layout),
+            json_fields=tuple(layout),
+            json_generics=generics,
+        )
+        constructor = ObjectConstructorValue(
+            type_name=name,
+            fields=tuple(key for key, _, _ in layout),
+            required=tuple(key for key, _, _ in layout if key not in supplied_defaults),
+            defaults=supplied_defaults,
+            runtime_type=metadata,
+        )
+        if name in self.globals:
+            raise ValueError(f"Reflection type conflicts with runtime element {name}")
+        self._reflection_constructors[name] = constructor
+        self._runtime_reflection_types.add(name)
+        self.globals[name] = constructor
+
+    def reflection_environment(self, env=None):
+        """Expose VM-registered runtime schemas to a *subsequent* compilation.
+
+        The returned analyser environment has real, checked owner/field type
+        declarations. It is a snapshot: a schema registered after compilation
+        cannot change the already-checked bytecode. Registered constructors
+        remain VM-local and must be used with this VM for execution.
+        """
+        from valiance.elements.builtins import default_environment
+        from valiance.parsing.parser import parse_type
+        from valiance.vtypes.symbols import Symbol
+        from valiance.runtime.reflection import _instantiate_runtime_type
+        import valiance.vtypes as T
+
+        scope = (default_environment() if env is None else env).child_scope()
+        # Reserve all names before declaring fields so mutually referring
+        # registered types can be resolved as part of one closed snapshot.
+        for name in self._runtime_reflection_types:
+            if scope.lookup_object(Symbol(name)) is not None:
+                raise ValueError(f"runtime reflection type conflicts with declared type {name}")
+        for name in sorted(self._runtime_reflection_types):
+            constructor = self._reflection_constructors[name]
+            runtime = constructor.runtime_type
+            generics = tuple(Symbol(arg) for arg in runtime.json_generics)
+            substitutions = {generic: T.V(generic) for generic in runtime.json_generics}
+            fields = tuple(T.ObjectAttribute(
+                Symbol(key), _instantiate_runtime_type(parse_type(declaration), substitutions),
+                Symbol(visibility), key in constructor.defaults,
+            ) for key, visibility, declaration in runtime.json_fields)
+            scope.define_object(Symbol(name), fields, generics=generics)
+            # No source constructor overload is invented.  Construction is
+            # available through the lexical-unsafe checked Uninit[T] path.
+            scope.define_constructor_metadata(Symbol(name), fields,
+                                              defaults=frozenset(Symbol(key) for key in constructor.defaults))
+        return scope
+
+    def register_json_type(
+        self, name: str, fields: tuple[tuple[str, str] | tuple[str, str, str], ...], *,
+        defaults: dict[str, Any] | None = None, generics: tuple[str, ...] = (),
+    ) -> None:
+        """Use the general reflection registry for JSON schema construction."""
+        self.register_reflection_type(name, fields, defaults=defaults, generics=generics)
+
+    def register_json_native(
+        self, ffi_type: str, *, decode: Callable[[Any], Any], encode: Callable[[Any], Any],
+    ) -> None:
+        """Use the general native reflection constructor for JSON reconstruction."""
+        self.register_reflection_native(ffi_type, construct=decode, encode=encode)
+
+    def _json_native_decode(self, ffi_type: str, value: Any) -> Any:
+        if ffi_type not in self._reflection_native_factories:
+            raise ValueError(f"No JSON adapter for native type {ffi_type}")
+        try:
+            return self.construct_reflected(ffi_type, value)
+        except ValueError as exc:
+            if f"invalid {ffi_type} value" in str(exc):
+                raise ValueError(f"native factory returned an invalid {ffi_type} handle") from exc
+            raise
+
+    def _json_native_encode(self, value: Any) -> Any:
+        adapter = self._reflection_native_encoders.get(value.ffi_type)
+        if adapter is None:
+            raise ValueError(f"No JSON adapter for native type {value.ffi_type}")
+        return adapter(value)
+
+    def decode_json(self, text: str, target_type: str) -> Any:
+        """Decode to a runtime-registered type, without requiring a source T.
+
+        Invalid input raises ValueError. The returned value carries checked
+        metadata; the embedding host must not treat it as a statically known T.
+        """
+        from types import SimpleNamespace
+        from valiance.std.json import _decode_dynamic
+
+        context = SimpleNamespace(
+            json_constructor=self._json_constructor,
+            json_variant_constructors=self._json_variant_constructors,
+            json_native_decoder=self._json_native_decode,
+        )
+        result, = _decode_dynamic((text, target_type), context)
+        if isinstance(result, ObjectValue) and result.type_name == "ValueError":
+            raise ValueError(result.fields["message"])
+        return result
+
+    def encode_json(self, value: Any, target_type: str | None = None) -> str:
+        """Encode a host-held runtime value using the same checked traversal."""
+        from valiance.std.json import _json_type, _render_json_value
+        return _render_json_value(value, set(),
+                                  None if target_type is None else _json_type(target_type),
+                                  self._json_native_encode)
 
     def __deepcopy__(self, memo: dict[int, object]) -> "VirtualMachine":
         """Copy VM language state while creating fresh scheduler resources."""
@@ -3446,7 +3719,11 @@ class VirtualMachine:
                                 _object_runtime_type(constructor.runtime_metadata),
                                 initializer,
                             )
-                            self.json_constructors[constructor.type_name] = constructed
+                            if constructor.type_name in self._runtime_reflection_types:
+                                raise RuntimeError(
+                                    f"Compiled type collides with runtime reflection type {constructor.type_name}"
+                                )
+                            self._reflection_constructors[constructor.type_name] = constructed
                             frame.stack.append(constructed)
                         case OpCode.MAKE_ENUM_MEMBER:
                             enum_name, member_name, value = instruction.arg
@@ -10322,8 +10599,26 @@ def _construct_managed(frame: _Frame, config: tuple, vm: VirtualMachine) -> Any:
                                     if field.name in fields)
                 error = _release_runtime_occurrences(initialized, vm, error)
             else:
-                result = ObjectValue(builder.owner_name, fields, owner_spec[2], runtime_type=builder.owner_runtime)
-                if operation == "finish?":
+                if owner_spec[0] == "ffi":
+                    # Native storage cannot be assembled from arbitrary bytes.
+                    # Completion delegates to a trusted, VM-local factory and
+                    # verifies its returned type and live-handle state.
+                    try:
+                        result = vm.construct_reflected(owner_spec[1])
+                    except Exception as failure:
+                        reason = ("NativeFactoryUnavailable" if owner_spec[1] not in
+                                  vm._reflection_native_factories else "NativeConstructionFailed")
+                        message = f"{owner_spec[1]}: {failure}"
+                        if operation == "finish?":
+                            result = ObjectValue("ConstructionError", {
+                                "reason": reason, "message": message, "missing": [],
+                            })
+                        else:
+                            error = PanicSignal(_fault_object("NativeConstructionFault", message))
+                else:
+                    result = ObjectValue(builder.owner_name, fields, owner_spec[2], runtime_type=builder.owner_runtime)
+                if operation == "finish?" and not (isinstance(result, ObjectValue) and
+                                                      result.type_name == "ConstructionError"):
                     result = ObjectValue("OK", {"value": result})
     except BaseException as failure:
         error = failure

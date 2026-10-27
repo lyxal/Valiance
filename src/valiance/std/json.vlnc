@@ -140,7 +140,9 @@ end
 #?? generic objects, and unambiguous variants are reconstructed recursively.
 #?? Required public/readable fields must be present; private fields need declared
 #?? defaults. Extra or duplicate keys, wrong shapes, invalid JSON, protected
-#?? owners, and objects with custom initializers return ValueError. JSON arrays
+#?? owners, and objects with custom initializers return ValueError. Registered
+#?? host native factories can decode opaque FFI handles; unregistered handles
+#?? return ValueError. JSON arrays
 #?? are decoded eagerly rather than as lazy evaluation plans.
 #?? @param text JSON string to decode.
 #?? @returns A typed value or ValueError.

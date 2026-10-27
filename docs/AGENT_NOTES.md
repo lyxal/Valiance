@@ -24,6 +24,26 @@ Never traverse `ObjectValue.fields` for JSON without a checked layout, since
 that would expose private storage. Instantiating reified generic field types
 also matters for Boolean tags, including those nested in collections.
 
+# General host reflection construction
+
+`VirtualMachine.register_reflection_type` registers novel host-runtime managed
+schemas, `construct_reflected` constructs checked occurrences without JSON,
+`reflected_fields` produces ordinary metadata, and `reflected_read`/
+`reflected_write` enforce visibility and type/ownership rules. Compiled `uninit[T]` also accepts native `&T` storage, but `finish` and
+`finish?` require a trusted no-argument VM-local factory and validate its
+returned FFI value. Bytecode serialization must accept only empty native
+layouts; native construction failures become `NativeConstructionFault` or
+`ConstructionError`. `reflection_environment()` snapshots VM-registered
+managed schemas into an analyser environment *before* compilation. Execute
+that bytecode in the same VM; registration after compilation cannot alter
+the compile-time type universe.
+`VirtualMachine.register_reflection_native` accepts a trusted constructor and
+optional JSON encoder. Validate the result's exact native type and live handle
+state before exposing it, and never manufacture an FFI address from untrusted
+data. `register_json_type`/`register_json_native` are thin delegates to the
+same VM-local registry, not independent JSON type systems. Source-level new type declarations *during execution* remain unsupported;
+compiler-visible schemas must be registered before analysis.
+
 # Lazy JSON serialization
 
 `std.json.encode` traverses `LazyList` / `PlannedLazyList` through their replayable

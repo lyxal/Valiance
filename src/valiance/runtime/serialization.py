@@ -256,13 +256,21 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                     or not isinstance(argument[0], str)
                     or argument[0] not in {"uninit", "finished?", "finish", "finish?"}
                     or (argument[2] is not None and (not isinstance(argument[2], str) or not argument[2]))
-                    or not isinstance(argument[3], tuple) or len(argument[3]) != 3
-                    or argument[3][0] != "nominal"
-                    or not isinstance(argument[3][1], str) or not argument[3][1]
-                    or not isinstance(argument[3][2], tuple)
-                    or any(not isinstance(item, str) or not item for item in argument[3][2])):
-                raise BytecodeFormatError("invalid managed construction payload")
+                    or not isinstance(argument[3], tuple)
+                    or not (
+                        len(argument[3]) == 3 and argument[3][0] == "nominal"
+                        and isinstance(argument[3][1], str) and bool(argument[3][1])
+                        and isinstance(argument[3][2], tuple)
+                        and all(isinstance(item, str) and bool(item) for item in argument[3][2])
+                        or len(argument[3]) == 2 and argument[3][0] == "ffi"
+                        and isinstance(argument[3][1], str) and argument[3][1].startswith("&")
+                        and argument[2] is None
+                    )):
+                raise BytecodeFormatError("invalid reflection construction payload")
             _validate_reflection_fields(argument[1])
+            if (argument[3][0] == "ffi" and
+                    (argument[1].owner != argument[3][1] or argument[1].fields)):
+                raise BytecodeFormatError("native construction must have empty opaque storage")
         if op is OpCode.TYPE_DISPATCH:
             if (not isinstance(argument, tuple) or len(argument) != 2
                     or not isinstance(argument[0], tuple)

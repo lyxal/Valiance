@@ -93,6 +93,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "ReflectionFieldFault",
         "ReflectionTypeFault",
         "IncompleteConstructionFault",
+        "NativeConstructionFault",
         "ShapeFault",
         "SliceFault",
         "StateFault",
@@ -786,6 +787,8 @@ class RuntimeContext:
     index_set: Callable[[Any, Any, Any, bool], Any] | None = None
     json_constructor: Callable[[str], Any | None] | None = None
     json_variant_constructors: Callable[[str], tuple[Any, ...]] | None = None
+    json_native_decoder: Callable[[str, Any], Any] | None = None
+    json_native_encoder: Callable[[Any], Any] | None = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -4052,13 +4055,13 @@ for _operation in ("uninit", "finished?", "finish", "finish?"):
         param_names=() if _operation == "uninit" else ("builder",),
         reflection_operation=_operation, vectorisable=False,
         documentation=element_documentation(
-            {"uninit": "Allocate empty managed storage under lexical unsafe.",
+            {"uninit": "Allocate empty managed or native storage under lexical unsafe. Native storage requires a registered trusted factory at finalization.",
              "finished?": "Check stored-field completeness without consuming the builder.",
              "finish": "Consume a complete builder, panicking when fields are missing.",
              "finish?": "Consume a builder, returning a Result on missing fields."}[_operation],
-            parameters=() if _operation == "uninit" else (("builder", "Managed incomplete storage."),),
+            parameters=() if _operation == "uninit" else (("builder", "Incomplete managed or native storage."),),
             returns={"uninit": "An empty Uninit owner.", "finished?": "Whether all stored fields are initialized.",
-                     "finish": "The completed owner.", "finish?": "The completed owner or ConstructionError."}[_operation],
+                     "finish": "The completed owner (or NativeConstructionFault).", "finish?": "The completed owner or ConstructionError."}[_operation],
             category="Reflection",
             examples=((f'object Empty => end\nunsafe => uninit[Empty]'
                        + ('' if _operation == 'uninit' else f' | {_operation}') + ' end',

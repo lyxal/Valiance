@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from dataclasses import replace
 from functools import lru_cache
 from typing import Any
@@ -11,7 +12,7 @@ import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import (
-    LazyList, ObjectValue, RuntimeNumber, TaggedValue,
+    FFIHandleValue, FFIScalarValue, FFIStructValue, LazyList, ObjectValue, RuntimeNumber, TaggedValue,
 )
 from valiance.vtypes.symbols import Symbol
 
@@ -92,7 +93,9 @@ def _instantiate_json_type(typ: T.Type, arguments: dict[str, T.Type]) -> T.Type:
     return typ
 
 
-def _render_json_value(value: Any, visiting: set[int], expected: T.Type | None) -> str:
+def _render_json_value(
+    value: Any, visiting: set[int], expected: T.Type | None, native_encode: Any = None,
+) -> str:
     """Encode JSON-compatible data using trusted metadata for managed fields."""
     runtime_infinite = False
     while isinstance(value, TaggedValue):
@@ -115,12 +118,34 @@ def _render_json_value(value: Any, visiting: set[int], expected: T.Type | None) 
         if value.is_complex():
             raise _JsonEncodingError("JSON numbers must be real")
         return str(value.real)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise _JsonEncodingError("JSON numbers must be finite")
+        return str(value)
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
     if value is None:
         return "null"
+    if isinstance(value, (FFIHandleValue, FFIScalarValue, FFIStructValue)):
+        # A native value has no serializable layout. Only the embedding
+        # application knows how to encode its identity without leaking pointers.
+        if isinstance(value, FFIHandleValue) and (not value.alive or value.destroy_pending):
+            raise _JsonEncodingError("Released native handles cannot be encoded")
+        if native_encode is None:
+            raise _JsonEncodingError(f"No JSON adapter for native type {value.ffi_type}")
+        if id(value) in visiting:
+            raise _JsonEncodingError("Cyclic JSON values cannot be encoded")
+        visiting.add(id(value))
+        try:
+            try:
+                representation = native_encode(value)
+            except Exception as exc:
+                raise _JsonEncodingError(f"Native JSON encoder failed: {exc}") from exc
+            return _render_json_value(representation, visiting, None, native_encode)
+        finally:
+            visiting.remove(id(value))
     if isinstance(value, ObjectValue):
         if value.type_name == "None":
             return "null"
@@ -131,7 +156,7 @@ def _render_json_value(value: Any, visiting: set[int], expected: T.Type | None) 
             visiting.add(identity)
             try:
                 return _render_json_value(value.fields["value"], visiting,
-                                          _optional_payload_type(expected))
+                                          _optional_payload_type(expected), native_encode)
             finally:
                 visiting.remove(identity)
         runtime = value.runtime_type
@@ -159,7 +184,7 @@ def _render_json_value(value: Any, visiting: set[int], expected: T.Type | None) 
                 expected_field = (_instantiate_json_type(_json_type(field_type), arguments)
                                   if field_type is not None else None)
                 parts.append(json.dumps(name, ensure_ascii=True) + ":" +
-                             _render_json_value(value.fields[name], visiting, expected_field))
+                             _render_json_value(value.fields[name], visiting, expected_field, native_encode))
             return "{" + ",".join(parts) + "}"
         finally:
             visiting.remove(identity)
@@ -183,7 +208,7 @@ def _render_json_value(value: Any, visiting: set[int], expected: T.Type | None) 
             if isinstance(value, (LazyList, list, tuple)):
                 child_type = _collection_child_type(expected)
                 return "[" + ",".join(
-                    _render_json_value(item, visiting, child_type) for item in value
+                    _render_json_value(item, visiting, child_type, native_encode) for item in value
                 ) + "]"
             if any(not isinstance(key, str) for key in value):
                 raise _JsonEncodingError("JSON dictionary keys must be strings")
@@ -192,7 +217,7 @@ def _render_json_value(value: Any, visiting: set[int], expected: T.Type | None) 
                                else None)
             return "{" + ",".join(
                 json.dumps(key, ensure_ascii=True) + ":" +
-                _render_json_value(item, visiting, dict_value_type)
+                _render_json_value(item, visiting, dict_value_type, native_encode)
                 for key, item in value.items()
             ) + "}"
         finally:
@@ -215,10 +240,9 @@ def _json_type(type_name: str) -> T.Type:
 )
 def _encode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Encode runtime data using checked constructor visibility metadata."""
-    del ctx
     try:
         expected = _json_type(args[1])
-        return (_render_json_value(args[0], set(), expected),)
+        return (_render_json_value(args[0], set(), expected, ctx.json_native_encoder),)
     except _JsonEncodingError as exc:
         return (ObjectValue("ValueError", {"message": str(exc)}),)
 
@@ -241,12 +265,15 @@ def _invalid_json_constant(value: str) -> None:
     raise _JsonDecodingError(f"Invalid JSON numeric constant {value!r}")
 
 
-def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$", depth: int = 0, variants: Any = None) -> Any:
+def _json_decode_typed(
+    value: Any, expected: T.Type, lookup: Any, path: str = "$",
+    depth: int = 0, variants: Any = None, native_decode: Any = None,
+) -> Any:
     """Construct checked JSON values recursively, using registered constructor layouts."""
     if depth > 512:
         raise _JsonDecodingError(f"{path}: JSON nesting exceeds supported depth")
     if isinstance(expected, (T.NoVecType, T.ExactType)):
-        return _json_decode_typed(value, expected.inner, lookup, path, depth, variants)
+        return _json_decode_typed(value, expected.inner, lookup, path, depth, variants, native_decode)
     if isinstance(expected, T.TaggedType):
         if any(tag.name == "boolean" and tag.depth == 0 and not tag.absent
                for tag in expected.tags):
@@ -258,18 +285,18 @@ def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$
         # Collection-depth tags belong to the elements; the caller recurses
         # using the same tag-shifting convention as encode.
         if isinstance(expected.inner, T.CollectionType):
-            return _json_decode_collection(value, expected, lookup, path, depth, variants)
+            return _json_decode_collection(value, expected, lookup, path, depth, variants, native_decode)
         if expected.tags:
             raise _JsonDecodingError(f"{path}: cannot decode tagged type {expected}")
-        return _json_decode_typed(value, expected.inner, lookup, path, depth, variants)
+        return _json_decode_typed(value, expected.inner, lookup, path, depth, variants, native_decode)
     if isinstance(expected, T.CollectionType):
-        return _json_decode_collection(value, expected, lookup, path, depth, variants)
+        return _json_decode_collection(value, expected, lookup, path, depth, variants, native_decode)
     if isinstance(expected, T.UnionType):
         payload = _optional_payload_type(expected)
         if payload is not None:
             if value is None:
                 return ObjectValue("None", {})
-            return ObjectValue("Some", {"value": _json_decode_typed(value, payload, lookup, path, depth + 1, variants)},
+            return ObjectValue("Some", {"value": _json_decode_typed(value, payload, lookup, path, depth + 1, variants, native_decode)},
                                (str(payload),))
         raise _JsonDecodingError(f"{path}: ambiguous JSON union type {expected}")
     if isinstance(expected, T.RowType):
@@ -282,13 +309,28 @@ def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$
         if set(value) != declared:
             raise _JsonDecodingError(f"{path}: record fields mismatch (missing {sorted(declared - value.keys())}, unexpected {sorted(value.keys() - declared)})")
         fields = [(str(field.name), _json_decode_typed(value[str(field.name)], field.typ, lookup,
-                          f"{path}.{field.name}", depth + 1, variants)) for field in expected.fields]
+                          f"{path}.{field.name}", depth + 1, variants, native_decode)) for field in expected.fields]
         from valiance.runtime.runtime_values import RecordValue
         return RecordValue(fields, type_signature=str(expected))
     if isinstance(expected, T.NoneTypeNode):
         if value is None:
             return ObjectValue("None", {})
         raise _JsonDecodingError(f"{path}: expected JSON null")
+    if isinstance(expected, T.FFINamedType):
+        # Never manufacture a pointer from JSON bytes. The registered factory
+        # must return a live native handle of precisely the requested type.
+        if native_decode is None:
+            raise _JsonDecodingError(f"{path}: no native JSON factory for {expected}")
+        try:
+            result = native_decode(str(expected), value)
+        except Exception as exc:
+            raise _JsonDecodingError(f"{path}: native JSON factory failed: {exc}") from exc
+        if (not isinstance(result, (FFIHandleValue, FFIScalarValue, FFIStructValue)) or
+                result.ffi_type != str(expected) or
+                (isinstance(result, FFIHandleValue) and
+                 (not result.alive or result.destroy_pending))):
+            raise _JsonDecodingError(f"{path}: native factory returned an invalid {expected} handle")
+        return result
     if not isinstance(expected, T.NominalType):
         raise _JsonDecodingError(f"{path}: unsupported JSON target type {expected}")
     name = expected.name.text
@@ -310,7 +352,7 @@ def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$
     if name == "Some" and len(expected.args) == 1:
         if value is None:
             raise _JsonDecodingError(f"{path}: expected present optional value")
-        return ObjectValue("Some", {"value": _json_decode_typed(value, expected.args[0], lookup, path, depth + 1, variants)},
+        return ObjectValue("Some", {"value": _json_decode_typed(value, expected.args[0], lookup, path, depth + 1, variants, native_decode)},
                            (str(expected.args[0]),))
     if name == "Dict" and len(expected.args) == 2:
         if not (isinstance(expected.args[0], T.NominalType)
@@ -320,7 +362,7 @@ def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$
             raise _JsonDecodingError(f"{path}: expected JSON object")
         from valiance.runtime.runtime_values import DictValue
         return DictValue((key, _json_decode_typed(item, expected.args[1], lookup,
-                f"{path}.{key}", depth + 1)) for key, item in value.items())
+                f"{path}.{key}", depth + 1, variants, native_decode)) for key, item in value.items())
     if not isinstance(value, dict):
         raise _JsonDecodingError(f"{path}: expected JSON object for {expected}")
     constructor = None if lookup is None else lookup(name)
@@ -334,7 +376,7 @@ def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$
                 )
                 try:
                     successes.append(_json_decode_typed(
-                        value, candidate_type, lookup, path, depth + 1, variants
+                        value, candidate_type, lookup, path, depth + 1, variants, native_decode
                     ))
                 except _JsonDecodingError:
                     continue
@@ -372,13 +414,16 @@ def _json_decode_typed(value: Any, expected: T.Type, lookup: Any, path: str = "$
         if declaration is None:
             raise _JsonDecodingError(f"{path}: incomplete type information for {key!r}")
         field_type = _instantiate_json_type(_json_type(declaration), arguments)
-        fields[key] = _json_decode_typed(value[key], field_type, lookup, f"{path}.{key}", depth + 1, variants)
+        fields[key] = _json_decode_typed(value[key], field_type, lookup, f"{path}.{key}", depth + 1, variants, native_decode)
     if set(fields) != set(constructor.fields):
         raise _JsonDecodingError(f"{path}: incomplete object storage")
     return ObjectValue(name, fields, tuple(str(arg) for arg in expected.args), runtime_type=runtime)
 
 
-def _json_decode_collection(value: Any, expected: T.Type, lookup: Any, path: str, depth: int, variants: Any) -> Any:
+def _json_decode_collection(
+    value: Any, expected: T.Type, lookup: Any, path: str, depth: int,
+    variants: Any, native_decode: Any = None,
+) -> Any:
     if not isinstance(value, list):
         raise _JsonDecodingError(f"{path}: expected JSON array")
     child_type = _collection_child_type(expected)
@@ -388,7 +433,7 @@ def _json_decode_collection(value: Any, expected: T.Type, lookup: Any, path: str
     collection = expected.inner if isinstance(expected, T.TaggedType) else expected
     rank = collection.rank if isinstance(collection, T.CollectionType) and isinstance(collection.rank, int) else None
     return ListValue(
-        (_json_decode_typed(item, child_type, lookup, f"{path}[{index}]", depth + 1, variants)
+        (_json_decode_typed(item, child_type, lookup, f"{path}[{index}]", depth + 1, variants, native_decode)
          for index, item in enumerate(value)),
         runtime_rank=rank,
     )
@@ -407,6 +452,7 @@ def _decode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
                              parse_constant=_invalid_json_constant,
                              object_pairs_hook=_unique_json_pairs)
         return (_json_decode_typed(decoded, _json_type(args[1]), ctx.json_constructor,
-                                  variants=ctx.json_variant_constructors),)
+                                  variants=ctx.json_variant_constructors,
+                                   native_decode=ctx.json_native_decoder),)
     except (ValueError, RecursionError) as exc:
         return (ObjectValue("ValueError", {"message": str(exc)}),)
