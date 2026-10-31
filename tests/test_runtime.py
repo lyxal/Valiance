@@ -4860,6 +4860,54 @@ define add(a: Int, b: Int) -> Int => $a $b + end
         self.assertEqual(execute('3 "ha" *'), ["hahaha"])
         self.assertEqual(execute('"ha" 3 *'), ["hahaha"])
 
+    def test_trait_dispatch_sums_stored_bytes_through_nested_folders(self):
+        self.assertEqual(execute("""
+trait Entry =>
+  extend storedBytes -> Int
+end
+
+object File =>
+  $name: String
+  $size: Int
+end
+
+object File as Entry =>
+  define storedBytes => $self.size
+end
+
+object Folder =>
+  $name: String
+  $children: Entry+
+end
+
+object Folder as Entry =>
+  define storedBytes =>
+    $self.children map: storedBytes | sum
+  end
+end
+
+object Shortcut =>
+  $name: String
+  $target: String
+end
+
+object Shortcut as Entry =>
+  define storedBytes => 0
+end
+
+$documents = Folder("Documents", [
+  File("notes.txt", 1200),
+  File("essay.pdf", 4500),
+  Folder("Images", [
+    File("cat.png", 8000),
+    File("dog.png", 6000)
+  ]),
+  Shortcut("Latest Essay", "essay.pdf")
+])
+
+$documents storedBytes
+"""), [RuntimeNumber("19700")])
+
     def test_structural_trait_element_calls_dispatch_to_runtime_shape(self):
         self.assertEqual(
             execute("""
