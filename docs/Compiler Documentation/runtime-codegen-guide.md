@@ -138,6 +138,11 @@ The runtime implementation is small, but several files must evolve together.
   replacing the built-in. Other friendly names also retain their existing
   unqualified binding. `@self` definitions retain their synthesized receiver
   returns in runtime bytecode.
+  A parameter typed `$self` selects an explicit receiver: code generation
+  preserves its declared position and name without prepending another input.
+  `TypedObjectNode.method_bodies` retains checked explicit-receiver functions,
+  including recursive union dispatch and vectorisation plans. Imported module
+  interfaces and typed refinements preserve these bodies.
 - Trait-implementation object declarations such as `object X as T => end` do
   not emit constructors; they may add object-friendly definitions, but the base
   object declaration owns runtime constructor metadata and fields.

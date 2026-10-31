@@ -421,10 +421,11 @@ def _self_transform(
     """Compute self transform while applying compiler annotations."""
     if not has_annotation(annotations, "self") or not function.params:
         return function
-    self_param = function.params[0]
-    if self_param.name != Symbol("self"):
+    receiver_indices = function.explicit_receiver_indices
+    self_param = function.params[receiver_indices[0] if receiver_indices else 0]
+    if self_param.name is None or (not receiver_indices and self_param.name != Symbol("self")):
         return function
-    body = (*function.body, GetVariableNode(Symbol("self"), location=function.location))
+    body = (*function.body, GetVariableNode(self_param.name, location=function.location))
     returns = (
         (*function.returns, self_param.typ)
         if function.returns is not None and self_param.typ is not None

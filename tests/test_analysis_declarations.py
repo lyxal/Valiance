@@ -14,6 +14,35 @@ from valiance.parsing import parse
 class DeclarationBoundaryTests(unittest.TestCase):
     """Verify declaration services remain coordinated by the façade."""
 
+    def test_explicit_receiver_rejects_multiple_receiver_parameters(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+object Box =>
+  define get(first: $self, second: $self) -> Int => 1
+end
+'''))
+        self.assertTrue(any("only one $self receiver" in message
+                            for message in analyser.diagnostics), analyser.diagnostics)
+
+    def test_explicit_receiver_does_not_create_an_implicit_self_local(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+object Box =>
+  $value: Int
+  define get(box: $self) -> Int => $self.value
+end
+'''))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_explicit_receiver_checks_declared_return_type(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''
+object Box =>
+  define get(box: $self) -> Int => "wrong"
+end
+'''))
+        self.assertTrue(analyser.diagnostics)
+
     def test_fields_uses_concrete_owner_and_preserves_all_descriptor_type_alternatives(self):
         import valiance.vtypes as T
         from valiance.vtypes.symbols import Symbol

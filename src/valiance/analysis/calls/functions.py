@@ -373,7 +373,11 @@ class _CallableValues:
                     )
                 return None
 
-        parameter_writes = _functions._parameter_write_nodes(node)
+        local_names = {name for name, _ in initial_function_locals}
+        parameter_writes = tuple(
+            (write, name) for write, name in _functions._parameter_write_nodes(node)
+            if name not in local_names
+        )
         if parameter_writes:
             for write, name in parameter_writes:
                 self._diagnose(
@@ -398,7 +402,7 @@ class _CallableValues:
         named_params = tuple(
             (param.name, typ)
             for param, typ in zip(node.params or (), body_params, strict=True)
-            if param.name is not None
+            if param.name is not None and param.name not in local_names
         )
         variables = BranchVariables.from_parameters(
             named_params,

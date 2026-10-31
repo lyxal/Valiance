@@ -4980,6 +4980,147 @@ $documents = Folder("Documents", [
 $documents storedBytes
 """), [RuntimeNumber("19700")])
 
+    def test_explicit_object_receiver_supports_recursive_folder_union(self):
+        source = '''
+object File =>
+  $name: String
+  $size: Int
+  define storedBytes => $self.size
+end
+object Folder =>
+  $name: String
+  $entries: (File|Folder)+
+  define storedBytes(folder: $self) -> Int =>
+    sum storedBytes $folder.entries
+  end
+end
+Folder("root", [File("a", 12), Folder("nested", [File("b", 30)])]) storedBytes
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    self.assertEqual(run(loads(dumps(program)) if serialized else program),
+                                     [RuntimeNumber("42")])
+
+    def test_explicit_object_receiver_preserves_parameter_order_and_name(self):
+        for index in range(3):
+            params = ["left: Int", "right: Int"]
+            args = ["2", "3"]
+            params.insert(index, "box: $self")
+            args.insert(index, "Box(10)")
+            source = f'''
+object Box =>
+  private $value: Int
+  define calculate({', '.join(params)}) -> Int =>
+    $left * $box.value + $right
+  end
+end
+calculate({', '.join(args)})
+Box::calculate({', '.join(args)})
+calculate(right = 3, box = Box(10), left = 2)
+'''
+            with self.subTest(index=index):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                program = compile_program(typed)
+                self.assertEqual(run(loads(dumps(program))), [RuntimeNumber("23")] * 3)
+
+    def test_generic_explicit_object_receiver_and_self_return(self):
+        self.assertEqual(execute('''
+object[T] Box =>
+  private $value: T
+  define get(box: $self) -> T => $box.value
+  define copy(box: $self) -> $self => $box
+end
+Box(42) copy | get
+Box("text") get
+'''), [RuntimeNumber("42"), "text"])
+
+    def test_explicit_receiver_without_return_annotation_and_fluent_annotation(self):
+        self.assertEqual(execute('''
+object Box =>
+  $value: Int
+  @self define set(value: Int, box: $self) =>
+    if ($value > 0) => $box.value = $value
+    else => $box.value = 1
+    end
+  end
+  define get(box: $self) => $box.value
+end
+set(42, Box(1)) get
+'''), [RuntimeNumber("42")])
+
+    def test_generic_explicit_receiver_recurses_in_last_position(self):
+        self.assertEqual(execute('''
+object[T] Box =>
+  $value: T
+  define repeat(n: Int, box: $self) -> T =>
+    if ($n == 0) => $box.value
+    else => Box::repeat($n - 1, $box)
+    end
+  end
+end
+repeat(3, Box(42))
+'''), [RuntimeNumber("42")])
+
+    def test_explicit_receiver_can_be_named_self_or_stack_sourced(self):
+        self.assertEqual(execute('''
+object Box =>
+  $value: Int
+  define named(self: $self) -> Int => $self.value
+  define stacked(:$self) -> Int => $.value
+end
+Box(42) named
+Box(42) stacked
+'''), [RuntimeNumber("42")] * 2)
+
+    def test_explicit_receivers_in_trait_implementations_and_variant_members(self):
+        self.assertEqual(execute('''
+trait Readable =>
+  extend get -> Int
+end
+object Box =>
+  $value: Int
+end
+object Box as Readable =>
+  define get(box: $self) -> Int => $box.value
+end
+variant Entry =>
+  extend addValue(:Int) -> Int
+  File =>
+    $value: Int
+    define addValue(amount: Int, file: $self) -> Int => $amount + $file.value
+  end
+  Folder =>
+    $value: Int
+    define addValue(amount: Int, folder: $self) -> Int => $amount + $folder.value
+  end
+end
+define asEntry(value: Entry) -> Entry => $value
+Box(42) get
+addValue(2, asEntry(File(40)))
+addValue(2, asEntry(Folder(40)))
+'''), [RuntimeNumber("42")] * 3)
+
+    def test_explicit_receiver_survives_imported_module_interfaces(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "boxes.vlnc").write_text('''
+public object Box =>
+  private $value: Int
+  public define get(offset: Int, box: $self) -> Int => $box.value + $offset
+end
+''', encoding="utf-8")
+            source = 'import { boxes.Box }\nget(2, Box(40))'
+            for attempt in range(2):
+                with self.subTest(attempt=attempt):
+                    self.assertEqual(execute(source, root / "main.vlnc"), [RuntimeNumber("42")])
+
     def test_structural_trait_element_calls_dispatch_to_runtime_shape(self):
         self.assertEqual(
             execute("""

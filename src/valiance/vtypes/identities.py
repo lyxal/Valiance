@@ -28,10 +28,14 @@ def overload_implementation_id(overload: object) -> str:
     return "callable:" + sha256(contract.encode("utf-8")).hexdigest()
 
 
-def method_variant_id(overload: object) -> str:
+def method_variant_id(overload: object, receiver_index: int = 0) -> str:
     """Identify a friendly method's input shape independently of its receiver name."""
     from .builders import Fn, show
-    return sha256(show(Fn(overload.params[1:], ())).encode("utf-8")).hexdigest()
+    params = overload.params[:receiver_index] + overload.params[receiver_index + 1:]
+    signature = show(Fn(params, ()))
+    if receiver_index:
+        signature = f"receiver:{receiver_index}:{signature}"
+    return sha256(signature.encode("utf-8")).hexdigest()
 
 
 def constructor_implementation_id(owner: str, location: object) -> str:

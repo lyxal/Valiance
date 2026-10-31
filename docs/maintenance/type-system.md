@@ -475,6 +475,12 @@ overload solving.
 - data tags and element tags; and
 - object-friendly overload metadata.
 
+Object-friendly definitions may replace their implicit first receiver with one
+parameter typed `$self`, at any position. The analyser substitutes the owner
+type and exposes complete signatures to recursive calls. Checked bodies for
+these definitions are retained on `TypedObjectNode.method_bodies`; preserve them
+when transforming typed objects or assembling imported implementation surfaces.
+
 An environment owns a `Context` and updates it when declarations imply new type
 relationships.
 

@@ -15,6 +15,34 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_explicit_receiver_recursion_survives_source_free_module(self):
+        from valiance.incremental import CompilationCoordinator
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "boxes.vlnc"
+            library.write_text('''
+public object Box =>
+  private $value: Int
+  public define repeat(n: Int, box: $self) -> Int =>
+    if ($n == 0) => $box.value
+    else => Box::repeat($n - 1, $box)
+    end
+  end
+end
+''', encoding="utf-8")
+            CompilationCoordinator(root).build_module(
+                library, library.with_suffix(".vbcm"), module_name="boxes",
+            )
+            library.unlink()
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse('import { boxes.Box }\nrepeat(3, Box(42))'))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                with self.subTest(optimize=optimize):
+                    self.assertEqual(run(loads(dumps(compile_program(typed, optimize=optimize)))), [42])
+
     def test_json_encoders_specialize_from_a_source_free_standard_module(self):
         from valiance.incremental import CompilationCoordinator
         from valiance.runtime import compile_program, dumps, loads, run
@@ -1325,7 +1353,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x0b"))
+        self.assertTrue(first.startswith(b"VLNI\x0c"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -1342,10 +1370,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0b{"schema":11,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x0c{"schema":12,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x0b{"schema":11,"value":null}trailing'
+                b'VLNI\x0c{"schema":12,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -1353,7 +1381,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0b{"schema":11,"value":')
+            loads_interface(b'VLNI\x0c{"schema":12,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

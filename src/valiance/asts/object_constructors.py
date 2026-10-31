@@ -38,19 +38,21 @@ def constructor_definitions(
     )
 
 
-def prepare_constructor_body(body: tuple[ASTNode, ...]) -> tuple[ASTNode, ...]:
-    """Make direct ``$self.field = ...`` writes update the local receiver."""
+def prepare_constructor_body(
+    body: tuple[ASTNode, ...], receiver: Symbol = _SELF,
+) -> tuple[ASTNode, ...]:
+    """Make direct receiver field writes update the local receiver."""
     transformed: list[ASTNode] = []
     for index, node in enumerate(body):
         targets_self = isinstance(node, FieldSetNode) and _field_set_targets_self(
             body,
-            index,
+            index, receiver,
         )
         already_rebound = (
             targets_self
             and index + 1 < len(body)
             and isinstance(body[index + 1], SetVariableNode)
-            and body[index + 1].name == _SELF
+            and body[index + 1].name == receiver
         )
         if (
             targets_self
@@ -59,7 +61,7 @@ def prepare_constructor_body(body: tuple[ASTNode, ...]) -> tuple[ASTNode, ...]:
         ):
             transformed.extend(
                 (
-                    GetVariableNode(_SELF, location=node.location),
+                    GetVariableNode(receiver, location=node.location),
                     StackShuffleNode(
                         Symbol("move"),
                         (Symbol("value"), Symbol("receiver")),
@@ -68,9 +70,9 @@ def prepare_constructor_body(body: tuple[ASTNode, ...]) -> tuple[ASTNode, ...]:
                     ),
                 )
             )
-        transformed.append(_prepare_constructor_child(node))
+        transformed.append(_prepare_constructor_child(node, receiver))
         if targets_self and not already_rebound:
-            transformed.append(SetVariableNode(_SELF, location=node.location))
+            transformed.append(SetVariableNode(receiver, location=node.location))
     return tuple(transformed)
 
 
@@ -168,58 +170,58 @@ def definitely_initialized_fields(
     return fields
 
 
-def _prepare_constructor_child(node: ASTNode) -> ASTNode:
+def _prepare_constructor_child(node: ASTNode, receiver: Symbol) -> ASTNode:
     """Prepare constructor child while analysing object construction."""
     if isinstance(node, IfNode):
         return replace(
             node,
-            condition=prepare_constructor_body(node.condition),
-            then_branch=prepare_constructor_body(node.then_branch),
-            else_branch=prepare_constructor_body(node.else_branch),
+            condition=prepare_constructor_body(node.condition, receiver),
+            then_branch=prepare_constructor_body(node.then_branch, receiver),
+            else_branch=prepare_constructor_body(node.else_branch, receiver),
         )
     if isinstance(node, AssertNode):
         return replace(
             node,
-            condition=prepare_constructor_body(node.condition),
-            else_branch=prepare_constructor_body(node.else_branch),
+            condition=prepare_constructor_body(node.condition, receiver),
+            else_branch=prepare_constructor_body(node.else_branch, receiver),
         )
     if isinstance(node, MatchNode):
         return replace(
             node,
             cases=tuple(
-                replace(case, body=prepare_constructor_body(case.body))
+                replace(case, body=prepare_constructor_body(case.body, receiver))
                 for case in node.cases
             ),
         )
     if isinstance(node, TryNode):
         return replace(
             node,
-            body=prepare_constructor_body(node.body),
+            body=prepare_constructor_body(node.body, receiver),
             handlers=tuple(
-                replace(handler, body=prepare_constructor_body(handler.body))
+                replace(handler, body=prepare_constructor_body(handler.body, receiver))
                 for handler in node.handlers
             ),
         )
     if isinstance(node, WhileNode):
         return replace(
             node,
-            condition=prepare_constructor_body(node.condition),
-            body=prepare_constructor_body(node.body),
+            condition=prepare_constructor_body(node.condition, receiver),
+            body=prepare_constructor_body(node.body, receiver),
         )
     if isinstance(node, UnfoldNode):
         return replace(
             node,
-            condition=prepare_constructor_body(node.condition),
-            body=prepare_constructor_body(node.body),
+            condition=prepare_constructor_body(node.condition, receiver),
+            body=prepare_constructor_body(node.body, receiver),
         )
     if isinstance(node, ForNode):
-        return replace(node, body=prepare_constructor_body(node.body))
+        return replace(node, body=prepare_constructor_body(node.body, receiver))
     if isinstance(node, AtNode):
-        return replace(node, body=prepare_constructor_body(node.body))
+        return replace(node, body=prepare_constructor_body(node.body, receiver))
     return node
 
 
-def _field_set_targets_self(body: tuple[ASTNode, ...], index: int) -> bool:
+def _field_set_targets_self(body: tuple[ASTNode, ...], index: int, receiver: Symbol = _SELF) -> bool:
     """Return the Boolean result of field set targets self while analysing object construction."""
     target = body[index]
     if not isinstance(target, FieldSetNode) or target.location is None:
@@ -228,7 +230,7 @@ def _field_set_targets_self(body: tuple[ASTNode, ...], index: int) -> bool:
         if candidate.location != target.location:
             continue
         if isinstance(candidate, GetVariableNode):
-            return candidate.name == _SELF
+            return candidate.name == receiver
     return False
 
 

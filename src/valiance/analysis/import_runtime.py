@@ -61,6 +61,7 @@ def with_import_runtime_name(
             runtime_name,
             imported_supertypes,
             imported_guarded_supertypes,
+            method_bodies=node.method_bodies if isinstance(node, TypedObjectNode) else (),
         )
     return node
 

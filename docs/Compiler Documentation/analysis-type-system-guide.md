@@ -611,6 +611,30 @@ registering object attributes, constructors, function definitions, function
 literals, and requirements. Nested generic function literals shadow outer
 generic names with the same spelling.
 
+Object-friendly definitions normally receive an implicit first parameter,
+available as `$self`. A parameter declared with the exact type `$self` instead
+selects an explicit receiver and suppresses that implicit parameter. There may
+be one explicit receiver, at any parameter position; its declared name is the
+receiver's local binding. Other uses of `$self` in the signature, including
+return types and nested types, substitute the enclosing owner type without
+selecting a receiver.
+
+```valiance
+object Folder =>
+  $entries: (File | Folder)+
+  define storedBytes(folder: $self) -> Int =>
+    sum storedBytes $folder.entries
+  end
+end
+```
+
+A complete explicit signature is visible while checking its body, allowing
+recursive calls through both the friendly and owner-qualified names. Explicit
+receivers retain ordinary named-argument binding and the owner's private-field
+access. `@self` returns the named receiver, including updates to its fields.
+Checked explicit-receiver bodies travel with `TypedObjectNode`, preserving
+selected calls and vectorisation through code generation and module interfaces.
+
 Object declarations synthesize their field-order constructor only when the
 declaration has no definition with the same name as the object. A same-name
 definition is an explicit constructor: its declared parameters are the public

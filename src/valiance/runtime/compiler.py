@@ -1176,6 +1176,7 @@ class _Compiler:
                         if isinstance(typed_node, TypedObjectNode)
                         else None
                     ),
+                    method_bodies=dict(typed_node.method_bodies) if isinstance(typed_node, TypedObjectNode) else None,
                 )
             case FieldAccessNode(name):
                 argument = (name.text, "optional") if node.optional_safe else name.text
@@ -1324,6 +1325,7 @@ class _Compiler:
         runtime_name: Symbol | None = None,
         method_results: dict[str, tuple[str, ...]] | None = None,
         method_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
+        method_bodies: dict[str, TypedFunctionNode] | None = None,
     ) -> None:
         """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
@@ -1371,6 +1373,7 @@ class _Compiler:
                             result_signature_types=(method_results or {}).get(identity, ()),
                             implementation_id=identity,
                             owner_generics=tuple(generic.text for generic in node.generics),
+                            checked_function=(method_bodies or {}).get(identity),
                             variant_dispatch=(node.target is not None or definition.is_multi),
                         )
             case "trait":
@@ -1383,6 +1386,7 @@ class _Compiler:
                             runtime_name, definition, implementation_id=identity,
                             result_signature_types=(method_results or {}).get(identity, ()),
                             owner_generics=tuple(generic.text for generic in node.generics),
+                            checked_function=(method_bodies or {}).get(identity),
                         )
             case "variant":
                 required_names = {requirement.name for requirement in node.requirements}
@@ -1416,6 +1420,7 @@ class _Compiler:
                                 variant_dispatch=definition.name in required_names,
                                 implementation_id=identity,
                                 result_signature_types=(method_results or {}).get(identity, ()),
+                                checked_function=(method_bodies or {}).get(identity),
                             )
             case "enum":
                 enum_name = _symbol_runtime_name(node.name)
@@ -1504,19 +1509,26 @@ class _Compiler:
         owner_generics: tuple[str, ...] = (),
         result_signature_types: tuple[str, ...] = (),
         implementation_id: str | None = None,
+        checked_function: TypedFunctionNode | None = None,
     ) -> None:
         """Compile and store an object-friendly element implementation."""
+        receiver_indices = definition.function.explicit_receiver_indices
+        explicit_receiver = bool(receiver_indices)
+        receiver_index = receiver_indices[0] if explicit_receiver else 0
+        params = tuple(definition.function.params or ())
+        if not explicit_receiver:
+            params = (FunctionParam(Symbol("self")),) + params
         body = definition.function.body
         if any(
             isinstance(annotation, AnnotationNode)
             and annotation.name.text == "self"
             for annotation in definition.annotations
         ):
-            body = prepare_constructor_body(body)
-            body = (*body, GetVariableNode(Symbol("self")))
+            receiver_name = params[receiver_index].name
+            body = prepare_constructor_body(body, receiver_name)
+            body = (*body, GetVariableNode(receiver_name))
         function = FunctionNode(
-            params=(FunctionParam(Symbol("self")),)
-            + tuple(definition.function.params or ()),
+            params=params,
             body=body,
             returns=definition.function.returns,
             where_clause=definition.function.where_clause,
@@ -1536,26 +1548,27 @@ class _Compiler:
         receiver = (
             f"{owner}[{', '.join(owner_generics)}]" if owner_generics else owner
         )
-        signature_types = (
-            receiver,
-            *(
-                show(param.typ) if param.typ is not None else "Any"
-                for param in definition.function.params or ()
-            ),
+        signature_types = tuple(
+            receiver if index == receiver_index else
+            show(param.typ) if param.typ is not None else "Any"
+            for index, param in enumerate(function.params)
         )
         if runtime_definition_name not in self._runtime_elements():
+            code = _compile_function_value(
+                checked_function or node, runtime_definition_name,
+                signature_types=signature_types,
+                result_signature_types=result_signature_types,
+                implementation_id=implementation_id,
+                generic_type_parameters=tuple(generic.text for generic in definition.generics),
+            )
             self.emit(
                 OpCode.MAKE_FUNCTION,
-                _compile_function_node(
-                    node,
-                    runtime_definition_name,
+                replace(
+                    code,
                     multi=True,
-                    signature_types=signature_types,
-                    result_signature_types=result_signature_types,
-                    implementation_id=implementation_id,
-                    generic_type_parameters=tuple(generic.text for generic in definition.generics),
                     dispatch_types=(
-                        (owner, *(None for _ in definition.function.params or ()))
+                        tuple(owner if index == receiver_index else None
+                              for index in range(len(function.params)))
                         if variant_dispatch
                         else ()
                     ),
@@ -1565,7 +1578,7 @@ class _Compiler:
         self.emit(
             OpCode.MAKE_FUNCTION,
             _compile_function_value(
-                node,
+                checked_function or node,
                 f"{owner}::{runtime_definition_name}",
                 signature_types=signature_types,
                 result_signature_types=result_signature_types,

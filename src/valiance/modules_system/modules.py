@@ -84,6 +84,7 @@ class ModuleTraitImplementation:
     subject_kind: Symbol = Symbol("object")
     method_results: tuple[tuple[str, tuple[str, ...]], ...] = ()
     method_ids: tuple[tuple[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]], ...] = ()
+    method_bodies: tuple[tuple[str, TypedFunctionNode], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -804,13 +805,16 @@ def _module_objects(
             continue
         if isinstance(typed_node, TypedObjectNode):
             results = dict(typed_node.method_results)
+            bodies = dict(typed_node.method_bodies)
             identities = {name: list(records) for name, records in typed_node.method_ids}
             for implementation in metadata_by_owner.get(node.name, ()):
                 results.update(dict(implementation.method_results))
+                bodies.update(dict(implementation.method_bodies))
                 for name, records in implementation.method_ids:
                     identities.setdefault(name, []).extend(records)
             typed_node = replace(
                 typed_node, method_results=tuple(results.items()),
+                method_bodies=tuple(bodies.items()),
                 method_ids=tuple((name, tuple(records)) for name, records in identities.items()),
             )
         result.append(
@@ -949,6 +953,7 @@ def _module_trait_implementations(
                     typed_node.method_ids
                     if isinstance(typed_node, TypedObjectNode) else ()
                 ),
+                method_bodies=typed_node.method_bodies if isinstance(typed_node, TypedObjectNode) else (),
             )
         )
     return tuple(result)
@@ -999,6 +1004,8 @@ def import_behaviour_set_objects(
             if isinstance(obj.typed, TypedObjectNode) else {}
         )
         identity_metadata.update(dict(implementation.method_ids))
+        body_metadata = dict(obj.typed.method_bodies) if isinstance(obj.typed, TypedObjectNode) else {}
+        body_metadata.update(dict(implementation.method_bodies))
         implementation_object = replace(
             obj,
             typed=TypedObjectNode(
@@ -1006,6 +1013,7 @@ def import_behaviour_set_objects(
                 obj.typed.typ,
                 tuple(result_metadata.items()),
                 tuple(identity_metadata.items()),
+                method_bodies=tuple(body_metadata.items()),
             ),
             friendly_definitions=definitions,
         )

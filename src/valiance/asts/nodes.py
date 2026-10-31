@@ -15,6 +15,7 @@ from valiance.vtypes import (
     ElementTag,
     Type,
     UnionDispatchPlan,
+    VarType,
 )
 
 
@@ -97,10 +98,11 @@ class TypedCastNode(TypedNode):
 
 @dataclass(frozen=True, slots=True)
 class TypedObjectNode(TypedNode):
-    """Method results and identities keyed by source declaration and input shape."""
+    """Method contracts, identities, and retained checked implementations."""
 
     method_results: tuple[tuple[str, tuple[str, ...]], ...] = ()
     method_ids: tuple[tuple[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]], ...] = ()
+    method_bodies: tuple[tuple[str, TypedFunctionNode], ...] = field(default=(), kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +599,14 @@ class FunctionNode(ASTNode):
     type_name_locations: tuple[tuple[Symbol, SourceLocation], ...] = field(
         default=(), compare=False,
     )
+
+    @property
+    def explicit_receiver_indices(self) -> tuple[int, ...]:
+        """Locate parameters whose declared type is the receiver marker ``$self``."""
+        return tuple(
+            index for index, param in enumerate(self.params or ())
+            if isinstance(param.typ, VarType) and param.typ.name == "$self"
+        )
 
 
 @dataclass(frozen=True)

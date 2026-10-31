@@ -1972,7 +1972,7 @@ define greet(:Person) => println("Howdy, {$.name}!")
 - However, not all elements should be able to access the internals of an object. Especially given that access modifiers exist.
 - Therefore, there is a distinction between elements defined outside an object and elements defined inside an object.
 - Elements inside an object are termed "object friendly elements". Object friendly elements have full read and write access to all members of an object.
-- Note that the object is an implicit part of the element parameter list.
+- By default, the object is an implicit part of the element parameter list.
 	- The object becomes the leftmost parameter.
 - Elements outside of an object can only read `public` and `readable` members, and can only write to `public` members.
 - Note: elements defined outside of an object take priority over an object friendly element. This is because: a) a library author realistically is not defining such an element without good reason and b) a user of a library would be defining such a function to specifically overwrite the default element.
@@ -1990,6 +1990,59 @@ define get(:Foo) => $.x + 5
 Foo(10) get #? 15
 Foo(10) Foo::get #? 10
 ```
+
+### 12.2.1. Explicit Receivers
+
+An object friendly element can declare its receiver explicitly by giving a
+parameter the type `$self`. This replaces the implicit receiver; it does not add
+another object parameter.
+
+- At most one parameter may have the exact type `$self`.
+- The explicit receiver may appear at any position in the parameter list. The
+  declared order is preserved when calling the element.
+- The receiver is available under its declared name. For example,
+  `folder: $self` is accessed as `$folder`; no implicit `$self` variable is added.
+  Naming the parameter `self` makes it available as `$self`.
+- The element retains full access to the object's members, including private
+  members. Named arguments and owner-qualified calls work as usual.
+- `$self` in a return type or nested type denotes the owning object type but
+  does not select a receiver. For a generic object, it includes the object's
+  generic arguments.
+- `@self` returns the explicit receiver under its declared name, including
+  updates to its fields.
+
+An explicit receiver lets an element declare its complete parameter and return
+signature, making that signature available to recursive calls:
+
+```valiance
+object File =>
+  $fileName: String
+  $fileSize: Int
+
+  define storedBytes => $self.fileSize
+end
+
+object Folder =>
+  $folderName: String
+  $entries: (File | Folder)+
+
+  define storedBytes(folder: $self) -> Int =>
+    sum storedBytes $folder.entries
+  end
+
+  define withOverhead(overhead: Int, folder: $self) -> Int =>
+    storedBytes($folder) + $overhead
+  end
+end
+
+$root = Folder("root", [File("notes.txt", 32)])
+$root storedBytes          #? 32
+withOverhead(10, $root)    #? 42
+```
+
+Here, `storedBytes` uses an explicit first receiver, while `withOverhead` places
+its receiver second. Elements without an explicit receiver continue to receive
+the implicit leftmost receiver.
 
 ## 12.3. Member Access and Writing
 - Members can be accessed from an object by:
@@ -2041,7 +2094,7 @@ $person->age = 37
 
 ## 12.4. `$self`
 
-- Inside an object friendly element, `$self` can be used to retrieve the object state as it was at the time of the element call.
+- Inside an object friendly element with an implicit receiver, `$self` can be used to retrieve the object state as it was at the time of the element call. With an [explicit receiver](#1221-explicit-receivers), use its declared parameter name instead.
 - `$self $.member` and `$self.member` are both valid.
 - `$self $.member = <value>` and `$self.member = <value>` are both valid. But only `$self.member = <value>` will update what is returned by `$self`.
 - Note that returning `$self` is important if you want to chain object-friendly elements.
@@ -3047,6 +3100,7 @@ end
 - A return convention annotation
 - Makes object friendly elements automatically return `$self`
 	- Even if the return types are already specified.
+	- With an explicit receiver, returns that receiver under its declared name.
 - Compare:
 
 ```

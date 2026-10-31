@@ -346,9 +346,11 @@ class _ObjectDeclarations:
             )
             signatures.extend((overload.implementation_id, tuple(T.show(ret) for ret in overload.returns))
                               for overload in overloads)
+            receiver_index = next(iter(definition.function.explicit_receiver_indices), 0)
             method_ids.setdefault(definition.name.text, []).append((
                 definition.location.offset if definition.location is not None else None,
-                tuple((method_variant_id(overload), overload.implementation_id) for overload in overloads),
+                tuple((method_variant_id(overload, receiver_index), overload.implementation_id)
+                      for overload in overloads),
             ))
         signatures = tuple(signatures)
         method_ids = tuple((name, tuple(records)) for name, records in method_ids.items())
@@ -356,7 +358,10 @@ class _ObjectDeclarations:
             item = branch.typed_body[index]
             if item.node is node:
                 items = list(branch.typed_body)
-                items[index] = TypedObjectNode(node, item.typ, signatures, method_ids)
+                items[index] = TypedObjectNode(
+                    node, item.typ, signatures, method_ids,
+                    method_bodies=item.method_bodies if isinstance(item, TypedObjectNode) else (),
+                )
                 return replace(branch, typed_body=tuple(items))
         return branch
 
@@ -779,12 +784,22 @@ class _ObjectDeclarations:
             else None
         )
         self_type = _utils._declared_nominal(owner, owner_generics, owner_scope)
-        params = (FunctionParam(Symbol("self"), self_type),) + tuple(
-            definition.function.params or ()
-        )
+        receiver_indices = definition.function.explicit_receiver_indices
+        if len(receiver_indices) > 1:
+            self._diagnose("object-friendly elements may declare only one $self receiver", definition)
+            return branch.emit(TypedNode(definition, None))
+        explicit_receiver = bool(receiver_indices)
+        receiver_index = receiver_indices[0] if explicit_receiver else 0
+        params = tuple(definition.function.params or ())
+        if not explicit_receiver:
+            params = (FunctionParam(Symbol("self"), self_type),) + params
         body = definition.function.body
         if annotation_hooks.has_annotation(definition.annotations, "self"):
-            body = prepare_constructor_body(body)
+            receiver_name = params[receiver_index].name
+            if receiver_name is None:
+                self._diagnose("@self requires a named receiver parameter", definition)
+                return branch.emit(TypedNode(definition, None))
+            body = prepare_constructor_body(body, receiver_name)
         function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
             FunctionNode(
                 params=params,
@@ -801,18 +816,20 @@ class _ObjectDeclarations:
                     else None
                 ),
                 object_friendly_receiver=(
-                    annotation_hooks.has_annotation(definition.annotations, "self")
-                    or definition.function.returns is None
+                    not explicit_receiver and (
+                        annotation_hooks.has_annotation(definition.annotations, "self")
+                        or definition.function.returns is None
+                    )
                 ),
             ),
             definition.annotations,
         )
-        function_node = replace(
-            function_node,
-            annotations=definition.annotations,
-            params=(replace(function_node.params[0], name=None),)
-            + function_node.params[1:],
-        )
+        if not explicit_receiver:
+            function_node = replace(
+                function_node,
+                params=(replace(function_node.params[0], name=None),) + function_node.params[1:],
+            )
+        function_node = replace(function_node, annotations=definition.annotations)
         function_node = _functions._genericize_function_node(
             function_node,
             (*owner_generics, *definition.generics),
@@ -828,8 +845,10 @@ class _ObjectDeclarations:
             self_type = _utils._declared_nominal(owner, owner_generics, owner_scope)
             function_node = replace(
                 function_node,
-                params=(replace(function_node.params[0], typ=self_type),)
-                + function_node.params[1:],
+                params=tuple(
+                    replace(param, typ=self_type) if index == receiver_index else param
+                    for index, param in enumerate(function_node.params)
+                ),
             )
         self_substitution = {"$self": self_type}
         function_node = replace(
@@ -865,15 +884,64 @@ class _ObjectDeclarations:
                 for tag in function_node.element_tags
             ),
         )
+        generic_constraints = (
+            *_functions._generic_constraints(
+                owner_generics,
+                owner_node.generic_variances if owner_node is not None else (),
+                owner_node.generic_constraints if owner_node is not None else (),
+            ),
+            *_functions._generic_constraints(
+                definition.generics,
+                definition.generic_variances,
+                definition.generic_constraints,
+            ),
+        )
+        receiver_name = params[receiver_index].name if explicit_receiver else Symbol("self")
+        receiver_locals = () if receiver_name is None else ((receiver_name, self_type),)
         self._friendly_owners = self._friendly_owners + (owner,)
+        snapshots = {}
         try:
+            # A complete explicit signature is available to recursive calls
+            # before its body has been checked, just like an ordinary define.
+            declared = (
+                _functions._fully_typed_overload(function_node) if explicit_receiver else None
+            )
+            if declared is not None:
+                declared = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
+                    _functions._with_generic_constraints(declared, generic_constraints),
+                    definition.annotations,
+                )
+                declared = replace(declared, implementation_id=(
+                    implementation_ids[method_variant_id(declared, receiver_index)]
+                    if implementation_ids is not None else
+                    declaration_id(self.source_file, definition.location, declared)
+                ))
+                for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
+                    snapshots[name] = (
+                        list(self.env.overloads[name]) if name in self.env.overloads else None,
+                        set(self.env.object_friendly_overloads[name]) if name in self.env.object_friendly_overloads else None,
+                    )
+                    try:
+                        self.env.define_overload(name, declared, object_friendly=name == definition.name)
+                    except ValueError as exc:
+                        self._diagnose(str(exc), definition)
+                        return branch.emit(TypedNode(definition, None))
             result = self._analyse_function_literal(
                 branch,
                 function_node,
-                initial_function_locals=((Symbol("self"), self_type),),
+                initial_function_locals=receiver_locals,
             )
         finally:
             self._friendly_owners = self._friendly_owners[:-1]
+            for name, (overloads, friendly) in snapshots.items():
+                if overloads is None:
+                    self.env.overloads.pop(name, None)
+                else:
+                    self.env.overloads[name] = overloads
+                if friendly is None:
+                    self.env.object_friendly_overloads.pop(name, None)
+                else:
+                    self.env.object_friendly_overloads[name] = friendly
         if result is None:
             return branch.emit(TypedNode(definition, None))
         function, typed_branch = result
@@ -935,25 +1003,14 @@ class _ObjectDeclarations:
                     definition,
                 )
                 return typed_branch
-        generic_constraints = (
-            *_functions._generic_constraints(
-                owner_generics,
-                owner_node.generic_variances if owner_node is not None else (),
-                owner_node.generic_constraints if owner_node is not None else (),
-            ),
-            *_functions._generic_constraints(
-                definition.generics,
-                definition.generic_variances,
-                definition.generic_constraints,
-            ),
-        )
+        checked_bodies = []
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
             object_friendly = name == definition.name
             for variant_index, typing in enumerate(function.overloads):
                 if not isinstance(typing.overload, T.Overload):
                     continue
                 identity = (
-                    implementation_ids[method_variant_id(typing.overload)]
+                    implementation_ids[method_variant_id(typing.overload, receiver_index)]
                     if implementation_ids is not None
                     else declaration_id(self.source_file, definition.location, typing.overload)
                 )
@@ -968,6 +1025,11 @@ class _ObjectDeclarations:
                     replace(transformed, implementation_id=identity),
                     object_friendly=object_friendly,
                 )
+                if explicit_receiver and object_friendly:
+                    checked_bodies.append((identity, TypedFunctionNode(
+                        function_node, typing.typ,
+                        (replace(typing, overload=replace(transformed, implementation_id=identity)),),
+                    )))
                 if object_friendly and name.text in {
                     item.name.text for item in BUILTIN_ELEMENTS
                 }:
@@ -976,6 +1038,20 @@ class _ObjectDeclarations:
                         Symbol(f"{owner}::{definition.name}"),
                         self.env.overloads[name][-1],
                     )
+        if checked_bodies:
+            items = list(typed_branch.typed_body)
+            for index in range(len(items) - 1, -1, -1):
+                item = items[index]
+                if isinstance(item.node, ObjectNode):
+                    bodies = item.method_bodies if isinstance(item, TypedObjectNode) else ()
+                    if isinstance(item, TypedObjectNode):
+                        items[index] = replace(item, method_bodies=(*bodies, *checked_bodies))
+                    else:
+                        items[index] = TypedObjectNode(
+                            item.node, item.typ, method_bodies=tuple(checked_bodies),
+                        )
+                    typed_branch = replace(typed_branch, typed_body=tuple(items))
+                    break
         return typed_branch
 
     def _trait_requirement_implementation_compatible(

@@ -211,7 +211,14 @@ class _VariantDeclarations:
         if not self._validate_annotations(definition.annotations, "define", definition):
             return branch.emit(TypedNode(definition, None))
 
-        explicit_params = tuple(definition.function.params or ())
+        receiver_indices = definition.function.explicit_receiver_indices
+        if len(receiver_indices) > 1:
+            self._diagnose("object-friendly elements may declare only one $self receiver", definition)
+            return branch.emit(TypedNode(definition, None))
+        explicit_params = tuple(
+            param for index, param in enumerate(definition.function.params or ())
+            if index not in receiver_indices
+        )
         if len(explicit_params) != len(requirement.overload.params):
             self._diagnose(
                 f"variant member element '{definition.name}' must take "
@@ -254,6 +261,33 @@ class _VariantDeclarations:
                 definition,
             )
             return branch.emit(TypedNode(definition, None))
+
+        if receiver_indices:
+            receiver_index = receiver_indices[0]
+            contextual_params.insert(receiver_index, definition.function.params[receiver_index])
+            contextual_definition = replace(definition, function=replace(
+                definition.function, params=tuple(contextual_params),
+                returns=requirement.overload.returns,
+            ))
+            current = self._register_friendly_definition(
+                branch, owner, contextual_definition, owner_node=variant,
+            )
+            candidates = self.env.overloads_for(Symbol(f"{owner}::{definition.name}"))
+            if not candidates:
+                return current
+            concrete = candidates[-1]
+            if concrete.element_tags != requirement.overload.element_tags:
+                self._diagnose(
+                    f"variant member element '{definition.name}' element tags must "
+                    "exactly match the variant extend declaration", definition,
+                )
+                return current
+            params = list(concrete.params)
+            params[receiver_index] = _utils._declared_nominal(variant.name, variant.generics)
+            exposed = replace(concrete, params=tuple(params), is_multi=True)
+            self.env.overloads[definition.name][-1] = exposed
+            self.env.context.define_structural_overload(definition.name, exposed)
+            return current
 
         self_type = _utils._declared_nominal(owner, variant.generics)
         params = (FunctionParam(Symbol("self"), self_type), *contextual_params)
