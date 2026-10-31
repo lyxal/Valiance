@@ -154,7 +154,13 @@ class _Lexer:
                     self._fail(
                         f"forbidden character U+{ord(char):04X} {name} in source"
                     )
-                self._fail(f"unexpected character {char!r}")
+                hints = {
+                    ";": "Use a newline to separate statements, or `|` to separate chains.",
+                    "`": 'Use double quotes (`"`) around strings.',
+                    "“": 'Replace typographic quotes with double quotes (`"`) around strings.',
+                    "”": 'Replace typographic quotes with double quotes (`"`) around strings.',
+                }
+                self._fail(f"unexpected character {char!r}", help=hints.get(char))
                 if self.recover and not self._at_end:
                     self._advance()
 
@@ -224,7 +230,10 @@ class _Lexer:
                 else:
                     self._advance()
             if depth:
-                self._fail("unterminated multiline comment; expected closing /#")
+                self._fail(
+                    "unterminated multiline comment; expected closing /#",
+                    help="Close each `#/` comment with `/#`; multiline comments can nest.",
+                )
             return
         self._tag()
 
@@ -276,6 +285,7 @@ class _Lexer:
                         "unterminated string escape; expected a character after backslash",
                         escape_line,
                         escape_col,
+                        help='Complete the escape and close the string with a double quote (`").',
                     )
                     if self.recover:
                         return
@@ -292,6 +302,7 @@ class _Lexer:
                         f"invalid string escape '\\{escaped}'",
                         escape_line,
                         escape_col,
+                        help=r'Valid escapes are `\n`, `\t`, `\"`, `\\` and `\$`.',
                     )
                     if self.recover:
                         self._skip_invalid_string()
@@ -312,7 +323,12 @@ class _Lexer:
                     interpolation_depth += 1
                 elif interpolation_depth > 0 and char == "}":
                     interpolation_depth -= 1
-        self._fail("unterminated string literal; expected a closing double quote", line, col)
+        self._fail(
+            "unterminated string literal; expected a closing double quote",
+            line,
+            col,
+            help='Add a closing double quote (`") to the string.',
+        )
 
     def _string_interpolation_nested_string(self, pieces: list[str]) -> bool:
         """Scan and validate a string nested inside an interpolation."""
@@ -331,6 +347,7 @@ class _Lexer:
                         f"invalid string escape '\\{escaped}'",
                         escape_line,
                         escape_col,
+                        help=r'Valid escapes are `\n`, `\t`, `\"`, `\\` and `\$`.',
                     )
                     if self.recover:
                         self._skip_invalid_string()
@@ -481,9 +498,12 @@ class _Lexer:
         return is_xid_continue(char) and not forbidden_identifier_character(char)
 
     def _fail(
-        self, message: str, line: int | None = None, col: int | None = None
+        self, message: str, line: int | None = None, col: int | None = None,
+        *, help: str | None = None,
     ) -> None:
         """Report a lexical error, optionally leaving a recoverable token."""
+        if help is not None:
+            message += f"\nhelp: {help}"
         error = LexError(message, line=line or self.line, column=col or self.column)
         if not self.recover:
             raise error

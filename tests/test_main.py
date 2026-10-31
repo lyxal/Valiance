@@ -683,7 +683,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("--> <code>:1:1", rendered)
         self.assertIn('1 | "missing', rendered)
         self.assertIn("| ^", rendered)
-        self.assertIn("help: Add the missing closing delimiter", rendered)
+        self.assertIn("help: Add a closing double quote", rendered)
 
     def test_main_formats_parse_errors_with_source_context(self):
         error = io.StringIO()

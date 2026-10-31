@@ -9,7 +9,12 @@ from pathlib import Path
 import valiance.vtypes as T
 from valiance.analysis.analyser import Analyser
 from valiance.analysis.completion import CompletionContext
-from valiance.analysis.diagnostics import Diagnostic, SourceLocation, from_message
+from valiance.analysis.diagnostics import (
+    Diagnostic,
+    SourceLocation,
+    from_exception,
+    from_message,
+)
 from valiance.analysis.traces import TraceCollector
 from valiance.asts import (
     DefineNode,
@@ -314,15 +319,17 @@ def analyse_sources(
 
     def gather(source, path, result, analysis):
         """Collect recoverable source diagnostics with their actual file identity."""
-        diagnostics.extend(
-            Diagnostic(
-                type(error).__name__,
-                error.message,
-                SourceLocation(error.line or 1, error.column or 1),
-                source_file=path,
+        for error in result.diagnostics:
+            diagnostic = from_exception(type(error).__name__, error)
+            diagnostics.append(
+                Diagnostic(
+                    type(error).__name__,
+                    diagnostic.message,
+                    SourceLocation(error.line or 1, error.column or 1),
+                    help=diagnostic.help,
+                    source_file=path,
+                )
             )
-            for error in result.diagnostics
-        )
         for message in analysis.diagnostics:
             diagnostic = from_message("Type error", message)
             diagnostics.append(

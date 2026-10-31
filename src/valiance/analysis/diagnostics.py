@@ -196,7 +196,8 @@ def from_exception(stage: str, exc: BaseException) -> Diagnostic:
             )
     if stage == "Type error":
         stage = analysis_stage(message)
-    return Diagnostic(stage, message, location, _help_for(message))
+    message, specific_help = _split_specific_help(message)
+    return Diagnostic(stage, message, location, specific_help or _help_for(message))
 
 
 def render(
@@ -330,10 +331,4 @@ def _help_for(message: str) -> str | None:
         return "Use `as?[T]` for optional refinement or `as![T]` when failure should stop execution."
     if message.startswith("empty stack"):
         return "This operation needs a value first; place the producer before it."
-    if message.startswith("expected "):
-        return "The parser reached a different token than this construct requires."
-    if message.startswith("unexpected character"):
-        return "Remove the character or add lexer support for the syntax you intended."
-    if message.startswith("unterminated "):
-        return "Add the missing closing delimiter before the end of the file."
     return None

@@ -2881,7 +2881,7 @@ class Parser:
             self._skip_newlines()
             if self._match(closer):
                 return tuple(items)
-            self._expect(TokenKind.COMMA)
+            self._expect_entry_separator(closer)
             self._skip_newlines()
             if self._match(closer):
                 return tuple(items)
@@ -2941,7 +2941,7 @@ class Parser:
             self._skip_newlines()
             if self._match(TokenKind.RPAREN):
                 return tuple(args)
-            self._expect(TokenKind.COMMA)
+            self._expect_entry_separator(TokenKind.RPAREN)
 
     def _element_generic_arguments(
         self, start: Token, *, name: Symbol
@@ -3108,7 +3108,7 @@ class Parser:
             self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(fields)
-            self._expect(TokenKind.COMMA)
+            self._expect_entry_separator(TokenKind.RBRACE)
             self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(fields)
@@ -3135,7 +3135,7 @@ class Parser:
             self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(entries)
-            self._expect(TokenKind.COMMA)
+            self._expect_entry_separator(TokenKind.RBRACE)
             self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(entries)
@@ -3792,11 +3792,36 @@ class Parser:
         """Return the Boolean result of check from the current parser token stream."""
         return self._current.kind in kinds
 
+    def _expect_entry_separator(self, closer: TokenKind) -> None:
+        """Require a comma after an entry, naming the alternative closing token."""
+        if not self._match(TokenKind.COMMA):
+            self._error(
+                f"expected ',' or {closer.value!r}",
+                help=f"Separate entries with `,`, or close this construct with `{closer.value}`.",
+            )
+
     def _expect(self, kind: TokenKind) -> Token:
         """Consume the required token or raise a parse error."""
         if self._match(kind):
             return self._previous
-        self._error(f"expected {kind.value}")
+        descriptions = {
+            TokenKind.IDENT: "a name",
+            TokenKind.NUMBER: "a number",
+            TokenKind.STRING: "a double-quoted string",
+            TokenKind.EOF: "end of file",
+        }
+        hints = {
+            TokenKind.FAT_ARROW: "Use `=>` to separate the header from its body or value.",
+            TokenKind.ARROW: "Use `->` between input and output types.",
+            TokenKind.COMMA: "Separate entries with `,`.",
+            TokenKind.ASSIGN: "Use `=` before the assigned value.",
+        }
+        if kind in {TokenKind.RPAREN, TokenKind.RBRACKET, TokenKind.RBRACE}:
+            hints[kind] = f"Close this construct with `{kind.value}`."
+        self._error(
+            f"expected {descriptions.get(kind, repr(kind.value))}",
+            help=hints.get(kind),
+        )
 
     def _advance(self) -> Token:
         """Consume and return the current token."""
@@ -3835,7 +3860,7 @@ class Parser:
         """Return the previous exposed by this parser."""
         return self.tokens[self.index - 1]
 
-    def _error(self, message: str) -> None:
+    def _error(self, message: str, *, help: str | None = None) -> None:
         """Raise a source-located parse error with the unexpected token."""
         token = self._current
         if token.kind is TokenKind.EOF:
@@ -3846,6 +3871,8 @@ class Parser:
             detail = repr(token.raw if token.raw is not None else token.value)
         if "found " not in message and "unexpected " not in message:
             message = f"{message}; found {detail}"
+        if help is not None:
+            message += f"\nhelp: {help}"
         raise ParseError(message, line=token.line, column=token.column)
 
     def _synchronize_statement(self, start: int) -> None:

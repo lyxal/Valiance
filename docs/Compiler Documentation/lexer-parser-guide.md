@@ -101,9 +101,8 @@ Important token rules:
 - `#/ ... /#` is a nested multiline comment.
 - A bare `#name`, `#-name`, `#-name`, or `#name++` is emitted as one `OP` token for data
   tags.
-- `"` starts a string. Strings may contain literal newlines. Escaped `"`, `\`,
-  and `$` are unescaped; other backslash sequences are preserved with the
-  backslash.
+- `"` starts a string. Strings may contain literal newlines. Supported escapes
+  are `\"`, `\\`, `\$`, `\n`, and `\t`; other backslash sequences are errors.
 - Numbers include signed decimals, scientific notation, and the current complex
   literal form such as `3i4`. Scientific exponents may themselves be real-valued,
   so `1.3e5.2` is one NUMBER token rather than a number followed by field access.
@@ -181,6 +180,13 @@ Diagnostics should state both the expectation and the token actually found.
 When adding grammar, prefer messages such as `expected ')' after argument list`
 over generic messages such as `invalid syntax`. Add a focused recovery test
 whenever a new construct introduces a useful synchronization boundary.
+
+Supply actionable syntax guidance at the lexer/parser error site using the
+optional `help` argument to `_fail` or `_error`. It is carried as a `help:` line
+and separated into structured diagnostic help by the renderer. Omit help when
+the intended correction is unknown; generic restatements of the error do not
+help the programmer. Delimited entry errors should name both the comma and the
+closing delimiter when either would be valid.
 
 ## Parser Model
 
