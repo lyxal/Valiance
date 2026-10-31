@@ -3203,8 +3203,8 @@ def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] * args[0],)
 
 
-@builtin("sum", (T.ExactList(T.Int)), (T.Int,))
-@builtin("sum", (T.ExactList(T.Real)), (T.Real,))
+@builtin("sum", (T.ExactList(T.Int),), (T.Int,))
+@builtin("sum", (T.ExactList(T.Real),), (T.Real,))
 @builtin("sum", (T.ExactList(T.Number),), (T.Number,))
 def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Add every numeric item, fusing any prepared lazy pipeline stages."""
