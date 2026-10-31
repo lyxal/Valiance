@@ -1797,6 +1797,13 @@ must provide required effects and must not violate absence requirements.
 `Context.implements(type_name, trait_name)` follows direct implementations and
 trait parents. `subtype(...)` uses this relationship for nominal values.
 
+Element calls discover nominal trait requirements through collection receivers
+before ordinary overload matching determines vectorisation. The scalar contract
+retains the trait's generic substitutions; runtime dispatch selects the concrete
+implementation separately for each scalar receiver. Checked object method bodies
+are retained for both implicit and explicit receivers so lowering preserves these
+call and vectorisation decisions.
+
 ### Variants
 
 `Context.variant_members` maps a member nominal type to its variant parent. This

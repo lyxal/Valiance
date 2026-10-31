@@ -1025,10 +1025,18 @@ class _ObjectDeclarations:
                     replace(transformed, implementation_id=identity),
                     object_friendly=object_friendly,
                 )
-                if explicit_receiver and object_friendly:
+                if object_friendly:
+                    runtime_overload = replace(transformed, implementation_id=identity)
+                    if not explicit_receiver:
+                        # Analysis hides the implicit receiver from stack inputs;
+                        # the checked runtime body still reads it as $self.
+                        runtime_overload = replace(
+                            runtime_overload,
+                            param_names=(Symbol("self"), *runtime_overload.param_names[1:]),
+                        )
                     checked_bodies.append((identity, TypedFunctionNode(
                         function_node, typing.typ,
-                        (replace(typing, overload=replace(transformed, implementation_id=identity)),),
+                        (replace(typing, overload=runtime_overload),),
                     )))
                 if object_friendly and name.text in {
                     item.name.text for item in BUILTIN_ELEMENTS

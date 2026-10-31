@@ -514,10 +514,14 @@ class _ElementCalls:
         branch: AnalysisBranch,
         overloads: tuple[T.Overload, ...],
     ) -> tuple[T.Overload, ...]:
-        """Add receiver-specialized contracts for trait-valued receivers."""
+        """Add scalar trait contracts before ordinary vectorisation matching."""
         if not branch.stack:
             return overloads
         receiver = T.normalize(branch.stack[-1])
+        while isinstance(receiver, (T.CollectionType, T.TaggedType, T.ExactType)):
+            receiver = T.normalize(
+                receiver.base if isinstance(receiver, T.CollectionType) else receiver.inner
+            )
         receivers = (
             receiver.items
             if isinstance(receiver, T.IntersectionType)
@@ -547,6 +551,7 @@ class _ElementCalls:
                     continue
                 contract = replace(
                     requirement.overload,
+                    is_multi=True,
                     params=(
                         *(
                             T._substitute(param, substitution)
@@ -592,6 +597,7 @@ class _ElementCalls:
                         specialized[provider_index] = replace(
                             contract,
                             implementation_id=original.implementation_id,
+                            is_multi=original.is_multi,
                         )
                     else:
                         specialized.append(contract)

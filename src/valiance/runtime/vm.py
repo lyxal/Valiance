@@ -4954,7 +4954,7 @@ class VirtualMachine:
         if not isinstance(reference, ResolvedElementReference):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
         if not (reference.implementation_id is None
-                and reference.dispatch_kind & DispatchKind.TRAIT_WITNESS):
+                and reference.dispatch_kind & (DispatchKind.TRAIT_WITNESS | DispatchKind.NOMINAL_TRAIT)):
             if not isinstance(reference.implementation_id, str) or not reference.implementation_id:
                 raise RuntimeError("resolved call is missing its implementation identity")
         cache_key = id(reference)
@@ -5127,6 +5127,32 @@ class VirtualMachine:
         reference: ResolvedElementReference,
     ) -> _FunctionCallRequest | None:
         """Invoke resolved overloaded function during VM execution."""
+        if (reference.implementation_id is None
+                and reference.dispatch_kind & DispatchKind.NOMINAL_TRAIT):
+            arity = reference.arity_override
+            if arity is None:
+                raise RuntimeError("nominal trait call is missing its checked arity")
+            if reference.vectorised:
+                args = _source_args(frame, arity, "trait-dispatched vector call")
+                extension = _materialize_vector_extension(self, reference.extension, frame)
+                try:
+                    results = _vectorize_declared_callable(
+                        self, value, args, reference.vectorised_depths,
+                        reference.vectorised_target_ranks, extension,
+                    )
+                finally:
+                    _release_runtime_vector_extension(extension, self)
+                if reference.return_tag_specs:
+                    results = _canonicalize_runtime_tag_contracts(
+                        results, reference.return_tag_specs, self.tag_parents,
+                    )
+                frame.stack.extend(results)
+                return None
+            args, _, _, _ = frame.source_args(arity)
+            overload = _select_declared_dispatch_overload(value, tuple(args))
+            return self._call_resolved_function_value(
+                overload, frame, replace(reference, dispatch_kind=DispatchKind.STATIC),
+            )
         if reference.dispatch_kind & DispatchKind.TRAIT_WITNESS:
             required = reference.structural_signature
             if required is None:

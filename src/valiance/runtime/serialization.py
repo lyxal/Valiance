@@ -39,7 +39,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x44  # CALL_NUMERIC adds an opcode; older readers must reject it.
+BYTECODE_VERSION = 0x45  # Nominal trait calls retain checked vectorisation plans.
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -202,10 +202,10 @@ def loads(data: bytes) -> Program:
         if prefix != MAGIC_PREFIX:
             raise BytecodeFormatError("invalid Valiance bytecode magic")
         version = reader.u8()
-        if version not in (0x43, BYTECODE_VERSION):
+        if version not in (0x43, 0x44, BYTECODE_VERSION):
             raise BytecodeFormatError(
                 f"unsupported Valiance bytecode version {version}; "
-                f"expected 0x43 or {BYTECODE_VERSION}"
+                f"expected 0x43, 0x44 or {BYTECODE_VERSION}"
             )
         main = reader.function()
         tag_parents = tuple(
@@ -777,7 +777,7 @@ class _Writer:
 
     def resolved_element_reference(self, reference: ResolvedElementReference) -> None:
         """Encode resolved element reference in the portable bytecode stream."""
-        _validate_implementation_identity(reference.implementation_id, allow_none=bool(reference.dispatch_kind & DispatchKind.TRAIT_WITNESS))
+        _validate_implementation_identity(reference.implementation_id, allow_none=bool(reference.dispatch_kind & (DispatchKind.TRAIT_WITNESS | DispatchKind.NOMINAL_TRAIT)))
         self.string(reference.name)
         self.bool(reference.vectorised)
         self.value(reference.vectorised_depths)
@@ -1176,6 +1176,7 @@ class _Reader:
         kind_bits = self.u8()
         if kind_bits & ~int(
             DispatchKind.TRAIT_WITNESS | DispatchKind.MULTIMETHOD | DispatchKind.UNION
+            | DispatchKind.NOMINAL_TRAIT
         ):
             raise BytecodeFormatError("unknown resolved dispatch mode")
         dispatch_kind = DispatchKind(kind_bits)
@@ -1185,7 +1186,7 @@ class _Reader:
         extension = self.value()
         structural_signature = self.value()
         implementation_id = self.optional_string()
-        _validate_implementation_identity(implementation_id, allow_none=bool(dispatch_kind & DispatchKind.TRAIT_WITNESS))
+        _validate_implementation_identity(implementation_id, allow_none=bool(dispatch_kind & (DispatchKind.TRAIT_WITNESS | DispatchKind.NOMINAL_TRAIT)))
         structural_witnesses = self.value()
         callable_witnesses = self.value()
         if (not isinstance(callable_witnesses, tuple) or any(

@@ -905,6 +905,26 @@ class _Compiler:
                         self.emit(OpCode.CALL, reference)
                     return
                 resolved = self._resolved_element_reference(typed_node)
+                if (resolved is not None
+                        and resolved.dispatch_kind & DispatchKind.NOMINAL_TRAIT
+                        and resolved.arity_override > 1):
+                    # Trait contracts consume the receiver last; object method
+                    # bodies bind their implicit receiver before other inputs.
+                    labels = tuple(f"_trait_arg_{index}" for index in range(resolved.arity_override))
+                    self.emit(OpCode.STACK_SHUFFLE, (
+                        "move", labels, (labels[-1], *labels[:-1]),
+                    ))
+                    resolved = replace(
+                        resolved,
+                        vectorised_depths=(
+                            (resolved.vectorised_depths[-1], *resolved.vectorised_depths[:-1])
+                            if resolved.vectorised_depths else ()
+                        ),
+                        vectorised_target_ranks=(
+                            (resolved.vectorised_target_ranks[-1], *resolved.vectorised_target_ranks[:-1])
+                            if resolved.vectorised_target_ranks else ()
+                        ),
+                    )
                 if resolved is None:
                     self.emit(
                         OpCode.LOAD_ELEMENT,
@@ -3189,7 +3209,10 @@ def _resolved_element_reference(
         return None
     source_runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
     if node.implementation_id is None and (
-        not node.overload.overload.is_structural_requirement
+        not (
+            node.overload.overload.is_structural_requirement
+            or node.overload.overload.is_multi
+        )
         or source_runtime_name in elements
     ):
         return None
@@ -3244,7 +3267,8 @@ def _resolved_element_reference(
             if node.overload is not None and node.overload.rank_values
             else ()
         )
-    multidispatch = bool(node.overload is not None and node.overload.multidispatch)
+    nominal_trait = node.implementation_id is None and node.overload.overload.is_multi
+    multidispatch = bool(node.overload.multidispatch and not nominal_trait)
     union_dispatch_plan = (
         node.overload.union_dispatch_plan.branches
         if node.overload is not None and node.overload.union_dispatch_plan is not None
@@ -3290,6 +3314,8 @@ def _resolved_element_reference(
             else:
                 arity_override = len(node.overload.params) + hidden_count
             consumed_override = runtime_consumed + hidden_count
+    if nominal_trait:
+        arity_override = len(node.overload.params)
     return ResolvedElementReference(
         runtime_name,
         node.implementation_id,
@@ -3310,6 +3336,7 @@ def _resolved_element_reference(
             ) else DispatchKind.STATIC)
             | (DispatchKind.UNION if union_dispatch_plan else DispatchKind.STATIC)
             | (DispatchKind.MULTIMETHOD if multidispatch else DispatchKind.STATIC)
+            | (DispatchKind.NOMINAL_TRAIT if nominal_trait else DispatchKind.STATIC)
         ),
         union_dispatch_plan=union_dispatch_plan,
         extension=_compiled_element_extension(node.extension),

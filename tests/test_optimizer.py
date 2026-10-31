@@ -116,14 +116,15 @@ class OptimizerTests(unittest.TestCase):
         """New binaries signal their format, but previous bytecode remains readable."""
         from valiance.runtime.serialization import BYTECODE_VERSION
 
-        self.assertEqual(BYTECODE_VERSION, 0x44)
+        self.assertEqual(BYTECODE_VERSION, 0x45)
         old_style = Program(FunctionCode((
             Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
             Instruction(OpCode.RETURN),
         )))
         current_bytes = dumps(old_style)
-        prior_bytes = current_bytes[:6] + bytes((0x43,)) + current_bytes[7:]
-        self.assertEqual(loads(prior_bytes), old_style)
+        for version in (0x43, 0x44):
+            prior_bytes = current_bytes[:6] + bytes((version,)) + current_bytes[7:]
+            self.assertEqual(loads(prior_bytes), old_style)
 
     def test_numeric_opcode_falls_back_when_binding_or_stack_is_unusual(self):
         """A replaced global or cyclic argument keeps generic call behaviour."""

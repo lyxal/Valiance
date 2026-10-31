@@ -140,7 +140,7 @@ The runtime implementation is small, but several files must evolve together.
   returns in runtime bytecode.
   A parameter typed `$self` selects an explicit receiver: code generation
   preserves its declared position and name without prepending another input.
-  `TypedObjectNode.method_bodies` retains checked explicit-receiver functions,
+  `TypedObjectNode.method_bodies` retains checked implicit- and explicit-receiver functions,
   including recursive union dispatch and vectorisation plans. Imported module
   interfaces and typed refinements preserve these bodies.
 - Trait-implementation object declarations such as `object X as T => end` do
@@ -213,7 +213,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x1d"`.
+- The current magic/version marker is `b"VLNCBC\x45"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
@@ -446,6 +446,12 @@ implementations. For resolved calls, analysis decides whether vectorisation is
 needed and codegen records that decision in bytecode. The VM then maps the
 selected scalar implementation over each list item and collects the returned
 stack fragments.
+
+Nominal trait requirements use `DispatchKind.NOMINAL_TRAIT` with a checked
+argument count and vectorisation plan. For collection receivers, the VM traverses
+the planned collection depths and selects the concrete trait implementation at
+each scalar leaf. Bytecode version `0x45` introduces this dispatch mode; versions
+`0x43` and `0x44` remain readable.
 
 Saved bytecode must stay portable.
 

@@ -198,6 +198,7 @@ class DispatchKind(IntFlag):
     TRAIT_WITNESS = 1
     MULTIMETHOD = 2
     UNION = 4
+    NOMINAL_TRAIT = 8
 
 
 @dataclass(frozen=True, slots=True)
