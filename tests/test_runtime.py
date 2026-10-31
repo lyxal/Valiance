@@ -4860,6 +4860,78 @@ define add(a: Int, b: Int) -> Int => $a $b + end
         self.assertEqual(execute('3 "ha" *'), ["hahaha"])
         self.assertEqual(execute('"ha" 3 *'), ["hahaha"])
 
+    def test_inferred_combinators_execute_each_callback_specialization(self):
+        """Checked callback choices survive named/literal functions and bytecode."""
+        definitions = (
+            'define pick(value: Int) -> Int => $value 10 + end\n'
+            'define pick(value: Real) -> Real => $value 0.5 + end\n'
+        )
+        cases = (
+            ('fork: (pick, pick) | +', ('2', '2.5'), ('24', '6')),
+            ('"held" dip: pick | pop', ('2', '2.5'), ('12', '3')),
+            ('peek: pick | +', ('2', '2.5'), ('14', '5.5')),
+            ('both: pick | +', ('2, 3', '2.5, 3.5'), ('25', '7')),
+            ('2 both: pick | +', ('2', '2.5'), ('24', '5.5')),
+            ('sequence: (pick, pick) | +',
+             ('2, 3', '2, 3.5', '2.5, 3', '2.5, 3.5'), ('25', '16', '16', '7')),
+            ('2 sequence: (pick, pick) | +', ('2', '2.5'), ('24', '15')),
+            ('hook: (pick, +, pick)', ('2', '2.5'), ('24', '6')),
+            ('call: pick', ('2', '2.5'), ('12', '3')),
+            ('fn => pick end | call', ('2', '2.5'), ('12', '3')),
+            ('fn => pick end | "held" swap | dip | pop', ('2', '2.5'), ('12', '3')),
+            ('fn => pick end | peek | +', ('2', '2.5'), ('14', '5.5')),
+            ('2 | fn => pick end | both | +', ('2', '2.5'), ('24', '5.5')),
+            ('peek: fn => call: pick end | +', ('2', '2.5'), ('14', '5.5')),
+            ('sum', ('[1, 2]', '[1.5, 2.5]', '[] as[Int+]'), ('3', '4', '0')),
+            ('fork: (sum, length) | /', ('[1, 2]', '[1.5, 2.5]'), ('1.5', '2')),
+            ('"held" dip: sum | pop',
+             ('[1, 2]', '[1.5, 2.5]', '[] as[Int+]'), ('3', '4', '0')),
+        )
+        for body, arguments, results in cases:
+            for literal in (False, True):
+                declaration = (f'$wrapped = fn => {body} end\n' if literal else
+                               f'define wrapped => {body} end\n')
+                name = '$wrapped' if literal else 'wrapped'
+                source = definitions + declaration + '\n'.join(
+                    f'{name}({args})' for args in arguments
+                )
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                with self.subTest(body=body, literal=literal):
+                    self.assertEqual(analyser.diagnostics, [])
+                    expected = [RuntimeNumber(result) for result in results]
+                    for optimize in (False, True):
+                        program = compile_program(typed, optimize=optimize)
+                        for serialized in (False, True):
+                            with self.subTest(optimize=optimize, serialized=serialized):
+                                self.assertEqual(
+                                    run(loads(dumps(program)) if serialized else program),
+                                    expected,
+                                )
+
+    def test_both_keeps_one_checked_overload_with_distinct_invocation_shapes(self):
+        """A stacked overload set uses the common choice for both input groups."""
+        definitions = (
+            'define pick(value: Int) -> Int => $value 10 + end\n'
+            'define pick(value: Real) -> Real => $value 0.5 + end\n'
+        )
+        cases = (
+            ('2.5 2', [RuntimeNumber('3'), RuntimeNumber('2.5')]),
+            ('[1, 2] 3', [[RuntimeNumber('11'), RuntimeNumber('12')], RuntimeNumber('13')]),
+            ('"sentinel" 2.5 2', ['sentinel', RuntimeNumber('3'), RuntimeNumber('2.5')]),
+        )
+        for inputs, expected in cases:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(definitions + inputs + ' | fn => pick end | both'))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(inputs=inputs, optimize=optimize, serialized=serialized):
+                        self.assertEqual(
+                            run(loads(dumps(program)) if serialized else program), expected,
+                        )
+
     def test_trait_dispatch_sums_stored_bytes_through_nested_folders(self):
         self.assertEqual(execute("""
 trait Entry =>

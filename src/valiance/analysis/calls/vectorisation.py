@@ -104,9 +104,16 @@ def _call_site_checked_overload_signature(
         ):
             function_type = call_params[-1]
             stack = call_params[:-1]
-            for callable_index, candidate in enumerate(
-                _functions._callable_overloads(function_type)
+            callable_overloads = _functions._callable_overloads(function_type)
+            if all(
+                candidate.call_site_body is None
+                and not candidate.where_clause
+                and not static_where.rank_variable_names(candidate.params + candidate.returns)
+                for candidate in callable_overloads
             ):
+                choice = T.choose_best_overload(function_type, T.TypeStack(stack), ctx)
+                callable_overloads = (choice.overload,) if choice is not None else ()
+            for candidate in callable_overloads:
                 declared = _candidate_call_site_static_overload(candidate)
                 uses_static_values = bool(
                     declared.where_clause
@@ -209,7 +216,14 @@ def _call_site_checked_overload_signature(
                     (*explicit, concrete_function_type),
                     applied.actual_returns,
                     call_site_body=arity,
-                    runtime_static_values=(),
+                    runtime_static_values=(
+                        candidate.implementation_id,
+                        "__call_static__",
+                        applied.vectorised,
+                        applied.vectorised_depths,
+                        applied.vectorised_target_ranks,
+                        *applied.runtime_static_values,
+                    ),
                 )
             candidates = _functions._callable_overloads(function_type)
             covered = analyser._union_coverage_candidate(

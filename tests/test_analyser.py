@@ -4723,7 +4723,7 @@ pick(_, 4)
         self.assertEqual(both_branch.stack, TypeStack((Number, Number)))
         both_node = both_branch.typed_body[-1]
         self.assertIsInstance(both_node, TypedElementNode)
-        self.assertEqual(both_node.overload.runtime_static_values, (3,))
+        self.assertEqual(both_node.overload.runtime_static_values[0], 3)
 
         sequence = analyser.analyse_block(
             BranchSet((AnalysisBranch(stack=TypeStack((Number, String, String))),)),
@@ -4762,15 +4762,20 @@ pick(_, 4)
         self.assertFalse(analyser.diagnostics)
         self.assertEqual(
             show(typed[0].typ),
-            "Function[#-infinite Number+ -> Number]",
+            "OverloadSet[Function[#-infinite Int+ -> Real], "
+            "Function[#-infinite Number+ -> Number], "
+            "Function[#-infinite Real+ -> Real]]",
         )
 
     def test_fork_shared_input_rejects_infinite_value(self):
         analyser = Analyser()
 
         analyser.analyse(parse("define f => fork: (sum, length) | /"))
-        overload = analyser.env.overloads_for(Symbol("f"))[0]
-        self.assertEqual(show(overload.params[0]), "#-infinite Number+")
+        overloads = analyser.env.overloads_for(Symbol("f"))
+        self.assertEqual(
+            {show(overload.params[0]) for overload in overloads},
+            {"#-infinite Int+", "#-infinite Real+", "#-infinite Number+"},
+        )
 
         analyser.analyse(parse("f(#infinite [1, 2, 3, 4, 5])"))
         self.assertIn(
@@ -4786,7 +4791,12 @@ pick(_, 4)
         )
 
         self.assertFalse(analyser.diagnostics)
-        self.assertEqual(show(typed[0].typ), "Function[#-infinite Number+ -> Number]")
+        self.assertEqual(
+            show(typed[0].typ),
+            "OverloadSet[Function[#-infinite Int+ -> Real], "
+            "Function[#-infinite Number+ -> Number], "
+            "Function[#-infinite Real+ -> Real]]",
+        )
 
     def test_peek_infers_partially_missing_callable_inputs(self):
         analyser = Analyser()
@@ -4806,7 +4816,11 @@ pick(_, 4)
         )
 
         self.assertFalse(analyser.diagnostics)
-        self.assertEqual(show(typed[0].typ), "Function[Number+ -> String]")
+        self.assertEqual(
+            show(typed[0].typ),
+            "OverloadSet[Function[Int+ -> String], "
+            "Function[Number+ -> String], Function[Real+ -> String]]",
+        )
 
     def test_dip_modifier_contributes_to_defined_function_input_inference(self):
         analyser = Analyser()

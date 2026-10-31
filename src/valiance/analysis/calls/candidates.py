@@ -1171,6 +1171,14 @@ def _specialize_modifier_arguments(
         if item.typed_node.dispatch_plan is not None:
             typed_nodes.append(item.typed_node)
             continue
+        if isinstance(expected, T.OverloadSetType):
+            overloads = tuple(
+                overload for overload in item.typed_node.overloads
+                if overload.overload in expected.overloads
+            )
+            if overloads:
+                typed_nodes.append(TypedFunctionNode(item.typed_node.node, expected, overloads))
+                continue
         if isinstance(expected, T.FunctionType):
             overloads = tuple(
                 overload
@@ -1328,6 +1336,36 @@ def _merge_where_union_applications(
         runtime_static_values=runtime_values,
     )
     return _core.OverloadApplication(merged, first.branch)
+
+
+def _inferred_call_site_argument_variants(
+    source: _core.ElementArguments,
+) -> tuple[_core.ElementArguments, ...]:
+    """Keep callback alternatives separate while a CSTC call infers inputs."""
+    if (
+        source.branch.input_mode is not _core.InputMode.INFER_INPUTS
+        or not callable(source.overload.call_site_body)
+    ):
+        return ()
+    alternatives: list[tuple[T.Type, ...]] = []
+    for argument, parameter in zip(
+        source.arguments, source.overload.params, strict=True,
+    ):
+        typ = T.normalize(argument)
+        if (
+            _functions._is_bare_function_type(parameter)
+            and isinstance(typ, T.OverloadSetType)
+            and len(typ.overloads) > 1
+        ):
+            alternatives.append(tuple(T.Overloads(overload) for overload in typ.overloads))
+        else:
+            alternatives.append((argument,))
+    if all(len(items) == 1 for items in alternatives):
+        return ()
+    return tuple(
+        replace(source, arguments=arguments)
+        for arguments in product(*alternatives)
+    )
 
 
 def _apply_overload_to_branch(
@@ -1864,6 +1902,25 @@ def _apply_call_site_checked_overload(
             )
             if concrete is None or len(concrete.params) < len(args):
                 continue
+            # A preview may infer callback inputs before its full argument
+            # group is known. Select again with every available argument in
+            # that group rather than committing the preview's first overload.
+            available_count = min(len(concrete.params) - len(args), len(branch.stack))
+            if callable(overload.call_site_body) and available_count > extra_count:
+                checked_bodies = []
+                concrete = _call_site_checked_overload_signature(
+                    deferred,
+                    branch.stack.items[-available_count:] + body_args,
+                    ctx,
+                    analyser,
+                    rank_values=rank_values,
+                    type_values=preliminary_substitution,
+                    where_evaluated=True,
+                    static_values=static_values,
+                    checked_bodies=checked_bodies,
+                )
+                if concrete is None or len(concrete.params) < len(args):
+                    continue
             consumed_count = _call_site_consumed_count(overload, concrete, extra_count)
             if consumed_count is None:
                 continue

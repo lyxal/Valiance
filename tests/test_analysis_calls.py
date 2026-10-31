@@ -18,6 +18,129 @@ from valiance.vtypes.symbols import Symbol
 class CallPlanningBoundaryTests(unittest.TestCase):
     """Verify call planning is owned outside the analyser façade."""
 
+    def test_combinators_preserve_inferred_callback_overloads(self):
+        """Missing inputs retain every supported callback specialization."""
+        definitions = (
+            'define pick(value: Int) -> Int => $value 10 + end\n',
+            'define pick(value: Real) -> Real => $value 0.5 + end\n',
+        )
+        unary = {(("Int",), ("Int",)), (("Real",), ("Real",))}
+        cases = (
+            ('fork: (pick, pick) | +', unary),
+            ('"held" dip: pick | pop', unary),
+            ('peek: pick | +', unary),
+            ('both: pick | +', {
+                (("Int", "Int"), ("Int",)),
+                (("Real", "Real"), ("Real",)),
+            }),
+            ('sequence: (pick, pick) | +', {
+                (("Int", "Int"), ("Int",)),
+                (("Int", "Real"), ("Real",)),
+                (("Real", "Int"), ("Real",)),
+                (("Real", "Real"), ("Real",)),
+            }),
+            ('hook: (pick, +, pick)', unary),
+            ('call: pick', unary),
+        )
+        for order in permutations(definitions):
+            for body, expected in cases:
+                with self.subTest(order=order, body=body):
+                    analyser = Analyser()
+                    analyser.analyse(parse(''.join(order) + f'define wrapped => {body} end'))
+                    self.assertEqual(analyser.diagnostics, [])
+                    signatures = {
+                        (tuple(map(T.show, overload.params)), tuple(map(T.show, overload.returns)))
+                        for overload in analyser.env.overloads_for(Symbol('wrapped'))
+                    }
+                    self.assertEqual(signatures, expected)
+
+    def test_sum_preserves_the_declared_numeric_element_type(self):
+        """Numeric specializations remain precise without narrowing Number inputs."""
+        for element in (T.Int, T.Real, T.Number):
+            with self.subTest(element=element):
+                analyser = Analyser()
+                analyser.analyse(parse(
+                    f'define total(values: {T.show(element)}+) => $values sum end'
+                ))
+                self.assertEqual(analyser.diagnostics, [])
+                overloads = analyser.env.overloads_for(Symbol('total'))
+                self.assertEqual(len(overloads), 1)
+                self.assertEqual(overloads[0].returns, (element,))
+
+    def test_shared_input_inference_keeps_a_later_compatible_callback(self):
+        """A shared requirement can rule out the first callback specialization."""
+        definitions = (
+            'define pick(value: Int) -> Int => $value end\n',
+            'define pick(value: String) -> Int => $value length end\n',
+        )
+        for order in permutations(definitions):
+            for body in ('fork: (pick, length) | +', 'hook: (pick, +, length)'):
+                with self.subTest(order=order, body=body):
+                    analyser = Analyser()
+                    analyser.analyse(parse(''.join(order) + f'define wrapped => {body} end'))
+                    self.assertEqual(analyser.diagnostics, [])
+                    self.assertEqual(
+                        {overload.params for overload in analyser.env.overloads_for(Symbol('wrapped'))},
+                        {(T.String,)},
+                    )
+
+    def test_combinators_reject_unsupported_inputs(self):
+        """Inferred alternatives must not permit unsupported callback invocations."""
+        definitions = (
+            'define pick(value: Int) -> Int => $value end\n'
+            'define pick(value: String) -> Int => $value length end\n'
+        )
+        cases = (
+            ('fork: (pick, pick) | +', '1.5'),
+            ('"held" dip: pick | pop', '1.5'),
+            ('peek: pick | pop', '1.5'),
+            ('both: pick | +', '1, "text"'),
+            ('sequence: (pick, pick) | +', '1, 1.5'),
+            ('hook: (pick, +, pick)', '1.5'),
+            ('call: pick', '1.5'),
+        )
+        for body, arguments in cases:
+            with self.subTest(body=body):
+                analyser = Analyser()
+                analyser.analyse(parse(definitions + f'define wrapped => {body} end\nwrapped({arguments})'))
+                self.assertTrue(analyser.diagnostics)
+                self.assertIn("no overloads for element 'wrapped'", str(analyser.diagnostics[0]))
+
+    def test_shared_combinators_reject_incompatible_callback_requirements(self):
+        """Fork and hook cannot invent a shared input for disjoint contracts."""
+        definitions = (
+            'define numeric(value: Int) -> Int => $value end\n'
+            'define textual(value: String) -> Int => $value length end\n'
+        )
+        for body in ('fork: (numeric, textual)', 'hook: (numeric, +, textual)'):
+            with self.subTest(body=body):
+                analyser = Analyser()
+                analyser.analyse(parse(definitions + f'define wrapped => {body} end'))
+                self.assertTrue(analyser.diagnostics)
+                self.assertIn('no overloads', str(analyser.diagnostics[0]))
+
+    def test_concrete_combinators_reject_ambiguous_callbacks(self):
+        """Known inputs cannot resolve callbacks by declaration order."""
+        definitions = (
+            'define choose(a: Int, b: Int|String) -> Int => 10 end\n',
+            'define choose(a: Int|String, b: Int) -> String => "right" end\n',
+        )
+        calls = (
+            '1 2 fork: (choose, choose)',
+            '1 2 "held" dip: choose',
+            '1 2 peek: choose',
+            '1 2 3 4 both: choose',
+            '1 2 3 4 sequence: (choose, choose)',
+            '1 2 hook: (choose, +, choose)',
+            '1 2 call: choose',
+        )
+        for order in permutations(definitions):
+            for call in calls:
+                with self.subTest(order=order, call=call):
+                    analyser = Analyser()
+                    analyser.analyse(parse(''.join(order) + call))
+                    self.assertTrue(analyser.diagnostics)
+
     def test_contextual_modifier_cache_is_limited_to_one_call(self):
         """Repeated expected signatures reuse work without leaking across calls."""
         modifier = object()

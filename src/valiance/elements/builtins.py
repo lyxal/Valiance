@@ -1512,11 +1512,23 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
         else function_type
     )
     args = (*first.args, *second.args)
+    applications = tuple(
+        T.apply_overload(choice.overload, application.args)
+        for application in (first, second)
+    )
     return T.Overload(
         (*args, concrete_function_type),
         (*first.returns, *second.returns),
         call_site_body=arity * 2,
-        runtime_static_values=(arity,),
+        runtime_static_values=(
+            arity,
+            choice.overload.implementation_id,
+            tuple(
+                (application.vectorised, application.vectorised_depths,
+                 application.vectorised_target_ranks, application.runtime_static_values)
+                for application in applications
+            ),
+        ),
     )
 
 
@@ -1647,9 +1659,23 @@ def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     arity = int(ctx.static_values[0]) if ctx.static_values else len(values) // 2
     if arity < 0 or len(values) != arity * 2:
         raise RuntimeError("invalid both call-site arity metadata")
-    prepared = _prepared_runtime_call(ctx, callable_value, arity)
     lower = tuple(values[:arity])
     upper = tuple(values[arity:])
+    if (
+        len(ctx.static_values) > 1
+        and ctx.static_values[1] is not None
+        and ctx.call_overload is not None
+    ):
+        selected = ctx.static_values[1]
+        results: list[Any] = []
+        for group, plan in zip((lower, upper), ctx.static_values[2], strict=True):
+            vectorised, depths, targets, static_values = plan
+            results.extend(ctx.call_overload(
+                callable_value, list(group), selected, static_values,
+                vectorised, depths, targets,
+            ))
+        return tuple(results)
+    prepared = _prepared_runtime_call(ctx, callable_value, arity)
     if prepared is not None:
         return (*prepared(*lower), *prepared(*upper))
     return (

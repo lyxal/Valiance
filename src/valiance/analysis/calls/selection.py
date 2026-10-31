@@ -379,6 +379,11 @@ class _CallSelection:
                 self,
                 node.generic_args,
             )
+            if candidate is None or candidate.branch.inputs != source.branch.inputs:
+                variants = _calls._inferred_call_site_argument_variants(source)
+                if variants:
+                    candidates.extend(self.element_call_candidates(node, overloads, variants))
+                    continue
             if candidate is None:
                 candidate = _calls._apply_overload_via_unit_overlay(
                     node.name,

@@ -1559,6 +1559,16 @@ source-visible values or part of semantic type identity.
 It diagnoses no-match and ambiguous cases. During input inference, distinct
 specializations may deliberately survive as separate branches.
 
+Call-site checked combinators retain separate overloaded-callback alternatives
+when completing missing inputs. For example, inferring `fork: (sum, length)`
+keeps the `Int+`, `Real+`, and `Number+` input contracts; a concrete integer call
+can then choose the integer specialization without excluding later real calls.
+Concrete callable-value invocations retain the selected implementation identity
+and vectorisation plan through bytecode generation, including anonymous functions.
+`both` selects one callback overload that accepts both argument groups and
+records its identity plus each group's invocation plan. `sequence` instead
+selects its two callbacks independently.
+
 ### 5. Commit
 
 `commit_element_candidate(...)`:
