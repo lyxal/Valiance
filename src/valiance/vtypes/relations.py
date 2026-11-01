@@ -468,7 +468,10 @@ def implementation_pattern_evidence(
         else target
     )
     results: set[ImplementationEvidence] = set()
-    for provider in ctx.implementation_providers(source.name, unqualified_target.name):
+    for provider in (
+        ctx.implementation_providers(source.name, unqualified_target.name)
+        if not unqualified_target.args else ()
+    ):
         if requested_provider is None or provider == requested_provider:
             results.add(ImplementationEvidence((
                 ImplementationEdge(
@@ -518,7 +521,11 @@ def implementation_pattern_evidence(
                     implementation.provider,
                     implementation.subject_kind,
                 ))
-                if same(specialized_trait, unqualified_target):
+                if (
+                    specialized_trait.name == unqualified_target.name
+                    and len(specialized_trait.args) == len(unqualified_target.args)
+                    and _nominal_args_subtype(specialized_trait, unqualified_target, ctx)
+                ):
                     if requested_provider is None or implementation.provider == requested_provider:
                         results.add(ImplementationEvidence(specialized_edges))
                 item = (specialized_trait, specialized_edges)
@@ -681,7 +688,7 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return True
         if len(pattern_providers) > 1:
             return False
-        if ctx.implements(source.name, target.name):
+        if not target.args and ctx.implements(source.name, target.name):
             return True
         if target.name == ERR and _is_builtin_err(source):
             return True

@@ -5184,7 +5184,8 @@ class VirtualMachine:
                 value.implementation_lookup[proven_id] = overload
         else:
             overload = _selected_function_implementation(value, reference.implementation_id)
-        if reference.dispatch_kind & DispatchKind.UNION:
+        if reference.dispatch_kind & (DispatchKind.UNION | DispatchKind.MULTIMETHOD):
+            union_dispatch = bool(reference.dispatch_kind & DispatchKind.UNION)
             arity = len(overload.code.params)
             dispatch_value = OverloadedFunctionValue(
                 value.overloads,
@@ -5192,7 +5193,7 @@ class VirtualMachine:
                 implementation_lookup=dict(value.implementation_lookup),
             )
             if reference.vectorised:
-                args = _source_args(frame, arity, "union-dispatched vector call")
+                args = _source_args(frame, arity, "dispatched vector call")
                 extension = _materialize_vector_extension(self, reference.extension, frame)
                 dispatch_value = OverloadedFunctionValue(
                     tuple(_retain_runtime_reference(item) for item in value.overloads),
@@ -5203,6 +5204,7 @@ class VirtualMachine:
                     results = _vectorize_declared_callable(
                         self, dispatch_value, args, reference.vectorised_depths,
                         reference.vectorised_target_ranks, extension,
+                        fallback=None if union_dispatch else overload,
                     )
                 finally:
                     _release_runtime_vector_extension(extension, self)
@@ -5217,9 +5219,10 @@ class VirtualMachine:
                 args, _, _, _ = frame.source_args(arity)
             except _StackUnderflow:
                 args = ()
-            overload = _select_union_dispatch_overload(dispatch_value, tuple(args))
-        elif reference.dispatch_kind & DispatchKind.MULTIMETHOD:
-            overload = _select_multimethod_overload(value, overload, frame)
+            if union_dispatch:
+                overload = _select_union_dispatch_overload(dispatch_value, tuple(args))
+            else:
+                overload = _select_multimethod_for_args(value, overload, tuple(args))
         checked_witnesses = self._checked_call_witnesses(frame, reference)
         frame.stack.extend(reference.static_values)
         return self._call_function(
@@ -7777,17 +7780,13 @@ def _structural_projection_guards_hold(
             return False
     return True
 
-def _select_multimethod_overload(
+def _select_multimethod_for_args(
     value: OverloadedFunctionValue,
     fallback: FunctionValue,
-    frame: _Frame,
+    args: tuple[Any, ...],
 ) -> FunctionValue:
-    """Select multimethod overload during VM execution."""
+    """Select an authorized scalar specialization, retaining the static fallback."""
     arity = len(fallback.code.params)
-    try:
-        args, _, _, _ = frame.source_args(arity)
-    except _StackUnderflow:
-        return fallback
     matches: list[FunctionValue] = []
     for overload in value.overloads:
         if not overload.code.multi:
@@ -8841,6 +8840,8 @@ def _vectorize_declared_callable(
     depths: tuple[int, ...] = (),
     target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
+    *,
+    fallback: FunctionValue | None = None,
 ) -> tuple[Any, ...]:
     """Vectorize an overload set, applying compiled dispatch at scalar leaves."""
     ranks = callee.overloads[0].code.param_collection_ranks
@@ -8857,7 +8858,11 @@ def _vectorize_declared_callable(
         _context: RuntimeContext,
     ) -> tuple[Any, ...]:
         """Dispatch one scalar leaf without trying candidate bodies."""
-        return tuple(vm.call_value(callee, list(item_args)))
+        selected = (
+            _select_multimethod_for_args(callee, fallback, item_args)
+            if fallback is not None else callee
+        )
+        return tuple(vm.call_value(selected, list(item_args)))
 
     result = _vectorize_resolved_depths(
         implementation,

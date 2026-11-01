@@ -12,6 +12,29 @@ from valiance.vtypes.symbols import Symbol
 
 
 class TraitImplementationImportTests(unittest.TestCase):
+    def test_concrete_generic_trait_arguments_survive_import(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "sources.vlnc").write_text('''
+public trait[T] Source => extend read -> T end
+public object Box => $value: Int end
+object Box as Source[Int] => define read => $self.value end
+''', encoding="utf-8")
+            prelude = "import { sources.[Box, Source] }\n"
+            valid = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
+            typed = valid.analyse(parse(prelude + '''
+define accept(item: Source[Int]) -> Int => $item read end
+Box(7) accept
+'''))
+            self.assertEqual(valid.diagnostics, [])
+            self.assertEqual(run(loads(dumps(compile_program(typed)))), [7])
+            invalid = self.analyse(root, prelude + '''
+define accept(item: Source[String]) -> String => $item read end
+Box(7) accept
+''')
+            self.assertTrue(any("accept" in message for message in invalid.diagnostics),
+                            invalid.diagnostics)
+
     def analyse(self, root: Path, source: str) -> Analyser:
         analyser = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
         analyser.analyse(parse(source))

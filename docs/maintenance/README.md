@@ -107,6 +107,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   multi-task scenarios to their outcome-asserting regression tests.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
   useful inspection commands, and a practical fault-isolation workflow.
+  [Trait and variant semantic tests](../../tests/test_traits_and_variants.py)
+  cover requirement checking, defaults, inheritance, generic evidence, closed
+  matching, and dispatch through executable and serialized programs.
   Cross-layer vectorisation invariants and execution-mode parity are exercised in
   `tests/test_vectorisation_properties.py`. The portable FFI fixture compiler
   `tests/ffi_support.py` supports the native ABI integration tests on Windows,

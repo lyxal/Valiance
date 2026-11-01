@@ -2119,7 +2119,12 @@ class ReflectionMetadataTests(unittest.TestCase):
         env.define_object(a.name)
         env.define_object(resource.name, duplication_error='protected')
         env.define_trait(view.name, generics=(Symbol('T'),))
-        env.add_trait_impl(a.name, view.name)
+        env.add_trait_impl(
+            a.name, view.name, provider=Symbol('<local>'),
+            object_pattern=a, trait_pattern=N(view.name, Int),
+        )
+        self.assertTrue(assignable(a, N(view.name, Int), env.context))
+        self.assertFalse(assignable(a, N(view.name, resource), env.context))
         self.assertFalse(env.reflection_requires_unsafe(I(a, N(view.name, Int))))
         self.assertTrue(env.reflection_requires_unsafe(I(a, N(view.name, resource))))
         self.assertTrue(env.reflection_requires_unsafe(I(a, T.Row(a, Field(Symbol('hidden'), resource)))))

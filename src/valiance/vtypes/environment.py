@@ -803,7 +803,10 @@ class Environment:
                 ).add(provider)
         if provider is not None:
             if (
-                (generic_names or subject_kind == Symbol("trait"))
+                (
+                    generic_names or subject_kind == Symbol("trait")
+                    or isinstance(trait_pattern, NominalType) and trait_pattern.args
+                )
                 and object_pattern is not None
                 and trait_pattern is not None
             ):

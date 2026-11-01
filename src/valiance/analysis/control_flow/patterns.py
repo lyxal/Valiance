@@ -33,6 +33,7 @@ from valiance.asts import (
 from valiance.asts.nodes import GetVariableNode
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.relations import merge_stacks
+from valiance.vtypes.structural import nested_types
 
 from .. import analyser as _core
 from ..calls import callable_values as _functions
@@ -1179,7 +1180,7 @@ def _successful_pattern_subject_type(
     if isinstance(pattern, BindingPatternNode):
         return _successful_pattern_subject_type(pattern.pattern, subject_type, env)
     if isinstance(pattern, TypePatternNode):
-        return pattern.typ or subject_type
+        return _specialized_pattern_type(pattern.typ, subject_type, env)
     if isinstance(pattern, LiteralPatternNode):
         if isinstance(pattern.value, NumberLiteralNode):
             return T.Number
@@ -1198,6 +1199,31 @@ def _successful_pattern_subject_type(
     # Guards, expression patterns, and structural list patterns can constrain
     # values without proving a narrower type for the entire subject.
     return subject_type
+
+
+def _specialized_pattern_type(
+    pattern_type: T.Type | None,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> T.Type:
+    """Retain subject arguments when narrowing to an unparameterized member."""
+    if pattern_type is None:
+        return subject_type
+    pattern_type = T.normalize(pattern_type)
+    subject_type = T.normalize(subject_type)
+    if not isinstance(pattern_type, T.NominalType) or pattern_type.args:
+        return pattern_type
+    definition = _pattern_object_definition(pattern_type, subject_type, env)
+    if definition is None:
+        return pattern_type
+    parent = env.context.variant_members.get(definition.name)
+    subjects = subject_type.items if isinstance(subject_type, T.UnionType) else (subject_type,)
+    members = tuple(
+        T.N(definition.name, *subject.args)
+        for subject in subjects
+        if isinstance(subject, T.NominalType) and subject.name in {definition.name, parent}
+    )
+    return T.U(*members) if members else pattern_type
 
 
 def _fully_excluded_pattern_types(
@@ -1332,7 +1358,7 @@ def _pattern_binding_types(
         return result
     if isinstance(pattern, TypePatternNode):
         if pattern.name is not None:
-            add(pattern.name, pattern.typ or subject_type)
+            add(pattern.name, _specialized_pattern_type(pattern.typ, subject_type, env))
         field_types = _destructure_field_types(pattern, subject_type, env)
         for index, field in enumerate(pattern.fields):
             field_type = (
@@ -1585,7 +1611,13 @@ def _destructure_field_types(
     env: T.Environment,
 ) -> tuple[T.Type, ...]:
     """Return declared field types for a type pattern when they are known."""
-    pattern_type = None if pattern.typ is None else T.normalize(pattern.typ)
+    pattern_type = _specialized_pattern_type(pattern.typ, subject_type, env)
+    if isinstance(pattern_type, T.UnionType) and isinstance(pattern.typ, T.NominalType):
+        alternatives = tuple(
+            _destructure_field_types(replace(pattern, typ=item), item, env)
+            for item in pattern_type.items
+        )
+        return tuple(T.U(*fields) for fields in zip(*alternatives, strict=True))
     if (
         isinstance(pattern_type, T.NominalType)
         and pattern_type.name in {Symbol("Some"), Symbol("OK")}
@@ -1595,7 +1627,18 @@ def _destructure_field_types(
     definition = _pattern_object_definition(pattern.typ, subject_type, env)
     if definition is None:
         return ()
-    return tuple(attribute.typ for attribute in definition.attributes)
+    arguments = (
+        dict(zip(definition.generics, pattern_type.args, strict=False))
+        if isinstance(pattern_type, T.NominalType) else {}
+    )
+    return tuple(
+        T._substitute(attribute.typ, {
+            T.type_var_key(variable): arguments[Symbol(variable.name)]
+            for variable in nested_types(attribute.typ)
+            if isinstance(variable, T.VarType) and Symbol(variable.name) in arguments
+        })
+        for attribute in definition.attributes
+    )
 
 
 def _match_pattern_guards(

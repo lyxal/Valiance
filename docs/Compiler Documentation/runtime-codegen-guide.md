@@ -405,6 +405,11 @@ static overload resolution selected a non-`multi` fallback that has compatible
 `multi` specialisations. If static types already select the exact `multi`
 overload, codegen emits an ordinary resolved call with no runtime dispatch flag.
 
+An authorized multimethod call that vectorises selects its implementation at
+each scalar leaf. Each leaf checks the compiled specialization types and uses
+the statically selected fallback when none matches. Collection traversal retains
+the recorded vectorisation depths and broadcast parameters.
+
 Runtime checks may still be needed for values whose static type permits several
 runtime shapes that the signature alone does not disambiguate, such as whether
 a list is non-empty for `head`, or which case of an optional/Result union a

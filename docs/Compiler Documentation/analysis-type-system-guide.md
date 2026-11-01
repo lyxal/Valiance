@@ -1437,9 +1437,19 @@ explicit `break` values through typed code generation and bytecode execution.
 
 ### Match extraction inputs
 
+Narrowing a generic variant to an unparameterized member pattern retains the
+subject's generic arguments. Destructured fields and whole-value bindings use
+that specialized member type, including scoped generic variables and nested
+field types.
+
 Every match case is analysed with an empty physical case stack. Ordinary cases place their retained complete subjects in the branch's conceptual cycle. An `extract` case replaces those cycle parameters with the statically derived anonymous captures from its patterns. The body sources a cycle parameter only when an operation would otherwise underflow, so unused captures do not become inferred branch results. Named captures are block-local variables and do not also occupy anonymous cycle positions.
 
 ## Trait inheritance and structural requirements
+
+Trait assignability checks the complete implementation pattern, including
+generic arguments on concrete objects implementing parameterized traits.
+Name-only implementation relationships support discovery; they do not prove
+assignability to a particular generic instantiation.
 
 A declaration `trait Child as Parent` imports the parent's requirements into the
 child trait and makes parent default bodies available while checking child
