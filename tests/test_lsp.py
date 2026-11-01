@@ -53,7 +53,8 @@ class LanguageServerTests(unittest.TestCase):
         })
         completion = next(item["result"] for item in results if item.get("id") == 2)
         labels = {item["label"] for item in completion}
-        self.assertIn("std.text", labels)
+        self.assertIn("std.string", labels)
+        self.assertNotIn("std.text", labels)
         self.assertIn("std.random", labels)
         self.assertNotIn("println", labels)
         self.assertTrue(all(item["kind"] == 9 for item in completion))
@@ -504,12 +505,12 @@ class HoverEnhancementTests(unittest.TestCase):
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
-            source = 'import {std.text}\ntext.exclaim("a")'
-            hover = self.hover(main, source, 1, 6)
+            source = 'import {std.arithmetic}\narithmetic.square(3)'
+            hover = self.hover(main, source, 1, 13)
 
         value = hover["contents"]["value"]
-        self.assertIn("text.exclaim", value)
-        self.assertIn("exclamation", value.casefold())
+        self.assertIn("arithmetic.square", value)
+        self.assertIn("multiply", value.casefold())
         self.assertIn("**Example**", value)
         self.assertNotIn("@example", value)
 

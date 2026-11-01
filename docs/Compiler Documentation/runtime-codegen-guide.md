@@ -580,7 +580,7 @@ def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (Decimal(str(math.sin(float(args[0])))),)
 ```
 
-Example mixed stdlib module:
+Example mixed stdlib module (`std.example`):
 
 ```python
 @stdlib_element("trim", (T.String,), (T.String,), param_names=("value",))
@@ -590,7 +590,7 @@ def _trim(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 ```valiance
 public define exclaim(value: String) -> String =>
-  $value | std.text.trim | + "!"
+  $value | std.example.trim | + "!"
 end
 ```
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import valiance.vtypes as T
@@ -52,3 +53,24 @@ def _transliterate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
         raise RuntimeError("transliterate alphabets must have equal length")
     table = str.maketrans(source, target)
     return (value.translate(table),)
+
+
+@stdlib_element(
+    "quote", (T.String,), (T.String,), param_names=("value",),
+    documentation=element_documentation(
+        "Wrap a string in double quotes using JSON escaping.",
+        parameters=(("value", "String to quote."),),
+        returns="A complete JSON string token with non-ASCII characters escaped.",
+        examples=(('import {std.string} "hello" string.quote', '"hello"'),),
+        category="Strings",
+    ),
+)
+def _quote(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a quoted string with JSON escaping."""
+    del ctx
+    return (quote_string(args[0]),)
+
+
+def quote_string(value: str) -> str:
+    """Escape a complete JSON string token, including control codes and surrogates."""
+    return json.dumps(value, ensure_ascii=True)

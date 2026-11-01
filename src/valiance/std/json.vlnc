@@ -1,3 +1,5 @@
+import {std.string}
+
 #? JSON encoding for managed data and checked application-defined codecs.
 
 define managedCategory(category: String) -> #boolean Int =>
@@ -50,7 +52,7 @@ public define[T, FieldValue] encodeObject(value: T, encodeField: Function[FieldV
     $value fields foreach(field) =>
       if $field.visibility.name != "private" =>
         $text = $encodeField($value[$field]) ?
-        $parts := append($parts, std.json.quote($field.name) + ":" + $text)
+        $parts := append($parts, string.quote($field.name) + ":" + $text)
       end
     end
   end
@@ -84,7 +86,7 @@ public define[T] encodeDictionary(value: Dict[String, T], encodeValue: Function[
   $parts: String+ = []
   $value foreach(key, item) =>
     $text = $encodeValue($item) ?
-    $parts := append($parts, std.json.quote($key) + ":" + $text)
+    $parts := append($parts, string.quote($key) + ":" + $text)
   end
   "{" + join($parts, ",") + "}"
 end
@@ -126,7 +128,7 @@ public define[T] encode(value: T) -> Result[String, ValueError] =>
     $value fields foreach(field) =>
       if $field.visibility.name != "private" =>
         $text = encode($value[$field]) ?
-        $parts := append($parts, std.json.quote($field.name) + ":" + $text)
+        $parts := append($parts, string.quote($field.name) + ":" + $text)
       end
     end
   end

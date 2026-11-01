@@ -7883,13 +7883,31 @@ import { std.arithmetic }
         self.assertEqual(stack, [RuntimeNumber("25"), RuntimeNumber("27")])
 
     def test_executes_mixed_python_and_valiance_standard_library_module(self):
-        stack = execute("""
-import { std.text }
-"  hi  " text.trim
-"  hi  " text.exclaim
-""")
+        self.assertEqual(execute('import {std.json} json.encode("hi") ?!'), ['"hi"'])
 
-        self.assertEqual(stack, ["hi", "hi!"])
+    def test_standard_library_string_quote(self):
+        from valiance.std.string import quote_string
+
+        cases = (
+            ("", '\"\"'),
+            ("hello", '\"hello\"'),
+            ('a"b\\c', '\"a\\"b\\\\c\"'),
+            ("\n\t\r\b\f\x00\x1f", '\"\\n\\t\\r\\b\\f\\u0000\\u001f\"'),
+            ("\u96ea\U0001f600", '\"\\u96ea\\ud83d\\ude00\"'),
+            ("\ud800", '\"\\ud800\"'),
+            ("$value", '\"$value\"'),
+        )
+        for value, expected in cases:
+            with self.subTest(value=repr(value)):
+                self.assertEqual(quote_string(value), expected)
+        self.assertEqual(execute('import {std.string.quote} "hello" quote'), ['"hello"'])
+        self.assertEqual(execute('import {std.string} string.quote(value = "hi")'), ['"hi"'])
+        analyser = Analyser()
+        typed = analyser.analyse(parse('import {std.string} ["a", "b"] string.quote'))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed)
+        self.assertEqual(run(loads(dumps(program))), [['"a"', '"b"']])
+
 
     def test_compiler_requires_typed_nodes(self):
         with self.assertRaises(CompileError):
@@ -11049,6 +11067,22 @@ end
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "hello\n")
+
+    def test_string_quote_quine_prints_its_source(self):
+        source = 'import {std.string} println + string.quote dup "import {std.string} println + string.quote dup "'
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    executable = loads(dumps(program)) if serialized else program
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        stack = run(executable)
+                    self.assertEqual(stack, [])
+                    self.assertEqual(output.getvalue(), source + "\n")
 
     def test_println_formats_finite_lazy_range_as_full_list(self):
         output = io.StringIO()

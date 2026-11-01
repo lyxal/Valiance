@@ -210,8 +210,8 @@ class ReferenceDocumentationTests(unittest.TestCase):
 
         self.assertIn("std.regex.matches", qualified_names)
         self.assertIn("std.testing.assertEqual", qualified_names)
-        self.assertIn("std.text.trim", qualified_names)
-        self.assertIn("std.text.exclaim", qualified_names)
+        self.assertIn("std.string.quote", qualified_names)
+        self.assertFalse(any(name.startswith("std.text.") for name in qualified_names))
         self.assertIn("std.arithmetic.square", qualified_names)
         self.assertIn("std.trig.sin", qualified_names)
         self.assertIn("std.grids.allNeighbors", qualified_names)

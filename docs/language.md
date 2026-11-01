@@ -95,6 +95,7 @@ $brainrot = "6 7"
 - Unterminated string = lexer error.
 - Type = `String`
 - Strings can be mapped directly. Each function call receives a one-character `String`, and `map` returns a list of mapped values.
+- `import {std.string}` provides `string.quote(value)`, which wraps a string in double quotes using JSON escaping, including control characters and non-ASCII characters.
 - Common string helpers include:
   - `split(separator)`; an empty separator splits into individual characters.
   - `rotate(amount)`; positive amounts rotate left and negative amounts rotate right.
@@ -3724,8 +3725,8 @@ body ends.
 
 ```vlnc
 define format(value) => (
-  import {std.text.format}
-  format(value)       # available here
+  import {std.string.quote}
+  quote(value)        # available here
 )
 
 if condition then (

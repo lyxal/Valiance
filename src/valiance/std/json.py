@@ -14,14 +14,8 @@ from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import (
     FFIHandleValue, FFIScalarValue, FFIStructValue, LazyList, ObjectValue, RuntimeNumber, TaggedValue,
 )
+from valiance.std.string import quote_string
 from valiance.vtypes.symbols import Symbol
-
-
-@stdlib_element("quote", (T.String,), (T.String,), param_names=("value",), exported=False)
-def _quote(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Escape a complete JSON string token, including control codes and surrogates."""
-    del ctx
-    return (json.dumps(args[0], ensure_ascii=True),)
 
 
 @stdlib_element(
@@ -113,7 +107,7 @@ def _render_json_value(
                 for tag in expected.tags) and isinstance(value, (int, RuntimeNumber))):
             return "true" if bool(value) else "false"
     if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=True)
+        return quote_string(value)
     if isinstance(value, RuntimeNumber):
         if value.is_complex():
             raise _JsonEncodingError("JSON numbers must be real")
@@ -183,7 +177,7 @@ def _render_json_value(
                     raise _JsonEncodingError("Incomplete managed JSON storage")
                 expected_field = (_instantiate_json_type(_json_type(field_type), arguments)
                                   if field_type is not None else None)
-                parts.append(json.dumps(name, ensure_ascii=True) + ":" +
+                parts.append(quote_string(name) + ":" +
                              _render_json_value(value.fields[name], visiting, expected_field, native_encode))
             return "{" + ",".join(parts) + "}"
         finally:
@@ -216,7 +210,7 @@ def _render_json_value(
                                and expected.name.text == "Dict" and len(expected.args) == 2
                                else None)
             return "{" + ",".join(
-                json.dumps(key, ensure_ascii=True) + ":" +
+                quote_string(key) + ":" +
                 _render_json_value(item, visiting, dict_value_type, native_encode)
                 for key, item in value.items()
             ) + "}"
