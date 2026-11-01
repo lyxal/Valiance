@@ -53,9 +53,11 @@ The [reference workflow](../../.github/workflows/reference-docs.yml) runs on eve
 push, pull request, and manual dispatch using Python 3.14 and the frozen uv lock.
 It runs `tests.test_reference_docs`, generates all three formats, and attaches
 `language-reference-<commit SHA>` to the workflow run for 30 days. Download and
-extract the artifact, then open `index.html`. No Pages configuration is required.
-The workflow has read-only repository permissions and does not commit generated
-files. Build outputs remain under the ignored `build/` directory.
+extract the artifact, then open `index.html`. On branch pushes and manual branch
+runs, the workflow also commits generated files to `docs/reference/` and pushes
+them to that branch. Pull requests and tag pushes do not push changes. The
+repository must permit the workflow to write to the branch. Local builds default
+to the ignored `build/` directory.
 
 ### HTML presentation
 
