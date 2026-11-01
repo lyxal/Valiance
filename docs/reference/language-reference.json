@@ -15436,6 +15436,59 @@
       "examples": [
         {
           "description": null,
+          "result": "\"hello\"",
+          "source": "import {std.string} \"hello\" string.quote"
+        }
+      ],
+      "module": "std.string",
+      "name": "quote",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Strings",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "\"hello\"",
+              "source": "import {std.string} \"hello\" string.quote"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "String to quote.",
+              "name": "value"
+            }
+          ],
+          "returns": "A complete JSON string token with non-ASCII characters escaped.",
+          "see_also": [],
+          "summary": "Wrap a string in double quotes using JSON escaping."
+        }
+      ],
+      "overloads": [
+        "std.string.quote(value: String) -> String"
+      ],
+      "parameters": [
+        {
+          "description": "String to quote.",
+          "name": "value"
+        }
+      ],
+      "qualified_name": "std.string.quote",
+      "returns": "A complete JSON string token with non-ASCII characters escaped.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/string.py",
+      "summary": "Wrap a string in double quotes using JSON escaping."
+    },
+    {
+      "aliases": [],
+      "category": "Strings",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
           "result": "CAB",
           "source": "import {std.string} \"cab\" \"abc\" \"ABC\" string.transliterate"
         }
@@ -15725,116 +15778,6 @@
       "see_also": [],
       "source_path": "src/valiance/std/testing.py",
       "summary": "Fail the current test immediately."
-    },
-    {
-      "aliases": [],
-      "category": "Text",
-      "description": [
-        "Trim a string and append an exclamation mark."
-      ],
-      "examples": [
-        {
-          "description": null,
-          "result": null,
-          "source": "import {std.text} text.exclaim(\" hi \")"
-        }
-      ],
-      "module": "std.text",
-      "name": "exclaim",
-      "notes": [],
-      "overload_documentation": [
-        {
-          "category": "Text",
-          "description": [
-            "Trim a string and append an exclamation mark."
-          ],
-          "examples": [
-            {
-              "description": null,
-              "result": null,
-              "source": "import {std.text} text.exclaim(\" hi \")"
-            }
-          ],
-          "notes": [],
-          "parameters": [
-            {
-              "description": "String to transform.",
-              "name": "value"
-            }
-          ],
-          "returns": "The trimmed string followed by `!`.",
-          "see_also": [],
-          "summary": "Trim a string and append an exclamation mark."
-        }
-      ],
-      "overloads": [
-        "public define exclaim(value: String) -> String"
-      ],
-      "parameters": [
-        {
-          "description": "String to transform.",
-          "name": "value"
-        }
-      ],
-      "qualified_name": "std.text.exclaim",
-      "returns": "The trimmed string followed by `!`.",
-      "scope": "standard-library",
-      "see_also": [],
-      "source_path": "src/valiance/std/text.vlnc",
-      "summary": "Trim a string and append an exclamation mark."
-    },
-    {
-      "aliases": [],
-      "category": "Text",
-      "description": [],
-      "examples": [
-        {
-          "description": null,
-          "result": "hello",
-          "source": "import {std.text} \"  hello  \" text.trim"
-        }
-      ],
-      "module": "std.text",
-      "name": "trim",
-      "notes": [],
-      "overload_documentation": [
-        {
-          "category": "Text",
-          "description": [],
-          "examples": [
-            {
-              "description": null,
-              "result": "hello",
-              "source": "import {std.text} \"  hello  \" text.trim"
-            }
-          ],
-          "notes": [],
-          "parameters": [
-            {
-              "description": "String to trim.",
-              "name": "value"
-            }
-          ],
-          "returns": "The trimmed string.",
-          "see_also": [],
-          "summary": "Remove leading and trailing whitespace from a string."
-        }
-      ],
-      "overloads": [
-        "std.text.trim(value: String) -> String"
-      ],
-      "parameters": [
-        {
-          "description": "String to trim.",
-          "name": "value"
-        }
-      ],
-      "qualified_name": "std.text.trim",
-      "returns": "The trimmed string.",
-      "scope": "standard-library",
-      "see_also": [],
-      "source_path": "src/valiance/std/text.py",
-      "summary": "Remove leading and trailing whitespace from a string."
     },
     {
       "aliases": [],

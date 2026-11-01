@@ -10441,6 +10441,43 @@ Result:
 ABCDEFGHIJKLMNOPQRSTUVWXYZ
 ```
 
+### `std.string.quote`
+
+Wrap a string in double quotes using JSON escaping.
+
+**Overloads**
+
+- `std.string.quote(value: String) -> String`
+
+  **Example**
+
+  ```vlnc
+  import {std.string} "hello" string.quote
+  ```
+  Result:
+
+  ```text
+  "hello"
+  ```
+
+
+**Parameters**
+
+- `value` — String to quote.
+
+**Returns:** A complete JSON string token with non-ASCII characters escaped.
+
+**Example**
+
+```vlnc
+import {std.string} "hello" string.quote
+```
+Result:
+
+```text
+"hello"
+```
+
 ### `std.string.transliterate`
 
 Replace characters according to two positional alphabets.
@@ -10623,74 +10660,6 @@ Fail the current test immediately.
 import {std.testing} "unexpected result" testing.fail
 ```
 Stops the test with the supplied failure message.
-
-## std.text
-
-### `std.text.exclaim`
-
-Trim a string and append an exclamation mark.
-
-**Overloads**
-
-- `public define exclaim(value: String) -> String`
-
-  **Example**
-
-  ```vlnc
-  import {std.text} text.exclaim(" hi ")
-  ```
-
-
-Trim a string and append an exclamation mark.
-
-**Parameters**
-
-- `value` — String to transform.
-
-**Returns:** The trimmed string followed by `!`.
-
-**Example**
-
-```vlnc
-import {std.text} text.exclaim(" hi ")
-```
-
-### `std.text.trim`
-
-Remove leading and trailing whitespace from a string.
-
-**Overloads**
-
-- `std.text.trim(value: String) -> String`
-
-  **Example**
-
-  ```vlnc
-  import {std.text} "  hello  " text.trim
-  ```
-  Result:
-
-  ```text
-  hello
-  ```
-
-
-**Parameters**
-
-- `value` — String to trim.
-
-**Returns:** The trimmed string.
-
-**Example**
-
-```vlnc
-import {std.text} "  hello  " text.trim
-```
-Result:
-
-```text
-hello
-```
 
 ## std.trig
 
