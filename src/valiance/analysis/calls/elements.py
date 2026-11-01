@@ -18,6 +18,7 @@ from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
+from valiance.vtypes.relations import implementation_target_providers
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
 from valiance.analysis.lints import (
@@ -516,8 +517,14 @@ class _ElementCalls:
     ) -> tuple[T.Overload, ...]:
         """Add scalar trait contracts before ordinary vectorisation matching."""
         if not branch.stack:
-            return overloads
-        receiver = T.normalize(branch.stack[-1])
+            if not branch.cycle_params:
+                return overloads
+            sourced = branch.source_arguments(branch.cycle_params[:1])
+            if sourced is None:
+                return overloads
+            receiver = T.normalize(sourced[0][-1])
+        else:
+            receiver = T.normalize(branch.stack[-1])
         while isinstance(receiver, (T.CollectionType, T.TaggedType, T.ExactType)):
             receiver = T.normalize(
                 receiver.base if isinstance(receiver, T.CollectionType) else receiver.inner
@@ -533,7 +540,7 @@ class _ElementCalls:
             if not isinstance(trait_receiver, T.NominalType):
                 continue
             trait = self.env.lookup_trait(trait_receiver.name)
-            if trait is None and trait_receiver.name.namespace:
+            if (trait is None or not trait.requirements) and trait_receiver.name.namespace:
                 trait = self.env.lookup_trait(Symbol(trait_receiver.name.text))
             if trait is None:
                 continue
@@ -565,6 +572,11 @@ class _ElementCalls:
                     ),
                     param_names=(*requirement.overload.param_names, None),
                 )
+                defaults = self.env.overloads_for(Symbol(f"{trait.name}::{name}"))
+                default_ids = {overload.implementation_id for overload in defaults}
+                specialized = [overload for overload in specialized
+                               if not (overload.implementation_id in default_ids
+                                       and overload.params == contract.params)]
                 provider_name = (
                     Symbol(trait_receiver.name.namespace[-1])
                     if trait_receiver.name.namespace
@@ -580,26 +592,26 @@ class _ElementCalls:
                     and T.normalize(behaviour.trait_pattern).name.text
                     == trait_receiver.name.text
                 )
+                if provider_name is None and implementations:
+                    applicable = implementation_target_providers(trait_receiver, self.env.context)
+                    if len(applicable) == 1:
+                        provider_name = next(iter(applicable))
                 if provider_name is not None and implementations:
-                    provider_index = next(
-                        (
-                            index
-                            for index, behaviour in enumerate(implementations)
-                            if behaviour.provider == provider_name
-                        ),
-                        None,
-                    )
-                    if provider_index is not None and provider_index < len(specialized):
-                        # The trait-specific signature is an analysis-only view
-                        # of an imported concrete method. Keep its declaration
-                        # identity: its position is not a stable runtime link.
-                        original = specialized[provider_index]
-                        specialized[provider_index] = replace(
-                            contract,
-                            implementation_id=original.implementation_id,
-                            is_multi=original.is_multi,
-                        )
-                    else:
+                    provider_trait = (trait_receiver.name if trait_receiver.name.namespace
+                                      else Symbol(trait_receiver.name.text, (provider_name.text,)))
+                    qualified = self.env.overloads_for(Symbol(f"{provider_trait}::{name}"))
+                    if not qualified:
+                        qualified = self.env.overloads_for(Symbol(
+                            name.text, (*provider_trait.namespace, provider_trait.text)))
+                    for original in qualified:
+                        linked = replace(contract, implementation_id=original.implementation_id,
+                                         is_multi=original.is_multi)
+                        runtime_name = self.env.overload_runtime_name_for(
+                            Symbol(f"{provider_trait}::{name}"), original)
+                        if runtime_name is not None:
+                            self.env.bind_runtime_name(name, runtime_name, linked)
+                        specialized.append(linked)
+                    if not qualified:
                         specialized.append(contract)
                 else:
                     specialized.append(contract)

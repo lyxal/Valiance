@@ -1817,8 +1817,18 @@ that subtype relationship.
 A child trait accumulates the parent's structural requirements. Default methods
 are checked with receiver-specialized views of those requirements, then reused by
 concrete child implementations. Do not permanently register the temporary
-receiver-specialized overloads: environment overload ordering is also the basis
-for compiled runtime indexes.
+receiver-specialized overloads. Imported behavior calls link to declaration
+identities; overload position and import order are not runtime links.
+
+Default definitions contribute contracts for subsequent sibling calls and
+override validation. A blanket `trait Source as Target` implementation supplies
+behavior without adding new requirements to `Source`.
+
+Imported and re-exported implementation records retain their originating
+provider. A facade qualifier selects its explicitly re-exported provider set;
+multiple distinct providers remain ambiguous, while multiple paths to the same
+origin preserve one implementation identity. Selected type aliases apply to
+implementation patterns and method signatures as well as declarations.
 
 Conformance checks distinguish abstract requirements from inherited defaults. An
 object must provide every abstract operation somewhere in its implementation

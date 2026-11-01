@@ -383,7 +383,27 @@ class _ImportDeclarations:
             return
         kind = node.kind.text
         if kind == "trait":
-            self._define_trait_shape(obj.name, node)
+            if obj.name not in self.env.traits:
+                self._define_trait_shape(obj.name, node)
+            if obj.import_friendly:
+                self._register_imported_friendly_runtime_elements(obj.name, node.definitions)
+                bodies = dict(obj.typed.method_bodies) if isinstance(obj.typed, TypedObjectNode) else {}
+                identities = dict(obj.typed.method_ids) if isinstance(obj.typed, TypedObjectNode) else {}
+                for definition in node.definitions:
+                    records = dict(identities.get(definition.name.text, ()))
+                    location = definition.location.offset if definition.location is not None else None
+                    for _shape, identity in records.get(location, ()):
+                        checked = bodies.get(identity)
+                        if checked is None:
+                            continue
+                        for overload in self._selected_import_overloads(checked):
+                            overload = replace(overload, implementation_id=identity, is_multi=definition.is_multi)
+                            qualified = Symbol(f"{obj.name}::{definition.name.text}")
+                            runtime_method = Symbol(f"{obj.name}::{definition.name}")
+                            self.env.define_overload(definition.name, overload, object_friendly=True)
+                            self.env.define_overload(qualified, overload)
+                            self.env.bind_runtime_name(qualified, runtime_method, overload)
+                            self.env.bind_runtime_name(definition.name, runtime_method, overload)
             return
         if kind == "enum":
             value_type = T.V(node.generics[0].text) if node.generics else None

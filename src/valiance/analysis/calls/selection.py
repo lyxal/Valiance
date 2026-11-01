@@ -301,7 +301,8 @@ class _CallSelection:
             """Test strict declared-parameter specificity for otherwise identical candidates."""
             if (
                 left.branch != right.branch
-                or left.applied.params != right.applied.params
+                or left.source_arguments != right.source_arguments
+                or left.applied.vectorised_depths != right.applied.vectorised_depths
                 or len(left.applied.overload.params)
                 != len(right.applied.overload.params)
             ):
@@ -369,6 +370,12 @@ class _CallSelection:
         """Build viable typed candidates for an explicit element call."""
         candidates: list[CallCandidate] = []
         for source in sources:
+            if any(isinstance(T.normalize(arg), T.UnionType)
+                   and isinstance(T.normalize(param), T.AnonymousTraitType)
+                   for arg, param in zip(source.arguments, source.overload.params)):
+                # Every union branch needs its own checked implementation
+                # witness before entering a structural abstraction.
+                continue
             candidate = _calls._apply_overload_to_branch(
                 source.overload,
                 source.arguments,
@@ -463,6 +470,12 @@ class _CallSelection:
             and isinstance(arg.rank, int)
         )
         if vector_sources:
+            overloads = tuple(overload for overload in overloads if all(
+                not isinstance(T.normalize(overload.params[index]), T.NoVecType)
+                for index, _ in vector_sources
+            ))
+            if not overloads:
+                return None
             ranks = {arg.rank for _, arg in vector_sources}
             if len(ranks) != 1:
                 return None
@@ -485,7 +498,10 @@ class _CallSelection:
             return None
         declared_overloads = overloads
         specialization = None
-        if any(overload.specialize_body for overload in overloads):
+        if any(overload.specialize_body or any(
+            isinstance(T.normalize(param), T.AnonymousTraitType)
+            and isinstance(T.normalize(arg), T.UnionType)
+            for param, arg in zip(overload.params, scalar_args)) for overload in overloads):
             checked = self._checked_union_dispatch(node, overloads, scalar_args, source)
             if checked is None:
                 return None
@@ -602,7 +618,21 @@ class _CallSelection:
                 element_tags=applied.element_tags,
                 implementation_id=identity,
             ))
-            specializations.append((winner.implementation_id, winner.specialization, applied.runtime_static_values))
+            body = winner.specialization
+            if any(isinstance(T.normalize(param), T.AnonymousTraitType) for param in applied.params):
+                call = self.commit_element_candidate(ElementNode(node.name), overloads, winner)
+                if call is None:
+                    return None
+                signature = T.Fn(branch_args, applied.actual_returns)
+                names = tuple(Symbol(f"input{position}") for position in range(len(branch_args)))
+                function = FunctionNode(params=tuple(FunctionParam(name, typ)
+                                                     for name, typ in zip(names, branch_args)),
+                                        body=(), returns=applied.actual_returns)
+                body = TypedFunctionNode(function, signature, (FunctionOverloadTyping(
+                    signature, (call.typed_body[-1],),
+                    T.Overload(branch_args, applied.actual_returns, param_names=names,
+                               implementation_id=identity)),))
+            specializations.append((winner.implementation_id, body, applied.runtime_static_values))
             runtime_names.append(
                 None if node.name == Symbol("call")
                 else self.env.runtime_name_for(node.name, applied.overload)

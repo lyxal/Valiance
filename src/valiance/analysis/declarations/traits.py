@@ -246,6 +246,9 @@ class _TraitDeclarations:
                         self.env.object_friendly_overloads[name] = friendly
             return BranchSet((self._attach_method_results(current, node),))
 
+        if isinstance(node.target, T.NominalType) and node.target.name == node.name:
+            self._diagnose("trait inheritance cycle: a trait cannot inherit itself", node)
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         self._define_trait_shape(node.name, node)
         trait = self.env.lookup_trait(node.name)
         self_type = _utils._declared_nominal(node.name, node.generics)
@@ -294,6 +297,7 @@ class _TraitDeclarations:
                 branch.emit(TypedNode(node, None)),
                 node.name,
                 node.definitions,
+                owner_node=node,
             )
         finally:
             for name, (overloads, friendly) in snapshots.items():

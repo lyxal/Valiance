@@ -196,6 +196,7 @@ class _FunctionDeclarations:
             )
             declared_overload = replace(
                 declared_overload,
+                is_multi=node.is_multi,
                 implementation_id=declaration_id(
                     self.source_file, node.location, declared_overload
                 ),
@@ -252,7 +253,7 @@ class _FunctionDeclarations:
             declared_signature_node = replace(declared_signature_node, params=())
         declared_overload = _functions._fully_typed_overload(declared_signature_node)
         if declared_overload is not None:
-            declared_overload = replace(declared_overload, implementation_id=declaration_id(
+            declared_overload = replace(declared_overload, is_multi=node.is_multi, implementation_id=declaration_id(
                 self.source_file, node.location, declared_overload,
             ))
         owned_declarations = self._prescanned_definition_overloads.get(id(node), ())

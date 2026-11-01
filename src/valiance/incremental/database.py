@@ -156,11 +156,11 @@ class CompilationDatabase:
 
     def _invalidate(self,changed:set[Path])->frozenset[Path]:
         """Invalidate changed paths and every cached transitive importer."""
-        affected={p.resolve() for p in changed}; again=True
+        affected = set(self.module_loader.invalidate(changed))
+        again = True
         while again:
             again=False
             for importer,deps in self._imports.items():
                 if importer not in affected and deps & affected: affected.add(importer); again=True
         for p in affected: self._analyses.pop(p,None)
-        self.module_loader.invalidate(affected)
         return frozenset(affected)

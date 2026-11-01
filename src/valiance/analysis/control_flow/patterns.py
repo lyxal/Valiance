@@ -770,7 +770,7 @@ def _pattern_is_irrefutable(
         return False
     if pattern.typ is not None and not T.assignable(
         subject_type,
-        pattern.typ,
+        _specialized_pattern_type(pattern.typ, subject_type, env),
         env.context,
     ):
         return False
@@ -1213,6 +1213,11 @@ def _specialized_pattern_type(
     subject_type = T.normalize(subject_type)
     if not isinstance(pattern_type, T.NominalType) or pattern_type.args:
         return pattern_type
+    subjects = subject_type.items if isinstance(subject_type, T.UnionType) else (subject_type,)
+    wrappers = tuple(subject for subject in subjects if isinstance(subject, T.NominalType)
+                     and subject.name == pattern_type.name and subject.args)
+    if wrappers:
+        return T.U(*wrappers)
     definition = _pattern_object_definition(pattern_type, subject_type, env)
     if definition is None:
         return pattern_type
@@ -1224,6 +1229,30 @@ def _specialized_pattern_type(
         if isinstance(subject, T.NominalType) and subject.name in {definition.name, parent}
     )
     return T.U(*members) if members else pattern_type
+
+
+def _specialized_runtime_pattern(
+    pattern: MatchPatternNode, subject_type: T.Type, env: T.Environment,
+) -> MatchPatternNode:
+    """Carry inferred wrapper arguments into runtime pattern checks."""
+    if isinstance(pattern, (ExtractPatternNode, BindingPatternNode)):
+        return replace(pattern, pattern=_specialized_runtime_pattern(pattern.pattern, subject_type, env))
+    if isinstance(pattern, OrPatternNode):
+        return replace(pattern, options=tuple(_specialized_runtime_pattern(item, subject_type, env)
+                                              for item in pattern.options))
+    if isinstance(pattern, TypePatternNode):
+        field_types = _destructure_field_types(pattern, subject_type, env)
+        fields = tuple(_specialized_runtime_pattern(item, typ, env)
+                       for item, typ in zip(pattern.fields, field_types, strict=False))
+        return replace(pattern, typ=(None if pattern.typ is None else
+                                     _specialized_pattern_type(pattern.typ, subject_type, env)),
+                       fields=fields if len(fields) == len(pattern.fields) else pattern.fields)
+    if isinstance(pattern, ListPatternNode):
+        item_type = T.collection_item_type(subject_type)
+        if item_type is not None:
+            return replace(pattern, items=tuple(_specialized_runtime_pattern(item, item_type, env)
+                                                for item in pattern.items))
+    return pattern
 
 
 def _fully_excluded_pattern_types(

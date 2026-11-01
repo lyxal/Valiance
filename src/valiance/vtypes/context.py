@@ -94,6 +94,7 @@ class Context:
     structural_overloads: dict[Symbol, list[Overload]] = field(
         default_factory=dict[Symbol, list[Overload]]
     )
+    trait_provider_aliases: dict[Symbol, set[Symbol]] = field(default_factory=dict)
 
     def copy(self) -> Context:
         """Return an independent copy of the currently visible type facts."""
@@ -106,6 +107,7 @@ class Context:
                 for key, providers in self.trait_impl_providers.items()
             },
             trait_impl_patterns=list(self.trait_impl_patterns),
+            trait_provider_aliases={name: set(providers) for name, providers in self.trait_provider_aliases.items()},
             trait_impl_behaviours=list(self.trait_impl_behaviours),
             trait_parents={
                 name: set(parents) for name, parents in self.trait_parents.items()

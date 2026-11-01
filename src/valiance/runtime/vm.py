@@ -4170,7 +4170,22 @@ class VirtualMachine:
                                     else 1
                                     for pattern in patterns
                                 )
-                                _release_stack_tail(frame.stack, consumed, self)
+                                # A successful pattern transfers its subjects
+                                # into the case scope. Bindings and cycling are
+                                # observations of those owners.
+                                subjects = frame.stack[-consumed:] if consumed else ()
+                                if consumed:
+                                    del frame.stack[-consumed:]
+                                for index, subject in enumerate(subjects):
+                                    owner = f"\x00match_{ip}_{index}"
+                                    previous = frame.locals.get(owner)
+                                    if previous is not None and _needs_release(previous):
+                                        _release_value(previous, self)
+                                    frame.locals[owner] = subject
+                                bindings = {name: _readonly_access(_borrow_named_access(value))
+                                            for name, value in bindings.items()}
+                                values = tuple(_readonly_access(_borrow_named_access(value))
+                                               for value in values)
                                 frame.locals.update(bindings)
                                 frame.cycle_scopes.append(
                                     (
@@ -4610,7 +4625,8 @@ class VirtualMachine:
                                     )
                             _release_value(channel, self)
                         case OpCode.CHANNEL_RECEIVE:
-                            channel = _pop(frame.stack, "channel receive")
+                            channel_access = _pop(frame.stack, "channel receive")
+                            channel = unwrap_runtime_value(channel_access)
                             if not isinstance(channel, Channel):
                                 raise RuntimeError("channel receive requires a channel handle")
                             if instruction_budget is not None:
@@ -4622,7 +4638,7 @@ class VirtualMachine:
                                     self.scheduler.schedule(owner)
                                 result = channel.register_receive(wake_receive)
                                 if isinstance(result, ChannelReceiver):
-                                    frame.stack.append(channel)
+                                    frame.stack.append(channel_access)
                                     event = _ActivationChannelReceive(
                                         channel, result, wake_receive, instruction.arg
                                     )
@@ -4638,7 +4654,7 @@ class VirtualMachine:
                                         "because resumable channel suspension is not implemented yet"
                                     )
                             frame.stack.append(result)
-                            _release_value(channel, self)
+                            _release_value(channel_access, self)
                         case OpCode.CHANNEL_CLOSE:
                             channel = _pop(frame.stack, "channel close")
                             if not isinstance(channel, Channel):
@@ -4714,6 +4730,11 @@ class VirtualMachine:
             if local_name is not None:
                 frame.locals.pop(local_name)
                 result[index] = _replace_access(value, owned)
+            elif id(owned) in _owned_argument_values(tuple(
+                    local for name, local in frame.locals.items()
+                    if _borrowed_payload(local) is None
+                    and (name in frame.retained_locals or frame.globals.get(name) is not local))):
+                result[index] = _materialize_access(value)
         self._release_frame_locals(frame)
         return result
 
@@ -5139,6 +5160,7 @@ class VirtualMachine:
                     results = _vectorize_declared_callable(
                         self, value, args, reference.vectorised_depths,
                         reference.vectorised_target_ranks, extension,
+                        nominal_trait=True,
                     )
                 finally:
                     _release_runtime_vector_extension(extension, self)
@@ -5149,7 +5171,7 @@ class VirtualMachine:
                 frame.stack.extend(results)
                 return None
             args, _, _, _ = frame.source_args(arity)
-            overload = _select_declared_dispatch_overload(value, tuple(args))
+            overload = _select_declared_dispatch_overload(value, tuple(args), nominal_trait=True)
             return self._call_resolved_function_value(
                 overload, frame, replace(reference, dispatch_kind=DispatchKind.STATIC),
             )
@@ -5491,6 +5513,9 @@ class VirtualMachine:
         frame.cycle_stack_remaining = next_cycle_stack_remaining
         # Build occurrence-local trait views. The caller's object is unchanged;
         # forwarding and returning this argument retains its checked dictionary.
+        cycle_count = arity - stack_count
+        if cycle_count:
+            args = tuple(_readonly_access(_borrow_named_access(arg)) for arg in args[:cycle_count]) + args[cycle_count:]
         if checked_witnesses:
             converted = list(args)
             for index, proof in checked_witnesses:
@@ -6424,9 +6449,11 @@ def _bind_global_function_declaration(
             # Top-level overload sets are open.  A function compiled earlier
             # must observe later implementations added to the same global
             # element name, not retain the first singleton value it captured.
-            overload.globals[name] = globals_[name]
+            if name not in overload.owned_names:
+                overload.globals[name] = globals_[name]
         for overload in _function_overloads(value):
-            overload.globals[existing_name] = globals_[existing_name]
+            if existing_name not in overload.owned_names:
+                overload.globals[existing_name] = globals_[existing_name]
 
 
 def _bind_recursive_value(value: Any, name: str) -> None:
@@ -7320,6 +7347,8 @@ def _function_overloads(
 def _select_declared_dispatch_overload(
     value: OverloadedFunctionValue,
     args: tuple[Any, ...],
+    *,
+    nominal_trait: bool = False,
 ) -> FunctionValue:
     """Apply compiled overload dispatch types without speculative execution."""
     matches = tuple(
@@ -7329,6 +7358,15 @@ def _select_declared_dispatch_overload(
         and overload.code.dispatch_types
         and _runtime_multimethod_types_match(args, overload.code.dispatch_types)
     )
+    if not matches and nominal_trait:
+        matches = tuple(
+            overload for overload in value.overloads
+            if len(overload.code.params) == len(args) and overload.code.dispatch_types
+            and all(
+                expected is None or _runtime_argument_type_matches(argument, expected, constraints=True)
+                for argument, expected in zip(args, overload.code.dispatch_types, strict=True)
+            )
+        )
     if not matches:
         raise RuntimeError(
             "cannot dispatch overloaded function for runtime types "
@@ -7413,6 +7451,8 @@ def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
         )
     if pattern.kind == "union":
         return any(_runtime_pattern_matches(value, item) for item in pattern.children)
+    if pattern.kind == "intersection":
+        return all(_runtime_pattern_matches(value, item) for item in pattern.children)
     if pattern.kind == "none":
         return isinstance(value, ObjectValue) and value.type_name == "None"
     if pattern.kind == "tuple":
@@ -7571,6 +7611,11 @@ def _parse_runtime_type_pattern(
                 _parse_runtime_type_pattern(part, type_facts) for part in union_parts
             ),
         )
+    intersection_parts = _split_runtime_type_args(text, "&")
+    if len(intersection_parts) > 1 and all(intersection_parts):
+        return RuntimeTypePattern("intersection", children=tuple(
+            _parse_runtime_type_pattern(part, type_facts) for part in intersection_parts
+        ))
     bracket = text.find("[")
     if bracket < 0 or not text.endswith("]"):
         accepted, variance_markers = _runtime_type_fact(text, type_facts)
@@ -7793,7 +7838,7 @@ def _select_multimethod_for_args(
             continue
         if len(overload.code.params) != arity:
             continue
-        if _runtime_multimethod_types_match(args, overload.code.dispatch_types):
+        if _runtime_multimethod_types_match(args, overload.code.dispatch_types, trait_constraints=True):
             matches.append(overload)
     if len(matches) == 1:
         return matches[0]
@@ -7808,6 +7853,8 @@ def _select_multimethod_for_args(
 def _runtime_multimethod_types_match(
     args: tuple[Any, ...],
     dispatch_types: tuple[str | None, ...],
+    *,
+    trait_constraints: bool = False,
 ) -> bool:
     """Return the Boolean result of runtime multimethod types match during virtual-machine execution."""
     if len(args) != len(dispatch_types) or not any(
@@ -7815,16 +7862,19 @@ def _runtime_multimethod_types_match(
     ):
         return False
     return all(
-        expected is None or _runtime_argument_type_matches(arg, expected)
+        expected is None or _runtime_argument_type_matches(arg, expected, constraints=trait_constraints)
         for arg, expected in zip(args, dispatch_types, strict=True)
     )
 
 
-def _runtime_argument_type_matches(value: Any, expected: str) -> bool:
+def _runtime_argument_type_matches(value: Any, expected: str, *, constraints: bool = False) -> bool:
     """Return the Boolean result of runtime argument type matches during virtual-machine execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, ObjectValue) and value.type_name == expected:
         return True
+    if constraints:
+        facts = value.runtime_type.type_facts if isinstance(value, ObjectValue) and value.runtime_type is not None else ()
+        return _runtime_pattern_matches(value, _parse_runtime_type_pattern(expected, facts))
     return _runtime_type_name(value) == expected
 
 
@@ -8842,6 +8892,7 @@ def _vectorize_declared_callable(
     extension: _RuntimeVectorExtension | None = None,
     *,
     fallback: FunctionValue | None = None,
+    nominal_trait: bool = False,
 ) -> tuple[Any, ...]:
     """Vectorize an overload set, applying compiled dispatch at scalar leaves."""
     ranks = callee.overloads[0].code.param_collection_ranks
@@ -8860,7 +8911,9 @@ def _vectorize_declared_callable(
         """Dispatch one scalar leaf without trying candidate bodies."""
         selected = (
             _select_multimethod_for_args(callee, fallback, item_args)
-            if fallback is not None else callee
+            if fallback is not None else
+            _select_declared_dispatch_overload(callee, item_args, nominal_trait=True)
+            if nominal_trait else callee
         )
         return tuple(vm.call_value(selected, list(item_args)))
 
@@ -8870,7 +8923,7 @@ def _vectorize_declared_callable(
         context,
         depths,
         extension,
-        stop_at_zero=True,
+        stop_at_zero=not nominal_trait,
     )
     return _bind_lazy_result_owners((*args, callee, *_extension_owned_values(extension)), result)
 
@@ -8890,6 +8943,15 @@ def _vectorize_function(
         _function_return_multiplicity(callee.code),
     )
     kernel = ScalarKernel.from_prepared(prepared)
+    if prepared.strategy == "general":
+        scalar = kernel
+
+        def invoke_borrowed(item_args: tuple[Any, ...]) -> tuple[Any, ...]:
+            """Keep vector-owned inputs alive across interpreted scalar calls."""
+            borrowed = tuple(_readonly_access(_borrow_named_access(arg)) for arg in item_args)
+            return tuple(_materialize_access(value) for value in scalar.invoke(borrowed))
+
+        kernel = ScalarKernel(scalar.arity, scalar.multiplicity, invoke_borrowed)
 
     def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
         """Execute one statically shaped scalar item call."""
@@ -9394,6 +9456,13 @@ def _matches_cast_type(
         # Optional and Result success values may use their documented raw
         # representation.  Explicit wrappers retain their inferred type args;
         # raw values are checked directly against the success payload.
+        if (name in {"Some", "OK"} and len(expected_args) == 1
+                and isinstance(unwrapped, ObjectValue) and unwrapped.type_name == name
+                and "value" in unwrapped.fields):
+            return _runtime_pattern_matches(
+                unwrapped.fields["value"],
+                _parse_runtime_type_pattern(expected_args[0], type_facts),
+            )
         if (
             name == "Some"
             and len(expected_args) == 1
@@ -9403,7 +9472,6 @@ def _matches_cast_type(
         ):
             return (
                 not _is_none_result_value(unwrapped)
-                and len(expected_args) == 1
                 and _runtime_pattern_matches(
                     unwrapped,
                     _parse_runtime_type_pattern(expected_args[0], type_facts),

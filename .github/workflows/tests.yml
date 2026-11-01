@@ -2,7 +2,10 @@ name: Tests
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *'
 
 permissions:
   contents: read
@@ -20,4 +23,19 @@ jobs:
       - name: Install project dependencies
         run: uv sync --frozen
       - name: Run test suite
+        timeout-minutes: 15
         run: uv run --frozen python -m unittest discover -s tests -v
+      - name: Run isolated trait P0 oracles
+        timeout-minutes: 15
+        if: always() && github.event_name != 'schedule'
+        run: uv run --frozen python -m tools.trait_plan --priority P0 --report trait-plan-results.json
+      - name: Run complete isolated trait plan
+        timeout-minutes: 30
+        if: always() && github.event_name == 'schedule'
+        run: uv run --frozen python -m tools.trait_plan --report trait-plan-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trait-plan-results
+          path: trait-plan-results.json
+          if-no-files-found: ignore

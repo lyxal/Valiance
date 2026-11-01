@@ -1463,6 +1463,14 @@ constraints use the same structural requirement machinery. The generic `find`
 example relies on a requirement for `===(T, T) -> #boolean Number`; the selected
 built-in equality overload is then available inside the generic body.
 
+Default definitions expose contracts for calls from sibling defaults and for
+checking overrides. Blanket implementations supply behavior without adding
+requirements to their source trait. Imported calls preserve implementation and
+provider identities through aliases and re-exports; distinct applicable providers
+remain ambiguous. Union arguments entering an anonymous trait abstraction use
+separately checked branch bodies so each branch carries its own structural
+witnesses.
+
 ## Data Tags
 
 Tags are represented by `DataTag`:

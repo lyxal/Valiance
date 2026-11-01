@@ -136,6 +136,16 @@ class _ObjectDeclarations:
         if not self._validate_object_lifecycle(node):
             return BranchSet((branch.emit(TypedNode(node, None)),))
         if node.target is not None:
+            target = T.normalize(node.target)
+            if not isinstance(target, T.NominalType) or self.env.lookup_trait(target.name) is None:
+                self._diagnose("trait implementation target must be a named trait", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            if self.env.lookup_object(node.name) is None:
+                self._diagnose(f"object '{node.name}' needs a base definition before a trait implementation", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            if constructor_definitions(node.name, node.definitions):
+                self._diagnose("trait implementation blocks cannot define a constructor", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
             if node.fields:
                 self._diagnose(
                     "trait implementation blocks cannot declare fields",
@@ -970,7 +980,7 @@ class _ObjectDeclarations:
             )
             if not any(
                 self._trait_requirement_implementation_compatible(
-                    implementation, required
+                    implementation, required, receiver_index=receiver_index
                 )
                 for implementation in implementations
             ):
@@ -1066,9 +1076,14 @@ class _ObjectDeclarations:
         self,
         implementation: T.Overload,
         requirement: T.Overload,
+        *,
+        receiver_index: int = 0,
     ) -> bool:
         """Check contravariant inputs and covariant results for one requirement."""
-        implemented_params = implementation.params[1:]
+        implemented_params = tuple(
+            param for index, param in enumerate(implementation.params)
+            if index != receiver_index
+        )
         if len(implemented_params) != len(requirement.params):
             return False
         if len(implementation.returns) != len(requirement.returns):
@@ -1112,4 +1127,19 @@ class _ObjectDeclarations:
                     if implementation_ids is not None else None
                 ),
             )
+            if (owner_node is not None and owner_node.kind == Symbol("trait")
+                    and owner_node.target is None):
+                trait = self.env.lookup_trait(owner)
+                if trait is not None and not any(item.name == definition.name for item in trait.requirements):
+                    receiver = next(iter(definition.function.explicit_receiver_indices), 0)
+                    contracts = tuple(
+                        T.TraitRequirement(definition.name, replace(
+                            overload,
+                            params=tuple(param for index, param in enumerate(overload.params) if index != receiver),
+                            param_names=tuple(param for index, param in enumerate(overload.param_names) if index != receiver),
+                            implementation_id=None,
+                        ))
+                        for overload in self.env.overloads_for(full_name)
+                    )
+                    self.env.traits[owner] = replace(trait, requirements=(*trait.requirements, *contracts))
         return current

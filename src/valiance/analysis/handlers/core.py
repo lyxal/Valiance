@@ -1462,10 +1462,12 @@ def _import_node(
                     )
         provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
         for implementation in trait_implementations:
+            origin = implementation.provider or provider
+            self.env.context.trait_provider_aliases.setdefault(provider, set()).add(origin)
             self.env.add_trait_impl(
                 implementation.object_name,
                 implementation.trait_name,
-                provider=provider,
+                provider=origin,
                 object_pattern=implementation.object_pattern,
                 trait_pattern=implementation.trait_pattern,
                 generic_names=implementation.generics,
@@ -1480,7 +1482,7 @@ def _import_node(
                 self.env.add_trait_impl_behaviour(
                     implementation.object_pattern,
                     implementation.trait_pattern,
-                    provider,
+                    origin,
                     implementation.subject_kind,
                     implementation.definitions,
                 )
@@ -1493,7 +1495,8 @@ def _import_node(
             self._imported_namespace_exports[namespace_name] = exports
         reexport = node.public and self._scope_depth == 0
         if reexport:
-            self._public_import_trait_implementations.extend(trait_implementations)
+            self._public_import_trait_implementations.extend(
+                replace(implementation, reexported=True) for implementation in trait_implementations)
             self._public_import_objects.extend(
                 replace(
                     obj,

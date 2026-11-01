@@ -7,6 +7,13 @@ discarding subtype-specific data even when refinement concerns an unrelated
 type. Cover branch/loop refinement and nested returns so code generation keeps
 checked operations instead of rebuilding them from raw AST syntax.
 
+Imported object and trait methods also carry checked expressions in
+`TypedObjectNode.method_bodies`. Renaming and re-export helpers must preserve
+these alongside `method_ids` and `method_results`. Dropping a checked body can
+hide return-arity errors because raw lowering lacks the analysed multiplicity;
+methods that intentionally return several values need explicit return types or
+`@returnAll`.
+
 When working on anonymous record reflection, preserve `RecordType` through type
 rebuilders. It represents the complete literal storage in declaration order;
 `RowType` only expresses required properties and can omit physical fields.

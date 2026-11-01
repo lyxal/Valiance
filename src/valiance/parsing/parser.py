@@ -926,6 +926,8 @@ class Parser:
                 )
             name = self._qualified_symbol(name_token)
         target = self.parse_type_expression() if self._match_ident("as") else None
+        if kind == "trait" and target is None and any(generic_constraints):
+            self._error("trait declarations allow only generic names; put constraints on typed uses")
         self._expect(TokenKind.FAT_ARROW)
         if kind == "enum":
             enum_members = self._enum_body()

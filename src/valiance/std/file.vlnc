@@ -26,31 +26,31 @@ public object ReadFile =>
     $self.handle = std.file.nativeOpenRead($path, $encoding)
   end
 
-  public define readLine =>
+  @returnAll public define readLine =>
     std.file.nativeReadLine($self.handle)
     $self
     swap
   end
 
-  public define readLines =>
+  @returnAll public define readLines =>
     std.file.nativeReadLines($self.handle)
     $self
     swap
   end
 
-  public define readText =>
+  @returnAll public define readText =>
     std.file.nativeReadText($self.handle)
     $self
     swap
   end
 
-  public define readBytes(count: Int) =>
+  @returnAll public define readBytes(count: Int) =>
     std.file.nativeReadBytes($self.handle, $count)
     $self
     swap
   end
 
-  public define readAllBytes =>
+  @returnAll public define readAllBytes =>
     std.file.nativeReadAllBytes($self.handle)
     $self
     swap

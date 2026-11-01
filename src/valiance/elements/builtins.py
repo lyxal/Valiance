@@ -1323,12 +1323,14 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
 def _callable_applications(
     typ: T.Type,
     args: tuple[T.Type, ...],
+    ctx: T.Context | None = None,
 ) -> Iterator[_ConcreteCallableApplication]:
     """Yield all applications for built-ins that filter callable candidates."""
     for overload in _callable_overloads(typ):
         application = T.apply_overload_to_stack(
             overload,
             T.TypeStack(args),
+            ctx,
         )
         if application is None:
             continue
@@ -1384,6 +1386,7 @@ def _completed_call_site_stack(
 def _choose_shared_call_site_applications(
     stack: tuple[T.Type, ...],
     callable_types: tuple[T.Type, ...],
+    ctx: T.Context | None = None,
 ) -> _CallSiteApplications | None:
     """Choose independent overloads while refining one shared stack suffix."""
     shared_args = stack
@@ -1391,7 +1394,7 @@ def _choose_shared_call_site_applications(
     expected: tuple[T.Type, ...] = ()
 
     for callable_type in callable_types:
-        choice = T.choose_best_overload(callable_type, T.TypeStack(shared_args))
+        choice = T.choose_best_overload(callable_type, T.TypeStack(shared_args), ctx)
         if choice is None:
             return None
         application = _concrete_callable_application(shared_args, choice)
@@ -1419,20 +1422,20 @@ def _choose_shared_call_site_applications(
     for callable_type, previous in zip(callable_types, selected, strict=True):
         callable_arity = len(previous.overload.params)
         callable_args = shared_args[-callable_arity:] if callable_arity else ()
-        choice = T.choose_best_overload(callable_type, T.TypeStack(callable_args))
+        choice = T.choose_best_overload(callable_type, T.TypeStack(callable_args), ctx)
         if choice is None:
             return None
         applications.append(_concrete_callable_application(callable_args, choice))
     return _CallSiteApplications(shared_args, tuple(applications))
 
 
-def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _peek_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Type-check peek while preserving every inspected outer-stack value."""
     if not call_params:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
-    choice = T.choose_best_overload(function_type, T.TypeStack(stack))
+    choice = T.choose_best_overload(function_type, T.TypeStack(stack), ctx)
     if choice is None:
         return None
     application = _concrete_callable_application(stack, choice)
@@ -1443,7 +1446,7 @@ def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _dip_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Type-check dip with one held value above an inferable argument group."""
     if len(call_params) < 2:
         return None
@@ -1451,7 +1454,7 @@ def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     stack = call_params[:-1]
     held = stack[-1]
     callable_stack = stack[:-1]
-    choice = T.choose_best_overload(function_type, T.TypeStack(callable_stack))
+    choice = T.choose_best_overload(function_type, T.TypeStack(callable_stack), ctx)
     if choice is None:
         return None
     application = _concrete_callable_application(callable_stack, choice)
@@ -1462,14 +1465,14 @@ def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _fork_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Type-check two callables against one centrally completed shared suffix."""
     if len(call_params) < 2:
         return None
     callable_types = call_params[-2:]
     group = _choose_shared_call_site_applications(
         call_params[:-2],
-        callable_types,
+        callable_types, ctx,
     )
     if group is None:
         return None
@@ -1481,7 +1484,7 @@ def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _both_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Type-check one callable against two completed consecutive groups."""
     if not call_params:
         return None
@@ -1500,7 +1503,7 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
 
     choice = T.choose_best_overload(
         function_type,
-        (T.TypeStack(first_stack), T.TypeStack(second_stack)),
+        (T.TypeStack(first_stack), T.TypeStack(second_stack)), ctx,
     )
     if choice is None:
         return None
@@ -1513,7 +1516,7 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
     args = (*first.args, *second.args)
     applications = tuple(
-        T.apply_overload(choice.overload, application.args)
+        T.apply_overload(choice.overload, application.args, ctx)
         for application in (first, second)
     )
     return T.Overload(
@@ -1532,14 +1535,14 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _hook_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _hook_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Type-check shared callables followed by one result-combining callable."""
     if len(call_params) < 3:
         return None
     f_type, combine_type, g_type = call_params[-3:]
     group = _choose_shared_call_site_applications(
         call_params[:-3],
-        (f_type, g_type),
+        (f_type, g_type), ctx,
     )
     if group is None:
         return None
@@ -1577,14 +1580,14 @@ def _hook_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _sequence_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Type-check two callables against completed consecutive input groups."""
     if len(call_params) < 2:
         return None
     lower_type, upper_type = call_params[-2:]
     stack = call_params[:-2]
 
-    upper_choice = T.choose_best_overload(upper_type, T.TypeStack(stack))
+    upper_choice = T.choose_best_overload(upper_type, T.TypeStack(stack), ctx)
     if upper_choice is None:
         return None
     upper_arity = len(upper_choice.overload.params)
@@ -1593,7 +1596,7 @@ def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     remaining = stack[:-upper_count] if upper_count else stack
     upper = _concrete_callable_application(upper_stack, upper_choice)
 
-    lower_choice = T.choose_best_overload(lower_type, T.TypeStack(remaining))
+    lower_choice = T.choose_best_overload(lower_type, T.TypeStack(remaining), ctx)
     if lower_choice is None:
         return None
     lower_arity = len(lower_choice.overload.params)
@@ -1610,13 +1613,13 @@ def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _call_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Invoke a callable against a centrally completed argument group."""
     if not call_params:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
-    choice = T.choose_best_overload(function_type, T.TypeStack(stack))
+    choice = T.choose_best_overload(function_type, T.TypeStack(stack), ctx)
     if choice is None:
         return None
     application = _concrete_callable_application(stack, choice)
@@ -1627,7 +1630,7 @@ def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     )
 
 
-def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _eager_map_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None = None) -> T.Overload | None:
     """Compute eager map call site for the built-in catalogue and runtime."""
     if len(call_params) != 2:
         return None
@@ -1635,7 +1638,7 @@ def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     item_type = T.collection_item_type(list_type)
     if item_type is None:
         return None
-    for application in _callable_applications(function_type, (item_type,)):
+    for application in _callable_applications(function_type, (item_type,), ctx):
         if application.returns:
             continue
         if EAGER_TAG not in application.concrete_type.element_tags:

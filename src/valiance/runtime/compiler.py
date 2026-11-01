@@ -1407,6 +1407,7 @@ class _Compiler:
                             result_signature_types=(method_results or {}).get(identity, ()),
                             owner_generics=tuple(generic.text for generic in node.generics),
                             checked_function=(method_bodies or {}).get(identity),
+                            variant_dispatch=True,
                         )
             case "variant":
                 required_names = {requirement.name for requirement in node.requirements}
@@ -1573,28 +1574,30 @@ class _Compiler:
             show(param.typ) if param.typ is not None else "Any"
             for index, param in enumerate(function.params)
         )
-        if runtime_definition_name not in self._runtime_elements():
-            code = _compile_function_value(
-                checked_function or node, runtime_definition_name,
-                signature_types=signature_types,
-                result_signature_types=result_signature_types,
-                implementation_id=implementation_id,
-                generic_type_parameters=tuple(generic.text for generic in definition.generics),
-            )
-            self.emit(
-                OpCode.MAKE_FUNCTION,
-                replace(
-                    code,
-                    multi=True,
-                    dispatch_types=(
-                        tuple(owner if index == receiver_index else None
-                              for index in range(len(function.params)))
-                        if variant_dispatch
-                        else ()
-                    ),
+        method_binding = (f"\x00methods::{runtime_definition_name}"
+                          if runtime_definition_name in self._runtime_elements()
+                          else runtime_definition_name)
+        code = _compile_function_value(
+            checked_function or node, runtime_definition_name,
+            signature_types=signature_types,
+            result_signature_types=result_signature_types,
+            implementation_id=implementation_id,
+            generic_type_parameters=tuple(generic.text for generic in definition.generics),
+        )
+        self.emit(
+            OpCode.MAKE_FUNCTION,
+            replace(
+                code,
+                multi=True,
+                dispatch_types=(
+                    tuple(owner if index == receiver_index else None
+                          for index in range(len(function.params)))
+                    if variant_dispatch
+                    else ()
                 ),
-            )
-            self.emit(OpCode.STORE_VAR, runtime_definition_name)
+            ),
+        )
+        self.emit(OpCode.STORE_VAR, method_binding)
         self.emit(
             OpCode.MAKE_FUNCTION,
             _compile_function_value(
@@ -2846,6 +2849,10 @@ def _runtime_dispatch_type(typ: Type) -> str | None:
         return _runtime_dispatch_type(typ.inner)
     if isinstance(typ, NominalType):
         return show(typ)
+    if isinstance(typ, (UnionType, IntersectionType)) and all(
+        _runtime_dispatch_type(item) is not None for item in typ.items
+    ):
+        return show(typ)
     return None
 
 
@@ -3208,13 +3215,9 @@ def _resolved_element_reference(
     if not isinstance(ast, ElementNode):
         return None
     source_runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
-    if node.implementation_id is None and (
-        not (
-            node.overload.overload.is_structural_requirement
-            or node.overload.overload.is_multi
-        )
-        or source_runtime_name in elements
-    ):
+    if (node.implementation_id is None
+            and not node.overload.overload.is_structural_requirement
+            and not node.overload.overload.is_multi):
         return None
     runtime_name = _symbol_runtime_name(
         node.runtime_name if node.runtime_name is not None else ast.name
@@ -3268,6 +3271,8 @@ def _resolved_element_reference(
             else ()
         )
     nominal_trait = node.implementation_id is None and node.overload.overload.is_multi
+    if nominal_trait and source_runtime_name in elements:
+        runtime_name = f"\x00methods::{source_runtime_name}"
     multidispatch = bool(node.overload.multidispatch and not nominal_trait)
     union_dispatch_plan = (
         node.overload.union_dispatch_plan.branches

@@ -85,6 +85,8 @@ class ModuleTraitImplementation:
     method_results: tuple[tuple[str, tuple[str, ...]], ...] = ()
     method_ids: tuple[tuple[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]], ...] = ()
     method_bodies: tuple[tuple[str, TypedFunctionNode], ...] = ()
+    provider: Symbol | None = None
+    reexported: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,7 +143,8 @@ def collect_module_exports(
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
         _deduplicate(
-            _module_trait_implementations(program, typed)
+            tuple(replace(item, provider=Symbol(module_name.rsplit(".", 1)[-1]))
+                  for item in _module_trait_implementations(program, typed))
             + analyser.public_import_trait_implementations
         ),
     )
@@ -178,6 +181,7 @@ class ModuleLoader:
     _implementation_hashes: dict[Path, str] = field(default_factory=dict)
     _dependency_hashes: dict[Path, dict[str, str]] = field(default_factory=dict)
     _dependency_implementation_hashes: dict[Path, dict[str, str]] = field(default_factory=dict)
+    _dependency_sources: dict[Path, set[Path]] = field(default_factory=dict)
     _loading: set[Path] = field(default_factory=set)
     _loading_stack: list[Path] = field(default_factory=list)
     _provisional: dict[Path, ModuleExports] = field(default_factory=dict)
@@ -214,6 +218,10 @@ class ModuleLoader:
         compiled_file = source_file.with_suffix(".vbcm")
         native_exports = _native_std_exports(path)
         cache_key = source_file if self._exists(source_file) else compiled_file
+        if current_file is not None:
+            self._dependency_sources.setdefault(current_file.resolve(), set()).update(
+                (source_file.resolve(), compiled_file.resolve())
+            )
         if cache_key in self._cache:
             exports = self._cache[cache_key]
             self._record_dependency(current_file, path, cache_key)
@@ -378,10 +386,16 @@ class ModuleLoader:
         source = self._read_bytes(source_file).decode("utf-8")
         program = parse(source)
         definitions: list[ModuleDefinition] = []
+        objects: list[ModuleObject] = []
         incomplete: list[DefineNode] = []
         from valiance.analysis.calls.callable_values import _fully_typed_overload
 
         for node in program:
+            if (isinstance(node, ObjectNode) and node.kind == Symbol("trait")
+                    and node.target is None and node.visibility == Symbol("public")
+                    and not node.definitions):
+                objects.append(ModuleObject(node.name, TypedObjectNode(node, T.N(node.name)), public=True))
+                continue
             if not isinstance(node, DefineNode) or node.visibility != Symbol("public"):
                 continue
             overload = _fully_typed_overload(node.function)
@@ -420,7 +434,7 @@ class ModuleLoader:
                 "cross-module recursive declarations require complete parameter "
                 f"and return signatures; cycle {cycle}; incomplete: {declarations}"
             )
-        exports = ModuleExports(_module_name(path), definitions=tuple(definitions))
+        exports = ModuleExports(_module_name(path), definitions=tuple(definitions), objects=tuple(objects))
         from valiance.runtime.compiled_module import interface_hash
 
         self._interface_hashes[cache_key] = interface_hash(exports)
@@ -429,11 +443,22 @@ class ModuleLoader:
 
     def invalidate(self, source_files: object) -> frozenset[Path]:
         """Invalidate selected source interfaces without clearing unrelated cache entries."""
-        paths={Path(item).resolve() for item in source_files}
+        paths = {Path(item).resolve() for item in source_files}
+        while True:
+            expanded = paths | {requester for requester, dependencies in self._dependency_sources.items()
+                                if dependencies & paths}
+            if expanded == paths:
+                break
+            paths = expanded
         for path in paths:
-            for key in (path,path.with_suffix(".vbcm")):
-                self._cache.pop(key,None); self._interface_hashes.pop(key,None); self._implementation_hashes.pop(key,None); self._provisional.pop(key,None)
-            self._dependency_hashes.pop(path,None); self._dependency_implementation_hashes.pop(path,None)
+            for key in (path, path.with_suffix(".vbcm")):
+                self._cache.pop(key, None)
+                self._interface_hashes.pop(key, None)
+                self._implementation_hashes.pop(key, None)
+                self._provisional.pop(key, None)
+            self._dependency_hashes.pop(path, None)
+            self._dependency_implementation_hashes.pop(path, None)
+            self._dependency_sources.pop(path, None)
         return frozenset(paths)
 
     def dependency_hashes_for(self, source_file: Path) -> tuple[tuple[str, str], ...]:
@@ -471,6 +496,7 @@ class ModuleLoader:
         if current_file is None or cache_key not in self._interface_hashes:
             return
         requester = current_file.resolve()
+        self._dependency_sources.setdefault(requester, set()).add(cache_key.resolve())
         identity = canonical_dependency_identity(path)
         self._dependency_hashes.setdefault(requester, {})[identity] = self._interface_hashes[
             cache_key
@@ -661,7 +687,9 @@ def import_objects(
                     ),
                 )
             )
-        return tuple(selected)
+        renames = {component.name: component.alias for component in spec.components
+                   if component.kind is None and component.alias is not None}
+        return tuple(_rename_imported_types(obj, renames) for obj in selected)
 
     namespace = spec.alias or Symbol(exports.module_name.rsplit(".", 1)[-1])
     return tuple(
@@ -967,6 +995,8 @@ def import_behaviour_set_objects(
     objects_by_name = {obj.name: obj for obj in exports.objects}
     provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
     selected = []
+    renames = {component.name: component.alias for component in spec.components
+               if component.kind is None and component.alias is not None}
 
     def implementation_surface(
         implementation: ModuleTraitImplementation,
@@ -1009,7 +1039,7 @@ def import_behaviour_set_objects(
         implementation_object = replace(
             obj,
             typed=TypedObjectNode(
-                replace(implementation_node, definitions=definitions),
+                replace(implementation_node, definitions=definitions, target=None),
                 obj.typed.typ,
                 tuple(result_metadata.items()),
                 tuple(identity_metadata.items()),
@@ -1019,36 +1049,33 @@ def import_behaviour_set_objects(
         )
         if qualified:
             surface = Symbol(implementation.trait_name.text, (provider.text,))
+            target = objects_by_name.get(implementation.trait_name)
+            qualified_object = implementation_object
+            if target is not None and implementation.subject_kind == Symbol("trait"):
+                qualified_object = replace(implementation_object, typed=replace(
+                    implementation_object.typed,
+                    node=replace(implementation_object.typed.node,
+                                 requirements=target.typed.node.requirements),
+                ))
             selected.append(
                 _renamed_object(
-                    implementation_object,
+                    qualified_object,
                     surface,
                     friendly_prefix=surface,
                     import_friendly=True,
                 )
             )
         selected.append(
-            _renamed_object(
+            _rename_imported_types(_renamed_object(
                 implementation_object,
-                implementation.object_name,
+                renames.get(implementation.object_name, implementation.object_name),
                 import_friendly=True,
-            )
+            ), renames)
         )
 
     for component in spec.components:
         if component.kind == Symbol("trait_impl"):
-            implementation = next(
-                (
-                    item
-                    for item in exports.trait_implementations
-                    if item.object_name == component.name
-                    and item.trait_name == component.trait
-                    and item.subject_kind
-                    == (component.subject_kind or Symbol("object"))
-                ),
-                None,
-            )
-            if implementation is not None and implementation.public:
+            for implementation in import_trait_implementations(exports, replace(spec, components=(component,))):
                 implementation_surface(implementation, qualified=True)
             continue
 
@@ -1056,9 +1083,10 @@ def import_behaviour_set_objects(
             continue
         for implementation in exports.trait_implementations:
             if (
-                implementation.object_name == component.name
-                and implementation.subject_kind == Symbol("object")
-                and implementation.owned
+                (implementation.object_name == component.name
+                 and implementation.subject_kind == Symbol("object") and implementation.owned
+                 or implementation.reexported
+                 and component.name in {implementation.object_name, implementation.trait_name})
                 and implementation.public
             ):
                 implementation_surface(implementation, qualified=False)
@@ -1077,9 +1105,16 @@ def import_owned_trait_implementations(
             continue
         selected.extend(
             item for item in exports.trait_implementations
-            if item.owned and item.public and item.object_name == component.name
+            if item.public and (
+                item.owned and item.object_name == component.name
+                or item.reexported and component.name in {item.object_name, item.trait_name})
         )
-    return tuple(selected)
+    renames = {component.name: component.alias for component in spec.components
+               if component.kind is None and component.alias is not None}
+    return _deduplicate(tuple(replace(_rename_imported_types(item, renames),
+                                    object_name=renames.get(item.object_name, item.object_name),
+                                    trait_name=renames.get(item.trait_name, item.trait_name))
+                              for item in selected))
 
 
 def import_trait_implementations(
@@ -1091,27 +1126,17 @@ def import_trait_implementations(
     for component in spec.components:
         if component.kind != Symbol("trait_impl"):
             continue
-        match = next(
-            (
-                impl for impl in exports.trait_implementations
-                if impl.object_name == component.name
-                and impl.trait_name == component.trait
-                and impl.subject_kind == (component.subject_kind or Symbol("object"))
-            ),
-            None,
-        )
-        if match is None:
-            raise ModuleLoadError(
-                f"module {exports.module_name!r} defines no implementation "
-                f"of trait {component.trait} for object {component.name}"
-            )
-        if not match.public:
-            raise ModuleLoadError(
-                f"module {exports.module_name!r} defines an implementation "
-                f"of trait {component.trait} for object {component.name}, "
-                "but that implementation is not public"
-            )
-        selected.append(match)
+        matches = tuple(impl for impl in exports.trait_implementations
+                        if impl.object_name == component.name and impl.trait_name == component.trait
+                        and impl.subject_kind == (component.subject_kind or Symbol("object")))
+        if not matches:
+            raise ModuleLoadError(f"module {exports.module_name!r} defines no implementation "
+                                  f"of trait {component.trait} for object {component.name}")
+        if not all(match.public for match in matches):
+            raise ModuleLoadError(f"module {exports.module_name!r} defines an implementation "
+                                  f"of trait {component.trait} for object {component.name}, "
+                                  "but that implementation is not public")
+        selected.extend(matches)
     return tuple(selected)
 
 
@@ -1233,12 +1258,29 @@ def _renamed_object(
             renamed, obj.typed.typ,
             obj.typed.method_results if isinstance(obj.typed, TypedObjectNode) else (),
             obj.typed.method_ids if isinstance(obj.typed, TypedObjectNode) else (),
+            method_bodies=obj.typed.method_bodies if isinstance(obj.typed, TypedObjectNode) else (),
         ),
         obj.public,
         definitions,
         import_friendly,
         renamed_private_friendly_definitions,
     )
+
+
+def _rename_imported_types(value, renames: dict[Symbol, Symbol]):
+    """Apply selected nominal aliases consistently to imported signatures."""
+    if not renames:
+        return value
+    if isinstance(value, T.NominalType) and value.name in renames:
+        value = replace(value, name=renames[value.name])
+    if is_dataclass(value):
+        return replace(value, **{item.name: _rename_imported_types(getattr(value, item.name), renames)
+                                 for item in fields(value) if item.init})
+    if isinstance(value, tuple):
+        return tuple(_rename_imported_types(item, renames) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_rename_imported_types(item, renames) for item in value)
+    return value
 
 
 def _qualify_provider_enum_references(

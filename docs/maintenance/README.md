@@ -110,6 +110,8 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   [Trait and variant semantic tests](../../tests/test_traits_and_variants.py)
   cover requirement checking, defaults, inheritance, generic evidence, closed
   matching, and dispatch through executable and serialized programs.
+  [Numbered trait hardening](trait-hardening.md) describes the 306 active
+  plan oracles, explicit retirements, isolated runner, and CI reports.
   Cross-layer vectorisation invariants and execution-mode parity are exercised in
   `tests/test_vectorisation_properties.py`. The portable FFI fixture compiler
   `tests/ffi_support.py` supports the native ABI integration tests on Windows,

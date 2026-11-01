@@ -472,7 +472,7 @@ def implementation_pattern_evidence(
         ctx.implementation_providers(source.name, unqualified_target.name)
         if not unqualified_target.args else ()
     ):
-        if requested_provider is None or provider == requested_provider:
+        if requested_provider is None or provider in ctx.trait_provider_aliases.get(requested_provider, {requested_provider}):
             results.add(ImplementationEvidence((
                 ImplementationEdge(
                     source,
@@ -526,7 +526,7 @@ def implementation_pattern_evidence(
                     and len(specialized_trait.args) == len(unqualified_target.args)
                     and _nominal_args_subtype(specialized_trait, unqualified_target, ctx)
                 ):
-                    if requested_provider is None or implementation.provider == requested_provider:
+                    if requested_provider is None or implementation.provider in ctx.trait_provider_aliases.get(requested_provider, {requested_provider}):
                         results.add(ImplementationEvidence(specialized_edges))
                 item = (specialized_trait, specialized_edges)
                 if item not in seen_evidence:
@@ -592,6 +592,20 @@ def implementation_evidence_definitions(
         if definition is not None:
             selected.append((edge, definition))
     return tuple(selected)
+
+
+def implementation_target_providers(target: Type, ctx: Context) -> frozenset[Symbol]:
+    """Find providers compatible with the arguments of an erased trait view."""
+    target = normalize(target)
+    if not isinstance(target, NominalType):
+        return frozenset()
+    target = NominalType(Symbol(target.name.text), target.args)
+    providers = set()
+    for implementation in ctx.trait_impl_patterns:
+        substitution = _implementation_substitution(implementation.trait_pattern, target, ctx)
+        if substitution is not None and _implementation_constraints_hold(implementation, substitution, ctx):
+            providers.add(implementation.provider)
+    return frozenset(providers)
 
 
 def implementation_pattern_providers(

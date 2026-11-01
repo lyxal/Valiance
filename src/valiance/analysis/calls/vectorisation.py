@@ -239,7 +239,7 @@ def _call_site_checked_overload_signature(
                     call_site_body=len(stack),
                 )
             return None
-        return overload.call_site_body(call_params)
+        return overload.call_site_body(call_params, ctx)
     if overload.call_site_body is not None and analyser is not None:
         outer, node = overload.call_site_body
         analysis = analyser._analyse_function_at_call_site(

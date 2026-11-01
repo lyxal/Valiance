@@ -289,6 +289,7 @@ class _MatchAnalysis:
             all(count == 1 for count in arities) for arities in case_pattern_arities
         )
         previous_patterns: list[tuple[MatchPatternNode, ...]] = []
+        runtime_cases = []
         for case_index, case in enumerate(node.cases):
             pattern_arities = case_pattern_arities[case_index]
             simple_coordinates = all_simple_coordinates and all(count == 1 for count in pattern_arities)
@@ -300,9 +301,11 @@ class _MatchAnalysis:
                 else body_input.variables
             )
             exposed_types: list[T.Type] = []
+            runtime_patterns = []
             coordinate = 0
             for pattern, consumed in zip(case.patterns, pattern_arities, strict=True):
                 segment = subject_types[coordinate:coordinate + consumed]
+                runtime_patterns.append(_patterns._specialized_runtime_pattern(pattern, segment[0], self.env))
                 coordinate += consumed
                 try:
                     exposed = self._pattern_exposed_types(pattern, segment)
@@ -312,6 +315,7 @@ class _MatchAnalysis:
                 exposed_types.extend(exposed)
                 for name, typ in self._extract_named_regex_captures(pattern):
                     case_variables = case_variables.with_block_local(name, typ)
+            runtime_cases.append(replace(case, patterns=tuple(runtime_patterns)))
             if subject_variables and simple_coordinates:
                 case_variables = _patterns._refine_match_subject_variables(
                     case_variables, subject_variables, case.patterns, subject_types,
@@ -343,7 +347,7 @@ class _MatchAnalysis:
             return BranchSet()
         joined = joined.with_traces(*(pattern_traces or ()))
         return BranchSet((joined.emit(TypedMatchNode(
-            node, _calls._returns_result_type(joined.stack.items),
+            replace(node, cases=tuple(runtime_cases)), _calls._returns_result_type(joined.stack.items),
             case_bodies=tuple(typed_case_bodies),
             case_guards=tuple(analysed_guards),
             case_pattern_arities=tuple(case_pattern_arities),
