@@ -1401,6 +1401,9 @@ class _Compiler:
                             owner_generics=tuple(generic.text for generic in node.generics),
                             checked_function=(method_bodies or {}).get(identity),
                             variant_dispatch=(node.target is not None or definition.is_multi),
+                            owner_constraints=_runtime_generic_constraint_guards(
+                                node.generics, node.generic_constraints,
+                            ),
                         )
             case "trait":
                 runtime_name = _symbol_runtime_name(node.name)
@@ -1414,6 +1417,9 @@ class _Compiler:
                             owner_generics=tuple(generic.text for generic in node.generics),
                             checked_function=(method_bodies or {}).get(identity),
                             variant_dispatch=True,
+                            owner_constraints=_runtime_generic_constraint_guards(
+                                node.generics, node.generic_constraints,
+                            ),
                         )
             case "variant":
                 required_names = {requirement.name for requirement in node.requirements}
@@ -1537,6 +1543,7 @@ class _Compiler:
         result_signature_types: tuple[str, ...] = (),
         implementation_id: str | None = None,
         checked_function: TypedFunctionNode | None = None,
+        owner_constraints: tuple[tuple[str, str], ...] = (),
     ) -> None:
         """Compile and store an object-friendly element implementation."""
         receiver_indices = definition.function.explicit_receiver_indices
@@ -1580,6 +1587,10 @@ class _Compiler:
             show(param.typ) if param.typ is not None else "Any"
             for index, param in enumerate(function.params)
         )
+        dispatch_bounds = (
+            ((receiver_index, owner, owner_constraints),)
+            if variant_dispatch and owner_constraints else ()
+        )
         method_binding = (f"\x00methods::{runtime_definition_name}"
                           if runtime_definition_name in self._runtime_elements()
                           else runtime_definition_name)
@@ -1601,18 +1612,22 @@ class _Compiler:
                     if variant_dispatch
                     else ()
                 ),
+                dispatch_bounds=dispatch_bounds,
             ),
         )
         self.emit(OpCode.STORE_VAR, method_binding)
         self.emit(
             OpCode.MAKE_FUNCTION,
-            _compile_function_value(
-                checked_function or node,
-                f"{owner}::{runtime_definition_name}",
-                signature_types=signature_types,
-                result_signature_types=result_signature_types,
-                implementation_id=implementation_id,
-                generic_type_parameters=tuple(generic.text for generic in definition.generics),
+            replace(
+                _compile_function_value(
+                    checked_function or node,
+                    f"{owner}::{runtime_definition_name}",
+                    signature_types=signature_types,
+                    result_signature_types=result_signature_types,
+                    implementation_id=implementation_id,
+                    generic_type_parameters=tuple(generic.text for generic in definition.generics),
+                ),
+                dispatch_bounds=dispatch_bounds,
             ),
         )
         self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")

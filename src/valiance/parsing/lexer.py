@@ -369,9 +369,9 @@ class _Lexer:
     def _starts_number(self) -> bool:
         """Return the Boolean result of starts number while tokenizing Valiance source."""
         char = self._peek()
-        if char.isdigit():
+        if "0" <= char <= "9":
             return True
-        return char == "-" and self._peek(1).isdigit()
+        return char == "-" and "0" <= self._peek(1) <= "9"
 
     def _number(self) -> None:
         """Scan number while tokenizing Valiance source."""
@@ -383,7 +383,7 @@ class _Lexer:
             self._exponent()
         if self._peek() == "i":
             self._advance()
-            if self._peek() in {"+", "-"} or self._peek().isdigit():
+            if self._peek() in {"+", "-"} or "0" <= self._peek() <= "9":
                 if self._peek() in {"+", "-"}:
                     self._advance()
                 self._number_part()
@@ -394,8 +394,13 @@ class _Lexer:
         # This is a common source of bugs in many programming languages, so we want to catch it early.
 
         number_str = self.source[offset : self.index]
-        if number_str.startswith("0") and len(number_str) > 1 and number_str[1] != ".":
-            self._fail("numbers cannot have leading 0s", line, col)
+        # Check the *integer component* of each complex mantissa, not the
+        # whole token: 0e2 and 0i1 are legal; -01 and 0i01 are not.
+        for part in number_str.split("i"):
+            mantissa = part.lstrip("+-").split("e", 1)[0].split("E", 1)[0]
+            integer_part = mantissa.split(".", 1)[0]
+            if len(integer_part) > 1 and integer_part.startswith("0"):
+                self._fail("numbers cannot have leading 0s", line, col)
 
         self.tokens.append(
             Token(
@@ -409,11 +414,11 @@ class _Lexer:
 
     def _number_part(self) -> None:
         """Scan number part while tokenizing Valiance source."""
-        while self._peek().isdigit():
+        while "0" <= self._peek() <= "9":
             self._advance()
-        if self._peek() == "." and self._peek(1).isdigit():
+        if self._peek() == "." and "0" <= self._peek(1) <= "9":
             self._advance()
-            while self._peek().isdigit():
+            while "0" <= self._peek() <= "9":
                 self._advance()
 
     def _exponent(self) -> None:
@@ -421,7 +426,7 @@ class _Lexer:
         self._advance()
         if self._peek() in {"+", "-"}:
             self._advance()
-        if not self._peek().isdigit():
+        if not "0" <= self._peek() <= "9":
             self._fail("expected exponent digits")
             if self.recover:
                 return

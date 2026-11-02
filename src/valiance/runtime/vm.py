@@ -1290,6 +1290,7 @@ class VirtualMachine:
                     f"invalid bytecode: {body_error}", body_error
                 ) from body_error
             raise body_error
+        _enable_host_fault_boundary(result)
         return result
 
     def call(
@@ -6715,7 +6716,21 @@ def _list_ownership_is_trivial(value: list[Any]) -> bool:
         cached = value._ownership_trivial
         if cached is not None:
             return cached
-    trivial = not any(_needs_release(item) for item in value)
+    # Plain Python list containers may have arbitrarily deep eager nesting.
+    # Only ListValue owns itself; an ordinary list owns its descendants.
+    pending = [iter(value)]
+    trivial = True
+    while pending:
+        try:
+            item = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        if type(item) is list:
+            pending.append(iter(item))
+        elif _needs_release(item):
+            trivial = False
+            break
     if isinstance(value, ListValue):
         value._ownership_trivial = trivial
     return trivial
@@ -6738,96 +6753,97 @@ def _check_duplication_allowed(
     context: _DuplicationContext | None = None,
 ) -> None:
     """Reject a semantic duplicate before any runtime references are retained."""
-    if isinstance(value, _BorrowedValue):
-        # Materialising a borrow is a *new* owned occurrence. Ordinary values
-        # may be copied, but the underlying @nodup policy still applies.
-        _check_duplication_allowed(value.value, context)
-        return
-    if isinstance(value, TaggedValue):
-        _check_duplication_allowed(value.value, context)
-        return
-    if isinstance(value, Receive):
-        if not value.closed:
-            _check_duplication_allowed(value.value, context)
-        return
-    if isinstance(value, ObjectValue):
-        if value.ownership_transferred:
-            raise RuntimeError(
-                f"use after ownership transfer of {object_type_name(value)}"
-            )
-        if value.destroyed:
-            raise RuntimeError(f"use after destruction of {object_type_name(value)}")
-        if value.destructor_borrowed:
-            raise RuntimeError(
-                f"cannot retain borrowed destructor receiver "
-                f"{object_type_name(value)}"
-            )
-        if isinstance(value, UninitValue):
-            for item in value.fields.values():
-                _check_duplication_allowed(item, context)
-        if isinstance(value, DynamicValue):
-            # A dynamic box must never hide a transitive @nodup payload from
-            # the runtime ownership gate when a source program duplicates it.
-            _check_duplication_allowed(value.fields["#value"], context)
-        if (
-            value.runtime_type is not None
-            and value.runtime_type.dup_error is not None
-            and value.refcount >= 1
-        ):
-            reason = value.runtime_type.dup_error
-            if context is not None:
-                type_name = object_type_name(value)
-                if context.operation == "storage":
-                    reason = (
-                        f"cannot store the value of '${context.source}' in "
-                        f"'${context.destination}'\n\n"
-                        f"The assignment would create an additional occurrence of "
-                        f"{type_name}.\n\n{reason}"
-                    )
-                elif context.operation == "aggregate":
-                    reason = (
-                        f"cannot store the value of '${context.source}' in "
-                        f"{context.destination}\n\n"
-                        f"The literal would create an additional occurrence of "
-                        f"{type_name}.\n\n{reason}"
-                    )
-                elif context.operation == "capture":
-                    reason = (
-                        f"cannot capture the value of '${context.source}' in a closure"
-                        f"\n\nThe closure would create an additional occurrence of "
-                        f"{type_name}.\n\n{reason}"
-                    )
-                elif context.operation == "copy":
-                    reason = (
-                        f"stack copy requires an additional occurrence of "
-                        f"{type_name}\n\n"
-                        f"copy preserves the original occurrence of "
-                        f"'{context.label}' and emits another.\n\n{reason}"
-                    )
-                elif context.operation == "move":
-                    reason = (
-                        f"stack move requires an additional occurrence of "
-                        f"{type_name}\n\n"
-                        f"move received one occurrence of '{context.label}' but "
-                        f"its poststack requested {context.requested}.\n\n{reason}"
-                    )
-            raise PanicSignal(_fault_object("DuplicationFault", reason))
-        return
-    if isinstance(value, list):
-        if _list_ownership_is_trivial(value):
-            return
-        for item in value:
-            _check_duplication_allowed(item, context)
-        return
-    if isinstance(value, tuple):
-        for item in value:
-            _check_duplication_allowed(item, context)
-        return
-    if isinstance(value, dict):
-        if _dict_ownership_is_trivial(value):
-            return
-        for item in value.values():
-            _check_duplication_allowed(item, context)
+    pending = [value]
+    after_children = object()
+    while pending:
+        value = pending.pop()
+        check_object = (
+            isinstance(value, tuple) and len(value) == 2
+            and value[0] is after_children
+        )
+        if check_object:
+            value = value[1]
+        if not check_object and isinstance(value, (_BorrowedValue, TaggedValue)):
+            # Inspect the underlying owner without adding an occurrence.
+            pending.append(value.value)
+            continue
+        if not check_object and isinstance(value, Receive):
+            if not value.closed:
+                pending.append(value.value)
+            continue
+        if isinstance(value, ObjectValue):
+            if not check_object and value.ownership_transferred:
+                raise RuntimeError(
+                    f"use after ownership transfer of {object_type_name(value)}"
+                )
+            if not check_object and value.destroyed:
+                raise RuntimeError(f"use after destruction of {object_type_name(value)}")
+            if not check_object and value.destructor_borrowed:
+                raise RuntimeError(
+                    f"cannot retain borrowed destructor receiver "
+                    f"{object_type_name(value)}"
+                )
+            if not check_object:
+                # Preserve the original policy's child-before-parent checking
+                # order, so a nested @nodup violation is diagnosed first.
+                pending.append((after_children, value))
+                if isinstance(value, UninitValue):
+                    pending.extend(reversed(tuple(value.fields.values())))
+                if isinstance(value, DynamicValue):
+                    pending.append(value.fields["#value"])
+                continue
+            if (
+                value.runtime_type is not None
+                and value.runtime_type.dup_error is not None
+                and value.refcount >= 1
+            ):
+                reason = value.runtime_type.dup_error
+                if context is not None:
+                    type_name = object_type_name(value)
+                    if context.operation == "storage":
+                        reason = (
+                            f"cannot store the value of '${context.source}' in "
+                            f"'${context.destination}'\n\n"
+                            f"The assignment would create an additional occurrence of "
+                            f"{type_name}.\n\n{reason}"
+                        )
+                    elif context.operation == "aggregate":
+                        reason = (
+                            f"cannot store the value of '${context.source}' in "
+                            f"{context.destination}\n\n"
+                            f"The literal would create an additional occurrence of "
+                            f"{type_name}.\n\n{reason}"
+                        )
+                    elif context.operation == "capture":
+                        reason = (
+                            f"cannot capture the value of '${context.source}' in a closure"
+                            f"\n\nThe closure would create an additional occurrence of "
+                            f"{type_name}.\n\n{reason}"
+                        )
+                    elif context.operation == "copy":
+                        reason = (
+                            f"stack copy requires an additional occurrence of "
+                            f"{type_name}\n\n"
+                            f"copy preserves the original occurrence of "
+                            f"'{context.label}' and emits another.\n\n{reason}"
+                        )
+                    elif context.operation == "move":
+                        reason = (
+                            f"stack move requires an additional occurrence of "
+                            f"{type_name}\n\n"
+                            f"move received one occurrence of '{context.label}' but "
+                            f"its poststack requested {context.requested}.\n\n{reason}"
+                        )
+                raise PanicSignal(_fault_object("DuplicationFault", reason))
+            continue
+        if isinstance(value, list):
+            if not _list_ownership_is_trivial(value):
+                pending.extend(value)
+        elif isinstance(value, tuple):
+            pending.extend(value)
+        elif isinstance(value, dict):
+            if not _dict_ownership_is_trivial(value):
+                pending.extend(value.values())
 
 
 def _retain_runtime_reference(value: Any) -> Any:
@@ -6873,21 +6889,22 @@ def _retain_runtime_reference(value: Any) -> Any:
     if isinstance(value, (ListValue, DictValue)):
         value.refcount += 1
         return value
-    if isinstance(value, list):
-        if _list_ownership_is_trivial(value):
-            return value
-        for item in value:
-            _retain_runtime_reference(item)
-        return value
-    if isinstance(value, tuple):
-        for item in value:
-            _retain_runtime_reference(item)
-        return value
-    if isinstance(value, dict):
-        if _dict_ownership_is_trivial(value):
-            return value
-        for item in value.values():
-            _retain_runtime_reference(item)
+    if isinstance(value, (list, tuple, dict)):
+        pending = [value]
+        while pending:
+            current = pending.pop()
+            if isinstance(current, (ListValue, DictValue)):
+                current.refcount += 1
+            elif isinstance(current, list):
+                if not _list_ownership_is_trivial(current):
+                    pending.extend(current)
+            elif isinstance(current, tuple):
+                pending.extend(current)
+            elif isinstance(current, dict):
+                if not _dict_ownership_is_trivial(current):
+                    pending.extend(current.values())
+            else:
+                _retain_runtime_reference(current)
         return value
     return value
 
@@ -7011,8 +7028,9 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
     if isinstance(value, list):
         if _list_ownership_is_trivial(value):
             return
-        for item in value:
-            _release_value(item, vm)
+        error = _release_runtime_occurrences(value, vm)
+        if error is not None:
+            raise error
         return
     if isinstance(value, tuple):
         for item in value:
@@ -7285,30 +7303,34 @@ def _retain_embedded_builtin_args(
     arg_ids: set[int],
     visited: set[int],
 ) -> None:
-    """Retain input values newly owned by a builtin result container."""
-    if not isinstance(
-        value,
-        (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict),
-    ):
-        return
-    ident = id(value)
-    if ident in arg_ids:
-        _duplicate_occurrence(value)
-        return
-    if ident in visited:
-        return
-    visited.add(ident)
+    """Retain input occurrences in result storage without Python recursion.
 
-    if isinstance(value, ObjectValue):
-        children = value.fields.values()
-    elif isinstance(value, dict):
-        children = value.values()
-    elif isinstance(value, (list, tuple)):
-        children = value
-    else:
-        return
-    for child in children:
-        _retain_embedded_builtin_args(child, arg_ids, visited)
+    A high-rank result can contain hundreds of nested list layers. Track
+    objects by identity while retaining repeated borrowed occurrences exactly
+    as the recursive traversal did.
+    """
+    owned_types = (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict)
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if not isinstance(item, owned_types):
+            continue
+        ident = id(item)
+        if ident in arg_ids:
+            _duplicate_occurrence(item)
+            continue
+        if ident in visited:
+            continue
+        visited.add(ident)
+        if isinstance(item, ObjectValue):
+            children = item.fields.values()
+        elif isinstance(item, dict):
+            children = item.values()
+        elif isinstance(item, (list, tuple)):
+            children = item
+        else:
+            continue
+        pending.extend(reversed(tuple(children)))
 
 
 def _bind_lazy_result_owners(
@@ -7371,6 +7393,10 @@ def _select_declared_dispatch_overload(
         if len(overload.code.params) == len(args)
         and overload.code.dispatch_types
         and _runtime_multimethod_types_match(args, overload.code.dispatch_types)
+        and (
+            not nominal_trait
+            or _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
+        )
     )
     if not matches and nominal_trait:
         matches = tuple(
@@ -7380,6 +7406,7 @@ def _select_declared_dispatch_overload(
                 expected is None or _runtime_argument_type_matches(argument, expected, constraints=True)
                 for argument, expected in zip(args, overload.code.dispatch_types, strict=True)
             )
+            and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
         )
     if not matches:
         raise RuntimeError(
@@ -7389,6 +7416,61 @@ def _select_declared_dispatch_overload(
     if len(matches) != 1:
         raise RuntimeError("ambiguous declared callable dispatch")
     return _selected_function_implementation(value, matches[0].code.implementation_id)
+
+
+def _runtime_dispatch_bounds_match(
+    args: tuple[Any, ...],
+    bounds: tuple[tuple[int, str, tuple[tuple[str, str], ...]], ...],
+) -> bool:
+    """Test compiled trait implication guards against the concrete owner type."""
+    for receiver_index, owner, guards in bounds:
+        if receiver_index >= len(args):
+            return False
+        value = unwrap_runtime_value(args[receiver_index])
+        if not isinstance(value, ObjectValue):
+            return False
+        metadata = value.runtime_type
+        facts = metadata.type_facts if metadata is not None else ()
+        ancestor_args = _runtime_project_nominal_args(value, owner, facts)
+        if ancestor_args is None or not _structural_projection_guards_hold(
+            guards, ancestor_args, facts,
+        ):
+            return False
+    return True
+
+
+def _runtime_project_nominal_args(
+    value: ObjectValue,
+    owner: str,
+    facts: tuple[tuple[object, ...], ...],
+) -> tuple[str, ...] | None:
+    """Find a declared generic ancestor, respecting projection prerequisites."""
+    pending = [(value.type_name, value.type_args)]
+    visited: set[tuple[str, tuple[str, ...]]] = set()
+    result: set[tuple[str, ...]] = set()
+    while pending:
+        name, args = pending.pop()
+        if (name, args) in visited:
+            continue
+        visited.add((name, args))
+        if name == owner:
+            result.add(args)
+            continue
+        for fact in facts:
+            if fact[0] != name:
+                continue
+            for parent, templates, guards in fact[3]:
+                if not _structural_projection_guards_hold(guards, args, facts):
+                    continue
+                projected = tuple(
+                    _instantiate_structural_projection(template, args)
+                    for template in templates
+                )
+                if any("$" in item for item in projected):
+                    continue
+                pending.append((parent, projected))
+    # Multiple inconsistent paths must never allow an arbitrary witness.
+    return next(iter(result)) if len(result) == 1 else None
 
 
 def _linked_function_implementation(
@@ -7867,7 +7949,12 @@ def _select_multimethod_for_args(
             continue
         if len(overload.code.params) != arity:
             continue
-        if _runtime_multimethod_types_match(args, overload.code.dispatch_types, trait_constraints=True):
+        if (
+            _runtime_multimethod_types_match(
+                args, overload.code.dispatch_types, trait_constraints=True,
+            )
+            and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
+        ):
             matches.append(overload)
     if len(matches) == 1:
         return matches[0]
@@ -8225,25 +8312,18 @@ def _borrowed_argument_values(args: tuple[Any, ...]) -> dict[int, _BorrowedValue
 def _owned_argument_values(args: tuple[Any, ...]) -> dict[int, _BorrowedValue]:
     """Find owned payloads retained by builtin arguments and their containers."""
     aliases: dict[int, _BorrowedValue] = {}
-
-    def collect(value: Any) -> None:
-        """Record owned payloads reachable through one input."""
-        value = unwrap_runtime_value(value)
+    pending = list(args)
+    while pending:
+        value = unwrap_runtime_value(pending.pop())
         if not _needs_release(value) or id(value) in aliases:
-            return
+            continue
         aliases[id(value)] = _BorrowedValue(value)
         if isinstance(value, ObjectValue):
-            for child in value.fields.values():
-                collect(child)
+            pending.extend(value.fields.values())
         elif isinstance(value, dict):
-            for child in value.values():
-                collect(child)
+            pending.extend(value.values())
         elif isinstance(value, (list, tuple)):
-            for child in value:
-                collect(child)
-
-    for argument in args:
-        collect(argument)
+            pending.extend(value)
     return aliases
 
 
@@ -8901,15 +8981,31 @@ def _parameter_stops_vectorisation(typ: Any) -> bool:
 
 
 def _minimum_runtime_collection_rank(value: Any) -> int:
-    """Return the shallowest leaf rank without consuming lazy collections."""
-    value = unwrap_runtime_value(value)
-    if not is_list_like(value):
-        return 0
-    if not is_eager_sequence(value):
-        return runtime_collection_rank(value)
-    if not value:
-        return 1
-    return 1 + min(_minimum_runtime_collection_rank(item) for item in value)
+    """Return shallowest leaf rank without recursion or consuming lazy lists."""
+    minimum: int | None = None
+    pending = [(value, 0)]
+    examined_depths: dict[int, int] = {}
+    while pending:
+        item, depth = pending.pop()
+        item = unwrap_runtime_value(item)
+        if is_eager_sequence(item):
+            previous = examined_depths.get(id(item))
+            if previous is not None and previous <= depth:
+                continue
+            examined_depths[id(item)] = depth
+        if not is_list_like(item):
+            candidate = depth
+        elif not is_eager_sequence(item):
+            candidate = depth + runtime_collection_rank(item)
+        elif not item:
+            candidate = depth + 1
+        else:
+            if minimum is None or depth + 1 < minimum:
+                pending.extend((child, depth + 1) for child in item)
+            continue
+        if minimum is None or candidate < minimum:
+            minimum = candidate
+    return minimum if minimum is not None else 0
 
 
 def _vectorize_declared_callable(
@@ -9086,21 +9182,47 @@ def _vectorize_eager_resolved_depths(
     stop_at_zero: bool = False,
     owns_results: bool = False,
 ) -> tuple[Any, ...]:
-    """Vectorize eager resolved depths during VM execution."""
-    vector_lengths = tuple(
-        len(unwrap_runtime_value(arg))
-        for arg, depth in zip(args, depths, strict=False)
-        if depth > 0 and is_eager_sequence(arg)
-    )
-    if not vector_lengths:
-        raise _CannotVectorize
-    if extension is None and len(set(vector_lengths)) != 1:
-        raise _vectorisation_fault()
+    """Execute eager vectorisation with an explicit stack of collection levels.
 
-    item_depths = tuple(max(depth - 1, 0) for depth in depths)
-    result_items = []
+    Every level stores only the scalar-child inputs and transposed results.
+    This avoids exhausting Python frames for valid high-rank collections while
+    retaining extension rules, lazy leaves and the usual ownership handling.
+    """
+    def make_frame(values: tuple[Any, ...], levels: tuple[int, ...]) -> dict[str, Any]:
+        lengths = tuple(
+            len(unwrap_runtime_value(arg))
+            for arg, depth in zip(values, levels, strict=False)
+            if depth > 0 and is_eager_sequence(arg)
+        )
+        if not lengths:
+            raise _CannotVectorize
+        if extension is None and len(set(lengths)) != 1:
+            raise _vectorisation_fault()
+        return {
+            "args": values, "depths": levels, "count": max(lengths),
+            "index": 0, "results": [], "child_args": None,
+        }
+
+    frames = [make_frame(args, depths)]
     try:
-        for index in range(max(vector_lengths)):
+        while frames:
+            frame = frames[-1]
+            if frame["index"] == frame["count"]:
+                result = _transpose_vectorized_items(frame["results"])
+                frames.pop()
+                if not frames:
+                    return result
+                parent = frames[-1]
+                parent["results"].append(
+                    _bind_lazy_result_owners(parent["child_args"], result)
+                )
+                parent["child_args"] = None
+                continue
+
+            index = frame["index"]
+            frame["index"] += 1
+            values = frame["args"]
+            levels = frame["depths"]
             item_args = tuple(
                 (
                     (_vector_child_access(arg, unwrap_runtime_value(arg)[index])
@@ -9108,25 +9230,32 @@ def _vectorize_eager_resolved_depths(
                     if depth > 0 and is_eager_sequence(arg)
                     else arg
                 )
-                for arg, depth in zip(args, depths, strict=False)
+                for arg, depth in zip(values, levels, strict=False)
             )
             item_args = _extend_vector_args(item_args, extension, context)
+            item_depths = tuple(max(depth - 1, 0) for depth in levels)
+            vector_args = tuple(
+                value for value, depth in zip(item_args, item_depths, strict=False)
+                if depth > 0
+            )
+            if vector_args and all(is_eager_sequence(value) for value in vector_args):
+                frame["child_args"] = item_args
+                frames.append(make_frame(item_args, item_depths))
+                continue
             item_result = _vectorize_resolved_depths(
                 implementation, item_args, context, item_depths, extension,
                 stop_at_zero=stop_at_zero, owns_results=owns_results,
             )
-            # The eager outer result does not itself retain callback arguments for
-            # deferred inner results. Bind those owners before transposing them.
-            result_items.append(_bind_lazy_result_owners(item_args, item_result))
+            frame["results"].append(_bind_lazy_result_owners(item_args, item_result))
     except BaseException as error:
         if owns_results:
             vm = cast(VirtualMachine, context.call.__self__)
-            error = _release_runtime_occurrences(
-                (value for row in result_items for value in row), vm, error,
-            )
+            for frame in reversed(frames):
+                error = _release_runtime_occurrences(
+                    (value for row in frame["results"] for value in row), vm, error,
+                )
         raise error
-
-    return _transpose_vectorized_items(result_items)
+    raise AssertionError("eager vectorisation did not complete")
 
 
 def _vectorize_lazy_resolved_depths(
@@ -9683,13 +9812,26 @@ def _matches_collection_cast(
         actual_rank is None or actual_rank < rank
     ):
         return False
-    if kind in {"list_exact"}:
-        return all(
-            _matches_collection_cast(
-                item, kind, rank - 1, base, allow_lazy_rank=allow_lazy_rank
-            )
-            for item in value
-        )
+    if kind == "list_exact":
+        # Validate every leaf using an explicit worklist. The source rank can
+        # be much larger than Python's recursion depth even for one scalar.
+        pending = [(item, rank - 1) for item in value]
+        while pending:
+            item, remaining = pending.pop()
+            if remaining <= 0:
+                if not _matches_cast_type(item, base, allow_lazy_rank=allow_lazy_rank):
+                    return False
+                continue
+            item = unwrap_runtime_value(item)
+            if not is_eager_sequence(item):
+                item_rank = runtime_collection_rank(item)
+                if (not allow_lazy_rank or item_rank != remaining):
+                    return False
+                continue
+            if runtime_collection_rank(item) != remaining:
+                return False
+            pending.extend((child, remaining - 1) for child in item)
+        return True
     if kind in {"list_min"}:
         return all(
             _matches_collection_cast(
@@ -9971,14 +10113,16 @@ def _sequence_selection_positions(receiver: Any, selector: Any) -> list[Any]:
             _index_path(receiver, path)
         return requested
     if not is_eager_sequence(receiver) and not isinstance(receiver, str):
-        positions: list[int] = []
-        for value in requested:
-            index = _int_index(value)
-            if index < 0:
-                raise RuntimeError(
-                    "lazy list selection does not support negative indices"
-                )
-            positions.append(index)
+        positions = [_int_index(value) for value in requested]
+        if any(index < 0 for index in positions):
+            # Negative indexing requires knowing the finite sequence length.
+            length = sum(1 for _ in receiver)
+            for index in positions:
+                if not -length <= index < length:
+                    raise PanicSignal(_fault_object(
+                        "IndexFault", _index_fault_message(index, length)
+                    ))
+            positions = [_normal_index(index, length) for index in positions]
         return positions
     length = len(receiver)
     positions = []
@@ -10147,12 +10291,21 @@ def _set_selected_positions(
     selected = frozenset(positions)
 
     def updated_items():
-        """Yield a lazy list with selected positions replaced or removed."""
+        """Yield replacements, validating every requested position."""
+        encountered: set[int] = set()
         for index, item in enumerate(receiver):
+            if index in selected:
+                encountered.add(index)
             if index in replacement_by_index:
                 yield replacement_by_index[index]
             elif index not in selected:
                 yield item
+        missing = selected - encountered
+        if missing:
+            target = min(missing)
+            raise PanicSignal(_fault_object(
+                "IndexFault", _index_fault_message(target)
+            ))
 
     return LazyList(updated_items())
 
@@ -10202,10 +10355,14 @@ def _validate_distinct_selection_indices(
         target = _int_index(index)
         if length is None:
             if target < 0:
-                raise RuntimeError(
-                    "lazy whole-selection assignment does not support negative indices"
-                )
-            normalized.append(target)
+                length = sum(1 for _ in receiver)
+                if not -length <= target < length:
+                    raise PanicSignal(_fault_object(
+                        "IndexFault", _index_fault_message(target, length)
+                    ))
+                normalized.append(_normal_index(target, length))
+            else:
+                normalized.append(target)
         else:
             if not -length <= target < length:
                 raise PanicSignal(
@@ -10242,6 +10399,21 @@ def _set_many_indices(
             updated[key] = replacement
         return updated
     raw_indices = [_int_index(key) for key in raw_keys]
+    if isinstance(receiver, str) or is_eager_sequence(receiver):
+        length = len(receiver)
+        for index in raw_indices:
+            if not -length <= index < length:
+                raise PanicSignal(_fault_object(
+                    "IndexFault", _index_fault_message(index, length)
+                ))
+    elif is_list_like(receiver) and any(index < 0 for index in raw_indices):
+        length = sum(1 for _ in receiver)
+        for index in raw_indices:
+            if not -length <= index < length:
+                raise PanicSignal(_fault_object(
+                    "IndexFault", _index_fault_message(index, length)
+                ))
+        raw_indices = [_normal_index(index, length) for index in raw_indices]
     if isinstance(receiver, str):
         if not isinstance(value, str):
             raise RuntimeError(
@@ -10322,7 +10494,7 @@ def _index_path(receiver: Any, index: Any) -> Any:
 
 def _index_many_lazy(receiver: Any, indices: tuple[Any, ...]) -> list[Any]:
     """Index many lazy during VM execution."""
-    requests = tuple(_lazy_index_request(index) for index in indices)
+    requests = tuple(_lazy_index_request(receiver, index) for index in indices)
     targets = sorted({target for target, _ in requests})
     results: dict[int, Any] = {}
     target_iter = iter(targets)
@@ -10350,7 +10522,7 @@ def _index_many_lazy(receiver: Any, indices: tuple[Any, ...]) -> list[Any]:
     ]
 
 
-def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
+def _lazy_index_request(receiver: Any, index: Any) -> tuple[int, list[Any]]:
     """Compute lazy index request during VM execution."""
     tail: list[Any] = []
     target = index
@@ -10363,7 +10535,12 @@ def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
         raise RuntimeError("lazy list indexing requires a numeric index")
     target_int = _int_index(target)
     if target_int < 0:
-        raise RuntimeError("lazy list indexing does not support negative indices")
+        length = sum(1 for _ in receiver)
+        if target_int < -length:
+            raise PanicSignal(_fault_object(
+                "IndexFault", _index_fault_message(target_int, length)
+            ))
+        target_int += length
     return target_int, tail
 
 
@@ -10412,7 +10589,12 @@ def _index_one(receiver: Any, index: Any) -> Any:
             raise RuntimeError("lazy list indexing requires a numeric index")
         target = _int_index(index)
         if target < 0:
-            raise RuntimeError("lazy list indexing does not support negative indices")
+            length = sum(1 for _ in receiver)
+            if target < -length:
+                raise PanicSignal(_fault_object(
+                    "IndexFault", _index_fault_message(target, length)
+                ))
+            target += length
         for offset, item in enumerate(receiver):
             if offset == target:
                 return finish(item)
@@ -10781,6 +10963,29 @@ def _set_index_one(
         list.__setitem__(updated, target, value)
         _update_list_ownership_after_replacements(updated, (value,))
         return updated
+    if isinstance(receiver, LazyList):
+        target = _int_index(index)
+        if target < 0:
+            length = sum(1 for _ in receiver)
+            if target < -length:
+                raise PanicSignal(_fault_object(
+                    "IndexFault", _index_fault_message(target, length)
+                ))
+            target += length
+
+        def updated_items():
+            """Copy the source lazily, replacing the one requested element."""
+            replaced = False
+            for offset, item in enumerate(receiver):
+                if offset == target:
+                    replaced = True
+                    yield value
+                else:
+                    yield item
+            if not replaced:
+                raise PanicSignal(_fault_object("IndexFault", _index_fault_message(target)))
+
+        return LazyList(updated_items(), runtime_rank=receiver.runtime_rank)
     raise RuntimeError("value is not index-assignable")
 
 
@@ -10797,7 +11002,12 @@ def _int_index(value: Any) -> int:
             "None is not a valid scalar index; "
             "use it inside a multidimensional index path"
         )
-    if isinstance(value, RuntimeNumber) and value == value.to_integral_value():
+    if isinstance(value, RuntimeNumber) and value.is_integer():
+        limit = 10**18
+        if value > limit:
+            return limit
+        if value < -limit:
+            return -limit
         return int(value)
     if isinstance(value, int):
         return value
@@ -11056,10 +11266,26 @@ def _validate_reflected_access(receiver: Any, descriptor: Any, config: tuple, va
 
 def _release_runtime_occurrences(occurrences, vm: VirtualMachine, error=None):
     """Release an owned row completely while preserving fatal cleanup failures."""
-    for occurrence in occurrences:
+    # Unwind nested eager lists explicitly. Deep rank values must not cost
+    # one VM cleanup frame plus one Python release frame per list axis.
+    pending = [iter(occurrences)]
+    while pending:
+        try:
+            occurrence = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
         try:
             with vm._unwinding(error):
-                _release_value(occurrence, vm)
+                if isinstance(occurrence, ListValue):
+                    occurrence.refcount -= 1
+                    if occurrence.refcount <= 0 and not _list_ownership_is_trivial(occurrence):
+                        pending.append(iter(occurrence))
+                elif type(occurrence) is list:
+                    if not _list_ownership_is_trivial(occurrence):
+                        pending.append(iter(occurrence))
+                else:
+                    _release_value(occurrence, vm)
         except BaseException as failure:
             if error is None:
                 error = failure
@@ -11753,6 +11979,27 @@ def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
     ]
 
 
+def _enable_host_fault_boundary(values: Iterable[Any]) -> None:
+    """Translate deferred lazy panics when values escape a completed VM.run.
+
+    Only returned objects are marked. Lazies evaluated *inside* the VM still
+    raise PanicSignal, so Valiance panic handlers continue to work normally.
+    """
+    pending = list(values)
+    visited: set[int] = set()
+    while pending:
+        item = unwrap_runtime_value(pending.pop())
+        if id(item) in visited:
+            continue
+        visited.add(id(item))
+        if isinstance(item, LazyList):
+            item.host_fault_boundary = True
+        elif isinstance(item, (list, tuple)):
+            pending.extend(item)
+        elif isinstance(item, dict):
+            pending.extend(item.values())
+
+
 def _format_stack(stack: list[Any]) -> str:
     """Format stack during VM execution."""
     if not stack:
@@ -11795,23 +12042,13 @@ def _format_value(value: Any) -> str:
         return f"<constructor {value.type_name}>"
     if isinstance(value, LazyList):
         return "<lazy list>"
-    if isinstance(value, (list, tuple)):
-        opening, closing = ("[", "]") if isinstance(value, list) else ("(", ")")
-        preview = [
-            _format_value(item)
-            for item in value[:DIAGNOSTIC_LIST_PREVIEW_LIMIT]
-        ]
-        if len(value) > DIAGNOSTIC_LIST_PREVIEW_LIMIT:
-            preview.append("...")
-        return opening + ", ".join(preview) + closing
-    if isinstance(value, dict):
-        items = []
-        for index, (key, item) in enumerate(value.items()):
-            if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
-                items.append("...")
-                break
-            items.append(f"{_format_value(key)}: {_format_value(item)}")
-        return "{" + ", ".join(items) + "}"
+    if isinstance(value, (list, tuple, dict)):
+        # Shared iterative formatter handles arbitrary collection ranks, even
+        # while reporting a *different* runtime failure.
+        return format_runtime_value(
+            value, quote_strings=True,
+            lazy_preview_limit=DIAGNOSTIC_LIST_PREVIEW_LIMIT,
+        )
     return format_runtime_value(
         value,
         quote_strings=True,
@@ -12064,10 +12301,75 @@ def _canonicalize_runtime_value_tag_contract(
             or spec[2] < 1
         ):
             raise RuntimeError("invalid bytecode: malformed collection tag contract")
+        if is_eager_sequence(payload):
+            return _canonicalize_eager_collection_tags(
+                payload, spec[1], spec[2], spec[3], tag_parents
+            )
         return _canonicalize_runtime_collection_tag_contract(
             payload, spec[1], spec[2], spec[3], tag_parents
         )
     raise RuntimeError(f"invalid bytecode: unknown tag contract kind {kind!r}")
+
+
+def _canonicalize_eager_collection_tags(
+    value: Any,
+    kind: str,
+    rank: int,
+    base_spec: object,
+    tag_parents: dict[str, str],
+) -> Any:
+    """Align tags of eager collections without one call frame per rank."""
+    pending = [(value, rank, False)]
+    converted: list[Any] = []
+    while pending:
+        node, remaining, finish = pending.pop()
+        if finish is not True and finish is not False:
+            converted.append(_canonicalize_runtime_value_tag_contract(
+                node, finish, tag_parents
+            ))
+            continue
+        if finish:
+            count = len(node)
+            children = converted[-count:] if count else []
+            if count:
+                del converted[-count:]
+            children, lifted_tags = _lift_common_collection_tags(children)
+            if isinstance(node, list):
+                node[:] = children
+                result = node
+            else:
+                result = children
+            converted.append(
+                update_runtime_tags(result, add=lifted_tags)
+                if lifted_tags else result
+            )
+            continue
+        payload = node.value if isinstance(node, TaggedValue) else node
+        if not is_eager_sequence(payload):
+            contract = ("collection", kind, remaining, base_spec)
+            converted.append(_canonicalize_runtime_value_tag_contract(
+                node, contract, tag_parents
+            ))
+            continue
+        pending.append((payload, remaining, True))
+        if kind == "list_exact":
+            child_rank = remaining - 1
+            for item in reversed(payload):
+                if child_rank == 0:
+                    # The next step is a scalar; it may itself be a list if
+                    # the runtime value does not satisfy the static contract.
+                    converted_spec = base_spec
+                    pending.append((item, 0, converted_spec))
+                else:
+                    pending.append((item, child_rank, False))
+        else:
+            for item in reversed(payload):
+                child_rank = max(remaining - 1, 1) if is_list_like(unwrap_runtime_value(item)) else 0
+                if child_rank == 0:
+                    pending.append((item, 0, base_spec))
+                else:
+                    pending.append((item, child_rank, False))
+    return converted[0]
 
 
 def _canonicalize_runtime_collection_tag_contract(

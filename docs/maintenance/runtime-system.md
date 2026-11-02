@@ -589,6 +589,18 @@ exports/imports, compilation, and serialization. Method-level generic
 parameters also remain in `FunctionCode` as part of the implementation's
 checked contract. See **Trait value witnesses (0x33)** for the representation.
 
+### Bounded nominal-trait dispatch
+
+`DispatchKind.NOMINAL_TRAIT` dispatch uses each method's compiled
+`dispatch_types` and `dispatch_bounds`. The latter stores the receiver position,
+its nominal source trait, and generic bound templates. When a concrete object
+is passed, the VM projects it through its declared generic supertypes, checks
+the bounds on the *instantiated trait arguments*, and admits only matching
+implementations. It rejects absent or inconsistent projections and reports
+ambiguity if multiple candidates remain. Version `0x47` of the portable
+bytecode format retains this evidence on serialized and re-exported methods.
+Older bytecode versions still load without the new optional evidence.
+
 ### Static union dispatch plans
 
 When analysis adapts an overload set to a union-typed callable, it emits
@@ -1425,6 +1437,18 @@ Decimal arithmetic first uses the active context when it is already sufficient
 for an exact result, then expands precision and exponent bounds only when
 needed. Any faster arithmetic path must retain the arbitrary-precision tests; a
 small-number benchmark is not permission to round large integers silently.
+
+`RuntimeNumber` hashes finite decimals as exact rational values, using modular
+powers for large decimal exponents rather than allocating enormous integers.
+Its hashes agree with Python integers, finite `Decimal` values and other native
+numbers whenever the exact values compare equal. Comparison with Python floats
+and complex values is exact: binary float `0.1` is not the same value as the
+literal decimal `0.1`, even though their short printed forms coincide. Numeric
+power identities such as `1 ** x` are handled before exponent expansion.
+
+Real-only numeric built-ins (`%` and `**`) reject non-real operands with a
+`DomainFault`. The `std.regex` helpers use `ValueFault` for invalid patterns and
+`TimeoutFault` for execution timeouts, never the VM's malformed-bytecode error.
 
 ## Serialization is a compatibility boundary
 
@@ -2636,3 +2660,55 @@ native buffer (`&int+` for `Int` inputs or `&double+` for `Real` inputs).
 `&short+` without a separate conversion. A mismatch or ragged input raises
 `Panic[ShapeFault]`. The FFI ABI remains rank-one contiguous arrays, **not**
 pointer tables (`int**`), and callers must provide dimensions separately.
+
+## Deep collection ranks and exact decimal resource bounds
+
+Reshape builds the nested shape from the innermost axis outwards, preserving
+zero-sized axes without exhausting the Python call stack. Eager collection tag
+canonicalization, exact-rank cast matching, and collection ownership release
+use explicit worklists for deeply nested values. Avoid introducing recursive
+per-axis traversal in these runtime paths: a finite rank with one scalar leaf
+can still exceed the interpreter's recursion limit.
+
+`BigDecimal` stores coefficient and exponent without eagerly materializing the
+expanded decimal value. Checking whether a normalized decimal is integral is
+constant-time in its exponent. Decimal operations requiring more than 100,000
+powers-of-ten alignment digits fail predictably with a runtime resource-limit
+error; ordinary arithmetic remains exact. Printing extreme exponents uses a
+compact exponent representation rather than creating millions of zeroes.
+
+## High-rank values and lazy collection consumers
+
+The eager built-in vectorisation driver in `runtime/vm.py` traverses nested
+collection ranks with explicit frames, rather than making a Python call for
+one level of every dimension. Ownership retention, minimum-leaf-rank checks,
+and `map` over ranked collections also traverse iteratively. Formatting and
+the standard JSON list encoder and typed collection decoder similarly use
+explicit work stacks; JSON still checks path-local reference identities for
+cycles and validates managed-object field visibility.
+
+Finite lazy lists can be passed to `last`, `unpair`, and `update`. `last` needs
+to exhaust its finite input, `unpair` checks at most three elements, and a
+scalar-index `update` produces a replayable lazy copy retaining the original
+input under the ordinary VM ownership rules. The indexed update supports negative indices for finite lazy collections,
+matching lazy read indexing, and raises `IndexFault` if a requested position
+does not exist when the collection is materialized.
+
+Real division operates on compact decimal coefficients and then adjusts the
+power-of-ten scale, avoiding host `Decimal` exponent-range overflow for large
+but exactly representable operands. Inexact coefficient division retains
+scale-sensitive working precision up to 10,000 significant digits, plus any
+digits needed for the operand coefficients. `/` converts zero divisors into
+the documented recoverable `DivisionByZeroFault`. Integer powers use
+exponentiation by squaring and bound materialized coefficient growth without
+expanding a compact base-ten exponent unnecessarily.
+
+## Bounded regular-expression execution
+
+`std.regex` uses the external `regex` package for interruptible matching,
+search, replacement, and splitting. Each operation has a 0.25-second matching
+budget; a match that exceeds it raises the catchable `TimeoutFault` panic.
+Regular-expression syntax is largely compatible with Python `re`, although
+patterns depending on engine-specific behaviour should be tested against the
+`regex` engine. The timeout bounds *an individual operation*, not a sequence
+of calls made by a running Valiance program.

@@ -483,6 +483,25 @@ class Analyser:
         Session loads use these environments to continue with later commands.
         Runtime prelude nodes remain available separately through runtime_prelude.
         """
+        # Recursive semantic checking visits several interpreter frames per
+        # nested expression. Cap AST depth, not sibling count, so wide literals
+        # remain valid and deeply nested source gets a controlled diagnostic.
+        pending = [(node, 0) for node in program]
+        while pending:
+            item, depth = pending.pop()
+            if isinstance(item, ASTNode):
+                depth += 1
+                if depth > 120:
+                    self._diagnose("source nesting is too deep for semantic analysis", item)
+                    return BranchSet()
+            if isinstance(item, (tuple, list)):
+                pending.extend((child, depth) for child in item)
+            elif is_dataclass(item) and not isinstance(item, T.Type):
+                pending.extend(
+                    (getattr(item, field.name), depth)
+                    for field in fields(item)
+                    if field.name not in {"location", "capture_context"}
+                )
         self.disabled_lint_codes = (
             set(self.project_disabled_lint_codes)
             if self.project_lints_enabled
@@ -606,14 +625,22 @@ class Analyser:
         from valiance.vtypes.reflection import ReflectionUniverse
 
         def queries(value):
-            """Locate value enumeration, including imported deferred templates."""
-            if isinstance(value, FieldsNode):
-                return value.owner is None
-            if isinstance(value, (tuple, list)):
-                return any(queries(item) for item in value)
-            if is_dataclass(value) and not isinstance(value, T.Type):
-                return any(queries(getattr(value, item.name)) for item in fields(value)
-                           if item.name not in {"location", "capture_context"})
+            """Locate value enumeration without using the Python call stack."""
+            pending = [value]
+            while pending:
+                item = pending.pop()
+                if isinstance(item, FieldsNode):
+                    if item.owner is None:
+                        return True
+                    continue
+                if isinstance(item, (tuple, list)):
+                    pending.extend(item)
+                elif is_dataclass(item) and not isinstance(item, T.Type):
+                    pending.extend(
+                        getattr(item, attribute.name)
+                        for attribute in fields(item)
+                        if attribute.name not in {"location", "capture_context"}
+                    )
             return False
 
         scopes = []

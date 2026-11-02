@@ -1213,6 +1213,7 @@ def _constant_inline_body(
         or function.recursive
         or function.multi
         or function.dispatch_types
+        or function.dispatch_bounds
         or any(function.return_tags)
         or function.return_collection_ranks
         or function.param_collection_ranks
@@ -1250,6 +1251,7 @@ def _scalar_inline_body(
         or function.requires_specialization
         or function.generic_type_parameters
         or function.structural_parameters
+        or function.dispatch_bounds
         or len(function.dispatch_types) != arity
         or any(typ not in _SCALAR_PARAMETER_DISPATCH_TYPES
                for typ in function.dispatch_types)

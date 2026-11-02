@@ -115,7 +115,10 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   Cross-layer vectorisation invariants and execution-mode parity are exercised in
   `tests/test_vectorisation_properties.py`. Multi-hop private import identity,
   re-exported generic specializations and source-free facade chains are covered
-  in `tests/test_type_soundness_multimodule.py`. The portable FFI fixture compiler
+  in `tests/test_type_soundness_multimodule.py`. Incremental generic-trait implication,
+  body/constraint edits, diamond re-exports and source-free dependency freshness
+  are covered in `tests/test_type_soundness_incremental_traits_multimodule.py`.
+  The portable FFI fixture compiler
   `tests/ffi_support.py` supports the native ABI integration tests on Windows,
   macOS, and Linux.
 - [Numbered generics hardening](generics-hardening.md) describes the 351-case

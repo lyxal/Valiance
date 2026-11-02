@@ -36,6 +36,7 @@ class CompiledModule:
     implementation_options: str = "optimize=true"
     compiler_abi: int = COMPILER_ABI
     interface_abi: int = INTERFACE_ABI
+    dependency_implementation_hashes: tuple[tuple[str, str], ...] = ()
 
 
 def interface_bytes(interface: Any | None) -> bytes:
@@ -143,6 +144,7 @@ def build_module(
     *,
     analysed_interface: Any | None = None,
     dependency_hashes: tuple[tuple[str, str], ...] = (),
+    dependency_implementation_hashes: tuple[tuple[str, str], ...] = (),
     implementation_options: str = "optimize=true",
 ) -> CompiledModule:
     """Create a compiled module from analysed source, interface, and bytecode."""
@@ -158,6 +160,7 @@ def build_module(
         tuple(sorted(dependency_hashes)),
         implementation_hash(program, options=implementation_options),
         implementation_options,
+        dependency_implementation_hashes=tuple(sorted(dependency_implementation_hashes)),
     )
 
 
@@ -185,6 +188,7 @@ def dumps_module(module: CompiledModule) -> bytes:
             "interface_abi": module.interface_abi,
             "interface_source": module.interface_source,
             "dependencies": list(module.dependency_hashes),
+            "dependency_implementations": list(module.dependency_implementation_hashes),
             "implementation_hash": actual_implementation_hash,
             "implementation_options": module.implementation_options,
         },
@@ -288,6 +292,12 @@ def loads_module(data: bytes) -> CompiledModule:
         for item in dependencies
     ):
         raise BytecodeFormatError("invalid module dependency metadata")
+    implementation_dependencies = metadata.get("dependency_implementations", [])
+    if not isinstance(implementation_dependencies, list) or not all(
+        isinstance(item, list) and len(item) == 2 and all(isinstance(v, str) for v in item)
+        for item in implementation_dependencies
+    ):
+        raise BytecodeFormatError("invalid module implementation dependency metadata")
     program = loads(data[end_interface:end_bytecode])
     actual_implementation_hash = implementation_hash(program, options=implementation_options)
     if actual_implementation_hash != stored_implementation_hash:
@@ -304,6 +314,7 @@ def loads_module(data: bytes) -> CompiledModule:
         implementation_options,
         COMPILER_ABI,
         INTERFACE_ABI,
+        tuple((name, digest) for name, digest in implementation_dependencies),
     )
 
 

@@ -143,6 +143,10 @@ class CompilationCoordinator:
         rebuild: bool = False,
     ) -> BuildResult:
         """Build or reuse one module and recursively publish imported modules."""
+        # A coordinator may be reused after files change on disk. Loader
+        # caches belong to one build traversal, not the coordinator lifetime.
+        if not self._active_modules:
+            self.module_loader = ModuleLoader()
         source_file = source_file.resolve()
         output = output.resolve()
         source_bytes = source_file.read_bytes()
@@ -167,6 +171,11 @@ class CompilationCoordinator:
                 )
                 dependencies_match = self._dependencies_current(
                     source_file, candidate.dependency_hashes
+                ) and (
+                    not candidate.dependency_hashes
+                    or bool(candidate.dependency_implementation_hashes)
+                ) and self._dependency_implementations_current(
+                    source_file, candidate.dependency_implementation_hashes
                 )
             except Exception:
                 output_matches = options_match = dependencies_match = False
@@ -208,6 +217,7 @@ class CompilationCoordinator:
             if native_exports is not None:
                 interface = replace(interface, definitions=native_exports.definitions + interface.definitions)
             dependencies = self.module_loader.dependency_hashes_for(source_file)
+            implementations = self.module_loader.dependency_implementation_hashes_for(source_file)
             for identity, _ in dependencies:
                 path = dependency_path_from_identity(identity)
                 dependency_source = self.module_loader.resolve(path, current_file=source_file)
@@ -230,6 +240,7 @@ class CompilationCoordinator:
                 bytecode,
                 analysed_interface=interface,
                 dependency_hashes=dependencies,
+                dependency_implementation_hashes=implementations,
                 implementation_options=f"optimize={str(optimize).lower()}",
             )
             artifact_bytes = dumps_module(artifact)
@@ -243,6 +254,7 @@ class CompilationCoordinator:
                     "interface": artifact.interface_hash,
                     "implementation": artifact.implementation_hash,
                     "dependencies": [list(item) for item in dependencies],
+                    "implementations": [list(item) for item in implementations],
                     "disposition": BuildDisposition.RECOMPILED.value,
                     "reason": ReasonCode.SOURCE_CHANGED.value,
                 }
@@ -268,6 +280,9 @@ class CompilationCoordinator:
         rebuild: bool = False,
     ) -> BuildResult:
         """Build or reuse an executable target with semantic dependency validation."""
+        # Re-evaluate disk dependencies for each top-level build, even when
+        # this coordinator instance previously analysed the same import graph.
+        self.module_loader = ModuleLoader()
         source_file = source_file.resolve()
         output = output.resolve()
         source = source_file.read_text(encoding="utf-8")

@@ -252,6 +252,8 @@ class FunctionCode:
     recursive: bool = False
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
+    # Receiver index, nominal trait owner and guards over its instantiated arguments.
+    dispatch_bounds: tuple[tuple[int, str, tuple[tuple[str, str], ...]], ...] = ()
     signature_types: tuple[str, ...] = ()
     # Statically inferred results for structural-witness linking.
     result_signature_types: tuple[str, ...] = ()

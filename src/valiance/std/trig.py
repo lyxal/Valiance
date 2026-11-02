@@ -9,7 +9,27 @@ import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.documentation import element_documentation
 from valiance.elements.stdlib_native import stdlib_element
-from valiance.runtime.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber, ObjectValue, PanicSignal
+
+
+def _trig(operation: Any, value: Any) -> RuntimeNumber:
+    """Map host-float domain and range errors to user-facing Valiance faults."""
+    number = RuntimeNumber.from_value(value)
+    if number.is_complex():
+        raise PanicSignal(ObjectValue("DomainFault", {
+            "message": "trigonometry requires a real number",
+        }))
+    # Trig is inherently approximate, but converting huge compact decimals to
+    # float or expanding them at host precision is never safe.
+    magnitude = number.real.digits() + number.real.exponent
+    if number.real.coefficient and magnitude > 309:
+        raise PanicSignal(ObjectValue("RangeFault", {
+            "message": "trigonometric input is too large for approximate evaluation",
+        }))
+    try:
+        return _number(operation(float(number)))
+    except (ValueError, OverflowError, ArithmeticError) as exc:
+        raise PanicSignal(ObjectValue("DomainFault", {"message": str(exc)})) from exc
 
 
 def _number(value: float) -> RuntimeNumber:
@@ -48,7 +68,7 @@ def _pi(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `trig.sin` standard-library element."""
-    return (_number(math.sin(float(args[0]))),)
+    return (_trig(math.sin, args[0]),)
 
 
 @stdlib_element(
@@ -66,7 +86,7 @@ def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _cos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `trig.cos` standard-library element."""
-    return (_number(math.cos(float(args[0]))),)
+    return (_trig(math.cos, args[0]),)
 
 
 @stdlib_element(
@@ -84,7 +104,7 @@ def _cos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _tan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `trig.tan` standard-library element."""
-    return (_number(math.tan(float(args[0]))),)
+    return (_trig(math.tan, args[0]),)
 
 
 @stdlib_element(
@@ -102,7 +122,7 @@ def _tan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _asin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `trig.asin` standard-library element."""
-    return (_number(math.asin(float(args[0]))),)
+    return (_trig(math.asin, args[0]),)
 
 
 @stdlib_element(
@@ -120,7 +140,7 @@ def _asin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _acos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `trig.acos` standard-library element."""
-    return (_number(math.acos(float(args[0]))),)
+    return (_trig(math.acos, args[0]),)
 
 
 @stdlib_element(
@@ -138,4 +158,4 @@ def _acos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _atan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `trig.atan` standard-library element."""
-    return (_number(math.atan(float(args[0]))),)
+    return (_trig(math.atan, args[0]),)

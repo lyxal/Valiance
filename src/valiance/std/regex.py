@@ -2,19 +2,39 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
+
+import regex
 
 import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.documentation import element_documentation
-from valiance.runtime.runtime_values import RuntimeNumber, ObjectValue
+from valiance.runtime.runtime_values import ObjectValue, PanicSignal, RuntimeNumber
 from valiance.elements.stdlib_native import stdlib_element
 
 
 def _truth(value: bool) -> RuntimeNumber:
     """Compute truth within this subsystem."""
     return RuntimeNumber(1) if value else RuntimeNumber(0)
+
+
+# A match can involve untrusted patterns and text. The third-party regex
+# engine supports a real interruption budget, unlike the standard-library re.
+REGEX_TIMEOUT_SECONDS = 0.25
+
+
+def _bounded_regex(operation: Any, /, *args: str) -> Any:
+    """Run one regex operation with a deadline, including replacements/splits."""
+    try:
+        return operation(*args, timeout=REGEX_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise PanicSignal(ObjectValue(
+            "TimeoutFault", {"message": "regular expression execution time limit exceeded"},
+        )) from exc
+    except (regex.error, IndexError, ValueError) as exc:
+        raise PanicSignal(ObjectValue(
+            "ValueFault", {"message": f"invalid regular expression: {exc}"},
+        )) from exc
 
 
 @stdlib_element(
@@ -36,7 +56,7 @@ def _truth(value: bool) -> RuntimeNumber:
 def _matches(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `regex.matches` standard-library element."""
     pattern, value = args
-    return (_truth(re.fullmatch(pattern, value) is not None),)
+    return (_truth(_bounded_regex(regex.fullmatch, pattern, value) is not None),)
 
 
 @stdlib_element(
@@ -58,7 +78,7 @@ def _matches(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `regex.contains` standard-library element."""
     pattern, value = args
-    return (_truth(re.search(pattern, value) is not None),)
+    return (_truth(_bounded_regex(regex.search, pattern, value) is not None),)
 
 
 @stdlib_element(
@@ -80,7 +100,7 @@ def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `regex.first` standard-library element."""
     pattern, value = args
-    match = re.search(pattern, value)
+    match = _bounded_regex(regex.search, pattern, value)
     if match is None:
         return (ObjectValue("None", {}),)
     return (ObjectValue("Some", {"value": match.group(0)}),)
@@ -106,7 +126,7 @@ def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _replace(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `regex.replace` standard-library element."""
     pattern, replacement, value = args
-    return (re.sub(pattern, replacement, value),)
+    return (_bounded_regex(regex.sub, pattern, replacement, value),)
 
 
 @stdlib_element(
@@ -125,4 +145,4 @@ def _replace(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _split(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `regex.split` standard-library element."""
     pattern, value = args
-    return (re.split(pattern, value),)
+    return (_bounded_regex(regex.split, pattern, value),)

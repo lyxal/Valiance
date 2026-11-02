@@ -1379,6 +1379,8 @@ These are known constraints of the current runtime/codegen layer:
   validator and disjoint/parent tag metadata.
 - Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
   are runtime-dispatched.
+- Bounded nominal trait dispatch filters compiled candidates using concrete trait
+  projections and serialized generic constraints (portable bytecode version `0x47`).
 - Multimethod runtime dispatch currently matches exact runtime nominal names
   recorded on compiled `multi` user-defined overloads.
 - Runtime vectorisation length mismatches raise intrinsic, catchable

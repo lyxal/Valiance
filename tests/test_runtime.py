@@ -13015,3 +13015,321 @@ end
         analyser = Analyser()
         analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
+
+
+class DeepCollectionRuntimeRegressionTests(unittest.TestCase):
+    """Finite high-rank collections must work across VM execution modes."""
+
+    def test_high_rank_operations_in_all_execution_modes(self):
+        sources = (
+            "reshape([1],overtake([1],350))",
+            "1 ^+500 | length",
+            "1 ^+450 | as?[Int+450]",
+            "1 ^+450 | as![Int+450]",
+        )
+        for source in sources:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(source=source, optimize=optimize, serialized=serialized):
+                        result = run(loads(dumps(program)) if serialized else program)
+                        self.assertEqual(len(result), 1)
+                        value = result[0]
+                        if source.endswith("length"):
+                            self.assertEqual(value, RuntimeNumber(1))
+                        elif "as?" in source:
+                            self.assertIsInstance(value, ObjectValue)
+                            self.assertEqual(value.type_name, "Some")
+                            value = value.fields["value"]
+                        if not source.endswith("length"):
+                            expected_depth = 350 if source.startswith("reshape") else 450
+                            for _ in range(expected_depth):
+                                self.assertIsInstance(value, list)
+                                self.assertEqual(len(value), 1)
+                                value = value[0]
+                            self.assertEqual(value, RuntimeNumber(1))
+
+    def test_round_two_runtime_reproducers_across_execution_modes(self):
+        # Independent correctness oracles: all cases were accepted by the
+        # analyser even before the runtime fixes.
+        cases = (
+            ("range(1,5) | last", ("5",), ""),
+            ("range(1,2) | unpair", ("1", "2"), ""),
+            ("update(range(1,3),1,9)", ("[1, 9, 3]",), ""),
+            ("1 ^+500 1 ^+500 == | length", ("1",), ""),
+            ("1 ^+500 1 ^+500 != | length", ("1",), ""),
+            ("1 ^+500 | to[String] | length", ("1001",), ""),
+            ("1 ^+500 | println", (), "[" * 500 + "1" + "]" * 500 + "\n"),
+            ("import {std.json}\njson.encode(1 ^+500) ?!",
+             ("[" * 500 + "1" + "]" * 500,), ""),
+            ("1e9999999 1e9999999 /", ("1",), ""),
+            ("1e9999999 1 /", ("1e+9999999",), ""),
+            ("1 1000000 **", ("1",), ""),
+            ("2 20 **", ("1048576",), ""),
+            ("1 3 /", None, ""),
+        )
+        for source, expected, expected_output in cases:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [], source)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(source=source[:55], optimize=optimize, serialized=serialized):
+                        output = io.StringIO()
+                        with contextlib.redirect_stdout(output):
+                            result = run(loads(dumps(program)) if serialized else program)
+                        if expected is None:
+                            self.assertTrue(str(result[0]).startswith("0.333333"))
+                        else:
+                            self.assertEqual(
+                                tuple(format_runtime_value(item) for item in result),
+                                expected,
+                            )
+                        self.assertEqual(output.getvalue(), expected_output)
+
+    def test_divide_by_zero_is_a_language_fault_in_all_modes(self):
+        for source in ("1 0 /", "1.5 0.0 /", "0 0 /"):
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [], source)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(source=source, optimize=optimize, serialized=serialized):
+                        with self.assertRaisesRegex(RuntimeError, "DivisionByZeroFault") as failure:
+                            run(loads(dumps(program)) if serialized else program)
+                        self.assertNotIn("invalid bytecode", str(failure.exception))
+
+    def test_lazy_update_preserves_source_and_replay(self):
+        source = "$xs = range(1, 3)\nupdate($xs, 1, 9)\n$xs"
+        updated, original = execute(source)
+        self.assertEqual(list(updated), [RuntimeNumber(1), RuntimeNumber(9), RuntimeNumber(3)])
+        self.assertEqual(list(original), [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)])
+        self.assertEqual(list(updated), [RuntimeNumber(1), RuntimeNumber(9), RuntimeNumber(3)])
+
+    def test_zero_axes_and_normal_reshape(self):
+        self.assertEqual(execute("reshape([] as[Int+],[2,0,3])"), [[[], []]])
+        self.assertEqual(execute("reshape([1,2,3,4],[2,2])"), [
+            [[RuntimeNumber(1), RuntimeNumber(2)],
+             [RuntimeNumber(3), RuntimeNumber(4)]]
+        ])
+
+    def test_huge_decimal_exponents_are_bounded(self):
+        # Canonical coefficients cannot represent integers at negative exponents.
+        self.assertFalse(BigDecimal(1, -9_999_999).is_integer())
+        self.assertEqual(str(BigDecimal(1, 9_999_999)), "1e+9999999")
+        self.assertEqual(BigDecimal(1, 9_999_999) + BigDecimal(0), BigDecimal(1, 9_999_999))
+        self.assertEqual(BigDecimal(-1, -9_999_999).to_int(), -1)
+        self.assertGreater(BigDecimal(1, 9_999_999), BigDecimal(1))
+        with self.assertRaisesRegex(PythonRuntimeError, "expand more than"):
+            _ = BigDecimal(1, 9_999_999) + BigDecimal(1)
+        with self.assertRaisesRegex(RuntimeError, "expand more than"):
+            execute("1e9999999 1 +")
+
+
+class Round4RuntimeRegressionTests(unittest.TestCase):
+    """Execution-mode parity for complex arithmetic and deep runtime values."""
+
+    MODES = ((False, False), (True, False), (False, True), (True, True))
+
+    def run_source(self, source: str, optimize: bool, serialized: bool):
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual([], analyser.diagnostics, source)
+        program = compile_program(typed, optimize=optimize)
+        if serialized:
+            program = loads(dumps(program))
+        return run(program)
+
+    def test_complex_division_and_host_truthiness(self):
+        samples = (
+            ("1i2 3i4 /", "0.44i0.08"),
+            ("1i2 1 /", "1i2"),
+            ("1i2 1i-2 /", "-0.6i0.8"),
+            ("1i2 3i4 *", "-5i10"),
+            ("1i1 1 -", "0i1"),
+        )
+        for source, expected in samples:
+            for optimize, serialized in self.MODES:
+                with self.subTest(source=source, optimize=optimize, serialized=serialized):
+                    value, = self.run_source(source, optimize, serialized)
+                    self.assertEqual(expected, format_runtime_value(value))
+                    if source == "1i1 1 -":
+                        self.assertTrue(bool(value))
+        for value, expected in (
+            (RuntimeNumber((0, 0)), False),
+            (RuntimeNumber((0, 1)), True),
+            (RuntimeNumber((0, -1)), True),
+            (RuntimeNumber((1, 0)), True),
+        ):
+            self.assertEqual(bool(value), expected)
+
+    def test_high_rank_arithmetic_mapping_and_fold(self):
+        samples = (
+            ("1 ^+1000 | sum", 999, "1"),
+            ("1 ^+1000 | double", 1000, "2"),
+            ("1 ^+1000 2 +", 1000, "3"),
+            ("1 ^+800 | map: inc", 800, "2"),
+            ("1 ^+800 | 0 fold: +", 799, "1"),
+        )
+        for source, expected_rank, expected_scalar in samples:
+            for optimize, serialized in self.MODES:
+                with self.subTest(source=source, optimize=optimize, serialized=serialized):
+                    value, = self.run_source(source, optimize, serialized)
+                    rank = 0
+                    while isinstance(value, (list, tuple)):
+                        self.assertEqual(len(value), 1)
+                        value = value[0]
+                        rank += 1
+                    self.assertEqual(rank, expected_rank)
+                    self.assertEqual(format_runtime_value(value), expected_scalar)
+
+    def test_typed_json_collection_decode_beyond_python_recursion_depth(self):
+        samples = (100, 240, 250, 350)
+        for rank in samples:
+            source = ("import {std.json}\n"
+                      f"json.decode[Int+{rank}](json.encode(1 ^+{rank}) ?!) | ?!")
+            for optimize, serialized in self.MODES:
+                with self.subTest(rank=rank, optimize=optimize, serialized=serialized):
+                    value, = self.run_source(source, optimize, serialized)
+                    depth = 0
+                    while isinstance(value, (list, tuple)):
+                        self.assertEqual(1, len(value))
+                        depth += 1
+                        value = value[0]
+                    self.assertEqual(rank, depth)
+                    self.assertEqual(RuntimeNumber(1), value)
+
+    def test_regex_helpers_are_bounded_and_preserve_matching_semantics(self):
+        from unittest.mock import patch
+        examples = (
+            ('import {std.regex}\n"[A-Z]+" "ABC" regex.matches', "1"),
+            ('import {std.regex}\n"[0-9]+" "abc123" regex.first | ?!', "123"),
+            ('import {std.regex}\n"[0-9]+" "a12b" regex.contains', "1"),
+            ('import {std.regex}\n"[0-9]+" "#" "a12b" regex.replace', "a#b"),
+            ('import {std.regex}\n"," "a,b" regex.split | to[String]', "['a', 'b']"),
+        )
+        for source, expected in examples:
+            for optimize, serialized in self.MODES:
+                with self.subTest(source=source, optimize=optimize, serialized=serialized):
+                    result, = self.run_source(source, optimize, serialized)
+                    self.assertEqual(expected, format_runtime_value(result))
+        # This ambiguous alternation grows exponentially under backtracking.
+        source = ('import {std.regex}\n"(a|aa)+b" "'
+                  + 'a' * 160 + 'c" regex.matches')
+        with patch("valiance.std.regex.REGEX_TIMEOUT_SECONDS", 0.005):
+            for optimize, serialized in self.MODES:
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    try:
+                        result, = self.run_source(source, optimize, serialized)
+                    except RuntimeError as exc:
+                        self.assertIn("TimeoutFault", str(exc))
+                    else:
+                        # A future regex version may recognize this pattern
+                        # and reject it quickly without backtracking.
+                        self.assertEqual("0", format_runtime_value(result))
+        # Independently verify that an engine timeout becomes a language fault.
+        simple_source = 'import {std.regex}\n"a+" "aaaa" regex.matches'
+        with patch("valiance.std.regex.regex.fullmatch", side_effect=TimeoutError):
+            for optimize, serialized in self.MODES:
+                with self.subTest(timeout_translation=(optimize, serialized)):
+                    with self.assertRaisesRegex(RuntimeError, "TimeoutFault"):
+                        self.run_source(simple_source, optimize, serialized)
+
+
+class Round5RuntimeRegressionTests(unittest.TestCase):
+    """Exact numeric hashing, host constructors, and language panic contracts."""
+
+    MODES = ((False, False), (True, False), (False, True), (True, True))
+
+    def run_source(self, source: str, optimized: bool, serialized: bool):
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual([], analyser.diagnostics, source)
+        program = compile_program(typed, optimize=optimized)
+        if serialized:
+            program = loads(dumps(program))
+        return run(program)
+
+    def test_large_dictionary_keys_and_tiny_power_identities(self):
+        examples = (
+            ("dict{1e100001 => 2}", "{1e+100001 => 2}"),
+            ("dict{1e-100001 => 2}", "{1e-100001 => 2}"),
+            ("1 1e-100001 **", "1"),
+            ("1 -1e-100001 **", "1"),
+            ("1 1e-100001 **c", "1"),
+            ("1 2 **", "1"),
+        )
+        for source, expected in examples:
+            for optimize, serialized in self.MODES:
+                with self.subTest(source=source, optimize=optimize,
+                                  serialized=serialized):
+                    value, = self.run_source(source, optimize, serialized)
+                    self.assertEqual(expected, format_runtime_value(value))
+
+    def test_invalid_regex_and_complex_arithmetic_raise_language_faults(self):
+        examples = (
+            ('import {std.regex}\n"[" "abc" regex.matches', "ValueFault"),
+            ('import {std.regex}\n"(" "abc" regex.split', "ValueFault"),
+            ("1i2 2 %", "DomainFault"),
+            ("1i2 2 **", "DomainFault"),
+            ("2 1i2 %", "DomainFault"),
+            ("2 1i2 **", "DomainFault"),
+        )
+        for source, expected_fault in examples:
+            for optimize, serialized in self.MODES:
+                with self.subTest(source=source, optimize=optimize,
+                                  serialized=serialized):
+                    with self.assertRaisesRegex(RuntimeError, expected_fault) as error:
+                        self.run_source(source, optimize, serialized)
+                    self.assertNotIn("invalid bytecode", str(error.exception))
+
+    def test_host_numeric_unary_and_complex_constructors(self):
+        self.assertEqual(-RuntimeNumber("1i2"), RuntimeNumber("-1i-2"))
+        self.assertEqual(-RuntimeNumber(2), RuntimeNumber(-2))
+        self.assertEqual(RuntimeNumber.from_value(1 + 2j), RuntimeNumber("1i2"))
+        self.assertEqual(RuntimeNumber(1 + 2j), RuntimeNumber("1i2"))
+        self.assertEqual(RuntimeNumber.from_value(0.5 - 2j), RuntimeNumber("0.5i-2"))
+
+    def test_hashes_are_exact_and_compatible_with_equal_native_numbers(self):
+        from decimal import Decimal
+        from fractions import Fraction
+
+        for source, native in (
+            ("0", 0), ("-1", -1), ("0.5", 0.5), ("0.25", 0.25),
+            ("0.1", Decimal("0.1")), ("-0.1", Decimal("-0.1")),
+            ("0.125", Fraction(1, 8)), ("1i2", 1 + 2j),
+            ("0.5i-2", 0.5 - 2j),
+            ("1e100001", 10 ** 100001), ("1e-100001", Decimal("1e-100001")),
+        ):
+            with self.subTest(source=source):
+                value = RuntimeNumber(source)
+                # Fraction may not be directly supported by RuntimeNumber.__eq__,
+                # but its rational hash must still match our exact value.
+                if not isinstance(native, Fraction):
+                    self.assertEqual(value, native)
+                self.assertEqual(hash(native), hash(value))
+                if not isinstance(native, Fraction):
+                    self.assertEqual({native: "found"}[value], "found")
+
+        # Binary float 0.1 and exact decimal 0.1 are *not* the same number;
+        # treating them as equal would violate the hash invariant.
+        self.assertNotEqual(RuntimeNumber("0.1"), 0.1)
+        self.assertEqual(RuntimeNumber("0.1"), Decimal("0.1"))
+        self.assertEqual({0.5: "found"}[RuntimeNumber(0.5)], "found")
+        self.assertEqual({1 + 2j: "found"}[RuntimeNumber("1i2")], "found")
+
+    def test_decimal_hash_matches_python_rational_hash_over_scales(self):
+        from decimal import Decimal
+
+        for coefficient in (-111, -1, 0, 1, 3, 217):
+            for exponent in (-1000, -12, -1, 0, 1, 12, 1000):
+                with self.subTest(coefficient=coefficient, exponent=exponent):
+                    decimal = Decimal(coefficient).scaleb(exponent)
+                    runtime = RuntimeNumber(BigDecimal(coefficient, exponent))
+                    self.assertEqual(runtime, decimal)
+                    self.assertEqual(hash(runtime), hash(decimal))

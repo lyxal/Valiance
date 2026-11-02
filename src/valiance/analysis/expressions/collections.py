@@ -122,17 +122,18 @@ def _string_interpolation_node(
     )
 
 def _direct_variable_expressions(value: object) -> Iterable[GetVariableNode]:
-    """Yield direct variable expressions stored by one literal."""
-    if isinstance(value, GetVariableNode):
-        yield value
-        return
-    if isinstance(value, tuple):
-        for item in value:
-            yield from _direct_variable_expressions(item)
-        return
-    if is_dataclass(value) and not isinstance(value, type):
-        for item in fields(value):
-            yield from _direct_variable_expressions(getattr(value, item.name))
+    """Yield direct variable expressions without recursing through nested ASTs."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, GetVariableNode):
+            yield item
+        elif isinstance(item, tuple):
+            pending.extend(reversed(item))
+        elif is_dataclass(item) and not isinstance(item, type):
+            pending.extend(
+                getattr(item, field.name) for field in reversed(fields(item))
+            )
 
 
 def _reject_noncopyable_literal_storage(

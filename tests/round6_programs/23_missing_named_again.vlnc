@@ -1,0 +1,1 @@
+import {std.regex} "(?P<foo>a)" "\\g<bar>" "a" regex.replace

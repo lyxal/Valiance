@@ -156,7 +156,10 @@ String-keyed dictionaries, optionals, and generic managed objects recursively.
 Only checked runtime constructors may be used; field names and values must
 match their declared types. Public and readable fields are decoded, private
 fields are filled only from declared defaults, and arbitrary extra fields or
-ambiguous duplicate JSON keys are rejected. Missing required fields, invalid
+ambiguous duplicate JSON keys are rejected. Collection reconstruction uses an
+explicit work stack so a high-rank list does not exhaust Python recursion;
+JSON nesting beyond 512 levels returns a controlled `ValueError`. Missing
+required fields, invalid
 number formats, wrong JSON shapes, and unsupported target types return
 `ValueError` with a path indicating the failure. Union variants are selected
 only when their constructor field layouts uniquely identify one case; ambiguous

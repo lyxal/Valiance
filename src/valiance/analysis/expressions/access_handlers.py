@@ -196,6 +196,17 @@ def _reflection_private_owners(metadata, friendly_owners: frozenset[Symbol]) -> 
     return tuple(permitted)
 
 
+def _bounded_constant_index(value: RuntimeNumber) -> int:
+    # More than 10**18 elements cannot be materialized as an AST literal;
+    # retain only the information that this is well out of range.
+    limit = 10**18
+    if value > limit:
+        return limit
+    if value < -limit:
+        return -limit
+    return int(value)
+
+
 def _literal_integer_index(node: IndexAccessNode) -> int | None:
     """Return a scalar index only when its source is one integer literal."""
     expression = _scalar_index_expression(node)
@@ -208,7 +219,7 @@ def _literal_integer_index(node: IndexAccessNode) -> int | None:
         value = RuntimeNumber(literal.value)
     except InvalidOperation:
         return None
-    return int(value) if value.is_integer() else None
+    return _bounded_constant_index(value) if value.is_integer() else None
 
 
 def _scalar_index_expression(node: IndexAccessNode) -> tuple[ASTNode, ...] | None:
@@ -255,12 +266,12 @@ def _constant_integer_index(node: IndexAccessNode) -> int | None:
                 "*": lambda: left * right,
                 "**": lambda: left**right,
             }[name]()
-        except (DecimalException, ValueError, ZeroDivisionError):
+        except (DecimalException, ValueError, ZeroDivisionError, OverflowError, RuntimeError):
             return None
         stack.append(result)
     if len(stack) != 1 or not isinstance(stack[0], RuntimeNumber):
         return None
-    return int(stack[0]) if stack[0].is_integer() else None
+    return _bounded_constant_index(stack[0]) if stack[0].is_integer() else None
 
 
 def _literal_tuple_index_type(

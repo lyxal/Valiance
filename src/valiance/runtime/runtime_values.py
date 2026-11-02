@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import cmath
+import math
+import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -55,6 +57,8 @@ class LazyList:
         default=None, init=False, compare=False, repr=False
     )
     _exhausted: bool = field(default=False, init=False, compare=False, repr=False)
+    _terminal_error: Exception | None = field(default=None, init=False, compare=False, repr=False)
+    host_fault_boundary: bool = field(default=False, compare=False, repr=False)
 
     def _iterate_uncached(self) -> Iterator[Any]:
         """Return the source iterator used to populate the replay cache."""
@@ -68,6 +72,8 @@ class LazyList:
                 yield self._cache[index]
                 index += 1
                 continue
+            if self._terminal_error is not None:
+                raise self._terminal_error
             if self._exhausted:
                 return
             if self._source_iterator is None:
@@ -78,6 +84,19 @@ class LazyList:
                 self._exhausted = True
                 self._source_iterator = None
                 return
+            except Exception as exc:
+                if isinstance(exc, PanicSignal) and self.host_fault_boundary:
+                    # Translate only at the host boundary; cache the translated
+                    # failure so subsequent traversals never lose an error.
+                    from .vm import RuntimeError as VMRuntimeError
+                    error = VMRuntimeError(
+                        f"uncaught panic: {format_runtime_value(exc.value)}"
+                    )
+                else:
+                    error = exc
+                self._terminal_error = error
+                self._source_iterator = None
+                raise error from exc if error is not exc else None
             self._cache.append(item)
             index += 1
             yield item
@@ -304,9 +323,10 @@ def _mutate_and_invalidate(
     *args: Any,
 ) -> Any:
     """Apply a built-in container mutation and invalidate ownership metadata."""
-    result = mutation(container, *args)
-    container._invalidate_ownership_cache()
-    return result
+    try:
+        return mutation(container, *args)
+    finally:
+        container._invalidate_ownership_cache()
 
 
 class ListValue(list[Any]):
@@ -345,8 +365,7 @@ class ListValue(list[Any]):
 
     def extend(self, values: Iterable[Any]) -> None:
         """Append several items and invalidate cached ownership metadata."""
-        super().extend(values)
-        self._invalidate_ownership_cache()
+        _mutate_and_invalidate(self, list.extend, values)
 
     def insert(self, index: int, value: Any) -> None:
         """Insert one item and invalidate cached ownership metadata."""
@@ -365,9 +384,10 @@ class ListValue(list[Any]):
         self._invalidate_ownership_cache()
 
     def clear(self) -> None:
-        """Remove all items and record that the empty list is ownership-trivial."""
+        """Remove all items and mark the empty list as owner- and tag-free."""
         super().clear()
         self._ownership_trivial = True
+        self._tag_free = True
 
     def reverse(self) -> None:
         """Reverse this list without changing its ownership classification."""
@@ -379,13 +399,15 @@ class ListValue(list[Any]):
 
     def __iadd__(self, values: Iterable[Any]):
         """Append several items and invalidate cached ownership metadata."""
-        result = super().__iadd__(values)
-        self._invalidate_ownership_cache()
-        return result
+        return _mutate_and_invalidate(self, list.__iadd__, values)
 
     def __imul__(self, count: int):
-        """Repeat this list without changing direct item ownership kinds."""
-        return super().__imul__(count)
+        """Repeat items, resetting metadata when repetition empties the list."""
+        result = super().__imul__(count)
+        if count <= 0:
+            self._ownership_trivial = True
+            self._tag_free = True
+        return result
 
 
 class DictValue(dict[Any, Any]):
@@ -436,14 +458,14 @@ class DictValue(dict[Any, Any]):
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         """Update items and invalidate cached ownership metadata."""
-        super().update(*args, **kwargs)
-        self._invalidate_ownership_cache()
+        try:
+            super().update(*args, **kwargs)
+        finally:
+            self._invalidate_ownership_cache()
 
     def __ior__(self, other: Any):
         """Merge values and invalidate cached ownership metadata."""
-        result = super().__ior__(other)
-        self._invalidate_ownership_cache()
-        return result
+        return _mutate_and_invalidate(self, dict.__ior__, other)
 
 
 class RecordValue(DictValue):
@@ -855,7 +877,7 @@ def is_recoverable_fault(error: BaseException) -> bool:
     return True
 
 
-from .bigdecimal import BigDecimal
+from .bigdecimal import BigDecimal, MAX_DECIMAL_EXPANSION_DIGITS
 
 
 class NumericContext:
@@ -902,14 +924,30 @@ def inferred_precision(*values: BigDecimal) -> int:
     )
 
 
+def _check_power_coefficient_size(number: "RuntimeNumber") -> None:
+    """Bound materialized power coefficients while allowing compact 10**N."""
+    # The coefficient may be tiny even if its *exponent* is enormous.
+    maximum_bits = (MAX_DECIMAL_EXPANSION_DIGITS + 1) * 4
+    if (abs(number.real.coefficient).bit_length() > maximum_bits
+            or abs(number.imag.coefficient).bit_length() > maximum_bits):
+        raise RuntimeError("power would expand more than 100000 digits")
+
+
+def _decimal_integer_mod(value: BigDecimal, divisor: int) -> int:
+    """Take a compact integral decimal modulo a small positive integer."""
+    if not value.is_integer():
+        raise ValueError("expected an integral decimal")
+    return (value.coefficient % divisor) * pow(10, value.exponent, divisor) % divisor
+
+
 class RuntimeNumber:
     __slots__ = ("real", "imag")
 
     def __init__(self, value: object = 0):
         """Initialize this runtime number from a value of any supported type."""
         if isinstance(value, complex):
-            self.real = BigDecimal.from_value(value.real)
-            self.imag = BigDecimal.from_value(value.imag)
+            self.real = BigDecimal.from_float(value.real)
+            self.imag = BigDecimal.from_float(value.imag)
         elif isinstance(value, RuntimeNumber):
             self.real = value.real
             self.imag = value.imag
@@ -977,9 +1015,6 @@ class RuntimeNumber:
         if isinstance(value, cls):
             return value
 
-        if isinstance(value, complex):
-            return cls(value.real, value.imag)
-
         return cls(value)
 
     @staticmethod
@@ -1022,18 +1057,55 @@ class RuntimeNumber:
             other, (RuntimeNumber, complex, BigDecimal, Decimal, int, float)
         ):
             return NotImplemented
+        # Python floats are binary rationals. Comparing with their displayed
+        # decimal approximation would make 0.1 == Decimal("0.1") while their
+        # hashes differ, breaking dictionary and set membership. Compare the
+        # exact values instead, without changing Valiance's decimal arithmetic.
+        if isinstance(other, (float, complex)):
+            real = other.real if isinstance(other, complex) else other
+            imag = other.imag if isinstance(other, complex) else 0.0
+            if not math.isfinite(real) or not math.isfinite(imag):
+                return False
+            return (
+                self.real == BigDecimal.from_decimal(Decimal.from_float(real))
+                and self.imag == BigDecimal.from_decimal(Decimal.from_float(imag))
+            )
         try:
             other = RuntimeNumber.from_value(other)
         except TypeError:
             return NotImplemented
-
         return self.real == other.real and self.imag == other.imag
 
+    @staticmethod
+    def _component_hash(component: BigDecimal) -> int:
+        """Hash a decimal as an exact rational without expanding 10**N.
+
+        Python's int, Decimal, Fraction and float hashes use a common rational
+        modulus. Powers of ten are coprime to that prime, so negative decimal
+        exponents can be handled by modular inversion.
+        """
+        modulus = sys.hash_info.modulus
+        coefficient = component.coefficient
+        if component.exponent >= 0:
+            magnitude = abs(coefficient) % modulus * pow(10, component.exponent, modulus)
+        else:
+            denominator = pow(10, -component.exponent, modulus)
+            magnitude = abs(coefficient) % modulus * pow(denominator, -1, modulus)
+        result = magnitude % modulus
+        if coefficient < 0:
+            result = -result
+        return -2 if result == -1 else result
+
     def __hash__(self) -> int:
-        """Return a value-consistent hash for dictionary-key use."""
-        if self.imag.is_zero() and self.real.is_integer():
-            return hash(self.real.to_int())
-        return hash((self.real, self.imag))
+        """Hash the exact numeric value consistently with native Python numbers."""
+        real_hash = self._component_hash(self.real)
+        if self.imag.is_zero():
+            return real_hash
+        # Match complex's component-hash formula and Py_ssize_t overflow rules.
+        combined = real_hash + sys.hash_info.imag * self._component_hash(self.imag)
+        width = sys.hash_info.width
+        combined = (combined + (1 << (width - 1))) % (1 << width) - (1 << (width - 1))
+        return -2 if combined == -1 else combined
 
     def _require_real(self, other):
         """Require that another value is a real number for ordering comparisons."""
@@ -1121,25 +1193,39 @@ class RuntimeNumber:
 
     def _divide_decimal(self, a, b):
         """Divide two BigDecimal values with inferred precision."""
-        precision = inferred_precision(a, b)
+        if b.is_zero():
+            raise ZeroDivisionError("division by zero")
+        if a.is_zero():
+            return ZERO
 
+        # Decimal's Emax/Emin apply to *values*, not to the significant
+        # digits in a quotient. Divide the compact coefficients and restore
+        # their power-of-ten difference without expanding huge exponents.
+        quotient, remainder = divmod(a.coefficient, b.coefficient)
+        if remainder == 0:
+            return BigDecimal(quotient).scaleb(a.exponent - b.exponent)
+        # Keep the established scale-sensitive precision for ordinary input,
+        # but do not allocate millions of significant digits for a compact
+        # exponent representation. Always retain enough digits for coefficients.
+        precision = max(
+            a.digits() + b.digits() + NumericContext.guard_digits,
+            min(inferred_precision(a, b), 10_000),
+        )
         with localcontext() as ctx:
             ctx.prec = precision
-
-            result = a.to_decimal(precision) / b.to_decimal(precision)
-
-        return BigDecimal.from_decimal(result)
+            result = Decimal(a.coefficient) / Decimal(b.coefficient)
+        return BigDecimal.from_decimal(result).scaleb(a.exponent - b.exponent)
 
     def _complex_divide(self, other):
         """Divide this runtime number by another value using complex arithmetic."""
         denominator = other.real * other.real + other.imag * other.imag
 
-        return RuntimeNumber(
-            (
-                (self.real * other.real + self.imag * other.imag)
-                / RuntimeNumber(denominator),
-                (self.imag * other.real - self.real * other.imag)
-                / RuntimeNumber(denominator),
+        return RuntimeNumber._from_components(
+            self._divide_decimal(
+                self.real * other.real + self.imag * other.imag, denominator,
+            ),
+            self._divide_decimal(
+                self.imag * other.real - self.real * other.imag, denominator,
             ),
         )
 
@@ -1153,14 +1239,74 @@ class RuntimeNumber:
         """Raise this number to another number on the principal branch."""
         other = RuntimeNumber.from_value(other)
 
+        # Identities must precede decimal conversion / precision inference:
+        # even 1 ** 1e-1000000 is exactly 1, and 10**N must stay compact.
+        if self.imag.is_zero() and self.real == BigDecimal(1):
+            return RuntimeNumber(1)
+        if other.real.is_zero() and other.imag.is_zero():
+            return RuntimeNumber(1)
+        if self.real.is_zero() and self.imag.is_zero():
+            if not other.imag.is_zero():
+                raise ValueError("zero base with complex exponent is undefined")
+            if other.real.coefficient < 0:
+                raise ZeroDivisionError("zero cannot be raised to a negative power")
+            return RuntimeNumber(0)
+
+        # Unit bases have modular integer powers. This avoids expanding
+        # 10**1000000 just to compute (-1)**N or i**N.
         if other.imag.is_zero() and other.real.is_integer():
+            if (self.real == BigDecimal(-1) and self.imag.is_zero()):
+                return RuntimeNumber(-1 if _decimal_integer_mod(other.real, 2) else 1)
+            if self.real.is_zero() and self.imag in (BigDecimal(1), BigDecimal(-1)):
+                residue = _decimal_integer_mod(other.real, 4)
+                if self.imag == BigDecimal(-1):
+                    residue = (-residue) % 4
+                return (RuntimeNumber(1), RuntimeNumber("0i1"),
+                        RuntimeNumber(-1), RuntimeNumber("0i-1"))[residue]
+            if self.real.is_zero() and self.imag.is_zero() and other.real.coefficient < 0:
+                raise ZeroDivisionError("zero cannot be raised to a negative power")
+
+        if (self.imag.is_zero() and self.real.coefficient > 0 and
+                other.imag.is_zero() and other.real == BigDecimal(5, -1)):
+            # Computing sqrt of a compact exponent never requires expanding
+            # the input to a million-digit Decimal first.
+            coefficient = self.real.coefficient
+            exponent = self.real.exponent
+            if exponent % 2:
+                coefficient *= 10
+                exponent -= 1
+            with localcontext() as ctx:
+                ctx.prec = min(100, max(50, len(str(coefficient)) + 16))
+                root = Decimal(coefficient).sqrt()
+            return RuntimeNumber(BigDecimal.from_decimal(root).scaleb(exponent // 2))
+
+        if other.imag.is_zero() and other.real.is_integer():
+            # Neutral/absorbing bases can be decided without expanding an
+            # astronomical integer exponent into a Python int.
+            if self.imag.is_zero() and self.real == BigDecimal(1):
+                return RuntimeNumber(1)
+            if other.real.is_zero():
+                return RuntimeNumber(1)
+            # Test the sign using the compact decimal coefficient first.
+            # An enormous positive integer exponent need never be expanded
+            # when the base is zero.
+            if self.real.is_zero() and self.imag.is_zero() and other.real.coefficient > 0:
+                return RuntimeNumber(0)
             exponent = other.real.to_int()
             if exponent < 0:
                 return RuntimeNumber(1) / (self ** -exponent)
 
+            # Exponentiation by squaring: logarithmic multiplication count.
             result = RuntimeNumber(1)
-            for _ in range(exponent):
-                result *= self
+            factor = self
+            while exponent:
+                if exponent & 1:
+                    result *= factor
+                    _check_power_coefficient_size(result)
+                exponent >>= 1
+                if exponent:
+                    factor *= factor
+                    _check_power_coefficient_size(factor)
             return result
 
         precision = inferred_precision(
@@ -1242,14 +1388,11 @@ class RuntimeNumber:
 
     def __neg__(self):
         """Negate this runtime number."""
-        return RuntimeNumber(
-            -self.real,
-            -self.imag,
-        )
+        return RuntimeNumber._from_components(-self.real, -self.imag)
 
     def __bool__(self):
-        """Return whether this runtime number is non-zero."""
-        return not self.real.is_zero()
+        """Return whether either component of this number is non-zero."""
+        return not (self.real.is_zero() and self.imag.is_zero())
 
     # ---------- helpers ----------
 
@@ -1290,6 +1433,10 @@ class RuntimeNumber:
         if not self.imag.is_zero():
             raise TypeError("Cannot convert complex RuntimeNumber to int")
 
+        if self.real.exponent < 0 and self.real.coefficient < 0:
+            # Python int(x) truncates toward zero; BigDecimal.to_int uses
+            # floor semantics for other existing language operations.
+            return -(-self.real).to_int()
         return self.real.to_int()
 
     def __float__(self):
@@ -1330,26 +1477,40 @@ def is_eager_sequence(value: Any) -> bool:
 
 
 def runtime_collection_rank(value: Any) -> int | None:
-    """Return the exact uniform rank carried by or observable from a list value."""
-    value = unwrap_runtime_value(value)
-    recorded = getattr(value, "runtime_rank", None)
-    if isinstance(recorded, int) and recorded >= 1:
-        return recorded
-    if not is_eager_sequence(value):
-        return None
-    if not value:
-        return 1
-
-    child_ranks = tuple(runtime_collection_rank(item) for item in value)
-    list_children = tuple(rank is not None for rank in child_ranks)
-    if not any(list_children):
-        return 1
-    if not all(list_children):
-        return None
-    first = child_ranks[0]
-    if first is None or any(rank != first for rank in child_ranks[1:]):
-        return None
-    return first + 1
+    """Infer uniform rank iteratively, including deeply nested native lists."""
+    ranks: dict[int, int | None] = {}
+    visiting: set[int] = set()
+    pending: list[tuple[Any, bool]] = [(value, False)]
+    while pending:
+        node, finished = pending.pop()
+        node = unwrap_runtime_value(node)
+        identity = id(node)
+        recorded = getattr(node, "runtime_rank", None)
+        if isinstance(recorded, int) and recorded >= 1:
+            ranks[identity] = recorded
+            continue
+        if not is_eager_sequence(node):
+            ranks[identity] = None
+            continue
+        if not finished:
+            if identity in visiting:
+                raise ValueError("cyclic list has no finite collection rank")
+            visiting.add(identity)
+            pending.append((node, True))
+            for child in reversed(node):
+                child = unwrap_runtime_value(child)
+                if id(child) not in ranks:
+                    pending.append((child, False))
+            continue
+        visiting.remove(identity)
+        children = [ranks[id(unwrap_runtime_value(child))] for child in node]
+        if not children or all(rank is None for rank in children):
+            ranks[identity] = 1
+        elif all(rank is not None and rank == children[0] for rank in children):
+            ranks[identity] = children[0] + 1
+        else:
+            ranks[identity] = None
+    return ranks[id(unwrap_runtime_value(value))]
 
 
 def with_runtime_collection_rank(value: Any, rank: int | None) -> Any:
@@ -1377,86 +1538,98 @@ def format_runtime_value(
     tuple_single_comma: bool = False,
     lazy_preview_limit: int | None = None,
 ) -> str:
-    """Format output, quoting strings inside aggregates and optionally at top level."""
-    value = unwrap_runtime_value(value)
-    options = {
-        "quote_strings": True,
-        "tuple_single_comma": tuple_single_comma,
-        "lazy_preview_limit": lazy_preview_limit,
-    }
-    if isinstance(value, (FFIScalarValue, FFIBufferValue, FFIStructValue, FFIHandleValue)):
-        return str(value)
-    if isinstance(value, (RuntimeNumber, int, float, Decimal)):
-        rendered = format(value, "f")
-        return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
-    if isinstance(value, str):
-        return repr(value) if quote_strings else value
-    if isinstance(value, list):
-        items: Iterable[Any] = value
-        has_more = False
-        if lazy_preview_limit is not None and len(value) > lazy_preview_limit:
-            items, has_more = value[:lazy_preview_limit], True
-        return _format_list_items(items, has_more=has_more, **options)
-    if is_list_like(value):
-        if lazy_preview_limit is None:
-            return _format_list_items(value, **options)
-        preview = list(islice(iter(value), lazy_preview_limit + 1))
-        has_more = len(preview) > lazy_preview_limit
-        return _format_list_items(
-            preview[:lazy_preview_limit], has_more=has_more, **options
-        )
-    if isinstance(value, tuple):
-        inner = ", ".join(format_runtime_value(item, **options) for item in value)
-        if tuple_single_comma and len(value) == 1:
-            inner += ","
-        return f"({inner})"
-    if isinstance(value, RecordValue):
-        items = ", ".join(
-            f"{name} => {format_runtime_value(item, **options)}"
-            for name, item in value.items()
-        )
-        return f"record{{{items}}}"
-    if isinstance(value, dict):
-        items = []
-        for key, item in value.items():
-            key = unwrap_runtime_value(key)
-            rendered_key = (
-                json.dumps(key, ensure_ascii=False)
-                if isinstance(key, str)
-                else format_runtime_value(key, **options)
-            )
-            items.append(f"{rendered_key} => {format_runtime_value(item, **options)}")
-        return "{" + ", ".join(items) + "}"
-    if isinstance(value, ObjectValue):
-        items = ", ".join(
-            f"{name}: {format_runtime_value(item, **options)}"
-            for name, item in value.fields.items()
-        )
-        return f"{object_type_name(value)}{{{items}}}"
-    return repr(value) if quote_strings else str(value)
+    """Format runtime values without consuming the Python recursion limit.
 
+    Collect explicit render tasks so deeply ranked values behave just like
+    shallow ones. The string-quoting rule applies to children of aggregates,
+    not necessarily to the top-level value.
+    """
+    rendered: list[str] = []
+    tasks: list[tuple[str, Any, bool]] = [("value", value, quote_strings)]
+    visiting: set[int] = set()
 
-def _format_list_items(
-    items: Iterable[Any],
-    *,
-    quote_strings: bool,
-    tuple_single_comma: bool,
-    lazy_preview_limit: int | None,
-    has_more: bool = False,
-) -> str:
-    """Format a sequence using the active recursive formatting options."""
-    rendered = [
-        format_runtime_value(
-            item,
-            quote_strings=quote_strings,
-            tuple_single_comma=tuple_single_comma,
-            lazy_preview_limit=lazy_preview_limit,
-        )
-        for item in items
-    ]
-    if has_more:
-        rendered.append("...")
-    return "[" + ", ".join(rendered) + "]"
+    def add_sequence(items: Iterable[Any], start: str, end: str,
+                     *, more: bool = False, singleton_comma: bool = False) -> None:
+        values = list(items)
+        tasks.append(("text", end, False))
+        if more:
+            tasks.append(("text", "...", False))
+            if values:
+                tasks.append(("text", ", ", False))
+        if singleton_comma:
+            tasks.append(("text", ",", False))
+        for index in range(len(values) - 1, -1, -1):
+            tasks.append(("value", values[index], True))
+            if index:
+                tasks.append(("text", ", ", False))
+        tasks.append(("text", start, False))
+
+    while tasks:
+        kind, current, quoted = tasks.pop()
+        if kind == "text":
+            rendered.append(current)
+            continue
+        if kind == "leave":
+            visiting.remove(current)
+            continue
+        current = unwrap_runtime_value(current)
+        if (isinstance(current, (list, tuple, dict, ObjectValue)) or
+                (is_list_like(current) and not isinstance(current, str))):
+            identity = id(current)
+            if identity in visiting:
+                raise ValueError("cyclic runtime value cannot be formatted")
+            visiting.add(identity)
+            tasks.append(("leave", identity, False))
+        if isinstance(current, (FFIScalarValue, FFIBufferValue, FFIStructValue, FFIHandleValue)):
+            rendered.append(str(current))
+        elif isinstance(current, (RuntimeNumber, int, float, Decimal)):
+            shown = format(current, "f")
+            rendered.append(shown.rstrip("0").rstrip(".") if "." in shown else shown)
+        elif isinstance(current, str):
+            rendered.append(repr(current) if quoted else current)
+        elif isinstance(current, list):
+            extra = lazy_preview_limit is not None and len(current) > lazy_preview_limit
+            add_sequence(current[:lazy_preview_limit] if extra else current,
+                         "[", "]", more=extra)
+        elif is_list_like(current):
+            if lazy_preview_limit is None:
+                add_sequence(current, "[", "]")
+            else:
+                preview = list(islice(iter(current), lazy_preview_limit + 1))
+                extra = len(preview) > lazy_preview_limit
+                add_sequence(preview[:lazy_preview_limit], "[", "]", more=extra)
+        elif isinstance(current, tuple):
+            add_sequence(current, "(", ")",
+                         singleton_comma=tuple_single_comma and len(current) == 1)
+        elif isinstance(current, (RecordValue, dict, ObjectValue)):
+            if isinstance(current, ObjectValue):
+                entries = list(current.fields.items())
+                prefix, separator, suffix = object_type_name(current) + "{", ": ", "}"
+            elif isinstance(current, RecordValue):
+                entries = list(current.items())
+                prefix, separator, suffix = "record{", " => ", "}"
+            else:
+                entries = list(current.items())
+                prefix, separator, suffix = "{", " => ", "}"
+            tasks.append(("text", suffix, False))
+            for index in range(len(entries) - 1, -1, -1):
+                key, item = entries[index]
+                tasks.append(("value", item, True))
+                tasks.append(("text", separator, False))
+                if isinstance(current, dict) and not isinstance(current, RecordValue):
+                    unwrapped_key = unwrap_runtime_value(key)
+                    if isinstance(unwrapped_key, str):
+                        tasks.append(("text", json.dumps(unwrapped_key, ensure_ascii=False), False))
+                    else:
+                        tasks.append(("value", key, True))
+                else:
+                    tasks.append(("text", str(key), False))
+                if index:
+                    tasks.append(("text", ", ", False))
+            tasks.append(("text", prefix, False))
+        else:
+            rendered.append(repr(current) if quoted else str(current))
+    return "".join(rendered)
 
 
 def object_type_name(value: ObjectValue) -> str:

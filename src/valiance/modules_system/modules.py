@@ -257,7 +257,8 @@ class ModuleLoader:
                         self._read_bytes(source_file)
                     ).hexdigest() == candidate.source_hash
                     dependencies_match = source_matches and self._compiled_dependencies_match(
-                        candidate.dependency_hashes, source_file
+                        candidate.dependency_hashes, source_file,
+                        candidate.dependency_implementation_hashes,
                     )
                     if dependencies_match and candidate.analysed_interface is not None:
                         expected_name = _module_name(path)
@@ -511,14 +512,28 @@ class ModuleLoader:
             ] = self._implementation_hashes[cache_key]
 
     def _compiled_dependencies_match(
-        self, dependencies: tuple[tuple[str, str], ...], source_file: Path
+        self, dependencies: tuple[tuple[str, str], ...], source_file: Path,
+        implementations: tuple[tuple[str, str], ...] = (),
     ) -> bool:
-        """Validate recorded direct dependency interfaces before artifact reuse."""
+        """Validate both public contracts and linked runtime code dependencies."""
+        # Older artifacts cannot prove implementation freshness. Reanalyse from
+        # source (or embedded interface source) instead of trusting stale code.
+        if dependencies and not implementations:
+            return False
         for identity, expected_hash in dependencies:
             try:
                 path = dependency_path_from_identity(identity)
                 exports = self.load(path, current_file=source_file)
                 actual_hash = self.interface_hash_for(exports)
+            except ModuleLoadError:
+                return False
+            if actual_hash != expected_hash:
+                return False
+        for identity, expected_hash in implementations:
+            try:
+                path = dependency_path_from_identity(identity)
+                exports = self.load(path, current_file=source_file)
+                actual_hash = self.implementation_hash_for(exports)
             except ModuleLoadError:
                 return False
             if actual_hash != expected_hash:
@@ -1043,7 +1058,13 @@ def import_behaviour_set_objects(
         implementation_object = replace(
             obj,
             typed=TypedObjectNode(
-                replace(implementation_node, definitions=definitions, target=None),
+                replace(
+                    implementation_node,
+                    definitions=definitions,
+                    target=None,
+                    generics=implementation.generics,
+                    generic_constraints=implementation.generic_constraints,
+                ),
                 obj.typed.typ,
                 tuple(result_metadata.items()),
                 tuple(identity_metadata.items()),

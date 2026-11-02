@@ -193,30 +193,95 @@ def _render_json_value(
         )
         if runtime_infinite or expected_infinite:
             raise _JsonEncodingError("Infinite JSON lists cannot be encoded")
-    if isinstance(value, (LazyList, list, tuple, dict)):
-        identity = id(value)
-        if identity in visiting:
-            raise _JsonEncodingError("Cyclic JSON values cannot be encoded")
-        visiting.add(identity)
-        try:
-            if isinstance(value, (LazyList, list, tuple)):
-                child_type = _collection_child_type(expected)
-                return "[" + ",".join(
-                    _render_json_value(item, visiting, child_type, native_encode) for item in value
-                ) + "]"
-            if any(not isinstance(key, str) for key in value):
-                raise _JsonEncodingError("JSON dictionary keys must be strings")
-            dict_value_type = (expected.args[1] if isinstance(expected, T.NominalType)
-                               and expected.name.text == "Dict" and len(expected.args) == 2
-                               else None)
-            return "{" + ",".join(
-                quote_string(key) + ":" +
-                _render_json_value(item, visiting, dict_value_type, native_encode)
-                for key, item in value.items()
-            ) + "}"
-        finally:
-            visiting.remove(identity)
+    if isinstance(value, (LazyList, list, tuple)):
+        return _render_json_list(value, visiting, expected, native_encode)
+    if isinstance(value, dict):
+        return _render_json_list(value, visiting, expected, native_encode)
     raise _JsonEncodingError("Unsupported JSON value type")
+
+
+def _render_json_list(
+    root: Any, visiting: set[int], expected: T.Type | None,
+    native_encode: Any,
+) -> str:
+    """Render lists and dictionaries iteratively with path-local cycle detection.
+
+    An exact-rank list of hundreds of dimensions must not consume a Python
+    call frame for every dimension. Noncollection leaves still use the checked
+    scalar/object/native encoder and preserve their expected type metadata.
+    """
+    output: list[str] = []
+    tasks: list[tuple[str, Any, T.Type | None]] = [("visit", root, expected)]
+    opened: set[int] = set()
+    try:
+        while tasks:
+            operation, value, typ = tasks.pop()
+            if operation == "text":
+                output.append(value)
+                continue
+            if operation == "close":
+                visiting.remove(value)
+                opened.remove(value)
+                continue
+            infinite = False
+            while isinstance(value, TaggedValue):
+                infinite |= any(
+                    tag.name == "infinite" and tag.depth == 0 and not tag.absent
+                    for tag in value.tags
+                )
+                # Boolean tags apply to scalar leaves, handled below.
+                if any(tag.name == "boolean" and tag.depth == 0 for tag in value.tags):
+                    break
+                value = value.value
+            if isinstance(value, (list, tuple, LazyList)):
+                expected_infinite = (
+                    isinstance(typ, T.TaggedType)
+                    and any(tag.name == "infinite" and tag.depth == 0 and not tag.absent
+                            for tag in typ.tags)
+                )
+                if infinite or expected_infinite:
+                    raise _JsonEncodingError("Infinite JSON lists cannot be encoded")
+                identity = id(value)
+                if identity in visiting:
+                    raise _JsonEncodingError("Cyclic JSON values cannot be encoded")
+                visiting.add(identity)
+                opened.add(identity)
+                child_type = _collection_child_type(typ)
+                children = list(value)
+                tasks.append(("close", identity, None))
+                tasks.append(("text", "]", None))
+                for index in range(len(children) - 1, -1, -1):
+                    tasks.append(("visit", children[index], child_type))
+                    if index:
+                        tasks.append(("text", ",", None))
+                tasks.append(("text", "[", None))
+            elif isinstance(value, dict):
+                identity = id(value)
+                if identity in visiting:
+                    raise _JsonEncodingError("Cyclic JSON values cannot be encoded")
+                if any(not isinstance(key, str) for key in value):
+                    raise _JsonEncodingError("JSON dictionary keys must be strings")
+                visiting.add(identity)
+                opened.add(identity)
+                value_type = (typ.args[1] if isinstance(typ, T.NominalType)
+                              and typ.name.text == "Dict" and len(typ.args) == 2
+                              else None)
+                entries = list(value.items())
+                tasks.append(("close", identity, None))
+                tasks.append(("text", "}", None))
+                for index in range(len(entries) - 1, -1, -1):
+                    key, item = entries[index]
+                    tasks.append(("visit", item, value_type))
+                    tasks.append(("text", ":", None))
+                    tasks.append(("text", quote_string(key), None))
+                    if index:
+                        tasks.append(("text", ",", None))
+                tasks.append(("text", "{", None))
+            else:
+                output.append(_render_json_value(value, visiting, typ, native_encode))
+    finally:
+        visiting.difference_update(opened)
+    return "".join(output)
 
 
 @lru_cache(maxsize=512)
@@ -419,20 +484,60 @@ def _json_decode_collection(
     value: Any, expected: T.Type, lookup: Any, path: str, depth: int,
     variants: Any, native_decode: Any = None,
 ) -> Any:
-    """Reconstruct nested JSON arrays using the expected typed collection rank."""
-    if not isinstance(value, list):
-        raise _JsonDecodingError(f"{path}: expected JSON array")
-    child_type = _collection_child_type(expected)
-    if child_type is None:
-        raise _JsonDecodingError(f"{path}: invalid collection target type {expected}")
+    """Reconstruct checked JSON arrays without a Python frame per rank.
+
+    Leaf values still use the normal typed decoder, including record/object
+    constructors and their checked visibility and native adapter rules.
+    """
     from valiance.runtime.runtime_values import ListValue
-    collection = expected.inner if isinstance(expected, T.TaggedType) else expected
-    rank = collection.rank if isinstance(collection, T.CollectionType) and isinstance(collection.rank, int) else None
-    return ListValue(
-        (_json_decode_typed(item, child_type, lookup, f"{path}[{index}]", depth + 1, variants, native_decode)
-         for index, item in enumerate(value)),
-        runtime_rank=rank,
-    )
+
+    pending: list[tuple[str, Any, T.Type | None, str, int, int | None]] = [
+        ("visit", value, expected, path, depth, None),
+    ]
+    decoded: list[Any] = []
+    while pending:
+        operation, raw, typ, location, level, rank = pending.pop()
+        if operation == "assemble":
+            size = int(raw)
+            items = decoded[-size:] if size else []
+            if size:
+                del decoded[-size:]
+            decoded.append(ListValue(items, runtime_rank=rank))
+            continue
+        if level > 512:
+            raise _JsonDecodingError(f"{location}: JSON nesting exceeds supported depth")
+        # The initial call and each child must carry the same type/tag
+        # evidence that the recursive decoder would use at that rank.
+        unwrapped = typ
+        while isinstance(unwrapped, (T.NoVecType, T.ExactType)):
+            unwrapped = unwrapped.inner
+        if isinstance(unwrapped, T.TaggedType):
+            if any(tag.name == "boolean" and tag.depth == 0 and not tag.absent
+                   for tag in unwrapped.tags):
+                decoded.append(_json_decode_typed(
+                    raw, typ, lookup, location, level, variants, native_decode,
+                ))
+                continue
+            unwrapped = unwrapped.inner
+        if not isinstance(unwrapped, T.CollectionType):
+            decoded.append(_json_decode_typed(
+                raw, typ, lookup, location, level, variants, native_decode,
+            ))
+            continue
+        if not isinstance(raw, list):
+            raise _JsonDecodingError(f"{location}: expected JSON array")
+        child_type = _collection_child_type(typ)
+        if child_type is None:
+            raise _JsonDecodingError(f"{location}: invalid collection target type {typ}")
+        collection_rank = unwrapped.rank if isinstance(unwrapped.rank, int) else None
+        pending.append(("assemble", len(raw), None, location, level, collection_rank))
+        for index in range(len(raw) - 1, -1, -1):
+            pending.append((
+                "visit", raw[index], child_type, f"{location}[{index}]", level + 1, None,
+            ))
+    if len(decoded) != 1:
+        raise AssertionError("typed JSON collection reconstruction left an invalid stack")
+    return decoded[0]
 
 
 @stdlib_element(

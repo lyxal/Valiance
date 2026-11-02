@@ -7986,3 +7986,23 @@ class PowerOverloadTypingTests(unittest.TestCase):
         analyser = Analyser()
         analyser.analyse(parse("define power(:Number, :Number) -> Number => ** end"))
         self.assertEqual(analyser.diagnostics, [])
+
+
+class DeepAndWideLiteralRegressionTests(unittest.TestCase):
+    """Do not expose host recursion limits through source collection literals."""
+
+    def test_deep_list_has_a_controlled_diagnostic(self):
+        analyser = Analyser()
+        analyser.analyse(parse("[" * 170 + "1" + "]" * 170))
+        self.assertTrue(any("nesting is too deep" in d for d in analyser.diagnostics))
+
+    def test_large_flat_dictionary_and_tuple_are_accepted(self):
+        programs = (
+            "dict{" + ", ".join(f'"x{i}" => {i}' for i in range(500)) + "}",
+            "{" + ", ".join("1" for _ in range(1000)) + "}",
+        )
+        for source in programs:
+            with self.subTest(prefix=source[:10]):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])

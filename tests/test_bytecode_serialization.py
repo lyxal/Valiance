@@ -24,9 +24,33 @@ from valiance.runtime.bytecode import (
 )
 
 from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
+from valiance.runtime.serialization import MAGIC
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_bounded_trait_dispatch_metadata_is_validated_and_serialized(self):
+        guards = ((0, "Source", (("$0", "Number"),)),)
+        function = FunctionCode(
+            (Instruction(OpCode.RETURN),),
+            params=("self",),
+            multi=True,
+            dispatch_types=("Source",),
+            dispatch_bounds=guards,
+        )
+        program = Program(function)
+        self.assertEqual(loads(dumps(program)), program)
+
+        malformed = (
+            ((1, "Source", (("$0", "Number"),)),),  # Invalid receiver index.
+            ((0, "", (("$0", "Number"),)),),
+            ((0, "Source", ()),),
+            ((0, "Source", (("$0", 4),)),),
+            (("self", "Source", (("$0", "Number"),)),),
+        )
+        for bounds in malformed:
+            with self.subTest(bounds=bounds), self.assertRaises(BytecodeFormatError):
+                loads(dumps(Program(replace(function, dispatch_bounds=bounds))))
+
     def test_unwrap_return_policy_round_trip_and_validation(self):
         program = Program(FunctionCode((Instruction(OpCode.TRY_UNWRAP, True),)))
         self.assertEqual(loads(dumps(program)), program)
@@ -728,7 +752,7 @@ nameOf($field)
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x46"))
+        self.assertTrue(data.startswith(MAGIC))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

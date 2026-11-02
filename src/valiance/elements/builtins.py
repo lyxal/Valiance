@@ -13,6 +13,7 @@ import ctypes
 import hashlib
 import math
 import operator
+import unicodedata
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from itertools import chain, cycle, groupby, islice
@@ -1998,7 +1999,17 @@ def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     examples=(("7.5 2.5 %", "0"),),
 )
 def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `%`, `%`, `%`, `%`, `%` built-in runtime overloads."""
+    """Implement numeric remainder, mapping zero divisors to language faults."""
+    divisor = RuntimeNumber.from_value(args[1])
+    if divisor.real.is_zero() and divisor.imag.is_zero():
+        raise PanicSignal(ObjectValue(
+            "DivisionByZeroFault", {"message": "division by zero"},
+        ))
+    dividend = RuntimeNumber.from_value(args[0])
+    if not dividend.imag.is_zero() or not divisor.imag.is_zero():
+        raise PanicSignal(ObjectValue(
+            "DomainFault", {"message": "modulo is only defined for real numbers"},
+        ))
     return (_wrapping_mod(args[0], args[1]),)
 
 
@@ -2054,6 +2065,8 @@ def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _string_repeat(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `*` built-in runtime overload."""
+    if not args[1]:
+        return ("",)
     return (int(args[0]) * args[1],)
 
 
@@ -2067,6 +2080,8 @@ def _string_repeat_reverse(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
     """Implement the `*` built-in runtime overload."""
+    if not args[0]:
+        return ("",)
     return (args[0] * int(args[1]),)
 
 
@@ -2092,6 +2107,12 @@ def _real_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Raise a non-negative real number to a real power."""
 
     base, exponent = args
+    base = RuntimeNumber.from_value(base)
+    exponent = RuntimeNumber.from_value(exponent)
+    if not base.imag.is_zero() or not exponent.imag.is_zero():
+        raise PanicSignal(ObjectValue(
+            "DomainFault", {"message": "** is only defined for real numbers; use **c for complex exponentiation"},
+        ))
     if base < 0:
         raise PanicSignal(
             ObjectValue(
@@ -2103,8 +2124,9 @@ def _real_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         )
     try:
         return (base**exponent,)
-    except (ArithmeticError, ValueError) as exc:
-        raise RuntimeError("invalid real exponentiation") from exc
+    except (ArithmeticError, ValueError, OverflowError) as exc:
+        fault = "DivisionByZeroFault" if isinstance(exc, ZeroDivisionError) else "DomainFault"
+        raise PanicSignal(ObjectValue(fault, {"message": str(exc)})) from exc
 
 
 @builtin("**c", (T.Number, T.Number), (T.Number,))
@@ -2114,8 +2136,9 @@ def _complex_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     base, exponent = args
     try:
         return (base**exponent,)
-    except (ArithmeticError, ValueError) as exc:
-        raise RuntimeError("invalid numeric exponentiation") from exc
+    except (ArithmeticError, ValueError, OverflowError) as exc:
+        fault = "DivisionByZeroFault" if isinstance(exc, ZeroDivisionError) else "DomainFault"
+        raise PanicSignal(ObjectValue(fault, {"message": str(exc)})) from exc
 
 
 @builtin(
@@ -2236,6 +2259,11 @@ def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `/`, `/`, `/`, `/`, `/` built-in runtime overloads."""
+    divisor = RuntimeNumber.from_value(args[1])
+    if divisor.real.is_zero() and divisor.imag.is_zero():
+        raise PanicSignal(ObjectValue(
+            "DivisionByZeroFault", {"message": "division by zero"},
+        ))
     return (args[0] / args[1],)
 
 
@@ -2709,6 +2737,14 @@ def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the final item from a non-empty finite list or string."""
 
     value = args[0]
+    if isinstance(value, (LazyList, PlannedLazyList)):
+        sentinel = object()
+        last_item = sentinel
+        for last_item in value:
+            pass
+        if last_item is sentinel:
+            raise RuntimeError("last requires a non-empty value")
+        return (last_item,)
     if not value:
         raise RuntimeError("last requires a non-empty value")
     return (value[-1],)
@@ -2803,19 +2839,31 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         traversal_depth = input_rank - 1 - target_rank
 
         def map_nested(value: Any, depth: int) -> Any:
-            """Traverse known outer ranks before invoking the scalar callback."""
+            """Map known collection ranks with an explicit traversal stack."""
             if depth == 0:
                 return prepared.invoke1(value)[0]
-            result = ListValue(
-                (map_nested(item, depth - 1) for item in value),
-                runtime_rank=depth,
-            )
-            result._tag_free = all(
-                not hasattr(item, "tags")
-                and (not isinstance(item, ListValue) or item._tag_free is True)
-                for item in result
-            )
-            return result
+            frames = [[iter(value), [], depth]]
+            while frames:
+                iterator, items, level = frames[-1]
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    result = ListValue(items, runtime_rank=level)
+                    result._tag_free = all(
+                        not hasattr(child, "tags")
+                        and (not isinstance(child, ListValue) or child._tag_free is True)
+                        for child in result
+                    )
+                    frames.pop()
+                    if not frames:
+                        return result
+                    frames[-1][1].append(result)
+                    continue
+                if level == 1:
+                    items.append(prepared.invoke1(item)[0])
+                else:
+                    frames.append([iter(item), [], level - 1])
+            raise AssertionError("nested map traversal did not complete")
 
         result = ListValue(
             (map_nested(item, traversal_depth) for item in args[0]),
@@ -2892,13 +2940,36 @@ def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     return ()
 
 
+def _parse_exact_integer_text(value: str) -> RuntimeNumber:
+    """Parse strictly decimal integer text with no host int(str) digit cap."""
+    text = value.strip()
+    sign = text[0] if text.startswith(("+", "-")) else ""
+    body = text[len(sign):]
+    if not body:
+        raise ValueError("expected a base-ten integer")
+    # Preserve Python int(text, 10)'s existing accepted spellings: Unicode
+    # decimal digits and single underscores between digits. Convert them to
+    # an ASCII decimal spelling without ever calling int() on the long text.
+    digits = []
+    for offset, char in enumerate(body):
+        if char == "_":
+            if not digits or offset + 1 >= len(body) or body[offset + 1] == "_":
+                raise ValueError("invalid underscore in integer")
+            continue
+        try:
+            digits.append(str(unicodedata.decimal(char)))
+        except ValueError as exc:
+            raise ValueError("expected a base-ten integer") from exc
+    return RuntimeNumber(sign + "".join(digits))
+
+
 @builtin("numeric?", (T.String,), (T.Boolean,))
 def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return whether a string can be parsed as a base-ten integer."""
 
     try:
-        int(args[0].strip(), 10)
-    except ValueError:
+        _parse_exact_integer_text(args[0])
+    except (ValueError, ArithmeticError):
         return (_truth(False),)
     return (_truth(True),)
 
@@ -2943,8 +3014,8 @@ def _string_to_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     """Parse a base-ten integer, raising ConversionFault for invalid text."""
 
     try:
-        return (RuntimeNumber(int(args[0].strip(), 10)),)
-    except ValueError as error:
+        return (_parse_exact_integer_text(args[0]),)
+    except (ValueError, ArithmeticError) as error:
         raise PanicSignal(
             ObjectValue("ConversionFault", {"message": "cannot convert String to Int"})
         ) from error
@@ -2976,7 +3047,7 @@ def _pop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
-@builtin("positive?", (T.Number,), (T.Boolean,))
+@builtin("positive?", (T.Real,), (T.Boolean,))
 def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `positive?` built-in runtime overload."""
     return (_truth(args[0] > 0),)
@@ -3002,6 +3073,19 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (LazyList(RuntimeNumber(item) for item in range(int(start), int(stop) + 1)),)
 
 
+def _bounded_runtime_int(value: RuntimeNumber, bound: int) -> int:
+    """Clamp integral values to +-bound before ever expanding their digits."""
+    if value > bound:
+        return bound
+    if value < -bound:
+        return -bound
+    return int(value)
+
+
+def _index_range_fault(message: str) -> None:
+    raise PanicSignal(ObjectValue("IndexFault", {"message": message}))
+
+
 @builtin(
     "removeAt",
     (T.ExactList(T.V("Item")), T.Int),
@@ -3012,11 +3096,11 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return a materialized copy of a list without the indexed item."""
     values, raw_index = args
     result = list(values)
-    index = int(raw_index)
+    index = _bounded_runtime_int(raw_index, len(result) + 1)
     try:
         del result[index]
     except IndexError as exc:
-        raise RuntimeError(f"removeAt index {index} is out of range") from exc
+        _index_range_fault(f"removeAt index {index} is out of range")
     return (result,)
 
 
@@ -3149,12 +3233,18 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         shape.append(dimension)
 
     def flatten(value: Any) -> Iterator[Any]:
-        """Yield scalar leaves from a finite prefix of a nested value."""
-        if is_list_like(value) or isinstance(value, tuple):
-            for item in value:
-                yield from flatten(item)
-        else:
-            yield value
+        """Yield scalar leaves without recursive calls for nested collections."""
+        pending = [iter((value,))]
+        while pending:
+            try:
+                item = next(pending[-1])
+            except StopIteration:
+                pending.pop()
+                continue
+            if is_list_like(item) or isinstance(item, tuple):
+                pending.append(iter(item))
+            else:
+                yield item
 
     expected = 1
     for dimension in shape:
@@ -3166,19 +3256,20 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         raise RuntimeError(
             f"reshape needs exactly {expected} items for shape ({rendered_shape}); received {received}"
         )
-    position = 0
-
-    def build(depth: int) -> list[Any]:
-        """Build one nested result level while advancing the flat position."""
-        nonlocal position
-        dimension = shape[depth]
-        if depth == len(shape) - 1:
-            result = items[position : position + dimension]
-            position += dimension
-            return result
-        return [build(depth + 1) for _ in range(dimension)]
-
-    return (build(0),)
+    # Assemble from the innermost dimension outward. Prefix products retain
+    # the correct number of empty axes (e.g. reshape to [2, 0, 3]).
+    parents = [1]
+    for dimension in shape:
+        parents.append(parents[-1] * dimension)
+    level: list[Any] = items
+    for depth in range(len(shape) - 1, -1, -1):
+        width = shape[depth]
+        count = parents[depth]
+        level = [
+            level[index * width : (index + 1) * width]
+            for index in range(count)
+        ]
+    return (level[0],)
 
 
 @builtin(
@@ -3200,7 +3291,8 @@ def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     materialized = values if isinstance(values, str) else list(values)
     if not materialized:
         return (materialized,)
-    amount = int(raw_amount) % len(materialized)
+    # A compact 10**100001 rotation still only needs the remainder.
+    amount = int(raw_amount % RuntimeNumber(len(materialized)))
     return (materialized[amount:] + materialized[:amount],)
 
 
@@ -3254,11 +3346,23 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     lst, n = args
     if n < 0:
         raise RuntimeError("take requires a non-negative integer")
-    if isinstance(lst, PlannedLazyList):
-        return (lst.append_stage(LazyPipelineStage.limiting(int(n))),)
-    if isinstance(lst, LazyList):
-        return (LazyList(islice(iter(lst), int(n))),)
-    return (lst[: int(n)],)
+    if isinstance(lst, (PlannedLazyList, LazyList)):
+        if n <= 100_000:
+            if isinstance(lst, PlannedLazyList):
+                return (lst.append_stage(LazyPipelineStage.limiting(int(n))),)
+            return (LazyList(islice(iter(lst), int(n))),)
+        def take_huge_limit():
+            iterator = iter(lst)
+            count = 0
+            while RuntimeNumber(count) < n:
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    return
+                yield item
+                count += 1
+        return (LazyList(take_huge_limit()),)
+    return (lst[: _bounded_runtime_int(n, len(lst))],)
 
 
 @builtin(
@@ -3276,6 +3380,11 @@ def _true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the first two items of a finite list, raising if there are fewer than two."""
     values = args[0]
+    if isinstance(values, LazyList):
+        items = list(islice(iter(values), 3))
+        if len(items) != 2:
+            raise RuntimeError("unpair requires a list of exactly two items")
+        return (items[0], items[1])
     if len(values) != 2:
         raise RuntimeError("unpair requires a list of exactly two items")
     return (values[0], values[1])
@@ -3732,13 +3841,15 @@ def _from_charcode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     """Convert an integral Unicode code point to a character."""
 
     raw_codepoint = args[0]
-    if raw_codepoint != raw_codepoint.to_integral_value():
-        raise RuntimeError("fromCharcode requires an integer code point")
-    codepoint = int(raw_codepoint)
-    try:
-        return (chr(codepoint),)
-    except ValueError as exc:
-        raise RuntimeError("fromCharcode code point is out of range") from exc
+    if not raw_codepoint.is_integer():
+        raise PanicSignal(ObjectValue("RangeFault", {"message": "fromCharcode requires an integer code point"}))
+    if raw_codepoint < 0 or raw_codepoint > 0x10FFFF or (
+        0xD800 <= raw_codepoint <= 0xDFFF
+    ):
+        raise PanicSignal(ObjectValue(
+            "RangeFault", {"message": "fromCharcode requires a Unicode scalar value"}
+        ))
+    return (chr(int(raw_codepoint)),)
 
 
 @builtin(

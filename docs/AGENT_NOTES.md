@@ -1,3 +1,16 @@
+# Trait implication dispatch and generic bound evidence
+
+Multiple imported `trait[T: Bound] Source as Target[T]` implementations may
+have the same unqualified runtime receiver (`Source`). Compiled methods retain
+receiver-indexed `dispatch_bounds`, including when a module re-exports the
+implementation's friendly surface. Nominal-trait dispatch resolves a concrete
+object's `Source` ancestor via its guarded generic projection facts, then checks
+those bounds. Do not substitute the object's own type parameters for the
+trait's projected parameters: `object[A, B] Pair as Source[B]` would apply the
+wrong constraint. Preserve ambiguity if two distinct bound implementations
+remain applicable; never resolve it by import order. The multi-module
+regression covers serialized and source-free execution.
+
 # Hidden parameters in imported overload sets
 
 Imported function sets can group several checked overloads under a single
@@ -196,3 +209,28 @@ carry `runtime_name == node.name` (not just `None`), so both forms must be
 considered. Private nominal runtime type names need provider qualification to
 keep source-free modules and checked casts sound. None of these dependencies
 should enter the caller's source-level symbol or overload environment.
+
+# High-rank collection and decimal resource boundaries
+
+A list with hundreds of singleton dimensions is tiny in element count but can
+exhaust Python recursion through analyser AST walks, runtime tag normalization,
+cast checking, release bookkeeping or output formatting. When adding a new
+per-axis runtime pass, use an explicit stack and exercise rank 350+ with
+optimized and reloaded bytecode. In particular, ownership of builtin output
+containers (`_retain_embedded_builtin_args`), minimum-rank checks for higher-order
+calls (`_minimum_runtime_collection_rank`), and rank-typed JSON decoding each
+need depth-independent traversals; an iterative vectorisation loop alone does
+not protect these callers. Wide tuple/dict ASTs also need iterative
+Cartesian-product generation. For decimals, normalized `BigDecimal` coefficients
+allow integrality tests without expanding `10**(-exponent)`; avoid eager large
+powers in other operations, and keep runtime diagnostics printable on failure.
+
+
+For Python interoperability, numeric equality and hashing are inseparable:
+`RuntimeNumber`'s decimal coefficient/exponent should be hashed as an exact
+rational modulo `sys.hash_info.modulus`, not materialized with `to_int()` and
+not hashed as a tuple. Native `float` comparison must use its exact binary
+value rather than decimalizing its display string, or equal objects can have
+different hashes. Complex hashes follow Python's signed-width component
+combination rule. Place cheap arithmetic identities before precision inference
+and expensive decimal exponent conversion, including in `**c` execution.

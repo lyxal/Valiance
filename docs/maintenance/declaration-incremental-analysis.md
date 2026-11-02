@@ -48,3 +48,19 @@ without changing the product schema.
 Focused coverage is in `tests/test_incremental_semantic.py`. It verifies stable
 canonical fingerprints, body-edit precision, semantic-output propagation,
 declaration deletion, and executable-region incoming-state checks.
+
+## Cross-module trait dependency validation
+
+The whole-module `CompilationCoordinator` also checks dependency **implementation**
+identities, separately from exported interface identities. A trait-to-trait
+implication may keep its public signature while its checked method body changes.
+Re-exporting facades and downstream executables therefore cannot assume that an
+unchanged interface hash makes a previously linked method body current.
+
+`tests/test_type_soundness_incremental_traits_multimodule.py` verifies this
+through compiled-module artifacts, fresh and reused coordinators, generic
+trait specializations, edited bounds, deleted implications, diamond imports,
+optimized and unoptimized execution, and source-free `.vbcm` dependencies.
+Byte-for-byte restoration of a previous dependency is allowed to reuse an
+artifact whose recorded fingerprints match again; not every intermediate
+invalid build implies a forced recompile after the source is restored.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from valiance.runtime.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber, ObjectValue, PanicSignal
 import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.documentation import element_documentation
@@ -49,5 +49,5 @@ def _between(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     minimum, maximum = (int(value) for value in args)
     if minimum > maximum:
-        raise RuntimeError("between requires minimum <= maximum")
+        raise PanicSignal(ObjectValue("RangeFault", {"message": "between requires minimum <= maximum"}))
     return (RuntimeNumber(random.randint(minimum, maximum)),)

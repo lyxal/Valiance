@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
-from itertools import count
+from itertools import count, product
 from typing import cast
 
 from valiance.runtime.runtime_values import RuntimeNumber
@@ -314,13 +314,9 @@ def _cartesian_product(
     options: tuple[tuple[_core.ListItemAnalysis, ...], ...],
 ) -> Iterator[tuple[_core.ListItemAnalysis, ...]]:
     """Compute cartesian product during static analysis."""
-    if not options:
-        yield ()
-        return
-    first, rest = options[0], options[1:]
-    for item in first:
-        for suffix in _cartesian_product(rest):
-            yield (item, *suffix)
+    # itertools.product also yields one empty tuple for zero dimensions.
+    # Avoid one Python call frame per item in wide tuple/dict literals.
+    yield from product(*options)
 
 
 def _merge_inferred_inputs(

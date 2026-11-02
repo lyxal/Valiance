@@ -209,3 +209,90 @@ by the three soundness fixes; supporting that path requires provider-private
 runtime dependencies to remain linked without leaking or colliding with
 consumer-local declarations. The mapped A01 case checks unsafe assignment
 rejection, not construction through a private factory at runtime.
+
+## Phase 7 — incremental rebuilds and adversarial multi-module linking
+
+Baseline: the packaged Phase 6 repository. In addition to retaining the 79
+original soundness case dispositions (77 pass / 2 N/A), this phase introduces
+`tests/test_type_soundness_incremental_multimodule.py`: **20 executable tests**
+focused on successive builds, re-export facades, private generic dependencies,
+module aliases, source-free bytecode, and editor overlays.
+
+### New defect: implementation-only edits skipped by incremental builds
+
+A minimal reproducer constructs `core -> middle -> front -> main`, builds all
+three `.vbcm` modules and `main.vbc`, then changes only `core`'s function body:
+
+```valiance
+# core.vlnc, version A
+public define value(n:Int)->Int=>$n+1 end
+
+# core.vlnc, version B (same public signature)
+public define value(n:Int)->Int=>$n+2 end
+```
+
+Before the fix, `core` was rebuilt but `middle` and `front` were reported
+`reused`; the executable also reported `reused` and returned **5**, not **6**,
+for `value(4)`. The root cause was that compiled module freshness considered
+**interface hashes only**, although re-exported runtime code depends on the
+provider implementation. A separate reproducer reused one
+`CompilationCoordinator` instance across an edit and observed stale in-memory
+`ModuleLoader` exports.
+
+The compiler now records *direct implementation-dependency hashes* alongside
+interface hashes in compiled module metadata and incremental indexes. The
+module coordinator checks both before returning `REUSED`, and the loader checks
+both before trusting a persisted analysed interface. A reused coordinator
+creates a fresh loader per top-level build to avoid stale disk observations;
+recursive dependency builds still share their traversal loader. The new
+`dependency_implementations` metadata member is additive to module format 4;
+modules without this evidence are reanalysed conservatively when dependencies
+exist, rather than accepted on interface identity alone. Existing unmodified
+metadata remains readable, but it cannot prove implementation freshness.
+
+### Added executable checks
+
+The 20 source-backed tests include: direct/transitive implementation edits;
+private helper and generic layout changes; no-change reuse; coordinator reuse
+across disk edits; public signature changes and stale artifact preservation;
+source-free rebuild and deliberately stale facade bytecode; generic object
+identity through a diamond; independently sourced private nominals; aliases
+renamed twice; typed overlay invalidation; generic specializations at two
+concrete types; unaffected parallel providers; deleted exports; unaffected
+unrelated builds; and malformed dependency-metadata rejection. Tests execute
+actual published `.vbc` data rather than relying only on successful analysis.
+
+### Validation and limits
+
+With Python 3.13.5, the new module passed **20/20**; grouped regressions passed
+32 incremental/multi-module tests, 59 compiled-module tests, 87 bytecode tests
+(one skipped), 110 soundness/adversarial tests (two skipped), 975
+generics/type/analyser tests, and 202 optimizer/trait/re-export/program tests
+(34 skipped). Some groups overlap; these numbers are not additive. A focused
+runtime selection passed 13 tests. A separate attempt to run the complete
+standalone runtime module exceeded the tool execution window without a final
+result and is **not** claimed as passing. Python 3.14 and native sanitizer
+validation were not run. This work does not change Valiance's generic, rank,
+optional/result, or overload policies.
+
+## Incremental generic-trait and multi-provider follow-up
+
+A dedicated executable suite,
+`tests/test_type_soundness_incremental_traits_multimodule.py`, tests whether
+trait implication edits, explicit generic-bound changes, and method-body edits
+invalidate their consuming module chains. It also covers provider reuse,
+recovery after an invalid intermediate edit, three-hop and diamond re-exports,
+and fresh versus source-free module loading. The incremental tests use compiled
+`.vbcm` artifacts and executable `.vbc` outputs, not just analyser diagnostics.
+
+**Disjoint generic trait implication dispatch:** Compiled nominal-trait methods
+now retain the declaration's generic bound as receiver-indexed dispatch
+evidence. The VM projects the concrete receiver through its declared nominal
+trait ancestry and checks the instantiated bound before admitting a candidate.
+`trait[T:Number] Source as Target[T]` and `trait[T:String] Source as Target[T]`
+therefore dispatch to different methods for `Box[Int]` and `Box[String]`.
+Multiple remaining candidates still raise an ambiguity instead of choosing by
+import order. The regression
+`test_disjoint_generic_trait_implications_dispatch_by_instantiated_bound`
+checks optimized, unoptimized and source-free module execution.
+

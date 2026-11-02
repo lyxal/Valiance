@@ -2377,3 +2377,14 @@ signature filtering. Editor worlds are built from those exits, so a candidate
 rejected later cannot appear at an earlier cursor. Control-flow ancestry is kept
 within a world rather than labelled as an overload. Trace exhaustion makes
 inspection unavailable without changing executable products or diagnostics.
+
+## Source nesting and wide literal analysis
+
+The analyser checks AST nesting before recursive semantic checking and reports
+`source nesting is too deep for semantic analysis` for source exceeding 120 nested
+AST nodes. This is independent of the parser's own recursion diagnostic; it
+prevents interpreter `RecursionError` exceptions from leaking out of analysis.
+Sibling expressions do not count toward nesting depth, so wide tuple and
+dictionary literals remain supported. Literal-branch Cartesian products are
+constructed iteratively with `itertools.product` rather than recursively over
+one frame per item.

@@ -9,6 +9,7 @@ import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.documentation import element_documentation
 from valiance.elements.stdlib_native import stdlib_element
+from valiance.runtime.runtime_values import ObjectValue, PanicSignal
 
 
 @stdlib_element(
@@ -50,7 +51,7 @@ def _transliterate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     del ctx
     value, source, target = args
     if len(source) != len(target):
-        raise RuntimeError("transliterate alphabets must have equal length")
+        raise PanicSignal(ObjectValue("ValueFault", {"message": "transliterate alphabets must have equal length"}))
     table = str.maketrans(source, target)
     return (value.translate(table),)
 

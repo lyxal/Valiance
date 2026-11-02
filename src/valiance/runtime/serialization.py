@@ -40,7 +40,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x46  # Symbolic static ranks in compiled function bodies.
+BYTECODE_VERSION = 0x47  # Instantiated generic trait dispatch bounds.
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -204,11 +204,12 @@ def loads(data: bytes) -> Program:
         if prefix != MAGIC_PREFIX:
             raise BytecodeFormatError("invalid Valiance bytecode magic")
         version = reader.u8()
-        if version not in (0x43, 0x44, 0x45, BYTECODE_VERSION):
+        if version not in (0x43, 0x44, 0x45, 0x46, BYTECODE_VERSION):
             raise BytecodeFormatError(
                 f"unsupported Valiance bytecode version {version}; "
-                f"expected 0x43, 0x44, 0x45 or {BYTECODE_VERSION}"
+                f"expected 0x43 through {BYTECODE_VERSION}"
             )
+        reader.version = version
         main = reader.function()
         tag_parents = tuple(
             (reader.string(), reader.string()) for _ in range(reader.u32())
@@ -607,9 +608,10 @@ def _validate_tag_parent_metadata(
 
 
 class _Writer:
-    def __init__(self) -> None:
+    def __init__(self, *, version: int = BYTECODE_VERSION) -> None:
         """Initialize this writer."""
         self.buffer = bytearray()
+        self.version = version
 
     def finish(self) -> bytes:
         """Return the complete immutable bytecode buffer."""
@@ -907,6 +909,8 @@ class _Writer:
         self.u32(len(function.dispatch_types))
         for typ in function.dispatch_types:
             self.optional_string(typ)
+        if self.version >= 0x47:
+            self.value(function.dispatch_bounds)
         self.u32(len(function.signature_types))
         for typ in function.signature_types:
             self.string(typ)
@@ -947,6 +951,7 @@ class _Writer:
 class _Reader:
     data: bytes
     offset: int = 0
+    version: int = BYTECODE_VERSION
 
     def expect(self, value: bytes) -> None:
         """Consume and validate an expected byte sequence."""
@@ -1412,6 +1417,23 @@ class _Reader:
         if multi not in {0, 1}:
             raise BytecodeFormatError(f"invalid function multi flag {multi}")
         dispatch_types = tuple(self.optional_string() for _ in range(self.u32()))
+        dispatch_bounds = self.value() if self.version >= 0x47 else ()
+        if (
+            not isinstance(dispatch_bounds, tuple)
+            or any(
+                not isinstance(entry, tuple) or len(entry) != 3
+                or type(entry[0]) is not int or not 0 <= entry[0] < len(params)
+                or not isinstance(entry[1], str) or not entry[1]
+                or not isinstance(entry[2], tuple) or not entry[2]
+                or any(
+                    not isinstance(pair, tuple) or len(pair) != 2
+                    or not all(isinstance(part, str) and part for part in pair)
+                    for pair in entry[2]
+                )
+                for entry in dispatch_bounds
+            )
+        ):
+            raise BytecodeFormatError("invalid generic trait dispatch bounds")
         signature_types = tuple(self.string() for _ in range(self.u32()))
         result_signature_types = tuple(self.string() for _ in range(self.u32()))
         generic_type_parameters = tuple(self.string() for _ in range(self.u32()))
@@ -1478,6 +1500,7 @@ class _Reader:
             recursive=bool(recursive),
             multi=bool(multi),
             dispatch_types=dispatch_types,
+            dispatch_bounds=dispatch_bounds,
             signature_types=signature_types,
             result_signature_types=result_signature_types,
             generic_type_parameters=generic_type_parameters,
