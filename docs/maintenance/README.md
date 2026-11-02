@@ -83,6 +83,12 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   dismiss on edits, including undo/redo.
   Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
   and [compilation database tests](../../tests/test_compilation_database.py).
+- [Testing and debugging](testing-and-debugging.md) includes the discovered
+  regression suites and the [source fixture inventory](../../tests/fixtures/regressions/README.md).
+  The detailed contracts are documented under
+  [collection indexing and deferred faults](collection-indexing-and-faults.md),
+  [runtime invariants and numerical boundaries](runtime-invariants-and-numerics.md),
+  and [source and bytecode boundaries](source-boundary-correctness.md).
 - [Understanding the type system](type-system.md) gives a human-first mental
   model of type relations, generic solving, overload application, and branch
   analysis, with traced examples and an API decision table.

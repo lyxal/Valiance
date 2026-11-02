@@ -1,7 +1,4 @@
-# Round 3 runtime repairs
-
-This release continues from `Valiance_phase8_runtime_round2_fixed.zip` and
-addresses the 14 reproducer inputs from `Valiance_round3_bug_repros.zip`.
+# Collection indexing and deferred runtime faults
 
 ## Fixed behavior
 
@@ -23,19 +20,8 @@ addresses the 14 reproducer inputs from `Valiance_round3_bug_repros.zip`.
   `PanicSignal` exceptions into public Valiance `RuntimeError` exceptions when
   callers iterate them, without changing panic behavior inside VM execution.
 
-## Verification
+## Regression tests
 
-Run the added regression tests from the project root:
-
-```bash
-PYTHONPATH=src:.:tests python -m unittest -q tests.test_round3_runtime_regressions
-```
-
-They exercise all 14 original reproducers in optimized, unoptimized, and both
-serialized modes, plus negative-index bounds and mixed-scale remainder signs.
-The Round 2 regression tests, selected ownership/indexing/type-soundness suites,
-end-to-end compiler tests, and six deterministic fuzz targets were also run.
-
-**Important:** The validation environment used Python 3.13.5. The project
-requires Python 3.14 or newer. Full-suite and infinite-list behavior remain
-outside this round's validation scope.
+The indexed collection and deferred-fault behaviours are verified by
+`tests/test_collection_boundaries.py`, and decimal modulus by
+`tests/test_numeric_boundaries.py`.

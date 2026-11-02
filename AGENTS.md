@@ -81,6 +81,16 @@ Keep the repository organized and its documentation consistent with the implemen
 - Update relevant maintenance guides or compiler documentation when architecture, semantics, invariants, or supported behaviour changes.
 - Follow existing file naming, module structure, and import conventions.
 
+### Durable names for tests and project artifacts
+
+Name things for the **subsystem, behavior, or invariant** they represent, not for the investigation or conversation that produced them.
+
+- Do **not** use investigation labels such as `phase_x`, `round_y`, `test_round_7_*`, `fix_batch_2`, or `bughunt_3` for test modules, test cases, fixtures, helper scripts, directories, or maintenance documentation.
+- Prefer descriptive names such as `test_decimal_formatting.py`, `test_lazy_error_replay.py`, and `tests/fixtures/regressions/numeric/large_integer_serialization.vlnc`.
+- Integrate new regressions into the relevant subsystem tests and ordinary test discovery. State expected values and faults explicitly; never derive expectations from fixture numbers or discovery-batch IDs.
+- Keep docs and comments timeless: describe current behavior, guarantees, and pitfalls instead of recounting how a bug was found or which patch introduced a fix.
+- Only use phase or version labels when they identify a **real, stable technical concept** (for example, an actual compiler phase or a public format version), not an internal work session.
+
 ### Documentation and comments
 
 Write documentation and code comments for their intended readers, describing the software as though its current design had been intentional from the beginning.

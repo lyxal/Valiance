@@ -1,12 +1,4 @@
-# Round 7 — Source-guided correctness repairs
-
-This revision applies the findings in the Round 7 source-guided audit to the
-Round 6 repaired Valiance baseline. The original 41 Valiance source programs
-are installed as `tests/round7_programs/*.vlnc`. Run:
-
-```sh
-PYTHONPATH=src:tests python -m unittest -q tests.test_round7_source_regressions
-```
+# Source boundary and bytecode correctness
 
 ## Resolved categories
 
@@ -35,18 +27,7 @@ PYTHONPATH=src:tests python -m unittest -q tests.test_round7_source_regressions
   consistent with Python's `__int__` contract. It does not change Valiance
   decimal floor-division semantics.
 
-## Verified here
+## Regression tests
 
-- 41 audit programs across four modes (164 expectation assertions), plus 12
-  positive controls across all four modes (48 checks).
-- 252 parser/optimizer/end-to-end/previous-round/new regression test methods;
-  a further 54 selected runtime regression test methods. Both runs passed.
-- 11 Python host probes passed.
-- The existing bytecode test selection remains at 86 passing, one skipped,
-  and one *pre-existing* failure that expects header version 0x46 although
-  this baseline emits 0x47. This repair does not change the bytecode version.
-
-Testing used CPython 3.13.5, not the project's declared minimum of 3.14.
-The complete large legacy runtime suite and full repository suite were not
-completed in this environment. The `uv.lock` / regex dependency limitation
-from earlier rounds remains unchanged.
+See `tests/fixtures/regressions/README.md` for the behaviour-named source
+fixtures and their discovered test modules. Run `python -m unittest discover -s tests`.

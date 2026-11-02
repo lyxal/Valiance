@@ -13052,7 +13052,7 @@ class DeepCollectionRuntimeRegressionTests(unittest.TestCase):
                                 value = value[0]
                             self.assertEqual(value, RuntimeNumber(1))
 
-    def test_round_two_runtime_reproducers_across_execution_modes(self):
+    def test_lazy_operations_deep_equality_and_numeric_parity(self):
         # Independent correctness oracles: all cases were accepted by the
         # analyser even before the runtime fixes.
         cases = (
@@ -13131,7 +13131,7 @@ class DeepCollectionRuntimeRegressionTests(unittest.TestCase):
             execute("1e9999999 1 +")
 
 
-class Round4RuntimeRegressionTests(unittest.TestCase):
+class ComplexArithmeticAndDeepRankTests(unittest.TestCase):
     """Execution-mode parity for complex arithmetic and deep runtime values."""
 
     MODES = ((False, False), (True, False), (False, True), (True, True))
@@ -13241,7 +13241,7 @@ class Round4RuntimeRegressionTests(unittest.TestCase):
                         self.run_source(simple_source, optimize, serialized)
 
 
-class Round5RuntimeRegressionTests(unittest.TestCase):
+class NumericInteropAndFaultContractTests(unittest.TestCase):
     """Exact numeric hashing, host constructors, and language panic contracts."""
 
     MODES = ((False, False), (True, False), (False, True), (True, True))

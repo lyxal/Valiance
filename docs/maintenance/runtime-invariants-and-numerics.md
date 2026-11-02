@@ -1,11 +1,4 @@
-# Round 6 runtime fault repairs
-
-This change builds on the Round 5 repaired compiler. Regression inputs from the
-Round 6 audit are in `tests/round6_programs/`; run the full matrix with:
-
-```sh
-PYTHONPATH=src:. python -m unittest tests.test_round6_runtime_regressions
-```
+# Runtime invariants, numeric boundaries and fault contracts
 
 ## Corrections
 
@@ -43,14 +36,11 @@ float as exact `0.1`. Python's original `0.1` float still represents a distinct
 binary rational, so equality between `RuntimeNumber('0.1')` and native float
 `0.1` is **false**. This is deliberate: treating them as equal while retaining
 Python's exact hashes would violate the dictionary/set hash invariant restored
-in Round 5. Use `Decimal('0.1')` or `RuntimeNumber('0.1')` when working with
+by the runtime. Use `Decimal('0.1')` or `RuntimeNumber('0.1')` when working with
 exact decimal values in an embedding application.
 
-## Validation environment
 
-Tests ran with Python 3.13.5 although `pyproject.toml` requires Python 3.14+.
-The full suite is not claimed to have passed. The existing `regex` dependency
-remains declared in `pyproject.toml`, but the previous archive's `uv.lock` does
-not include it; `uv lock --offline` cannot regenerate the lock without an
-available Python 3.14 interpreter. Regenerate the lock on a 3.14 machine with
-`uv lock && uv sync`.
+## Regression tests
+
+See `tests/fixtures/regressions/README.md` for the behaviour-named source
+fixtures and their discovered test modules. Run `python -m unittest discover -s tests`.
