@@ -9189,6 +9189,7 @@ def _vectorize_eager_resolved_depths(
     retaining extension rules, lazy leaves and the usual ownership handling.
     """
     def make_frame(values: tuple[Any, ...], levels: tuple[int, ...]) -> dict[str, Any]:
+        """Prepare one vectorisation level and verify compatible collection lengths."""
         lengths = tuple(
             len(unwrap_runtime_value(arg))
             for arg, depth in zip(values, levels, strict=False)

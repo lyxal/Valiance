@@ -3648,7 +3648,7 @@ Test whether a number is greater than zero.
 
 **Overloads**
 
-- `positive?(value: Real) -> #boolean Int`
+- `positive?(value: Number) -> #boolean Int`
 
   **Example**
 

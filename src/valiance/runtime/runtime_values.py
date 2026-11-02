@@ -1550,6 +1550,7 @@ def format_runtime_value(
 
     def add_sequence(items: Iterable[Any], start: str, end: str,
                      *, more: bool = False, singleton_comma: bool = False) -> None:
+        """Schedule sequence formatting tasks in display order without recursion."""
         values = list(items)
         tasks.append(("text", end, False))
         if more:

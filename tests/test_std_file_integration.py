@@ -470,11 +470,17 @@ end
                                           optimize=optimize, serialized=serialized):
                             executable = loads(dumps(program)) if serialized else program
                             if expected is None:
-                                with self.assertRaises(PanicSignal) as caught:
-                                    list(run(executable)[-1])
-                                self.assertEqual(caught.exception.value.type_name, 'IndexFault')
-                                self.assertEqual(caught.exception.value.fields['message'],
-                                                 'index 4 is out of range for length 2')
+                                # Errors raised while consuming a VM-produced lazy
+                                # list cross the host boundary as public runtime
+                                # errors, rather than internal PanicSignal objects.
+                                rows = run(executable)[-1]
+                                for _ in range(2):
+                                    with self.assertRaises(ValianceRuntimeError) as caught:
+                                        list(rows)
+                                    self.assertEqual(
+                                        str(caught.exception),
+                                        "uncaught panic: IndexFault{message: 'index 4 is out of range for length 2'}",
+                                    )
                             else:
                                 self.assertEqual(list(run(executable)[-1]), expected)
                             self.assertFalse(file_backend._handles)

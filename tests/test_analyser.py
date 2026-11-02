@@ -3978,7 +3978,7 @@ getName $joe
 
         typ = analyse_function(node, default_environment())
 
-        self.assertEqual(show(typ), "Function[x(.foo: Number) -> Number]")
+        self.assertEqual(show(typ), "Function[x(.foo: Real) -> Number]")
         self.assertIsInstance(typ.params[0].base, T.MetaVarType)
 
     def test_if_branches_refine_row_field_collection_element_type(self):

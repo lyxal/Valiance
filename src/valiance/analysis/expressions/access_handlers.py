@@ -197,6 +197,7 @@ def _reflection_private_owners(metadata, friendly_owners: frozenset[Symbol]) -> 
 
 
 def _bounded_constant_index(value: RuntimeNumber) -> int:
+    """Clamp a source literal index to a safe sentinel before integer conversion."""
     # More than 10**18 elements cannot be materialized as an AST literal;
     # retain only the information that this is well out of range.
     limit = 10**18

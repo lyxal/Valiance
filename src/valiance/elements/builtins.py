@@ -3083,6 +3083,7 @@ def _bounded_runtime_int(value: RuntimeNumber, bound: int) -> int:
 
 
 def _index_range_fault(message: str) -> None:
+    """Raise the language-level index panic with its existing diagnostic."""
     raise PanicSignal(ObjectValue("IndexFault", {"message": message}))
 
 
@@ -3352,6 +3353,7 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 return (lst.append_stage(LazyPipelineStage.limiting(int(n))),)
             return (LazyList(islice(iter(lst), int(n))),)
         def take_huge_limit():
+            """Stream at most the requested count without expanding huge integers."""
             iterator = iter(lst)
             count = 0
             while RuntimeNumber(count) < n:

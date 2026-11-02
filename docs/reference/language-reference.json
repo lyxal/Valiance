@@ -8161,7 +8161,7 @@
         }
       ],
       "overloads": [
-        "positive?(value: Real) -> #boolean Int"
+        "positive?(value: Number) -> #boolean Int"
       ],
       "parameters": [
         {
