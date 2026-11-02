@@ -21,7 +21,12 @@ jobs:
       - name: Install Python 3.14
         run: uv python install 3.14
       - name: Install project dependencies
-        run: uv sync --frozen
+        # Keep the environment synchronized with pyproject.toml even when a
+        # dependency was added without regenerating uv.lock. In particular,
+        # std.regex requires the third-party regex package.
+        run: uv sync
+      - name: Verify regex runtime dependency
+        run: uv run --frozen python -c "import regex; import valiance.std.regex"
       - name: Run test suite
         timeout-minutes: 15
         run: uv run --frozen python -m unittest discover -s tests -v

@@ -23,7 +23,11 @@ jobs:
       - name: Install Python
         run: uv python install 3.14
       - name: Install project
-        run: uv sync --frozen
+        # Re-resolve the lockfile when pyproject.toml has changed. Frozen sync
+        # silently omitted regex when it was missing from the committed lock.
+        run: uv sync
+      - name: Verify regex runtime dependency
+        run: uv run --frozen python -c "import regex; import valiance.std.regex"
       - name: Validate documentation
         run: uv run --frozen python -m unittest tests.test_reference_docs
       - name: Generate built-in and standard library documentation
