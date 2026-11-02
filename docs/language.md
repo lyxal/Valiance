@@ -1801,7 +1801,8 @@ define[<generics>] <name>(<params>) -> <returns> => <code> end
 ```
 
 - `generics` is optional.
-- Generic parameter lists contain only generic names, for example `define[T]` or `define[T, U]`. Constraints are written in ordinary type positions instead of inside the `[]`.
+- Generic parameters can be unconstrained (`define[T]`) or explicitly constrained (`define[T: Number]`, `define[T: trait => extend +(T, Int) -> Number end]`). Constraints may also be expressed in ordinary parameter type positions with named or anonymous traits.
+- A generic function body must type-check for every permitted instantiation of its declared parameters. Overload resolution must not infer hidden operation requirements by narrowing an unconstrained `T` to a concrete type. A call such as `+(T, Int)` is valid only when a visible overload accepts an arbitrary `T`, or an explicit declared constraint proves applicability.
 - `params` is optional, but must contain at least one parameter if specified.
 - `returns` is optional
 
@@ -2494,13 +2495,15 @@ TokenType.\NUMBER.value
 # 16. Generics
 - Type substitution mechanism.
 - There is no type erasure with generics. If something is passed an object with a generic, both object and generic types are available. 
-- Generic parameter lists contain only names, such as `T` or `T, U`. Bounds like `T: SomeTrait` are not valid in the `[]`.
+- Function generic binders accept declared constraints, such as `define[T: Number]` or `define[T: trait => extend +(T, Int) -> Number end]`. An unconstrained binder `define[T]` does not silently acquire requirements from expressions in the body. Generic-list syntax for other declaration kinds follows their respective grammars.
 - Generic constructors are invariant by default.
 - Object, trait, and variant declarations can infer variance from how their generic parameters are used.
   - Readable fields and returns are covariant positions.
   - Function parameters are contravariant positions.
   - Public writable fields count as both covariant and contravariant, so they make the parameter invariant.
 - Collection item types are covariant: for example, `Car+` can be passed where `Vehicle+` is expected if `Car` implements `Vehicle`. Rank rules still apply separately.
+- A union of homogeneous lists, `Int+ | String+`, is **not** equivalent to a list of union items, `(Int | String)+`. The former guarantees that all elements belong to one branch; the latter permits a mixture within one list. The former is assignable to the latter, not conversely. Type normalization preserves this distinction.
+- Variant payloads are immutable readable positions for generic variance inference; case payloads therefore contribute positive occurrences. Additional declared method requirements participate in variance according to their input/output positions.
 - Generic constraints are expressed where the constrained value is typed. Use named traits for nominal constraints, or anonymous traits for structural constraints.
 
 ```
@@ -2539,7 +2542,26 @@ define[T] rankFour(values: T+4 exact) -> T+4 => $values end
 _Note: subject to determination about whether this is 100% correct_
 
 - When a generic function is called, each parameter determines what the generic type variable must be based on its argument.
-- Unification succeeds only if all parameters agree on the same type.
+- Unification combines all occurrences of the same `T` using the type join:
+  `Int` with `Real` resolves to `Real` (numeric promotion), whereas `Int`
+  with `String` resolves to `Int|String`. Do not arbitrarily choose one input
+  or default an unresolved parameter to `Number`.
+- A generic occurring only in the return type must be supplied explicitly or
+  uniquely determined by a concrete expected result type (e.g. a typed
+  assignment, declared function return, or concrete call-argument type).
+  Without this evidence, the call is rejected rather than producing a value
+  of an unsolved generic type.
+- Ranked-list subtyping follows `T+ <: T* <: T~`. A rugged `T~` value
+  cannot satisfy a homogeneous `T+` generic parameter by peeling rank into
+  `T`. A minimum-rank `T*` value is also not a subtype of `T+`, but the
+  separate dynamic call-rank-adaptation mechanism may specialize a `T*`
+  input to an exact-rank operation when vectorisation is permitted. With
+  `novec`, such narrowing is rejected. Generic variables alone do not
+  prove uniform shape.
+- Repeated overload declarations with alpha-equivalent parameter signatures
+  follow ordinary replacement semantics: the **later definition wins**.
+- An unused parameter of an inferred anonymous function may remain
+  universally generic. No implicit trait/operator requirements are inferred.
 - Basically, a map and reduce scheme.
 	- Each parameter solves for what type is needed to match the argument
 	- All parameters are combined into a single type. If they can't be, a compile error is raised.
@@ -3525,7 +3547,7 @@ define name(...) -> ... where (<static expressions>) => ...
 - **Literals** - numbers and types can be pushed directly onto the static stack.
 - **Rank variables** - `$n` from `T+$n`/`T*$n`/`T~$n` parameters, and any variables assigned in the `where` clause.
 - **Arithmetic** - `+`, `-`, `*`, `max`, `min` on numbers.
-- **Comparison** - `<`, `>`, `<=`, `>=`, `==`, `!=` on numbers; `==`, `!=` on types (no vectorisation).
+- **Comparison** - `<`, `>`, `<=`, `>=`, `==`, `!=` on numbers; `==`, `!=` on types and tuples of types (no vectorisation). Type tuples compare position by position using canonical type identity; different lengths are unequal.
 - **Boolean operations** - `and`, `or`, `not` on numbers (following the same truthiness rules as the rest of Valiance - `0` is false, all other numbers are true).
 - **Assignment** - `$name = value` to name a computed value for use in return types or later expressions.
 - **Stack manipulation** - `swap`, `pop`, `dup`.

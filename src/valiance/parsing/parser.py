@@ -979,7 +979,10 @@ class Parser:
         if self._match(TokenKind.RBRACKET):
             return (), (), ()
         while True:
-            names.append(self._symbol("expected generic parameter name"))
+            name = self._symbol("expected generic parameter name")
+            if name in names:
+                self._error(f"duplicate generic parameter name: {name}")
+            names.append(name)
             variance = None
             constraint = None
             if self._match(TokenKind.COLON):

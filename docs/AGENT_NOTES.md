@@ -1,3 +1,40 @@
+# Hidden parameters in imported overload sets
+
+Imported function sets can group several checked overloads under a single
+`TypedImportedFunctionNode` whose raw function AST comes from the first member.
+When compiling each member, use its own `FunctionOverloadTyping.overload`
+for hidden static parameter names (`where`-computed values and rank variables).
+Using the shared AST for members without a `where` clause can silently append
+the first member's hidden parameter to another member, causing an incorrect
+runtime call arity despite a valid static selection. CX-009 in the generics
+plan checks import, `where` branch switching, incremental invalidation and
+serialized execution together.
+
+# Hidden `where` values in vectorised resolved calls
+
+A `ResolvedElementReference` records vectorisation depths/target ranks for
+source arguments, while `reference.static_values` adds extra scalar arguments
+after them. `_call_resolved_function_value` and the normal overloaded-function
+path pass those hidden values into `_call_function`. When vectorising a user
+function, extend metadata with zero depths / absent target ranks only if its
+length excludes the appended static arguments. The existing `call_value_overload`
+path pads its own metadata and must not be padded twice. Cross-mode regression
+fixtures in `test_generics_adversarial.py` exercise ordinary and imported calls,
+empty/nested lists, pairwise vectorisation and mismatched-length faults.
+
+# Function body errors and speculative inference
+
+Function signature inference deliberately suppresses diagnostics from discarded
+candidate branches. Do not unconditionally propagate all diagnostics from the
+child analyser after a viable signature has been found: that rejects valid
+inferred overload sets and branch refinements. However, when a failed
+`TagApplicationNode` survives inside a published typed function body with no
+type, raw lowering can bypass a checked tag validator. Check surviving typed
+operations specifically and reject only those unresolved unsafe paths (see
+TG-007 in the generics plan). The tag validator must be selected at analysis
+time; a runtime tag operation with no validator implementation ID is not a
+substitute for validation.
+
 # Typed AST transformations
 
 When adding a typed node that owns checked expressions or operation plans, update
@@ -101,3 +138,36 @@ services that continue working for source-free compiled standard-library calls.
 Custom initializers and private fields without literal constructor defaults
 must fail decoding. For variants, select only when exactly one case matches the
 JSON object shape, otherwise return `ValueError`.
+
+# Generic call safety and implicit optional/result dispatch
+
+When checking a generic function body, scoped source-level type variables are
+universally quantified, not inference metavariables. Do not specialize `T` to
+`Int` just to accept `+(T, Int)`. `_solve_branch_argument` keeps those binders
+rigid; explicit generic upper bounds live in the copied lexical `Context` and
+can be used as *views* for overload proofs, without overwriting `T` in the
+function signature. Keep negative tag requirements (`#-infinite`, etc.) on the
+original generic type, not the bound view, when propagating call requirements.
+`define[T] bad(x:T) -> Number => $x + 1 end` must reject at declaration unless
+there is a universal generic `+` overload or an explicit applicable constraint.
+
+Optional and Result success have **implicit value representations**: every
+non-`None` value matches `Some[T]` when it matches `T`, and every non-`Err`
+value matches `OK[T]` when it matches `T`. Explicit `Some(value)` and
+`OK(value)` also match via their payload, including `Some(\None)` (present
+nested absence). Checked casts already implemented this rule. Union dispatch
+now implements it in `_runtime_pattern_matches` as well; the VM must not
+require or synthesize wrappers just to dispatch a widened raw value. Both
+paths must agree on the payload type and on the `None`/`Err` discriminants.
+
+
+# Alpha-equivalent imported generic signatures
+
+Import conflict tracking cannot use raw `Overload.params` tuples as dictionary
+keys: `VarType` retains the binder's source spelling and lexical identity, so
+`define[T] f(x:T)` and `define[U] f(x:U)` appear different even though they
+have the same input signature. Use `T.overload_parameter_shape(overload)` for
+both conflict lookup and commit, including source-free `.vbcm` imports.
+Do not drop binder correlation: `(T,T)` and `(T,U)` are different patterns.
+This is **not** permission to infer extra constraints inside generic bodies;
+keep declaration-time universal checking as documented above.

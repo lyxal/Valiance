@@ -301,41 +301,6 @@ def _optional_inner(t: UnionType) -> Type | None:
     return U(*non_none) if len(non_none) > 1 else non_none[0]
 
 
-def _normalize_exact_list_union(items: set[Type]) -> Type | None:
-    """Factor exact-list union members only when their ranks are identical.
-
-    ``A+n | B+n`` is equivalent to ``(A | B)+n``. Exact lists with different
-    ranks must remain separate union branches: factoring ``T+3 | T+2`` as
-    ``(T+ | T)+2`` would admit mixed-depth values that neither original branch
-    describes.
-    """
-    by_rank: dict[int, list[ListExactType]] = {}
-    for item in items:
-        if isinstance(item, ListExactType) and isinstance(item.rank, int):
-            by_rank.setdefault(item.rank, []).append(item)
-
-    groups = tuple(
-        (rank, members)
-        for rank, members in sorted(by_rank.items())
-        if len(members) >= 2
-    )
-    if not groups:
-        return None
-
-    factored_items = set(items)
-    for rank, members in groups:
-        factored_items.difference_update(members)
-        factored_items.add(
-            ListExactType(
-                UnionType(frozenset(member.base for member in members)),
-                rank,
-            )
-        )
-    if len(factored_items) == 1:
-        return next(iter(factored_items))
-    return UnionType(frozenset(factored_items))
-
-
 def normalize(t: Type) -> Type:
     """Canonicalize unions, intersections, nested collections, and wrappers."""
     if type(t) in _ATOMIC_TYPES:
@@ -366,9 +331,6 @@ def normalize(t: Type) -> Type:
         if result is not None:
             return result
         flat = _normalize_numeric_union(flat)
-        factored = _normalize_exact_list_union(flat)
-        if factored is not None:
-            return normalize(factored)
         if len(flat) == 1:
             return next(iter(flat))
         return UnionType(frozenset(flat))
@@ -669,6 +631,23 @@ def same(a: Type, b: Type) -> bool:
     if isinstance(left, NominalType) and left.name != right.name:
         return False
     return _alpha_canonicalize(left) == _alpha_canonicalize(right)
+
+
+def overload_parameter_shape(overload: Overload) -> tuple[Type, ...]:
+    """Return a hashable parameter pattern independent of generic binder spelling.
+
+    Import conflict checks compare parameter shapes, not return types or
+    implementation identities.  A bound ``T`` and an alpha-renamed ``U``
+    describe the same pattern, while ``(T, T)`` and ``(T, U)`` do not.  Rename
+    only the overload's own binders; nested trait binders have their own scope.
+    """
+    if not overload.generic_params:
+        return overload.params
+    scope = {
+        name: f"\x00overload-param:{index}"
+        for index, name in enumerate(overload.generic_params)
+    }
+    return tuple(_alpha_canonicalize(normalize(param), scope) for param in overload.params)
 
 
 def _alpha_canonicalize(

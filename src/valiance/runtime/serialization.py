@@ -34,12 +34,13 @@ from valiance.vtypes import (
     FFIFieldSpec,
     FFIStructSpec,
     RuntimeTypePattern,
+    RankVariable,
     UnionDispatchBranch,
     Variance,
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x45  # Nominal trait calls retain checked vectorisation plans.
+BYTECODE_VERSION = 0x46  # Symbolic static ranks in compiled function bodies.
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -148,6 +149,7 @@ _FFI_BUFFER = 0x11
 _REFLECTION_FIELDS_REFERENCE = 0x12
 _REFLECTION_FOREACH_REFERENCE = 0x13
 _FUNCTION_SPECIALIZATION_REFERENCE = 0x14
+_RANK_VARIABLE = 0x15
 
 
 def _validate_occurrence_effects(
@@ -202,10 +204,10 @@ def loads(data: bytes) -> Program:
         if prefix != MAGIC_PREFIX:
             raise BytecodeFormatError("invalid Valiance bytecode magic")
         version = reader.u8()
-        if version not in (0x43, 0x44, BYTECODE_VERSION):
+        if version not in (0x43, 0x44, 0x45, BYTECODE_VERSION):
             raise BytecodeFormatError(
                 f"unsupported Valiance bytecode version {version}; "
-                f"expected 0x43, 0x44 or {BYTECODE_VERSION}"
+                f"expected 0x43, 0x44, 0x45 or {BYTECODE_VERSION}"
             )
         main = reader.function()
         tag_parents = tuple(
@@ -664,6 +666,9 @@ class _Writer:
         elif isinstance(value, str):
             self.u8(_STRING)
             self.string(value)
+        elif isinstance(value, RankVariable):
+            self.u8(_RANK_VARIABLE)
+            self.string(value.name)
         elif isinstance(value, FFIScalarValue):
             self.u8(_FFI_SCALAR)
             self.string(value.ffi_type)
@@ -1003,6 +1008,8 @@ class _Reader:
             return RuntimeNumber(self.string())
         if tag == _STRING:
             return self.string()
+        if tag == _RANK_VARIABLE:
+            return RankVariable(self.string())
         if tag == _FFI_BUFFER:
             element_type, values = self.string(), self.value()
             if not isinstance(values, tuple):

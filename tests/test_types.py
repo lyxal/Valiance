@@ -163,11 +163,15 @@ class TypeLibraryTests(unittest.TestCase):
             UnionType(frozenset((ExactList(Int, 4), ExactList(Int, 2)))),
         )
 
-    def test_exact_list_union_factors_different_bases(self):
+    def test_exact_list_union_preserves_alternative_element_guarantees(self):
         self.assertEqual(
             U(ExactList(Int, 2), ExactList(String, 2)),
-            ExactList(U(Int, String), 2),
+            UnionType(frozenset((ExactList(Int, 2), ExactList(String, 2)))),
         )
+        self.assertFalse(same(
+            U(ExactList(Int, 2), ExactList(String, 2)),
+            ExactList(U(Int, String), 2),
+        ))
 
     def test_exact_list_union_preserves_different_rank_collection_subset(self):
         self.assertEqual(

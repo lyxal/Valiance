@@ -106,12 +106,16 @@ class _VariantDeclarations:
         )
         requirements = _utils._trait_requirements(node)
         members: list[Symbol] = []
+        # Variant case payloads are immutable values. Each payload contributes
+        # a covariant read of its type parameters, unlike a writable object field.
+        member_payloads: list[T.ObjectAttribute] = []
         for member in node.variants:
             member_name = _utils._child_symbol(node.name, member.name)
             members.append(member_name)
             object_attributes = self._object_attributes(member.fields, node.generics)
             if object_attributes is None:
                 return None
+            member_payloads.extend(object_attributes)
             variant_type = _utils._declared_nominal(node.name, node.generics)
             self._define_object_shape(
                 member_name,
@@ -139,6 +143,7 @@ class _VariantDeclarations:
                 (),
                 requirements,
                 self.env.context,
+                readonly_attributes=tuple(member_payloads),
             ),
             requirements=requirements,
         )

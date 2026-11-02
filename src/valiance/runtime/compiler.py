@@ -853,7 +853,7 @@ class _Compiler:
                         for (original, body, static_values), dispatch in zip(
                             specialization.specializations, specialization.dispatch_plan.branches, strict=True,
                         ):
-                            code = _compile_function_value(body, str(runtime_name)) if body is not None else None
+                            code = _compile_checked_specialization(body, str(runtime_name)) if body is not None else None
                             if code is not None:
                                 if not isinstance(code, FunctionCode):
                                     raise CompileError("union specialization must have one checked body per branch")
@@ -878,7 +878,7 @@ class _Compiler:
                             static_values=(),
                         ))
                     else:
-                        self.emit(OpCode.SPECIALIZE_FUNCTION, _compile_function_value(
+                        self.emit(OpCode.SPECIALIZE_FUNCTION, _compile_checked_specialization(
                             specialization, str(runtime_name),
                         ))
                         vectorised = typed_node.overload.vectorised
@@ -2151,6 +2151,32 @@ def _link_function_set(
     return FunctionSetCode(overloads, branches)
 
 
+
+def _compile_checked_specialization(
+    body: TypedFunctionNode,
+    name: str | None,
+) -> FunctionCode:
+    """Retain hidden `where` parameters on concrete checked function bodies.
+
+    A call-site specialization can erase its original where-clause binder from
+    the checked signature while retaining reads of that binder in the body.
+    The VM must receive or capture the corresponding static value, not treat
+    it as an ordinary function input or leave the binder undefined.
+    """
+    code = _compile_function_value(body, name)
+    if not isinstance(code, FunctionCode):
+        raise CompileError("checked specialization must have one function body")
+    names = _ast_static_param_names(_function_ast(body))
+    missing = tuple(name for name in names if name not in code.params)
+    if not missing:
+        return code
+    return replace(
+        code,
+        params=(*code.params, *missing),
+        param_collection_ranks=(*code.param_collection_ranks, *(None for _ in missing)),
+    )
+
+
 def _compile_function_value(
     node: FunctionNode | TypedNode,
     name: str | None = None,
@@ -2697,6 +2723,9 @@ def _compile_function_overload(
             f"cannot compile function overload from {type(typ).__name__}"
         )
     source = overload.overload if isinstance(overload.overload, Overload) else None
+    # In imported overload sets ``ast`` describes the first declaration, not
+    # each member. Derive hidden rank/where parameters from this overload's
+    # own checked signature so one member cannot inherit another's arity.
     static_params = (
         static_where.static_parameter_names(
             params=source.params,
@@ -2705,10 +2734,6 @@ def _compile_function_overload(
             clause=source.where_clause,
         )
         if source is not None
-        and (
-            source.where_clause
-            or static_where.rank_variable_names(source.params + source.returns)
-        )
         else _ast_static_param_names(ast)
     )
     if source is not None and source.param_names:

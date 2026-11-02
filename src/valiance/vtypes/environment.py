@@ -647,6 +647,11 @@ class Environment:
                     f"@{protocol} provider '{name}' first parameter must be "
                     f"{show(target)}, got {show(overload.params[0])}"
                 )
+            if protocol == "update" and not same(overload.returns[0], target):
+                raise ValueError(
+                    f"@update provider '{name}' must return {show(target)}, "
+                    f"got {show(overload.returns[0])}"
+                )
 
     def define_overload(
         self,

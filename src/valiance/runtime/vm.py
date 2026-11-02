@@ -5133,6 +5133,7 @@ class VirtualMachine:
             vectorised=reference.vectorised,
             vectorised_depths=reference.vectorised_depths,
             vectorised_target_ranks=reference.vectorised_target_ranks,
+            static_parameter_count=len(reference.static_values),
             extension_reference=reference.extension,
             return_tags=reference.return_tags,
             return_tag_specs=reference.return_tag_specs,
@@ -5253,6 +5254,7 @@ class VirtualMachine:
             vectorised=reference.vectorised,
             vectorised_depths=reference.vectorised_depths,
             vectorised_target_ranks=reference.vectorised_target_ranks,
+            static_parameter_count=len(reference.static_values),
             extension_reference=reference.extension,
             return_tags=reference.return_tags,
             return_tag_specs=reference.return_tag_specs,
@@ -5470,6 +5472,7 @@ class VirtualMachine:
         vectorised: bool = False,
         vectorised_depths: tuple[int, ...] = (),
         vectorised_target_ranks: tuple[int | None, ...] = (),
+        static_parameter_count: int = 0,
         extension_reference: VectorExtensionReference | None = None,
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
         return_tag_specs: tuple[object, ...] = (),
@@ -5525,6 +5528,17 @@ class VirtualMachine:
             args = tuple(converted)
         self._bind_structural_parameters(callee, args)
         if vectorised:
+            # `where` rank/computed binders are appended as scalar runtime
+            # parameters. The call plan describes *source* arguments only;
+            # never treat a hidden static value as an extra vector dimension.
+            if (static_parameter_count and vectorised_depths
+                    and len(vectorised_depths) + static_parameter_count == len(args)):
+                vectorised_depths = (*vectorised_depths,
+                                      *(0 for _ in range(static_parameter_count)))
+            if (static_parameter_count and vectorised_target_ranks
+                    and len(vectorised_target_ranks) + static_parameter_count == len(args)):
+                vectorised_target_ranks = (*vectorised_target_ranks,
+                                           *(None for _ in range(static_parameter_count)))
             extension = _materialize_vector_extension(
                 self,
                 extension_reference,
@@ -7469,6 +7483,21 @@ def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
     if pattern.kind != "nominal":
         return False
     unwrapped = unwrap_runtime_value(value)
+    # Optional and result success are value conventions, not mandatory
+    # runtime wrappers.  A present value is Some[T], and a non-error value
+    # is OK[T].  Explicit wrappers still match via their contained payload:
+    # this matters for Some(None) and nested optionals/results.
+    if pattern.name in {"Some", "OK"} and len(pattern.children) == 1:
+        if isinstance(unwrapped, ObjectValue) and unwrapped.type_name == pattern.name:
+            return (
+                "value" in unwrapped.fields
+                and _runtime_pattern_matches(unwrapped.fields["value"], pattern.children[0])
+            )
+        if pattern.name == "Some" and _is_none_result_value(unwrapped):
+            return False
+        if pattern.name == "OK" and _is_error_result_value(unwrapped):
+            return False
+        return _runtime_pattern_matches(unwrapped, pattern.children[0])
     if pattern.name == "Err":
         return _is_error_result_value(unwrapped)
     if pattern.name == "Fault":

@@ -166,11 +166,12 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
     def test_t_double_rugged_match_flattens_recursively(self):
         source = """
         define[T] flatten(xs: T~) -> T+ =>
+          $identity = fn (x: T) -> T => $x end
           $res: T+ = []
-          $xs foreach (x) =>
-            $res := addAll($x match =>
-              as :T~~ => flatten
-              _ => ^+
+          $xs foreach (item) =>
+            $res := addAll($item match =>
+              as ls: T~~ => flatten($ls)
+              as x => $identity(^+ $x)
             end)
           end
           $res
@@ -10485,8 +10486,10 @@ end
         )
 
     def test_recursive_rugged_fold_with_implicit_modifier_and_input_cycling(self):
-        self.assertEqual(
-            execute("""
+        # The old generic reducer assumed T~ could bind a homogeneous T+
+        # accumulator. That is no longer legal: T+ <: T* <: T~, not vice versa.
+        # Keep the negative regression while demonstrating a valid typed fold.
+        incompatible = """
 define[T] flatten(:T~) -> T+ =>
   fold([] as[T+]): addAll(match =>
     as :T~ => flatten
@@ -10494,15 +10497,17 @@ define[T] flatten(:T~) -> T+ =>
   )
 end
 [1, [2, [3]], 4] flatten
-"""),
-            [
-                [
-                    RuntimeNumber("1"),
-                    RuntimeNumber("2"),
-                    RuntimeNumber("3"),
-                    RuntimeNumber("4"),
-                ]
-            ],
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(incompatible))
+        self.assertTrue(
+            any("no overloads for element 'fold'" in diagnostic
+                for diagnostic in analyser.diagnostics),
+            analyser.diagnostics,
+        )
+        self.assertEqual(
+            execute("[1,2,3,4] fold([] as[Int+]): append"),
+            [[RuntimeNumber(str(value)) for value in range(1, 5)]],
         )
 
     def test_match_branch_cycles_only_over_retained_coordinates(self):

@@ -116,6 +116,11 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   `tests/test_vectorisation_properties.py`. The portable FFI fixture compiler
   `tests/ffi_support.py` supports the native ABI integration tests on Windows,
   macOS, and Linux.
+- [Numbered generics hardening](generics-hardening.md) describes the 351-case
+  inventory, executable source fixtures, isolated runner and CI gates. The
+  additional [adversarial generics tests](../../tests/test_generics_adversarial.py)
+  use deterministic permutations and cross-mode comparisons to stress `where`,
+  union dispatch and ranked list substitution beyond the inventory.
 - [Performance baselines](performance-benchmarking.md) documents the
   stage-aware benchmark runner, same-machine comparisons, and CI policy.
 - [Declaration-level incremental analysis](declaration-incremental-analysis.md) documents stable semantic products, dependency fingerprints, and targeted invalidation.

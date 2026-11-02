@@ -33,6 +33,26 @@ jobs:
         timeout-minutes: 30
         if: always() && github.event_name == 'schedule'
         run: uv run --frozen python -m tools.trait_plan --report trait-plan-results.json
+      - name: Run isolated generics smoke oracles
+        timeout-minutes: 15
+        if: always() && github.event_name != 'schedule'
+        run: uv run --frozen python -m tools.generics_plan --smoke --jobs 6 --timeout 45 --report generics-smoke-results.json
+      - name: Run all mapped generics P0 oracles
+        timeout-minutes: 15
+        if: always() && github.event_name != 'schedule'
+        run: uv run --frozen python -m tools.generics_plan --priority P0 --batch --report generics-plan-results.json
+      - name: Run complete mapped generics inventory
+        timeout-minutes: 30
+        if: always() && github.event_name == 'schedule'
+        run: uv run --frozen python -m tools.generics_plan --batch --report generics-plan-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generics-plan-results
+          path: |
+            generics-plan-results.json
+            generics-smoke-results.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         with:

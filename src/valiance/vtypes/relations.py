@@ -632,6 +632,14 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if same(source, target) or isinstance(source, NeverType):
         return True
 
+    # A generic declaration's explicit upper bound is evidence available
+    # inside its body, not an inferred constraint created by the body. This
+    # mapping lives in its lexical type context and never escapes the binder.
+    if isinstance(source, VarType) and source.identity is not None:
+        upper = ctx.type_var_upper_bounds.get(source.identity)
+        if upper is not None and not same(upper, source) and subtype(upper, target, ctx):
+            return True
+
     if _is_optional(source) and _is_optional(target):
         source_inner = _optional_inner(source)
         target_inner = _optional_inner(target)
@@ -1858,12 +1866,16 @@ def _solve_collection(
 
     if pk is ListExactType and ak in {ListExactType}:
         return bind_as(ListExactType)
+    # Ranked collection patterns follow exact (+) <: minimum (*) <: rugged
+    # (~). In particular, no T+ binding may absorb rugged rank into T.
+    # Minimum-rank input can *dynamically vectorise* down to an exact-ranked
+    # call, but that path must never be mistaken for subtype assignment.
     if pk is ListExactType and ak is ListMinType and adapt_min_rank:
-        # The exact parameter owns a fixed rank. Any unknown excess belongs
-        # to call vectorisation, not to its generic item type.
         return bind_as(ListExactType)
-    if pk is ListExactType and ak in {ListMinType, ListRuggedType}:
-        return bind_as(ak)
+    if pk is ListExactType and ak is ListMinType:
+        # A minimum-rank value can reach an exact-rank call through the
+        # existing dynamic rank adaptation. This is not subtype conversion.
+        return bind_as(ListMinType)
     if pk is ListMinType:
         if ak in {ListExactType}:
             return bind_as(ListExactType)
@@ -3433,6 +3445,23 @@ def _try_apply_overload(
     ] = []
     deferred_exact_args: list[tuple[ExactType, Type]] = []
     for index, (param, arg) in enumerate(zip(solving_params, base_args, strict=False)):
+        # `novec` prohibits dynamic rank adaptation. A minimum-rank value
+        # does not prove the uniform rank required by an exact-list pattern.
+        if (
+            isinstance(param, NoVecType)
+            and isinstance(normalize(param.inner), ListExactType)
+            and isinstance(normalize(arg), (ListMinType, ListRuggedType))
+        ):
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.ARGUMENT_TYPE,
+                    matched_arguments=index,
+                    argument_index=index,
+                    expected=param,
+                    actual=arg,
+                ),
+            )
         if isinstance(param, ExactType) and _contains_type_var(param.inner):
             deferred_exact_args.append((param, arg))
             continue

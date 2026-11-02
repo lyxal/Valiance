@@ -71,7 +71,7 @@ from valiance.asts import (
     VariantMemberNode,
     is_catch_all_match_case,
 )
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
+from valiance.asts.nodes import GetVariableNode, ObjectFieldNode, TagApplicationNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.asts.object_constructors import (
     constructor_definitions,
@@ -501,6 +501,22 @@ class _CallableValues:
         def function_environment() -> T.Environment:
             """Build an isolated lexical environment for one body-analysis pass."""
             function_env = self.env.lexical_child_scope()
+            # Explicit declaration constraints are the only bounds available
+            # for proving calls on a universally quantified generic parameter.
+            # An inferred use of an operator must not add a new requirement.
+            scope = (
+                T.TypeVarScope(
+                    node.generic_scope_id,
+                    tuple(generic.text for generic in node.generics),
+                )
+                if node.generics and node.generic_scope_id is not None
+                else None
+            )
+            if scope is not None:
+                for constraint in generic_constraints:
+                    if constraint.variance is T.Variance.COVARIANT:
+                        variable = scope.variable(constraint.name)
+                        function_env.context.type_var_upper_bounds[variable.identity] = constraint.bound
             for name, overload in structural_overloads:
                 function_env.overloads.setdefault(name, []).append(overload)
             if recursive_overload is not None and annotation_hooks.has_annotation(
@@ -546,6 +562,21 @@ class _CallableValues:
                 self.warnings.extend(function_analyser.warnings)
                 self._extend_lint_findings(function_analyser.lint_findings)
                 return self._call_site_checked_function(outer, node), outer
+            self.diagnostics.extend(function_analyser.diagnostics)
+            self.warnings.extend(function_analyser.warnings)
+            self._extend_lint_findings(function_analyser.lint_findings)
+            return None
+        # Inferred functions can discard diagnostics from unsuccessful
+        # alternative branches. A failed tag application surviving in the
+        # chosen body is different: compiling its untyped raw node would skip
+        # the statically selected validator and fabricate tagged evidence.
+        # Preserve normal branch pruning, but reject that unsafe fallback.
+        failed_tag_in_survivor = any(
+            isinstance(item.node, TagApplicationNode) and item.typ is None
+            for overload in analysis.overloads
+            for item in overload.body
+        )
+        if failed_tag_in_survivor and function_analyser.diagnostics:
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)
             self._extend_lint_findings(function_analyser.lint_findings)
@@ -940,6 +971,10 @@ class _CallableValues:
             return (result_stack.items[-1:] if result_stack else ()), branch
 
         checked_returns = tuple(_utils._return_value_shape(typ) for typ in node.returns)
+        if len(checked_returns) == 1:
+            from ..support.contextual_returns import specialize_last_call_result
+            branch = specialize_last_call_result(branch, checked_returns[0], self.env.context)
+            result_stack = branch.return_stack if branch.return_stack is not None else branch.stack
         expected = T.TypeStack(checked_returns)
         actual_returns = _utils._stack_returns(result_stack, expected)
         if len(actual_returns) != len(node.returns):

@@ -588,7 +588,7 @@ def _prepare_element_call_branches(
     if plan is None:
         return ()
     current = _core.BranchSet((branch,))
-    expressions, call_arg_order, default_indexes = plan
+    expressions, call_arg_order, default_indexes, expression_slots = plan
     provider_scope = analyser.env.default_argument_scope(overload)
     for index, expression in enumerate(expressions):
         caller_scope = analyser.env
@@ -600,6 +600,17 @@ def _prepare_element_call_branches(
             analyser.env = caller_scope
         if not current:
             return ()
+        # A concrete parameter is an expected result type for its explicit
+        # argument expression. This may solve a return-only generic call, but
+        # must never manufacture constraints on a generic parameter.
+        expected = overload.params[expression_slots[index]]
+        from valiance.vtypes.relations import _contains_type_var
+        if not _contains_type_var(expected):
+            from ..support.contextual_returns import specialize_last_call_result
+            current = _core.BranchSet.collect(
+                specialize_last_call_result(result, expected, analyser.env.context)
+                for result in current
+            )
     return tuple(
         _core.ElementCallPreparation(prepared, call_arg_order) for prepared in current
     )
@@ -611,11 +622,11 @@ def _element_call_argument_plan(
     has_modifier_args: bool,
     *,
     align_positional_right: bool = True,
-) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...], frozenset[int]] | None:
+) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...], frozenset[int], tuple[int, ...]] | None:
     """Build the plan for element call argument during static analysis."""
     param_count = len(overload.params)
     if param_count == 0:
-        return ((), (), frozenset()) if not call_args else None
+        return ((), (), frozenset(), ()) if not call_args else None
     param_names = overload.param_names or (None,) * param_count
     param_defaults = overload.param_defaults or (None,) * param_count
     if len(param_names) < param_count:
@@ -708,6 +719,7 @@ def _element_call_argument_plan(
     return (
         tuple(ordered), (() if call_arg_order == identity else call_arg_order),
         frozenset(default_indexes),
+        tuple(explicit_slots),
     )
 
 
@@ -1498,10 +1510,29 @@ def _apply_overload_to_branch(
             generic_args=generic_args,
         )
         applied = attempt.applied
+        checked_args = specialized_args
+        if applied is None and ctx.type_var_upper_bounds:
+            # A declared upper bound can prove an operation without changing
+            # the universally bound caller's T or generating a new constraint.
+            # Use it solely as an argument view if direct generic application
+            # cannot establish a matching overload.
+            bound_views = tuple(
+                _substitute_branch_type(arg, ctx.type_var_upper_bounds)
+                for arg in specialized_args
+            )
+            if bound_views != specialized_args:
+                bounded = T.try_apply_overload(
+                    specialized_overload, bound_views, ctx,
+                    disambiguation=disambiguation, generic_args=generic_args,
+                )
+                if bounded.applied is not None:
+                    attempt = bounded
+                    applied = bounded.applied
+                    checked_args = bound_views
         if applied is None:
             continue
         actual_returns = _apply_data_tag_flow(
-            specialized_args,
+            checked_args,
             specialized_overload.returns,
             applied.actual_returns,
             ctx,
@@ -1528,8 +1559,18 @@ def _apply_overload_to_branch(
                 else applied.runtime_static_values
             ),
         )
+        propagated_params = tuple(
+            T.Tagged(actual, *param.tags, exact=param.exact)
+            if actual != checked and isinstance(actual, T.VarType)
+            and isinstance(param, T.TaggedType)
+            and any(tag.absent for tag in param.tags)
+            else param
+            for actual, checked, param in zip(
+                specialized_args, checked_args, applied.params, strict=True,
+            )
+        )
         specialized_branch = _propagate_absent_parameter_requirements(
-            specialized_branch, specialized_args, applied.params
+            specialized_branch, specialized_args, propagated_params
         )
         return _core.OverloadApplication(applied, specialized_branch)
     return None
@@ -1544,6 +1585,17 @@ def _propagate_absent_parameter_requirements(
     for arg, param in zip(args, params, strict=True):
         if not _contains_absent_data_tag(param):
             continue
+        # An overload may compute a broader candidate view for a union input.
+        # A negative-tag precondition constrains the original alternatives;
+        # it does not permit replacing their union with the broader view.
+        normalized_arg = T.normalize(arg)
+        normalized_param = T.normalize(param)
+        if (
+            isinstance(normalized_arg, T.UnionType)
+            and isinstance(normalized_param, T.TaggedType)
+            and all(tag.absent for tag in normalized_param.tags)
+        ):
+            param = T.Tagged(normalized_arg, *normalized_param.tags)
         source = branch.typed_body[-1].node if branch.typed_body else None
         if isinstance(source, GetVariableNode) and source.name in branch.input_names:
             branch = branch.refine_named_input_requirement(source.name, arg, param)

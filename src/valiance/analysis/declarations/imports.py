@@ -198,7 +198,7 @@ class _ImportDeclarations:
         for definition in definitions:
             source = self._import_source_text(resolved_spec, definition.name)
             for overload in self._selected_import_overloads(definition.typed):
-                key = (definition.name, overload.params)
+                key = (definition.name, T.overload_parameter_shape(overload))
                 previous = self._imported_overload_sources.get(key)
                 current_pending = pending_overloads.get(key)
                 conflict = previous or current_pending
@@ -237,7 +237,7 @@ class _ImportDeclarations:
             source = self._import_source_text(resolved_spec, definition.name)
             self._imported_definition_sources[definition.name] = source
             for overload in self._selected_import_overloads(definition.typed):
-                self._imported_overload_sources[(definition.name, overload.params)] = source
+                self._imported_overload_sources[(definition.name, T.overload_parameter_shape(overload))] = source
         for obj in objects:
             self._imported_object_sources[obj.name] = self._import_source_text(
                 resolved_spec, obj.name

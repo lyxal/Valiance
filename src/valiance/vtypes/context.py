@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from valiance.vtypes.symbols import Symbol, tag_symbol
-from valiance.vtypes.nodes import Overload, Type, Variance
+from valiance.vtypes.nodes import Overload, Type, TypeVarId, Variance
 
 
 class TagKind(Enum):
@@ -95,6 +95,8 @@ class Context:
         default_factory=dict[Symbol, list[Overload]]
     )
     trait_provider_aliases: dict[Symbol, set[Symbol]] = field(default_factory=dict)
+    # Scoped, declared upper bounds visible only while checking a generic body.
+    type_var_upper_bounds: dict[TypeVarId, Type] = field(default_factory=dict)
 
     def copy(self) -> Context:
         """Return an independent copy of the currently visible type facts."""
@@ -119,6 +121,7 @@ class Context:
                 name: set(disjoints) for name, disjoints in self.disjoint_tags.items()
             },
             generic_variance=dict(self.generic_variance),
+            type_var_upper_bounds=dict(self.type_var_upper_bounds),
             structural_overloads={
                 name: list(overloads)
                 for name, overloads in self.structural_overloads.items()

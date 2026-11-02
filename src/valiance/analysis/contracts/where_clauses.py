@@ -443,9 +443,11 @@ def _validate_element(
             )
         right = stack.pop()
         left = stack.pop()
-        if left is not right or left not in {StaticKind.NUMBER, StaticKind.TYPE}:
+        if left is not right or left not in {
+            StaticKind.NUMBER, StaticKind.TYPE, StaticKind.TYPE_TUPLE,
+        }:
             return WhereClauseError(
-                f"'{name}' requires two numbers or two types", node
+                f"'{name}' requires matching numbers, types, or type tuples", node
             )
         stack.append(StaticKind.NUMBER)
         return None
@@ -648,6 +650,13 @@ def _evaluate_element(name: str, stack: list[StaticValue]) -> bool:
             equal = left == right
         elif isinstance(left, T.Type) and isinstance(right, T.Type):
             equal = T.same(left, right)
+        elif (
+            isinstance(left, tuple) and isinstance(right, tuple)
+            and all(isinstance(item, T.Type) for item in left + right)
+        ):
+            equal = len(left) == len(right) and all(
+                T.same(actual, expected) for actual, expected in zip(left, right)
+            )
         else:
             return False
         stack.append(_truth_number(equal if name == "==" else not equal))

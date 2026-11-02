@@ -493,6 +493,34 @@ class Analyser:
         if current:
             self._discover_reflection_shapes(current, definitions, executable, early_definitions)
         final = self._analyse_program_tail(current, definitions, executable, early_definitions)
+        # A generic parameter used only in a return type needs explicit type
+        # arguments or an unambiguous expected result. Contextual assignments
+        # and declared function returns specialize their producer before this
+        # final check. Do not silently export an unresolved concrete call.
+        from valiance.vtypes.relations import _ordered_type_vars
+        for branch in final:
+            for typed in branch.typed_body:
+                if not isinstance(typed, (TypedElementNode, TypedCallNode)):
+                    continue
+                applied = typed.overload
+                if applied is None or not applied.overload.generic_params:
+                    continue
+                keys = {
+                    T.type_var_key(var) for var in _ordered_type_vars(
+                        *applied.overload.params, *applied.overload.returns,
+                    ) if var.name in applied.overload.generic_params
+                }
+                unsolved = {
+                    var.name for var in _ordered_type_vars(*applied.actual_returns)
+                    if T.type_var_key(var) in keys and T.type_var_key(var) not in applied.substitution
+                }
+                if unsolved:
+                    names = ", ".join(sorted(unsolved))
+                    self._diagnose(
+                        f"cannot infer generic parameter(s) {names} from this call; "
+                        "supply explicit type arguments or a concrete expected result type",
+                        typed.node,
+                    )
         for code, directive in self.file_lint_suppressions.items():
             if code not in self.attempted_lint_codes:
                 self._record_lint_finding(

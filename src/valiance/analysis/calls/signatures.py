@@ -794,9 +794,14 @@ def _declared_or_inferred_variance(
     attributes: tuple[T.ObjectAttribute, ...],
     requirements: tuple[T.TraitRequirement, ...],
     ctx: T.Context | None = None,
+    *,
+    readonly_attributes: tuple[T.ObjectAttribute, ...] = (),
 ) -> tuple[T.Variance, ...]:
     """Compute declared or inferred variance during static analysis."""
-    inferred = _infer_generic_variance(generics, attributes, requirements, ctx)
+    inferred = _infer_generic_variance(
+        generics, attributes, requirements, ctx,
+        readonly_attributes=readonly_attributes,
+    )
     if len(explicit) != len(generics):
         return inferred
     return tuple(
@@ -817,10 +822,14 @@ def _infer_generic_variance(
     attributes: tuple[T.ObjectAttribute, ...],
     requirements: tuple[T.TraitRequirement, ...],
     ctx: T.Context | None = None,
+    *,
+    readonly_attributes: tuple[T.ObjectAttribute, ...] = (),
 ) -> tuple[T.Variance, ...]:
-    """Infer generic variance during static analysis."""
+    """Infer variance from writable fields, read-only payloads and requirements."""
     ctx = ctx or T.Context()
     usage = {generic.text: [False, False] for generic in generics}
+    for attribute in readonly_attributes:
+        _record_variance_use(attribute.typ, +1, usage, ctx)
     for attribute in attributes:
         _record_variance_use(attribute.typ, +1, usage, ctx)
         if attribute.access.text == "public":

@@ -4042,7 +4042,7 @@ getName $joe
 
         self.assertEqual(observed, [String, Real, Int, String])
 
-    def test_match_consumption_advances_explicit_parameter_cycle(self):
+    def test_rugged_fold_cannot_satisfy_uniform_generic_collection(self):
         analyser = Analyser()
         source = """
 define[T] flatten(:T~) -> T+ =>
@@ -4057,9 +4057,10 @@ end
 
         analyser.analyse(parse(source))
 
-        self.assertEqual(analyser.diagnostics, [])
+        self.assertIn("no overloads for element 'fold'", "\n".join(analyser.diagnostics))
+        # A rugged T~ is not a subtype of the uniform Item+ demanded by fold.
 
-    def test_implicit_modifier_orders_deeper_inputs_before_explicit_argument_inputs(self):
+    def test_implicit_rugged_fold_cannot_satisfy_uniform_generic_collection(self):
         analyser = Analyser()
         source = """
 define[T] flatten(:T~) -> T+ =>
@@ -4072,7 +4073,8 @@ end
 
         analyser.analyse(parse(source))
 
-        self.assertEqual(analyser.diagnostics, [])
+        self.assertIn("no overloads for element 'fold'", "\n".join(analyser.diagnostics))
+        # A rugged T~ is not a subtype of the uniform Item+ demanded by fold.
 
     def test_dip_modifier_can_source_explicit_parameter_cycle(self):
         analyser = Analyser()
@@ -5513,7 +5515,7 @@ define f(value: #left #right Number) -> Number => $value
 
         self.assertIn(
             "no overloads for element 'length' match stack "
-            "[Int | Number+]",
+            "[Int | Int+ | Number+]",
             analyser.diagnostics[0],
         )
 
@@ -7022,7 +7024,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Int)
 
-    def test_match_result_can_supply_an_explicit_call_argument_above_outer_stack(self):
+    def test_rugged_match_result_cannot_satisfy_uniform_addall(self):
         analyser = Analyser()
         source = """
         define[T] flatten(xs: T~) -> T+ =>
@@ -7039,7 +7041,9 @@ end
 
         analyser.analyse(parse(source))
 
-        self.assertEqual(analyser.diagnostics, [])
+        self.assertIn("no overloads for element 'addAll'", "\n".join(analyser.diagnostics))
+        # The match can still produce a rugged alternative; a generic T+
+        # consumer cannot assume a uniform list without a shape proof.
         self.assertNotIn(
             "minimum-rank-never-wraps",
             tuple(finding.code for finding in analyser.lint_findings),

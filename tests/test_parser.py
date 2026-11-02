@@ -222,6 +222,18 @@ class MinimumRankParserTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_duplicate_generic_parameters_are_diagnosed_at_parse_time(self):
+        for source in (
+            "define[T, T] id(x: T) -> T => $x end",
+            "object[T, T] Box => $value: T end",
+            "trait[T, T] Named => end",
+            "variant[T, T] Maybe => Some => $value: T end end",
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                ParseError, "duplicate generic parameter name: T"
+            ):
+                parse(source)
+
     def test_runtime_conversion_type_argument_retains_expression(self):
         from valiance.asts import TypeArgumentExpression
 

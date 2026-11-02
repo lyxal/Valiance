@@ -116,13 +116,13 @@ class OptimizerTests(unittest.TestCase):
         """New binaries signal their format, but previous bytecode remains readable."""
         from valiance.runtime.serialization import BYTECODE_VERSION
 
-        self.assertEqual(BYTECODE_VERSION, 0x45)
+        self.assertEqual(BYTECODE_VERSION, 0x46)
         old_style = Program(FunctionCode((
             Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
             Instruction(OpCode.RETURN),
         )))
         current_bytes = dumps(old_style)
-        for version in (0x43, 0x44):
+        for version in (0x43, 0x44, 0x45):
             prior_bytes = current_bytes[:6] + bytes((version,)) + current_bytes[7:]
             self.assertEqual(loads(prior_bytes), old_style)
 

@@ -441,6 +441,32 @@ class _ObjectDeclarations:
         """Compute object attribute during static analysis."""
         if field.typ is not None:
             typ = field.typ
+            if field.default:
+                # A declared field default must satisfy its type for every
+                # instantiation of the owner's generics. In particular, a
+                # concrete literal cannot silently specialize an unbound T.
+                diagnostics_before = len(self.diagnostics)
+                outputs = self.analyse_scoped_block(
+                    BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),)),
+                    field.default,
+                )
+                if not outputs or any(not output.stack for output in outputs):
+                    if len(self.diagnostics) == diagnostics_before:
+                        self._diagnose(
+                            f"default for field '{field.name}' must leave a value",
+                            field,
+                        )
+                    return None
+                if any(
+                    not T.assignable(output.stack[-1], typ, self.env.context)
+                    for output in outputs
+                ):
+                    self._diagnose(
+                        f"default for field '{field.name}' is not assignable to "
+                        f"{T.show(typ)}",
+                        field,
+                    )
+                    return None
         elif field.default:
             diagnostics_before = len(self.diagnostics)
             outputs = self.analyse_scoped_block(

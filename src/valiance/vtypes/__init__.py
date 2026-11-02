@@ -36,6 +36,7 @@ from valiance.vtypes.builders import (
     WithoutTag,
     WithTag,
     normalize,
+    overload_parameter_shape,
     optional,
     rebuild_nominal,
     same,

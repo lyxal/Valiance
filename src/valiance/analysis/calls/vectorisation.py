@@ -1073,6 +1073,14 @@ def _branch_argument_substitution(
             solve_arg = _substitute_branch_type(arg, substitution)
             solve_param = _substitute_branch_type(param, substitution)
         constraints = _solve_branch_argument(solve_arg, solve_param, ctx)
+        if not constraints and ctx.type_var_upper_bounds and _functions._contains_type_var(solve_param):
+            upper_view = _substitute_branch_type(solve_arg, ctx.type_var_upper_bounds)
+            if upper_view != solve_arg:
+                # Explicit upper bounds may solve *callee* variables; never
+                # bind the source-level generic from a body operation.
+                constraints = _solve_type_argument(
+                    upper_view, solve_param, ctx, adapt_min_rank=adapt_min_rank,
+                )
         if constraints is None or (
             not constraints and _functions._contains_type_var(solve_param)
         ):
@@ -1242,6 +1250,18 @@ def _solve_branch_argument(
         if isinstance(actual, T.VarType):
             if _functions._contains_named_type_var(expected, actual.name):
                 return True
+            # A source-level generic binder is universally quantified. Its
+            # value cannot be narrowed to a concrete overload parameter while
+            # checking the defining body. Only inference metavariables may
+            # acquire requirements from an operation.
+            if actual.identity is not None and not isinstance(actual, T.MetaVarType):
+                upper = ctx.type_var_upper_bounds.get(actual.identity)
+                if upper is not None and not T.same(upper, actual):
+                    # Match against the explicitly declared upper bound. This
+                    # may solve variables belonging to the *callee*, but never
+                    # specializes the caller's universally bound variable.
+                    return rec(upper, expected)
+                return T.compatible(actual, expected, ctx)
             return bind(T.type_var_key(actual), expected)
         if isinstance(expected, T.VarType):
             if _functions._contains_named_type_var(actual, expected.name):

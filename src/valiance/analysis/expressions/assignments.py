@@ -260,6 +260,10 @@ def _set_variable(
                 )
             )
     declared_type = node.declared_type or _declared_variable_type(branch, node.name)
+    if declared_type is not None:
+        from ..support.contextual_returns import specialize_last_call_result
+        branch = specialize_last_call_result(branch, declared_type, self.env.context)
+        value_type = branch.stack[-1]
     variable_type = declared_type or value_type
 
     if declared_type is not None and not T.assignable(
