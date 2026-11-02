@@ -97,6 +97,8 @@ class Context:
     trait_provider_aliases: dict[Symbol, set[Symbol]] = field(default_factory=dict)
     # Scoped, declared upper bounds visible only while checking a generic body.
     type_var_upper_bounds: dict[TypeVarId, Type] = field(default_factory=dict)
+    # Source-visible import spellings can share one declaration identity.
+    nominal_origins: dict[Symbol, Symbol] = field(default_factory=dict)
 
     def copy(self) -> Context:
         """Return an independent copy of the currently visible type facts."""
@@ -122,11 +124,16 @@ class Context:
             },
             generic_variance=dict(self.generic_variance),
             type_var_upper_bounds=dict(self.type_var_upper_bounds),
+            nominal_origins=dict(self.nominal_origins),
             structural_overloads={
                 name: list(overloads)
                 for name, overloads in self.structural_overloads.items()
             },
         )
+
+    def nominal_origin(self, name: Symbol) -> Symbol:
+        """Resolve aliases without identifying unrelated local declarations."""
+        return self.nominal_origins.get(name, name)
 
     def implementation_providers(
         self, type_name: Symbol, trait_name: Symbol

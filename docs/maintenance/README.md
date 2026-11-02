@@ -113,7 +113,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   [Numbered trait hardening](trait-hardening.md) describes the 306 active
   plan oracles, explicit retirements, isolated runner, and CI reports.
   Cross-layer vectorisation invariants and execution-mode parity are exercised in
-  `tests/test_vectorisation_properties.py`. The portable FFI fixture compiler
+  `tests/test_vectorisation_properties.py`. Multi-hop private import identity,
+  re-exported generic specializations and source-free facade chains are covered
+  in `tests/test_type_soundness_multimodule.py`. The portable FFI fixture compiler
   `tests/ffi_support.py` supports the native ABI integration tests on Windows,
   macOS, and Linux.
 - [Numbered generics hardening](generics-hardening.md) describes the 351-case

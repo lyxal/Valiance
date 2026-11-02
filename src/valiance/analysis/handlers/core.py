@@ -1347,6 +1347,18 @@ def _import_node(
         install_native_default_dependencies(self.env, definitions)
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
+        provider_runtime_links = self._prelude.add_provider_declarations(
+            exports.module_name,
+            tuple(
+                (obj.name, obj.typed)
+                for obj in exports.objects
+                if not obj.public
+                and isinstance(obj.typed.node, ObjectNode)
+                and obj.typed.node.kind == Symbol("object")
+                and obj.typed.node.target is None
+            )
+            + tuple((definition.name, definition.typed) for definition in exports.definitions),
+        )
         from valiance.modules_system.modules import import_constructor_dependencies
         from valiance.analysis.import_runtime import with_import_runtime_name
         constructor_dependencies = exports.runtime_prelude
@@ -1355,8 +1367,18 @@ def _import_node(
             constructor_dependencies += (
                 with_import_runtime_name(dependency.typed, runtime_name),
             )
+        # Every imported spelling of an object denotes the declaration in its
+        # provider, not a fresh nominal constructor.  Keep this separate from
+        # unqualified locally defined objects of the same name.
         for obj in objects:
             object_node = obj.typed.node
+            original = next((component.name for component in resolved_spec.components
+                             if (component.alias or component.name) == obj.name), None)
+            if original is None:
+                original = Symbol(obj.name.text)
+            self.env.context.nominal_origins[obj.name] = obj.origin or Symbol(
+                original.text, tuple(exports.module_name.split('.'))
+            )
             # Selected owned implementation evidence belongs to the imported
             # constructor as well as to the analyser's nominal Context. A
             # source module's implementation block need not be exported as an
@@ -1424,6 +1446,11 @@ def _import_node(
             call_site_dependencies = tuple(dependencies)
         for definition in definitions:
             definitions_by_name.setdefault(definition.name, []).append(definition)
+        private_nominals = {
+            obj.name: Symbol(obj.name.text, tuple(exports.module_name.split('.')))
+            for obj in exports.objects if not obj.public
+        }
+        reexport_runtime_functions = {}
         for definition_name, definition_group in definitions_by_name.items():
             first_typed = definition_group[0].typed
             merged_typed = TypedFunctionNode(
@@ -1439,6 +1466,13 @@ def _import_node(
             runtime_name = self._prelude.add_declaration(
                 merged_typed,
                 definition_name,
+                runtime_links=provider_runtime_links,
+            )
+            # Re-exported callables retain references to the original provider's
+            # private runtime dependencies, not the facade's lexical namespace.
+            from valiance.analysis.import_runtime import with_import_runtime_name
+            reexport_runtime_functions[definition_name] = with_import_runtime_name(
+                merged_typed, runtime_name, runtime_links=provider_runtime_links,
             )
             for definition in definition_group:
                 try:
@@ -1447,6 +1481,7 @@ def _import_node(
                         definition.typed,
                         runtime_name,
                         call_site_dependencies,
+                        {**private_nominals, **dict(definition.private_nominals)},
                     )
                 except ValueError as exc:
                     self._diagnose(
@@ -1513,7 +1548,15 @@ def _import_node(
                 for obj in objects
             )
             self._public_import_definitions.extend(
-                replace(definition, public=True) for definition in definitions
+                replace(
+                    definition,
+                    public=True,
+                    typed=reexport_runtime_functions.get(definition.name, definition.typed),
+                    private_nominals=tuple({
+                        **private_nominals, **dict(definition.private_nominals),
+                    }.items()),
+                )
+                for definition in definitions
             )
             selected_tags = {
                 Symbol(component.name.text.removeprefix("#"))

@@ -212,7 +212,7 @@ def _collect_directional_bounds(
         if isinstance(p, NominalType) and isinstance(a, NominalType):
             if (
                 not _same_nominal_family(p, a)
-                or p.name != a.name
+                or ctx.nominal_origin(p.name) != ctx.nominal_origin(a.name)
                 or len(p.args) != len(a.args)
             ):
                 return False
@@ -703,7 +703,8 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             )
         if target.name == RESULT and len(target.args) == 2:
             return _source_subtypes_result(source, target, ctx)
-        if source.name == target.name and len(source.args) == len(target.args):
+        if (ctx.nominal_origin(source.name) == ctx.nominal_origin(target.name)
+                and len(source.args) == len(target.args)):
             return _nominal_args_subtype(source, target, ctx)
         pattern_providers = implementation_pattern_providers(source, target, ctx)
         if len(pattern_providers) == 1:
@@ -1590,7 +1591,9 @@ def _solve(
                 return False
             if isinstance(p, FFINamedType) and p.name != a.name:
                 return False
-            if allow_implementation and p.name != a.name and _contains_type_var(p):
+            if (allow_implementation
+                    and ctx.nominal_origin(p.name) != ctx.nominal_origin(a.name)
+                    and _contains_type_var(p)):
                 matching = tuple(
                     target
                     for target in implementation_reachable_traits(a, ctx)
@@ -1612,7 +1615,7 @@ def _solve(
                         add(normalize(p.args[0]).name, NeverType())
                     return rec(p.args[1], a)
             return (
-                p.name == a.name
+                ctx.nominal_origin(p.name) == ctx.nominal_origin(a.name)
                 and len(p.args) == len(a.args)
                 and all(rec(x, y) for x, y in zip(p.args, a.args, strict=False))
             )

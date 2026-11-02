@@ -478,7 +478,7 @@ $box
             self.assertIsNone(analyser.env.lookup_object(Symbol('Box')))
             for optimize in (False, True):
                 (box,) = run(loads(dumps(compile_program(typed, optimize=optimize))))
-                self.assertEqual(box.type_name, 'Box')
+                self.assertEqual(box.type_name, 'builder.Box')
                 self.assertEqual(box.type_args, ('String',))
                 self.assertEqual(box.fields, {'value': 'hello'})
 

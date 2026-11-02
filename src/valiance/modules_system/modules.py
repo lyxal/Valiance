@@ -54,6 +54,8 @@ class ModuleDefinition:
     typed: TypedFunctionNode
     public: bool = False
     attached_tag: Symbol | None = None
+    # Private nominal identities referenced by this exported signature.
+    private_nominals: tuple[tuple[Symbol, Symbol], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ class ModuleObject:
     friendly_definitions: tuple[DefineNode, ...] = ()
     import_friendly: bool = False
     private_friendly_definitions: tuple[DefineNode, ...] = ()
+    # The original nominal declaration, independent of import aliases/facades.
+    origin: Symbol | None = None
 
 
 @dataclass(frozen=True)
@@ -675,7 +679,7 @@ def import_objects(
             if obj is None:
                 continue
             selected.append(
-                _renamed_object(
+                replace(_renamed_object(
                     obj,
                     component.alias or component.name,
                     import_friendly=True,
@@ -685,7 +689,7 @@ def import_objects(
                         _namespaced_symbol(obj.name, provider)
                         if native_module else None
                     ),
-                )
+                ), origin=obj.origin or Symbol(obj.name.text, tuple(exports.module_name.split('.'))))
             )
         renames = {component.name: component.alias for component in spec.components
                    if component.kind is None and component.alias is not None}
@@ -693,7 +697,7 @@ def import_objects(
 
     namespace = spec.alias or Symbol(exports.module_name.rsplit(".", 1)[-1])
     return tuple(
-        _renamed_object(
+        replace(_renamed_object(
             obj,
             _namespaced_symbol(obj.name, namespace),
             friendly_prefix=namespace,
@@ -701,7 +705,7 @@ def import_objects(
             enum_names=enum_names,
             enum_namespace=provider if native_module else namespace,
             nominal_name=_namespaced_symbol(obj.name, provider) if native_module else None,
-        )
+        ), origin=obj.origin or Symbol(obj.name.text, tuple(exports.module_name.split('.'))))
         for obj in public
     )
 
@@ -1184,7 +1188,7 @@ def _renamed_definition(
         definition.typed.overloads,
         definition.typed.dispatch_plan,
     )
-    return ModuleDefinition(name, typed, definition.public, definition.attached_tag)
+    return replace(definition, name=name, typed=typed)
 
 
 def _renamed_object(
@@ -1264,6 +1268,7 @@ def _renamed_object(
         definitions,
         import_friendly,
         renamed_private_friendly_definitions,
+        obj.origin,
     )
 
 

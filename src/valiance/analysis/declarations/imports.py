@@ -249,9 +249,23 @@ class _ImportDeclarations:
         typed_node: TypedFunctionNode,
         runtime_name: Symbol,
         dependencies: tuple[TypedNode, ...] = (),
+        private_nominals: dict[Symbol, Symbol] | None = None,
     ) -> None:
-        """Register imported definition during static analysis."""
+        """Register imported definition with provider-owned private type identities."""
+        from valiance.modules_system.modules import _rename_imported_types
         for overload in self._selected_import_overloads(typed_node):
+            if private_nominals:
+                # Imported signatures must not confuse private provider types
+                # with caller-local names. Leave call-site-checked bodies in
+                # their provider lexical scope; they carry private helpers.
+                overload = replace(
+                    overload,
+                    params=_rename_imported_types(overload.params, private_nominals),
+                    returns=_rename_imported_types(overload.returns, private_nominals),
+                    generic_constraints=_rename_imported_types(
+                        overload.generic_constraints, private_nominals
+                    ),
+                )
             self.env.define_overload(name, overload)
             if dependencies and overload.call_site_body is not None and overload.implementation_id is not None:
                 self.env.call_site_dependencies[overload.implementation_id] = dependencies

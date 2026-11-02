@@ -68,6 +68,19 @@ Never traverse `ObjectValue.fields` for JSON without a checked layout, since
 that would expose private storage. Instantiating reified generic field types
 also matters for Boolean tags, including those nested in collections.
 
+# Re-exported private dependency and nominal provenance
+
+A facade's `public import` carries more than renamed surface signatures. An
+imported checked function may refer to a private constructor/helper in its
+*original* provider; keep its existing `TypedElementNode.runtime_name` links
+when exporting from the facade, rather than rebuilding the body with the
+facade's provider links. Preserve `ModuleDefinition.private_nominals` so the
+signature still distinguishes returned private provider types from same-named
+consumer types. Keep `ModuleObject.origin` through each `_renamed_object` step,
+including namespaced and selected imports, so successive `as` aliases remain
+the same nominal declaration. Use `test_type_soundness_multimodule.py` with
+source and source-free modules to detect failures that direct-import tests miss.
+
 # Parallel unittest worker imports
 
 Some test modules import sibling fixtures such as `ffi_support` as top-level
@@ -171,3 +184,15 @@ both conflict lookup and commit, including source-free `.vbcm` imports.
 Do not drop binder correlation: `(T,T)` and `(T,U)` are different patterns.
 This is **not** permission to infer extra constraints inside generic bodies;
 keep declaration-time universal checking as documented above.
+
+# Private runtime dependencies in module imports
+
+`ModuleExports` includes private local declarations for runtime linking even
+when only a public function is selected by source import. An import prelude
+installs them under unique provider-scoped runtime bindings; imported checked
+calls must be retargeted to those bindings without rewriting their overload
+implementation IDs. In analysed `TypedElementNode`s, a local call may already
+carry `runtime_name == node.name` (not just `None`), so both forms must be
+considered. Private nominal runtime type names need provider qualification to
+keep source-free modules and checked casts sound. None of these dependencies
+should enter the caller's source-level symbol or overload environment.

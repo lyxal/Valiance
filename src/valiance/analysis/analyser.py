@@ -198,6 +198,7 @@ class _AnalysisPrelude:
     namespace_seed: str
     nodes: list[TypedNode] = field(default_factory=list)
     bindings: list[tuple[TypedNode, Symbol, Symbol]] = field(default_factory=list)
+    provider_links: dict[str, dict[Symbol, Symbol]] = field(default_factory=dict)
 
     def add(self, node: TypedNode) -> None:
         """Add one imported runtime declaration exactly once."""
@@ -209,6 +210,7 @@ class _AnalysisPrelude:
         node: TypedNode,
         source_name: Symbol,
         *,
+        runtime_links: dict[Symbol, Symbol] | None = None,
         imported_supertypes: tuple[T.Type, ...] = (),
         imported_guarded_supertypes: tuple[
             tuple[T.Type, tuple[T.Type | None, ...]], ...
@@ -225,11 +227,53 @@ class _AnalysisPrelude:
         )
         self.nodes.append(with_import_runtime_name(
             node, runtime_name,
+            runtime_links=runtime_links,
             imported_supertypes=imported_supertypes,
             imported_guarded_supertypes=imported_guarded_supertypes,
         ))
         self.bindings.append((node, source_name, runtime_name))
         return runtime_name
+
+    def add_provider_declarations(
+        self,
+        module_name: str,
+        declarations: tuple[tuple[Symbol, TypedNode], ...],
+    ) -> dict[Symbol, Symbol]:
+        """Link a provider's lexical declarations privately into the runtime.
+
+        Publicly imported bodies retain references to sibling private helpers and
+        constructors.  All references use per-module hidden bindings, never the
+        importing module's user-visible globals or source-level symbol table.
+        """
+        existing = self.provider_links.get(module_name)
+        if existing is not None:
+            return existing
+        unique: dict[Symbol, list[TypedNode]] = {}
+        for name, typed in declarations:
+            unique.setdefault(name, []).append(typed)
+        links = {
+            name: Symbol(name.text, (f"__valiance_import_{self.namespace_seed}_{len(self.bindings) + index}",))
+            for index, name in enumerate(unique)
+        }
+        self.provider_links[module_name] = links
+        for name, group in unique.items():
+            binding = links[name]
+            for typed in group:
+                object_node = typed.node
+                private_nominal = (
+                    Symbol(name.text, tuple(module_name.split(".")))
+                    if isinstance(object_node, ObjectNode)
+                    and object_node.kind == Symbol("object")
+                    and object_node.target is None
+                    and object_node.visibility != Symbol("public")
+                    else None
+                )
+                self.nodes.append(with_import_runtime_name(
+                    typed, binding, runtime_links=links,
+                    runtime_nominal_name=private_nominal,
+                ))
+                self.bindings.append((typed, name, binding))
+        return links
 
 
 def _nested_types(typ: T.Type) -> Iterator[T.Type]:
@@ -462,6 +506,7 @@ class Analyser:
         if self._owns_prelude:
             self._prelude.nodes.clear()
             self._prelude.bindings.clear()
+            self._prelude.provider_links.clear()
         initial = BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),))
         setup, definitions, executable = self._top_level_analysis_phases(program)
         self._top_level_declared_variable_names = frozenset(

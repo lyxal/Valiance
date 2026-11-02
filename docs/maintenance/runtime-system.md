@@ -271,6 +271,33 @@ transfer, and other partially committed native operations remain atomic. Future
 long-running resumable work must use explicit VM machinery rather than adding
 polling callbacks to `RuntimeContext`.
 
+### Imported provider-private runtime dependencies
+
+A public function imported from a module is executable using the provider's
+lexical declarations, even when it calls a non-exported constructor or helper.
+The import prelude links that module's checked declarations under internal
+runtime bindings and retargets its checked calls to those bindings. These
+bindings are **not** added to the caller's visible type or overload environment.
+They must be keyed by the provider, not by an unqualified spelling: a caller's
+`Secret` and two different modules' private `Secret` declarations are distinct.
+
+Private nominal object instances retain their provider-qualified runtime type
+(e.g. `builder.Box`), including through serialized or source-free bytecode. This
+is important for checked casts and reified union dispatch; treating every
+private `Box` as one runtime name would reintroduce cross-module type confusion.
+The imported function's checked implementation identity remains unchanged when
+its private calls are retargeted, so runtime linking still verifies the chosen
+overload. Keep this path covered with both optimized and serialized execution.
+
+A public re-export must retain the checked body's links to its **original**
+provider-private runtime declarations, even after several facade modules rename
+or re-export that function. The facade's lexical declarations are not a
+replacement for the original constructor/helper environment. `ModuleExports`
+retains those linked bodies in the public interface and carries the imported
+runtime prelude through source-free `.vbcm` dependencies. Importing two providers
+that independently declare `Secret[T]` must not let either constructor resolve
+against the other's private binding.
+
 ### `stdlib_native.py`: Python-backed imported functions
 
 Native standard-library functions use the same runtime implementation shape as

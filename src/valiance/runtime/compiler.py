@@ -1186,6 +1186,11 @@ class _Compiler:
                 self.object_declaration(
                     node,
                     runtime_name=runtime_name,
+                    runtime_nominal_name=(
+                        typed_node.runtime_nominal_name
+                        if isinstance(typed_node, TypedImportedObjectNode)
+                        else None
+                    ),
                     method_results=(
                         dict(typed_node.method_results)
                         if isinstance(typed_node, TypedObjectNode)
@@ -1343,6 +1348,7 @@ class _Compiler:
         node: ObjectNode,
         *,
         runtime_name: Symbol | None = None,
+        runtime_nominal_name: Symbol | None = None,
         method_results: dict[str, tuple[str, ...]] | None = None,
         method_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
         method_bodies: dict[str, TypedFunctionNode] | None = None,
@@ -1350,7 +1356,7 @@ class _Compiler:
         """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
             case "object":
-                type_name = _symbol_runtime_name(node.name)
+                type_name = _symbol_runtime_name(runtime_nominal_name or node.name)
                 binding_name = (
                     type_name
                     if runtime_name is None

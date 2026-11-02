@@ -957,6 +957,16 @@ solving recurses through matching nominal names and arguments:
 T -> [String]
 ```
 
+Import renaming is not nominal type creation: a `Box[T]` re-exported as
+`Package[T]` and then `Wrapped[T]` still denotes the original provider's
+`Box[T]`. Imported object interfaces carry their declaring nominal origin
+through each re-export and across compiled interfaces. Likewise, a public
+function returning a private provider type must retain its qualified private
+nominal in its *signature*, even if its definition is re-exported twice;
+a caller-local object with the same spelling may never satisfy that return type.
+This provenance applies recursively to instantiated type arguments and
+functions, without making the private type importable by source code.
+
 Different nominal names do not match through generic solving alone. Trait and
 subtype rules are checked at other stages.
 

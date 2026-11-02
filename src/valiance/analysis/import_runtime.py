@@ -30,6 +30,8 @@ def with_import_runtime_name(
     node: TypedNode,
     runtime_name: Symbol,
     *,
+    runtime_links: dict[Symbol, Symbol] | None = None,
+    runtime_nominal_name: Symbol | None = None,
     imported_supertypes: tuple[Type, ...] = (),
     imported_guarded_supertypes: tuple[
         tuple[Type, tuple[Type | None, ...]], ...
@@ -44,6 +46,7 @@ def with_import_runtime_name(
             node.overloads,
             source_name,
             runtime_name,
+            runtime_links,
         )
         return TypedImportedFunctionNode(
             node.node,
@@ -61,7 +64,12 @@ def with_import_runtime_name(
             runtime_name,
             imported_supertypes,
             imported_guarded_supertypes,
-            method_bodies=node.method_bodies if isinstance(node, TypedObjectNode) else (),
+            runtime_nominal_name=runtime_nominal_name,
+            method_bodies=(
+                _rewrite_imported_self_calls(
+                    node.method_bodies, node.node.name, runtime_name, runtime_links,
+                ) if isinstance(node, TypedObjectNode) else ()
+            ),
         )
     return node
 
@@ -70,21 +78,27 @@ def _rewrite_imported_self_calls(
     value: Any,
     source_name: Symbol,
     runtime_name: Symbol,
+    runtime_links: dict[Symbol, Symbol] | None = None,
 ) -> Any:
     """Retarget recursive calls in an imported definition to its hidden binding."""
     if isinstance(value, TypedElementNode):
         rewritten = {
             field.name: _rewrite_imported_self_calls(
-                getattr(value, field.name), source_name, runtime_name
+                getattr(value, field.name), source_name, runtime_name, runtime_links
             )
             for field in fields(value)
         }
-        if isinstance(value.node, ElementNode) and value.node.name == source_name:
-            rewritten["runtime_name"] = runtime_name
+        if isinstance(value.node, ElementNode):
+            if value.node.name == source_name:
+                rewritten["runtime_name"] = runtime_name
+            elif runtime_links and value.runtime_name in (None, value.node.name):
+                target = runtime_links.get(value.node.name)
+                if target is not None:
+                    rewritten["runtime_name"] = target
         return replace(value, **rewritten)
     if isinstance(value, tuple):
         return tuple(
-            _rewrite_imported_self_calls(item, source_name, runtime_name)
+            _rewrite_imported_self_calls(item, source_name, runtime_name, runtime_links)
             for item in value
         )
     if is_dataclass(value) and not isinstance(value, ASTNode):
@@ -92,7 +106,7 @@ def _rewrite_imported_self_calls(
             value,
             **{
                 field.name: _rewrite_imported_self_calls(
-                    getattr(value, field.name), source_name, runtime_name
+                    getattr(value, field.name), source_name, runtime_name, runtime_links
                 )
                 for field in fields(value)
             },

@@ -517,6 +517,37 @@ class _CallableValues:
                     if constraint.variance is T.Variance.COVARIANT:
                         variable = scope.variable(constraint.name)
                         function_env.context.type_var_upper_bounds[variable.identity] = constraint.bound
+            # A named trait bound is also evidence for each operation in the
+            # trait's declared interface.  This evidence is lexical: it may
+            # justify calls on T without turning concrete overloads (such as
+            # size(Item)) into a hidden restriction on T.
+            if scope is not None:
+                for constraint in generic_constraints:
+                    bound = T.normalize(constraint.bound)
+                    if constraint.variance is not T.Variance.COVARIANT or not isinstance(bound, T.NominalType):
+                        continue
+                    trait = function_env.lookup_trait(bound.name)
+                    if trait is None or len(trait.generics) != len(bound.args):
+                        continue
+                    subject = scope.variable(constraint.name)
+                    substitutions = {
+                        **{generic.text: arg for generic, arg in zip(trait.generics, bound.args, strict=True)},
+                        "$self": subject,
+                    }
+                    for requirement in trait.requirements:
+                        declared = requirement.overload
+                        evidence = replace(
+                            declared,
+                            params=(*tuple(T._substitute(arg, substitutions) for arg in declared.params), subject),
+                            returns=tuple(T._substitute(arg, substitutions) for arg in declared.returns),
+                            param_names=(*declared.param_names, None),
+                            param_defaults=(*declared.param_defaults, None),
+                            # Named trait requirements use nominal trait dispatch,
+                            # not anonymous structural witnesses.
+                            is_multi=True,
+                            is_structural_requirement=False,
+                        )
+                        function_env.overloads.setdefault(requirement.name, []).append(evidence)
             for name, overload in structural_overloads:
                 function_env.overloads.setdefault(name, []).append(overload)
             if recursive_overload is not None and annotation_hooks.has_annotation(
