@@ -4692,8 +4692,9 @@ pick(_, 4)
         )
         self.assertEqual(next(iter(dip)).stack, TypeStack((Number, Number)))
 
+        # `positive?` requires Real; a general Number could be complex.
         fork = analyser.analyse_block(
-            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
+            BranchSet((AnalysisBranch(stack=TypeStack((Real,))),)),
             (
                 ElementNode(
                     Symbol("fork"),
@@ -4705,6 +4706,28 @@ pick(_, 4)
             ),
         )
         self.assertEqual(next(iter(fork)).stack, TypeStack((Number, Boolean)))
+        self.assertFalse(analyser.diagnostics)
+
+    def test_fork_rejects_number_input_for_real_only_predicate(self):
+        """A shared Number cannot safely feed a Real-only fork branch."""
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
+            (
+                ElementNode(
+                    Symbol("fork"),
+                    modifier_args=(
+                        FunctionNode(body=(ElementNode(DOUBLE),)),
+                        FunctionNode(body=(ElementNode(IS_POSITIVE),)),
+                    ),
+                ),
+            ),
+        )
+        self.assertFalse(branches)
+        self.assertTrue(
+            any("no overloads for element 'fork'" in str(d) for d in analyser.diagnostics),
+            analyser.diagnostics,
+        )
 
     def test_both_and_sequence_type_check_callable_arity_at_each_call_site(self):
         analyser = Analyser()
