@@ -7387,6 +7387,7 @@ def _matches_declared_generic_dispatch(
     bindings: dict[str, str] = {}
 
     def match(expected: RuntimeTypePattern, actual: RuntimeTypePattern) -> bool:
+        """Unify a declared generic dispatch pattern with the runtime type."""
         if (expected.kind == "nominal" and not expected.children
                 and expected.name in generic_vars):
             rendered = _render_structural_type(actual)

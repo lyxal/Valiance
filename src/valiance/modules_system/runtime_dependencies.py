@@ -66,6 +66,7 @@ def provider_runtime_object(declaration: ModuleObject) -> TypedNode:
 
 
 def _identity(declaration: ModuleObject, module_name: str) -> Symbol:
+    """Get a declaration's canonical provider-qualified identity."""
     return declaration.origin or Symbol(
         declaration.name.text, tuple(module_name.split("."))
     )
@@ -106,6 +107,7 @@ def _types_of_object(declaration: ModuleObject) -> Iterable[T.Type]:
 
 
 def _types_of_definition(declaration: ModuleDefinition) -> Iterable[T.Type]:
+    """Yield all types referenced by a definition and its checked overloads."""
     if isinstance(declaration.typed.typ, T.Type):
         yield declaration.typed.typ
     for typing in declaration.typed.overloads:
@@ -119,6 +121,7 @@ def _types_of_definition(declaration: ModuleDefinition) -> Iterable[T.Type]:
 
 
 def _references(types: Iterable[T.Type]) -> Iterable[Symbol]:
+    """Yield nominal names occurring anywhere within the given types."""
     for typ in types:
         for part in nested_types(typ):
             if isinstance(part, T.NominalType):
@@ -135,6 +138,7 @@ def _checked_calls(value: object) -> Iterable[Symbol]:
     visited: set[int] = set()
 
     def visit(item: object) -> Iterable[Symbol]:
+        """Traverse checked bodies without revisiting shared dataclass nodes."""
         if isinstance(item, TypedElementNode):
             name = item.node.name
             if item.runtime_name in (None, name):
@@ -217,6 +221,7 @@ def resolve_runtime_dependencies(
         available.setdefault(identity, declaration)
 
     def target(name: Symbol, owner: Symbol) -> Symbol | None:
+        """Resolve a referenced type using its owner's recorded provenance."""
         # The checked declaration is the authority for any local spelling of
         # an imported type. Looking up by short name alone would conflate
         # same-named declarations from distinct providers.

@@ -1388,18 +1388,13 @@ def _import_node(
             origin = dependency.origin or Symbol(
                 dependency.name.text, tuple(exports.module_name.split('.'))
             )
-            # A provider may already have linked this very declaration as a
-            # private import. Reconstructing it a second time under a new
-            # nominal spelling registers duplicate methods (which can have
-            # incompatible receiver predicates). Reuse the provider's runtime
-            # prelude instead of emitting another copy of the same origin.
+            # An existing prelude declaration only provides this constructor
+            # if it was emitted under the same canonical runtime name. Its
+            # type-origin map qualifies references inside field schemas, but
+            # does not register a constructor under those referenced names.
             already_linked = any(
                 isinstance(prior, TypedImportedObjectNode)
-                and (
-                    prior.runtime_nominal_name == origin
-                    or any(canonical == origin
-                           for _spelling, canonical in prior.runtime_type_origins)
-                )
+                and prior.runtime_nominal_name == origin
                 for prior in exports.runtime_prelude
             )
             if already_linked:
@@ -1602,6 +1597,7 @@ def _import_node(
             visible_by_origin.setdefault(origin, []).append(visible)
 
         def selected_nominals(definition):
+            """Map a provider's private nominal spellings to visible aliases."""
             substitutions = {}
             for spelling, origin in definition.private_nominals:
                 visible = visible_by_origin.get(origin, ())
