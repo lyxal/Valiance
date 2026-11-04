@@ -27,28 +27,65 @@ jobs:
         run: uv sync
       - name: Verify regex runtime dependency
         run: uv run --frozen python -c "import regex; import valiance.std.regex"
-      - name: Run test suite
+      - name: Run test suite in parallel and collect timings
         timeout-minutes: 15
-        run: uv run --frozen python -m unittest discover -s tests -v
+        run: uv run --frozen python -m tools.test_suite --workers 4 --durations 20 --timings test-timings.json
+      - name: Upload test timing report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unittest-timings
+          path: test-timings.json
+          if-no-files-found: ignore
+
+  trait-oracles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python 3.14
+        run: uv python install 3.14
+      - name: Install project dependencies
+        run: uv sync
       - name: Run isolated trait P0 oracles
         timeout-minutes: 15
-        if: always() && github.event_name != 'schedule'
+        if: github.event_name != 'schedule'
         run: uv run --frozen python -m tools.trait_plan --priority P0 --report trait-plan-results.json
       - name: Run complete isolated trait plan
         timeout-minutes: 30
-        if: always() && github.event_name == 'schedule'
+        if: github.event_name == 'schedule'
         run: uv run --frozen python -m tools.trait_plan --report trait-plan-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trait-plan-results
+          path: trait-plan-results.json
+          if-no-files-found: ignore
+
+  generics-oracles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python 3.14
+        run: uv python install 3.14
+      - name: Install project dependencies
+        run: uv sync
       - name: Run isolated generics smoke oracles
         timeout-minutes: 15
-        if: always() && github.event_name != 'schedule'
+        if: github.event_name != 'schedule'
         run: uv run --frozen python -m tools.generics_plan --smoke --jobs 6 --timeout 45 --report generics-smoke-results.json
       - name: Run all mapped generics P0 oracles
         timeout-minutes: 15
-        if: always() && github.event_name != 'schedule'
+        if: github.event_name != 'schedule'
         run: uv run --frozen python -m tools.generics_plan --priority P0 --batch --report generics-plan-results.json
       - name: Run complete mapped generics inventory
         timeout-minutes: 30
-        if: always() && github.event_name == 'schedule'
+        if: github.event_name == 'schedule'
         run: uv run --frozen python -m tools.generics_plan --batch --report generics-plan-results.json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -57,12 +94,6 @@ jobs:
           path: |
             generics-plan-results.json
             generics-smoke-results.json
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: trait-plan-results
-          path: trait-plan-results.json
           if-no-files-found: ignore
 
   multimodule-projects:

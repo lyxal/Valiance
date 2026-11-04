@@ -1921,6 +1921,8 @@ end
 - `access modifier` is one of `public` (public read, public write), `readable` (public read, private write), or `private` (private read, private write). `access modifier` can also be omitted, making the member `readable` by default.
 - If `value` is not specified, then the member _must_ be set by the end of _all_ constructors.
 - If `value` is provided, `type` can be omitted.
+- For runtime field metadata, reflective access, and constructor-free building, see
+  [Reflection and Uninitialised Objects](#28-reflection-and-uninitialised-objects).
 
 ## 12.1. Constructors
 - Constructors are really just elements with the same name as the object.
@@ -6184,3 +6186,186 @@ Callback faults are contained at the ABI boundary and reported by the containing
 native call after C returns. C must not retain the callback pointer beyond the
 linked call; persistent callback registration requires a future explicit slot
 lifecycle API.
+
+# 28. Reflection and Uninitialised Objects
+
+Reflection exposes checked information about types and their stored fields. It
+can inspect an object's layout, select fields by name, and read or replace their
+values without declaring a separate accessor for each field. `Uninit[T]` uses
+those same field descriptors to build a value without calling its constructor.
+The two facilities have different safety requirements: ordinary reflection is
+available in safe code when ownership permits it, whereas incomplete
+construction always requires a lexical `unsafe` block.
+
+## 28.1. Types, Fields, and Field Metadata
+
+- `Type[T]` is runtime type evidence for `T`, including generic arguments; it
+  is not an instance of `T`.
+- `fields[T]` describes the **declared instance storage** of `T`.
+  `$value fields` describes the concrete storage selected for a value. Both
+  produce `Fields[Owner]`, a heterogeneous collection in declaration order,
+  rather than an ordinary list of identically typed fields.
+- Each `Field[Owner]` descriptor identifies one field and exposes read-only
+  `.name: String`, `.index: Int` (zero-based), `.owner: Type[Owner]`,
+  `.type: Type[FieldType]`, and `.visibility: Visibility` metadata.
+  `.visibility.name` is `"public"`, `"readable"`, or `"private"`.
+- Descriptors identify fields, not object instances. Two fields of the same
+  value type are still distinct. Descriptors include private field **metadata**,
+  but do not grant access to private field **values**. Outside a reflective
+  callback, `.type` has a conservative union of possible `Type[...]` witnesses;
+  inside the callback it retains the current field's precise type.
+
+```valiance
+object Person =>
+  public $name: String
+  readable $age: Int
+end
+
+$person = Person("Ada", 36)
+$layout = fields[Person]
+$field = $layout["age"]
+$field.name             # "age"
+$field.index            # 1
+$field.visibility.name  # "readable"
+$field.type             # Type[Int]
+$person fields | length # 2
+fields[Int] | length   # 0
+field?($layout, "noSuchField") # None
+```
+
+Lookup by `Fields[T][name]` is *always dynamic*, even when `name` is a string
+literal: a missing name raises `KeyFault` at runtime. Use
+`field?(fields[T], name)` to obtain `Field[T]?` (`None` for a missing name).
+A type with no stored fields, including primitives, has an empty field
+collection. Methods and computed properties without storage are not fields.
+
+`fields[T]` describes the specified type itself, not the combined fields of
+its alternatives: for example, `fields[A | B]` and `fields[Variant]` are empty
+when those types declare no storage of their own. By contrast, `$value fields`
+selects the actual stored layout of a value of a finite union or the active
+member of a closed variant. Generic calls can defer checking that layout until
+concrete caller type evidence is available. If no finite, distinguishable set
+of layouts can be established, typed field reflection is rejected rather than
+silently treating fields as unchecked dynamic values.
+
+For other type categories, use `typeInfo[T]` (such as `.category`, `.arguments`,
+`.elements`, `.parameters`, or `.returns`, where applicable),
+`alternatives[A | B]` for union members, and `cases[Variant]` for variant
+members. These describe types; they do not fabricate object fields.
+
+## 28.2. Reading, Writing, and Iterating Reflectively
+
+Use an owner value and one of its field descriptors to access a stored value:
+
+```valiance
+$person[$field]                  # Direct checked field read
+$read = read?($person, $field)   # Result[Value, ReflectionReadError]
+$updated = write?($person, fields[Person]["name"], "Bea")
+# Result[Person, ReflectionWriteError]; $person remains unchanged
+```
+
+Outside a reflective iteration callback, a dynamically selected field read has
+the conservative union of **all possible field value types** (for `Person`,
+`String | Int`), even if the descriptor came from a literal field name.
+Use ordinary casts or `match` to narrow the result. Within reflective
+`foreach`, the compiler opens the actual field type separately for each
+possible field and checks the callback for **every** such type:
+
+```valiance
+$person fields foreach (field) =>
+  println $field.name
+  # $field.type retains the concrete field type for this invocation.
+end
+```
+
+The callback runs in declaration order for the selected layout. An invalid
+operation for *any* possible field type is a compile-time error, even if a
+runtime condition might skip that field. Escaping callback results combine
+all possible resulting types. An empty layout invokes the callback zero times.
+
+Direct `owner[field] = value` follows ordinary immutable object
+reconstruction and rebinds the owner; `write?` instead returns an updated owner
+inside `Ok` while preserving the original owner on both success and recoverable
+failure. Both forms check the selected field's destination type (equivalent to
+an implicit checked `as!`), **not** an implicit `to` conversion. A conversion
+can be requested explicitly using `value to[$field.type]` when applicable.
+Field identity and receiver compatibility are checked before permissions;
+permissions are checked before the replacement type.
+
+- Direct name lookup fails with `KeyFault`; direct access or assignment can
+  raise `ReflectionFieldFault`, `ReflectionAccessFault`, or
+  `ReflectionTypeFault` for invalid fields, access denial, or type mismatch.
+- `read?` returns `ReflectionReadError` with `.reason` of `"InvalidField"` or
+  `"AccessDenied"` on recoverable failure.
+- `write?` returns `ReflectionWriteError` with `.reason` of `"InvalidField"`,
+  `"AccessDenied"`, or `"TypeMismatch"` on recoverable failure. It does not
+  return a partially modified owner.
+
+Safe code may read `public` and `readable` fields and write only `public`
+fields; owner-friendly scopes have their usual additional access. A lexical
+`unsafe => ... end` scope permits private reads and writes, but a field
+obtained there does not carry that authority into other code. Reflection that
+might transitively involve an `@nodup` value requires lexical `unsafe`, even
+for metadata-only operations. `unsafe` **never** permits unlawful duplication,
+bypasses type checks, or turns `DuplicationFault` into a recoverable result.
+
+## 28.3. Building an Object With `Uninit[T]`
+
+`uninit[T]` allocates an incomplete `Uninit[T]` builder for a concrete managed
+object type. No constructor runs, no field defaults are inserted, and no
+ordinary value of type `T` exists yet. This is useful for controlled
+reconstruction, such as deserialisation, but it bypasses constructor-only
+validation and must be used deliberately.
+
+```valiance
+unsafe =>
+  $builder = uninit[Person]
+  finished? $builder  # false: neither field has been written
+
+  $builder[fields[Person]["name"]] = "Ada"
+  $builder[fields[Person]["age"]] = 36
+  finished? $builder  # true: both stored fields are initialised
+
+  $finished = finish? $builder  # Result[Person, ConstructionError]
+  $person = $finished ?!        # Extract the completed Person
+  println $person.name
+end
+```
+
+Builder field writes use `Field[T]` descriptors and checked destination types.
+Writing an already initialised field replaces its value without marking the
+field incomplete. Unset fields cannot be read as ordinary `T` members, not
+even in `unsafe`. A builder is not a `T`, and constructor invariants or
+external resource validity are **not** established merely by filling every
+stored field.
+
+| Operation | Result | Effect on the builder |
+| --- | --- | --- |
+| `finished? builder` | `Bool`: all declared fields are set | Non-consuming; permits further writes |
+| `finish builder` | Completed `T`, or `IncompleteConstructionFault` if a field is missing | Consumes on success **and** failure |
+| `finish? builder` | `Result[T, ConstructionError]` | Consumes on success **and** failure |
+
+An incomplete `finish?` produces `ConstructionError` with
+`.reason = "MissingFields"` and `.missing: String*` listing the absent fields in
+declaration order. Once either finaliser is attempted, the builder cannot be
+reused or repaired, even after failure; subsequent use raises `StateFault`.
+Abandonment or failed finalisation cleans up only the fields that were
+initialised, in reverse declaration order, without running the incomplete
+owner's destructor. Successful finalisation transfers those fields into a
+normal owner with its normal lifecycle. All builder allocation, writes,
+readiness checks, and finalisation require lexical `unsafe`.
+
+For an opaque native `&T`, `uninit[&T]` has no reflected writable fields. It
+can only become a native value through a trusted factory registered with the
+VM. `finish`/`finish?` invoke that factory without an argument;
+`finishWith(builder, value)`/`finishWith?(builder, value)` pass a checked
+argument. The factory must produce a valid value of exactly the registered
+native type. A fallible factory failure yields `ConstructionError`; the direct
+form raises `NativeConstructionFault`. Native registrations are VM-local, not
+new runtime-defined Valiance types.
+
+For host-registered types without a statically known owner, the separate
+`RuntimeType`/`Dynamic` API (such as `lookupRuntimeType?`, `constructRuntime?`,
+`readRuntime?`, and `dynamicUnbox?[T]`) provides checked late-bound access.
+Those operations require lexical `unsafe` and do not replace the statically
+checked `Field[T]` and `Uninit[T]` APIs.

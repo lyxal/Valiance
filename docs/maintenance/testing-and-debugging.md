@@ -40,11 +40,25 @@ The repository uses `unittest`. Important suites include:
 
 ## Useful commands
 
-The project metadata requires Python 3.14. The canonical full-suite command is:
+The project metadata requires Python 3.14. The canonical full-suite command
+uses independent worker processes (the CI workflow uses four workers):
 
 ```powershell
-uv run python -m unittest discover -s tests -v
+uv run python -m tools.test_suite --workers 4
 ```
+
+Measure the slowest tests and retain module timings for more balanced later
+runs with:
+
+```powershell
+uv run python -m tools.test_suite --workers 4 --durations 20 --timings .test-timings.json
+```
+
+The timing report lists individual test durations (excluding class/module
+fixtures) and measured module totals. Its JSON file is reused on subsequent
+runs; unmeasured modules use estimates scaled to the observed durations.
+Keep the isolated trait and generics oracle campaigns as distinct CI gates;
+they run concurrently with the standard suite on GitHub Actions.
 
 Terminal editor, REPL, and project creation tests are temporarily disabled with
 `unittest.skip` decorators in their test modules. These skips apply to local and

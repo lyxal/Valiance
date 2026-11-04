@@ -31,8 +31,16 @@ Run the full test suite in balanced parallel workers with:
 uv run python -m tools.test_suite
 ```
 
-Use `--workers 1 --verbose` for serial debugging. The tests remain ordinary
-`unittest` modules, so focused modules can still be run directly.
+Use `--workers 1 --verbose` for serial debugging. To profile the slowest tests
+and let subsequent runs use measured module durations to balance workers, run:
+
+```powershell
+uv run python -m tools.test_suite --workers 4 --durations 20 --timings .test-timings.json
+```
+
+The timings file is refreshed on each run and ignored by Git. The tests remain
+ordinary `unittest` modules, so focused modules can still be run directly.
+CI runs the main suite, trait oracles, and generics oracles in independent jobs.
 
 Run individual test modules with:
 

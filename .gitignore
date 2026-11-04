@@ -32,6 +32,8 @@ venv.bak/
 .coverage.*
 coverage.xml
 htmlcov/
+test-timings.json
+.test-timings.json
 
 # Type checkers / caches
 .mypy_cache/

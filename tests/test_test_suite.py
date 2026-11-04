@@ -10,7 +10,12 @@ import unittest
 from unittest.mock import patch
 from subprocess import CompletedProcess, TimeoutExpired
 
-from tools.test_suite import TestBatch, discover_test_files, partition_test_files, run_batches
+from tools.test_suite import (
+    TestBatch,
+    discover_test_files,
+    partition_test_files,
+    run_batches,
+)
 
 
 class ParallelTestSuiteTests(unittest.TestCase):
@@ -37,6 +42,53 @@ class ParallelTestSuiteTests(unittest.TestCase):
         self.assertLessEqual(
             abs(batches[0].estimated_weight - batches[1].estimated_weight), 60
         )
+
+    def test_measured_durations_override_static_test_counts(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            large = root / "test_large.py"
+            small = root / "test_small.py"
+            large.write_text("\n".join(f"def test_{i}(): pass" for i in range(20)))
+            small.write_text("def test_one(): pass")
+            durations = {small.as_posix(): 40.0, large.as_posix(): 1.0}
+            batches = partition_test_files((large, small), 2, durations)
+        self.assertEqual(batches[0].files, (small,))
+        self.assertEqual(batches[0].estimated_weight, 40.0)
+
+    def test_partial_and_invalid_timings_fall_back_to_scaled_estimates(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            measured = root / "test_measured.py"
+            missing = root / "test_missing.py"
+            measured.write_text("def test_one(): pass")
+            missing.write_text("def test_two(): pass")
+            batches = partition_test_files(
+                (measured, missing), 2,
+                {measured.as_posix(): 2.0, missing.as_posix(): "invalid"},
+            )
+        self.assertEqual({batch.estimated_weight for batch in batches}, {2.0})
+
+    def test_timing_report_is_saved_by_real_workers(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            case = root / "test_timing_probe.py"
+            case.write_text(
+                "import unittest\n"
+                "class TimingProbe(unittest.TestCase):\n"
+                "    def test_ok(self): self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            report = root / "timings.json"
+            with redirect_stdout(StringIO()) as output:
+                status = run_batches(
+                    (TestBatch((case,), 1),), workers=1, verbose=False,
+                    fail_fast=False, timings_file=report, durations=1,
+                )
+            data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(status, 0)
+        self.assertEqual(data["version"], 1)
+        self.assertIn("test_timing_probe.py", data["modules"])
+        self.assertIn("TimingProbe.test_ok", output.getvalue())
 
     def test_partition_rejects_zero_workers(self):
         with self.assertRaisesRegex(ValueError, "at least 1"):
