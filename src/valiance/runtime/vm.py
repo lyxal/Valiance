@@ -690,6 +690,7 @@ class VirtualMachine:
         output: Callable[[str], None] | None = None,
         list_preview_limit: int | None = None,
         collect_optimization_stats: bool = False,
+        program_args: tuple[str, ...] = (),
     ) -> None:
         """Initialize this virtual machine."""
         self.output = (lambda value: print(value, end="")) if output is None else output
@@ -697,6 +698,7 @@ class VirtualMachine:
             value,
             lazy_preview_limit=list_preview_limit,
         )
+        self.program_args = program_args
         self.tag_parents: dict[str, str] = {}
         self.optimization_stats = (
             OptimizationStats() if collect_optimization_stats else None
@@ -746,6 +748,7 @@ class VirtualMachine:
             index_set=self._builtin_index_set,
             type_services=self._type_services,
             runtime_reflection=self._runtime_reflection_action,
+            program_args=self.program_args,
         )
         self.globals = {
             name: BuiltinValue(element, runtime_context)
@@ -6010,11 +6013,13 @@ def run(
     *,
     output: Callable[[str], None] | None = None,
     list_preview_limit: int | None = None,
+    program_args: tuple[str, ...] = (),
 ) -> list[Any]:
     """Execute a bytecode program with a fresh VM."""
     with VirtualMachine(
         output=output,
         list_preview_limit=list_preview_limit,
+        program_args=program_args,
     ) as vm:
         return vm.run(program)
 

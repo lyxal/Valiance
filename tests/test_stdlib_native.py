@@ -127,3 +127,34 @@ class NativeObjectElementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProgramArgumentTests(unittest.TestCase):
+    def test_runtime_arguments_are_local_and_returns_are_fresh(self):
+        from valiance.runtime import VirtualMachine, dumps, loads
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(r'import { std.cmdline } cmdline.\argv'))
+        self.assertEqual(analyser.diagnostics, [])
+        program = loads(dumps(compile_program(typed)))
+        with patch("sys.argv", ["vln", "exec", "interpreter.vbc"]):
+            self.assertEqual(run(program), [[]])
+            self.assertEqual(run(program, program_args=("--name", "Alice")),
+                             [["--name", "Alice"]])
+            with VirtualMachine(program_args=("one",)) as first, VirtualMachine(
+                program_args=("two",)
+            ) as second:
+                result = first.run(program)
+                result[0].append("changed")
+                self.assertEqual(second.run(program), [["two"]])
+                self.assertEqual(first.run(program), [["one"]])
+
+    def test_repl_does_not_expose_interpreter_arguments(self):
+        from valiance.sessions.service import SessionService
+
+        with patch("sys.argv", ["vln", "--interpreter-option"]):
+            session = SessionService()
+            self.addCleanup(session.close)
+            outcome = session.run(r'import { std.cmdline } cmdline.\argv')
+            self.assertTrue(outcome.successful, outcome)
+            self.assertEqual(session.runtime_stack, [[]])

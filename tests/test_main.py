@@ -125,6 +125,37 @@ class SessionServiceTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+
+    def test_program_arguments_for_source_and_bytecode(self):
+        from valiance.main import main_vln
+
+        source = r'import { std.cmdline } cmdline.\argv println'
+        cases = [
+            ([], []),
+            (["--"], []),
+            (["--", "one", "two"], ["one", "two"]),
+            (["--", "--verbose", "hello", "-h", "--help", "--"],
+             ["--verbose", "hello", "-h", "--help", "--"]),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            source_file = Path(tmp) / "main.vlnc"
+            bytecode_file = Path(tmp) / "main.vbc"
+            source_file.write_text(source, encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    "compile", "--file", str(source_file),
+                    "--output", str(bytecode_file),
+                ]), 0)
+            for entry in (main, main_vln):
+                for action, path in (("run", source_file), ("exec", bytecode_file)):
+                    for suffix, expected in cases:
+                        with self.subTest(entry=entry.__name__, action=action, suffix=suffix):
+                            output = io.StringIO()
+                            with contextlib.redirect_stdout(output):
+                                code = entry([action, "--file", str(path), *suffix])
+                            self.assertEqual(code, 0)
+                            self.assertEqual(output.getvalue().strip(), repr(expected))
+
     def test_format_stack_shows_values_from_top_to_bottom(self):
         self.assertEqual(
             _format_stack([1, 2, 3, 4, 5]),

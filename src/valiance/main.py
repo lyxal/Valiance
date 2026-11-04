@@ -249,6 +249,11 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
     """Parse command-line arguments and dispatch the requested Valiance action."""
     prog = "vln" if vln_mode else DEFAULT_PROG
     args = list(sys.argv[1:] if argv is None else argv)
+    program_args: tuple[str, ...] = ()
+    if args and args[0] in {"run", "exec"} and "--" in args:
+        separator = args.index("--")
+        program_args = tuple(args[separator + 1:])
+        args = args[:separator]
     if not args:
         return _run_repl()
 
@@ -310,6 +315,7 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
             bytecode_file,
             implicit_output=parsed.implicit_output,
             preview_lists=parsed.preview_lists,
+            program_args=program_args,
         )
     if parsed.action in {"tidy", "annotate"}:
         return _run_tidy_command(parsed)
@@ -363,6 +369,7 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
         implicit_output=parsed.implicit_output,
         preview_lists=parsed.preview_lists,
         optimize=not parsed.no_optimize,
+        program_args=program_args,
     )
 
 
@@ -1683,6 +1690,7 @@ def _run_source(
     implicit_output: bool = False,
     preview_lists: bool = False,
     optimize: bool = True,
+    program_args: tuple[str, ...] = (),
 ) -> int:
     """Run source for CLI and REPL orchestration."""
     try:
@@ -1734,6 +1742,7 @@ def _run_source(
                 bytecode,
                 implicit_output=implicit_output,
                 preview_lists=preview_lists,
+                program_args=program_args,
             )
             return 0
 
@@ -1916,6 +1925,7 @@ def _run_bytecode_file(
     *,
     implicit_output: bool = False,
     preview_lists: bool = False,
+    program_args: tuple[str, ...] = (),
 ) -> int:
     """Run bytecode file for CLI and REPL orchestration."""
     try:
@@ -1924,6 +1934,7 @@ def _run_bytecode_file(
             bytecode,
             implicit_output=implicit_output,
             preview_lists=preview_lists,
+            program_args=program_args,
         )
     except PanicSignal as exc:
         _print_panic_diagnostic(exc)
@@ -2059,11 +2070,15 @@ def _run_bytecode(
     *,
     implicit_output: bool = False,
     preview_lists: bool = False,
+    program_args: tuple[str, ...] = (),
 ) -> None:
     """Run bytecode for CLI and REPL orchestration."""
     output = _OutputTracker()
     preview_limit = DIAGNOSTIC_LIST_PREVIEW_LIMIT if preview_lists else None
-    stack = run(bytecode, output=output, list_preview_limit=preview_limit)
+    stack = run(
+        bytecode, output=output, list_preview_limit=preview_limit,
+        program_args=program_args,
+    )
     if implicit_output and not output.did_print:
         print(_format_stack(stack, preview_limit=preview_limit))
 

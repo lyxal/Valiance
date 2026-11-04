@@ -434,6 +434,12 @@ Built-in implementations return stack fragments.
 A runtime implementation receives a tuple of arguments and returns a tuple of
 values to push. Niladic returns use `()`, not `None`.
 
+`runtime.run(..., program_args=())` and `VirtualMachine(program_args=())` carry
+an immutable tuple of program arguments into `RuntimeContext.program_args`.
+`std.cmdline.\argv` returns a fresh list of those arguments. The CLI separates
+them from interpreter options at the first `--` for `run` and `exec`; the
+program filename is excluded. REPL VMs default to no program arguments.
+
 Built-ins are scheduler-atomic. `RuntimeContext` contains semantic runtime
 services, not fairness policy, and a built-in must never call `Scheduler.step()`
 directly or indirectly. Pending cancellation is checked by the VM after a

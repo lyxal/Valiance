@@ -815,6 +815,7 @@ class RuntimeContext:
     index_set: Callable[[Any, Any, Any, bool], Any] | None = None
     type_services: RuntimeTypeServices | None = None
     runtime_reflection: Callable[[str, tuple[Any, ...]], Any] | None = None
+    program_args: tuple[str, ...] = ()
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]

@@ -191,6 +191,20 @@ vln run --file samples/strings.vlnc
 vln run --code "1 2 +"
 ```
 
+Pass arguments to a source or bytecode program after `--`:
+
+```powershell
+vln run --file main.vlnc -- --name Alice
+vln exec --file main.vbc -- --name Alice
+```
+
+In the program, `import { std.cmdline }` then `cmdline.\argv` returns
+`["--name", "Alice"]`. Arguments retain their order, including values starting
+with `-`. The list excludes interpreter options and the program filename.
+Without arguments after `--` (or without the separator), it is empty, as it is
+in the REPL. Python callers can use `run(program, program_args=("one", "two"))`
+or `VirtualMachine(program_args=("one", "two"))`; arguments belong to that VM.
+
 Inline `run --code` snippets print the final stack automatically when the code
 does not print anything itself.
 
