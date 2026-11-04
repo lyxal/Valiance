@@ -482,6 +482,121 @@ $box
                 self.assertEqual(box.type_args, ('String',))
                 self.assertEqual(box.fields, {'value': 'hello'})
 
+    def test_private_generic_construction_through_source_and_binary_facades(self):
+        """Deferred checking sees private nominal types only in their provider scope."""
+        from valiance.incremental import CompilationCoordinator
+        from valiance.runtime import compile_program, dumps, loads, run
+        from valiance.vtypes.symbols import Symbol
+
+        provider = """object[T] Box => public $value: T end
+public define[T] build(value: T) =>
+  unsafe =>
+    $pending = uninit[Box[T]]
+    $pending[fields[Box[T]]["value"]] = $value
+    finish? $pending
+  end
+end
+"""
+        for layout in ("source", "binary", "provider_binary", "facade_binary"):
+            with self.subTest(layout=layout), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "builder.vlnc").write_text(provider, encoding="utf-8")
+                (root / "facade.vlnc").write_text(
+                    "public import {builder.[build as make]}\n", encoding="utf-8",
+                )
+                (root / "api.vlnc").write_text(
+                    "public import {facade.[make as create]}\n", encoding="utf-8",
+                )
+                if layout != "source":
+                    coordinator = CompilationCoordinator(root)
+                    for name in ("builder", "facade", "api"):
+                        coordinator.build_module(
+                            root / f"{name}.vlnc", root / f"{name}.vbcm",
+                            module_name=name,
+                        )
+                    for name in ("builder", "facade", "api"):
+                        if (layout == "binary"
+                                or layout == "provider_binary" and name == "builder"
+                                or layout == "facade_binary" and name == "facade"):
+                            (root / f"{name}.vlnc").unlink()
+                hidden = Analyser(source_file=root / "private_import.vlnc")
+                hidden.analyse(parse("import {builder.Box}"))
+                self.assertTrue(any(
+                    "no public component" in message for message in hidden.diagnostics
+                ), hidden.diagnostics)
+                for imported, call in (
+                    ("builder.build", "build"),
+                    ("facade.make", "make"),
+                    ("api.create", "create"),
+                ):
+                    with self.subTest(imported=imported):
+                        analyser = Analyser(source_file=root / "main.vlnc")
+                        typed = analyser.analyse(parse(
+                            f"import {{{imported}}}\n"
+                            f'$a = {call}(42) ?!\n'
+                            f'$b = {call}("hello") ?!\n$a\n$b'
+                        ))
+                        self.assertEqual(analyser.diagnostics, [])
+                        # Retaining a runtime dependency must not grant access
+                        # to the declaring module's private source type.
+                        self.assertIsNone(analyser.env.lookup_object(Symbol("Box")))
+                        for optimize in (False, True):
+                            program = compile_program(typed, optimize=optimize)
+                            for executable in (program, loads(dumps(program))):
+                                values = run(executable)
+                                self.assertEqual(
+                                    tuple((value.type_name, value.type_args,
+                                           value.fields) for value in values),
+                                    (("builder.Box", ("Int",), {"value": 42}),
+                                     ("builder.Box", ("String",), {"value": "hello"})),
+                                )
+
+    def test_private_generic_construction_does_not_conflate_providers(self):
+        """Rechecked private bodies may have equal short names, not identities."""
+        from valiance.incremental import CompilationCoordinator
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        for layout in ("source", "binary"):
+            with self.subTest(layout=layout), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for provider, method in (("alpha", "left"), ("beta", "right")):
+                    (root / f"{provider}.vlnc").write_text(f"""
+object[T] Box => public $value: T end
+public define[T] {method}(value: T) =>
+  unsafe =>
+    $pending = uninit[Box[T]]
+    $pending[fields[Box[T]]["value"]] = $value
+    finish? $pending
+  end
+end
+""", encoding="utf-8")
+                (root / "facade.vlnc").write_text(
+                    "public import {alpha.left,beta.right}\n", encoding="utf-8",
+                )
+                if layout == "binary":
+                    coordinator = CompilationCoordinator(root)
+                    for name in ("alpha", "beta", "facade"):
+                        coordinator.build_module(
+                            root / f"{name}.vlnc", root / f"{name}.vbcm",
+                            module_name=name,
+                        )
+                        (root / f"{name}.vlnc").unlink()
+                analyser = Analyser(source_file=root / "main.vlnc")
+                typed = analyser.analyse(parse(
+                    "import {facade.left,facade.right}\n"
+                    "$a = left(5) ?!\n"
+                    '$b = right("other") ?!\n$a\n$b'
+                ))
+                self.assertEqual(analyser.diagnostics, [])
+                for optimize in (False, True):
+                    program = compile_program(typed, optimize=optimize)
+                    for executable in (program, loads(dumps(program))):
+                        first, second = run(executable)
+                        self.assertEqual((first.type_name, first.type_args, first.fields),
+                                         ("alpha.Box", ("Int",), {"value": 5}))
+                        self.assertEqual((second.type_name, second.type_args, second.fields),
+                                         ("beta.Box", ("String",), {"value": "other"}))
+
     def test_descriptor_conversion_specializes_from_source_free_modules(self):
         from valiance.runtime import compile_program, dumps, loads, run
 

@@ -331,14 +331,17 @@ separate schema-data abstraction, not a dynamically minted nominal class.
 
 **JSON is a consumer of this shared reflection registry**, not its owner.
 `std.json.decode[T](...)` uses registered native factories when the requested
-`&T` is compiler-known; the host `decode_json` and `encode_json` functions
-consume checked host-registered schema metadata. The earlier
-`register_json_type`/`register_json_native` names delegate to these same general
-reflection registrations.
+`&T` is compiler-known. The host-facing codec helpers belong to `valiance.std.json`
+and use the same generic `RuntimeTypeServices` as any other standard-library
+implementation. Register managed types and native factories once through
+`vm.register_reflection_type` and `vm.register_reflection_native`; there are no
+codec-specific VM registration methods.
 
 ```python
-box = vm.decode_json('{"value":42}', "ExternalBox[Int]")
-assert vm.encode_json(box) == '{"value":42}'
+from valiance.std import json as json_std
+
+box = json_std.decode_host('{"value":42}', "ExternalBox[Int]", vm.runtime_type_services)
+assert json_std.encode_host(box, vm.runtime_type_services) == '{"value":42}'
 ```
 
 **Static/dynamic boundary:** Runtime registration cannot retroactively alter

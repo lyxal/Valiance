@@ -362,6 +362,7 @@ class TypedImportedObjectNode(TypedObjectNode):
 
     runtime_name: Symbol | None = None
     runtime_nominal_name: Symbol | None = field(default=None, kw_only=True)
+    runtime_type_origins: tuple[tuple[Symbol, Symbol], ...] = field(default=(), kw_only=True)
     # Unconditional nominal supertypes provided by imported module evidence.
     imported_supertypes: tuple[Type, ...] = ()
     # Conditional implementation edges carry their generic obligations.

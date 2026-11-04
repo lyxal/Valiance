@@ -361,8 +361,9 @@ class _Compiler:
         *,
         fields: tuple[ObjectFieldNode, ...] = (),
         generics: tuple[Symbol, ...] = (),
+        type_origins: tuple[tuple[Symbol, Symbol], ...] = (),
     ) -> tuple[object, ...]:
-        """Attach closed-world nominal and JSON field facts to one constructor."""
+        """Attach canonical nominal and declared-field facts to one constructor."""
         accepted, variances = self.runtime_type_facts.get(name, ((name,), ()))
         registry = tuple(
             (fact_name, fact[0], fact[1],
@@ -376,7 +377,9 @@ class _Compiler:
             registry,
             self.runtime_supertype_templates.get(name, ()),
             tuple((field.name.text, field.access.text,
-                   None if field.typ is None else str(field.typ)) for field in fields),
+                   None if field.typ is None else str(
+                       _runtime_declared_field_type(field.typ, type_origins)
+                   )) for field in fields),
             tuple(generic.text for generic in generics),
         )
 
@@ -1191,6 +1194,11 @@ class _Compiler:
                         if isinstance(typed_node, TypedImportedObjectNode)
                         else None
                     ),
+                    runtime_type_origins=(
+                        typed_node.runtime_type_origins
+                        if isinstance(typed_node, TypedImportedObjectNode)
+                        else ()
+                    ),
                     method_results=(
                         dict(typed_node.method_results)
                         if isinstance(typed_node, TypedObjectNode)
@@ -1349,6 +1357,7 @@ class _Compiler:
         *,
         runtime_name: Symbol | None = None,
         runtime_nominal_name: Symbol | None = None,
+        runtime_type_origins: tuple[tuple[Symbol, Symbol], ...] = (),
         method_results: dict[str, tuple[str, ...]] | None = None,
         method_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
         method_bodies: dict[str, TypedFunctionNode] | None = None,
@@ -1374,6 +1383,7 @@ class _Compiler:
                         ),
                         fields=node.fields,
                         generics=node.generics,
+                        type_origins=runtime_type_origins,
                     )
                     self.object_constructor(
                         type_name,
@@ -1578,7 +1588,11 @@ class _Compiler:
             definition.visibility,
             location=definition.location,
         )
-        runtime_definition_name = _symbol_runtime_name(definition.name)
+        is_destructor = definition.name.text.startswith("~")
+        runtime_definition_name = (
+            f"~{owner.rsplit('.', 1)[-1]}"
+            if is_destructor else _symbol_runtime_name(definition.name)
+        )
         receiver = (
             f"{owner}[{', '.join(owner_generics)}]" if owner_generics else owner
         )
@@ -1601,35 +1615,65 @@ class _Compiler:
             implementation_id=implementation_id,
             generic_type_parameters=tuple(generic.text for generic in definition.generics),
         )
-        self.emit(
-            OpCode.MAKE_FUNCTION,
-            replace(
-                code,
-                multi=True,
-                dispatch_types=(
-                    tuple(owner if index == receiver_index else None
-                          for index in range(len(function.params)))
-                    if variant_dispatch
-                    else ()
+        # Destructors are private lifecycle hooks. They have one qualified
+        # runtime binding (Type::~Type), not an ordinary unqualified multimethod
+        # binding. An unqualified `~Type` collides when an alias/facade imports
+        # the same object again, even though the nominal identities agree.
+        if not is_destructor:
+            self.emit(
+                OpCode.MAKE_FUNCTION,
+                replace(
+                    code,
+                    multi=True,
+                    dispatch_types=(
+                        tuple(owner if index == receiver_index else None
+                              for index in range(len(function.params)))
+                        if variant_dispatch
+                        else ()
+                    ),
+                    dispatch_bounds=dispatch_bounds,
                 ),
-                dispatch_bounds=dispatch_bounds,
-            ),
+            )
+            self.emit(OpCode.STORE_VAR, method_binding)
+        qualified_code = _compile_function_value(
+            checked_function or node,
+            f"{owner}::{runtime_definition_name}",
+            signature_types=signature_types,
+            result_signature_types=result_signature_types,
+            implementation_id=implementation_id,
+            generic_type_parameters=tuple(generic.text for generic in definition.generics),
         )
-        self.emit(OpCode.STORE_VAR, method_binding)
-        self.emit(
-            OpCode.MAKE_FUNCTION,
-            replace(
-                _compile_function_value(
-                    checked_function or node,
-                    f"{owner}::{runtime_definition_name}",
-                    signature_types=signature_types,
-                    result_signature_types=result_signature_types,
-                    implementation_id=implementation_id,
-                    generic_type_parameters=tuple(generic.text for generic in definition.generics),
-                ),
-                dispatch_bounds=dispatch_bounds,
-            ),
-        )
+        if is_destructor and isinstance(qualified_code, FunctionCode):
+            # Imported checked method bodies retain their provider's original
+            # receiver spelling. The compiled runtime constructor, however,
+            # uses the selected object spelling. Destructors are exclusively
+            # invoked by their own constructor's final-release hook: rebind
+            # that receiver evidence to the actual owner, never to a short
+            # name globally shared with another provider.
+            qualified_code = replace(
+                qualified_code,
+                dispatch_types=tuple(
+                    owner if index == receiver_index else original
+                    for index, original in enumerate(qualified_code.dispatch_types)
+                ) if qualified_code.dispatch_types else (owner,),
+                signature_types=signature_types,
+            )
+            from hashlib import sha256
+            # A public facade can replay the declaration in both checked and
+            # source-form. Its compiled instructions need not be identical,
+            # but its source declaration is. Derive the identity from that
+            # declaration, never from the import-site or bytecode variant.
+            fingerprint = sha256(repr((
+                definition.location or definition.function.location,
+                definition.function.body,
+            )).encode()).hexdigest()
+            qualified_code = replace(
+                qualified_code,
+                implementation_id=f"lifecycle:{owner}:{fingerprint}",
+            )
+        self.emit(OpCode.MAKE_FUNCTION, replace(
+            qualified_code, dispatch_bounds=dispatch_bounds,
+        ))
         self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")
 
     def if_node(self, node: IfNode, typed_node: TypedNode | None = None) -> None:
@@ -3125,6 +3169,21 @@ def _record_runtime_variance_use(
         return
     if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         _record_runtime_variance_use(typ.inner, polarity, usage)
+
+
+def _runtime_declared_field_type(
+    typ: Type, origins: tuple[tuple[Symbol, Symbol], ...],
+) -> Type:
+    """Qualify lexical nominal field types to the schema provider.
+
+    This does not alter the source-level type or the public import surface.
+    It prevents two providers' homonymous nested runtime constructors from
+    being resolved through one unqualified VM registry key.
+    """
+    if not origins:
+        return typ
+    from valiance.modules_system.modules import _rename_imported_types
+    return _rename_imported_types(typ, dict(origins))
 
 
 def _object_runtime_metadata(

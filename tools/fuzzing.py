@@ -3572,11 +3572,37 @@ def _fuzz_incremental_artifacts(rng: random.Random, iteration: int, config: Fuzz
         output.unlink(missing_ok=True); assert_equivalent(source, root)
     return {"mutation": mode, "iteration": iteration}
 
+def _fuzz_type_directed(rng: random.Random, iteration: int, config: FuzzConfig) -> object:
+    """Check constructed well-typed worlds and deliberately ill-typed calls."""
+    from tools.invariant_fuzzing import check_typed_case, random_typed_case
+
+    case = random_typed_case(rng)
+    try:
+        check_typed_case(case)
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
+def _fuzz_vm_ownership(rng: random.Random, iteration: int, config: FuzzConfig) -> object:
+    """Cross-check retaining, borrows, failures, and destruction with a model."""
+    from tools.invariant_fuzzing import check_ownership_sequence
+
+    try:
+        return check_ownership_sequence(rng, steps=20 + config.max_depth * 5)
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(
+            {"iteration": iteration, "steps": 20 + config.max_depth * 5}, exc
+        ) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
     "parser-depth": _fuzz_parser_depth,
     "valid-programs": _fuzz_valid_programs,
+    "type-directed": _fuzz_type_directed,
+    "vm-ownership": _fuzz_vm_ownership,
     "serialization": _fuzz_serialization_roundtrip,
     "optimizer": _fuzz_optimizer,
     "numeric-booleans": _fuzz_numeric_boolean_serialization,

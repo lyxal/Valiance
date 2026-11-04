@@ -64,3 +64,96 @@ jobs:
           name: trait-plan-results
           path: trait-plan-results.json
           if-no-files-found: ignore
+
+  multimodule-projects:
+    # Ordinary unittest discovery runs the source matrix and binary smoke tests
+    # on each PR. Periodic builds explore all feature/graph combinations with
+    # many independent project values and compiled-only dependency artifacts.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python 3.14
+        run: uv python install 3.14
+      - name: Install project dependencies
+        run: uv sync
+      - name: Exhaustively check bounded channel operation orders
+        run: uv run --frozen python -m tools.channel_schedule_oracle
+      - name: Run compiled-dependency project matrix
+        timeout-minutes: 30
+        run: uv run --frozen python -m tools.multimodule_fuzzing --iterations 684 --seed 95702 --source-free --output multimodule-project-results.json
+      - name: Save the language pairwise coverage-gap inventory
+        if: always()
+        run: uv run --frozen python -m tools.multimodule_interactions --inventory --output multimodule-interactions-inventory.json > /dev/null
+      - name: Save reproducible project failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multimodule-project-results
+          path: |
+            multimodule-project-results.json
+            multimodule-interactions-inventory.json
+          if-no-files-found: ignore
+
+  multimodule-interaction-shards:
+    # Split the *current registry size*, not a hard-coded historical count.
+    # Each candidate runs in a separate bounded worker. One stuck project
+    # cannot conceal unrelated successes or consume the entire campaign.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python 3.14
+        run: uv python install 3.14
+      - name: Install project dependencies
+        run: uv sync
+      - name: Run positive and negative registry shards
+        timeout-minutes: 50
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          read -r POS NEG < <(uv run --frozen python -c 'from tools.multimodule_interactions import combinations,negative_combinations; print(len(combinations()),len(negative_combinations()))')
+          failed=0
+          for kind in positive negative; do
+            if [[ "$kind" == positive ]]; then
+              total="$POS"
+              negative_flag=""
+            else
+              total="$NEG"
+              negative_flag="--negative"
+            fi
+            chunk=$(( (total + 15) / 16 ))
+            start=$(( SHARD * chunk ))
+            if (( start >= total )); then
+              continue
+            fi
+            iterations=$(( total - start ))
+            if (( iterations > chunk )); then
+              iterations="$chunk"
+            fi
+            if ! uv run --frozen python -m tools.multimodule_interactions \
+              $negative_flag --seed 49103 --start "$start" --iterations "$iterations" \
+              --batch-size 1 --batch-timeout 35 \
+              --output "multimodule-${kind}-${SHARD}.json" > /dev/null; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Upload independent shard reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multimodule-interaction-${{ matrix.shard }}
+          path: multimodule-*.json
+          if-no-files-found: ignore

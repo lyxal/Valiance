@@ -70,6 +70,8 @@ class ModuleObject:
     private_friendly_definitions: tuple[DefineNode, ...] = ()
     # The original nominal declaration, independent of import aliases/facades.
     origin: Symbol | None = None
+    # Provider-qualified schema identities survive public facades and aliases.
+    runtime_nominal_origins: tuple[tuple[Symbol, Symbol], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,9 @@ class ModuleExports:
     overlays: tuple[T.TagOverlayDefinition, ...] = ()
     runtime_prelude: tuple[TypedNode, ...] = ()
     trait_implementations: tuple[ModuleTraitImplementation, ...] = ()
+    # Internal runtime requirements do not grant source-level name visibility.
+    # Retain provider declarations through public facade chains and in .vbcm files.
+    runtime_dependencies: tuple[ModuleObject, ...] = ()
 
     def public_definitions(self) -> tuple[ModuleDefinition, ...]:
         """Return the definitions exported publicly by this module."""
@@ -141,8 +146,10 @@ def collect_module_exports(
     """Collect the complete analysed static and runtime-facing module interface."""
     return ModuleExports(
         module_name,
-        _deduplicate(_module_definitions(program, typed) + analyser.public_import_definitions),
-        _deduplicate(_module_objects(program, typed) + analyser.public_import_objects),
+        _deduplicate(_module_definitions(program, typed, analyser.env.context.nominal_origins) + analyser.public_import_definitions),
+        _deduplicate(_module_objects(
+            program, typed, analyser.env.context.nominal_origins
+        ) + analyser.public_import_objects),
         _deduplicate(_module_tags(program, analyser.env) + analyser.public_import_tags),
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
@@ -151,6 +158,7 @@ def collect_module_exports(
                   for item in _module_trait_implementations(program, typed))
             + analyser.public_import_trait_implementations
         ),
+        _deduplicate(analyser.runtime_dependency_objects),
     )
 
 
@@ -336,6 +344,7 @@ class ModuleLoader:
                     exports.overlays,
                     exports.runtime_prelude,
                     exports.trait_implementations,
+                    exports.runtime_dependencies,
                 )
             self._cache[cache_key] = exports
             from valiance.runtime import compile_program
@@ -725,17 +734,6 @@ def import_objects(
     )
 
 
-def import_constructor_dependencies(exports: ModuleExports) -> tuple[ModuleObject, ...]:
-    """Retain sibling enums privately for imported constructor types and defaults."""
-    provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
-    return tuple(
-        _renamed_object(obj, _namespaced_symbol(obj.name, provider))
-        for obj in exports.objects
-        if isinstance(obj.typed.node, ObjectNode)
-        and obj.typed.node.kind == Symbol("enum")
-    )
-
-
 def import_environment_facts(
     exports: ModuleExports,
     spec: ImportSpec,
@@ -768,6 +766,7 @@ def import_environment_facts(
 def _module_definitions(
     program: list,
     typed: list[TypedNode],
+    nominal_origins: dict[Symbol, Symbol] | None = None,
 ) -> tuple[ModuleDefinition, ...]:
     """Collect local definitions; imported functions remain in the runtime prelude."""
     public_names = {
@@ -790,6 +789,7 @@ def _module_definitions(
                 node.name,
                 typed_node,
                 public=node.name in public_names,
+                private_nominals=tuple((nominal_origins or {}).items()),
                 attached_tag=(
                     Symbol(node.attached_tag.name)
                     if node.attached_tag is not None
@@ -803,6 +803,7 @@ def _module_definitions(
 def _module_objects(
     program: list,
     typed: list[TypedNode],
+    nominal_origins: dict[Symbol, Symbol] | None = None,
 ) -> tuple[ModuleObject, ...]:
     """Collect local objects and foreign subjects used by local implementations."""
     local_traits = {
@@ -875,6 +876,11 @@ def _module_objects(
                     node.definitions
                     + tuple(friendly_by_owner.get(node.name, ()))
                 ),
+                # A local declaration may refer to an imported private or
+                # public type by its local spelling. Retain the provider
+                # origin in its interface; the caller cannot reconstruct it
+                # from the field annotation alone.
+                runtime_nominal_origins=tuple((nominal_origins or {}).items()),
             )
         )
     return tuple(result)
@@ -1036,6 +1042,14 @@ def import_behaviour_set_objects(
                 is_multi=True,
             )
             for definition in implementation.definitions
+        )
+        # This surface can also provide the nominal constructor used by calls
+        # through the implementation. Retain its private lifecycle hooks when
+        # rebuilding the object declaration; a second constructor must never
+        # silently discard the destructor or its method implementation.
+        definitions += tuple(
+            definition for definition in obj.friendly_definitions
+            if definition.name.text == f"~{obj.typed.node.name.text.rsplit('.', 1)[-1]}"
         )
         implementation_node = obj.typed.node
         if not isinstance(implementation_node, ObjectNode):
@@ -1249,7 +1263,19 @@ def _renamed_object(
         if definition not in explicit_constructors
         and definition.visibility != Symbol("public")
     )
-    definitions = renamed_constructors
+    # A destructor is a private lifecycle hook, not an importable method.
+    # Nevertheless, its checked implementation and runtime identity must travel
+    # with every constructor, including aliases and compiled-only providers.
+    # Without this, imported objects silently lose their final-release hook.
+    lifecycle_name = f"~{node.name.text.rsplit('.', 1)[-1]}"
+    lifecycle_definitions = (
+        tuple(
+            _renamed_define_node(definition, Symbol(f"~{owner.text.rsplit('.', 1)[-1]}"))
+            for definition in obj.friendly_definitions
+            if definition.name.text == lifecycle_name
+        ) if node.kind == Symbol("object") and node.target is None else ()
+    )
+    definitions = (*renamed_constructors, *lifecycle_definitions)
     renamed_private_friendly_definitions: tuple[DefineNode, ...] = ()
     if import_friendly:
         definitions += _renamed_friendly_definitions(
@@ -1290,6 +1316,7 @@ def _renamed_object(
         import_friendly,
         renamed_private_friendly_definitions,
         obj.origin,
+        obj.runtime_nominal_origins,
     )
 
 

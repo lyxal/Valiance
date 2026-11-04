@@ -12,7 +12,7 @@ from typing import Any
 from valiance.runtime.serialization import BytecodeFormatError
 
 MAGIC = b"VLNI\x0d"
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 MAX_DEPTH = 256
 MAX_ITEMS = 1_000_000
 
@@ -48,6 +48,19 @@ def _registry() -> dict[str, type[Any]]:
     return result
 
 
+def _compiler_callbacks() -> dict[str, Any]:
+    """Small, identity-checked whitelist. Never import names from untrusted data.
+
+    An analysed generic higher-order call may retain the compile-time hook for
+    the built-in `call` overload in its typed AST. The hook is not executable
+    bytecode and cannot be encoded as an arbitrary Python callable. Only this
+    known compiler callback may pass through a module interface.
+    """
+    from valiance.elements.builtins import _call_call_site
+
+    return {"valiance.builtin.call": _call_call_site}
+
+
 def _encode(value: Any, *, depth: int = 0, include_locations: bool = True) -> Any:
     """Convert one interface value into canonical tagged JSON-compatible data."""
     if depth > MAX_DEPTH:
@@ -71,6 +84,11 @@ def _encode(value: Any, *, depth: int = 0, include_locations: bool = True) -> An
         ]
         items.sort(key=lambda pair: json.dumps(pair[0], sort_keys=True, separators=(",", ":")))
         return {"$": "dict", "items": items}
+    if callable(value):
+        for tag, callback in _compiler_callbacks().items():
+            if value is callback:
+                return {"$": "compiler_callback", "id": tag}
+        raise BytecodeFormatError("unsupported compiler callback in analysed interface")
     if isinstance(value, Enum):
         tag = f"{type(value).__module__}:{type(value).__name__}"
         if tag not in _registry():
@@ -111,6 +129,13 @@ def _decode(value: Any, *, depth: int = 0) -> Any:
     if not isinstance(value, dict) or not isinstance(value.get("$"), str):
         raise BytecodeFormatError("invalid analysed interface value")
     kind = value["$"]
+    if kind == "compiler_callback":
+        if set(value) != {"$", "id"} or not isinstance(value["id"], str):
+            raise BytecodeFormatError("invalid compiler callback encoding")
+        callback = _compiler_callbacks().get(value["id"])
+        if callback is None:
+            raise BytecodeFormatError("unknown compiler callback in analysed interface")
+        return callback
     if kind == "decimal":
         if set(value) != {"$", "value"} or not isinstance(value["value"], str):
             raise BytecodeFormatError("invalid interface decimal")

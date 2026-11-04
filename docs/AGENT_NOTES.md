@@ -70,16 +70,25 @@ rebuilders. It represents the complete literal storage in declaration order;
 Rebuilding both as `T.Row(...)` silently discards the evidence needed to select a
 runtime schema. Record reconstruction must retain its reified type signature.
 
-# JSON encoding and managed constructor metadata
+# Runtime constructor metadata and provider-owned dependency closure
 
-`std.json.encode` uses one generic public entry point. Nested managed
-objects must be encoded through the JSON-only constructor layout in
-`ObjectRuntimeType`
-(`json_fields` and `json_generics`), populated by the compiler and decoded by
-the VM. The layout is part of the serialized constructor's runtime metadata.
-Never traverse `ObjectValue.fields` for JSON without a checked layout, since
-that would expose private storage. Instantiating reified generic field types
-also matters for Boolean tags, including those nested in collections.
+Imported declarations carry provider-qualified runtime identities and a private
+transitive declaration closure. `modules_system/runtime_dependencies.py` derives
+this closure from checked object field types, generic constraints, callable
+signatures and implementation patterns; it is **not** tied to the library that
+may consume the metadata. Public import surfaces must not expose the private
+required declarations. The linker loads checked constructor/variant/enum
+metadata for the runtime without granting source access.
+
+`ObjectRuntimeType.declared_fields` and `declared_generics` are the authoritative
+checked storage layout for reflection and serializers. Codecs must only inspect
+public fields from this layout, not infer visibility from `ObjectValue.fields`.
+All standard-library native implementations can consume
+`RuntimeContext.type_services` to resolve checked constructors and variant
+cases, or to use explicitly registered native construction/representation
+adapters; no module name is special to the import pipeline. Host codec entry
+points belong to their standard-library module, not `VirtualMachine`.
+
 
 # Re-exported private dependency and nominal provenance
 
@@ -132,10 +141,10 @@ managed schemas into an analyser environment *before* compilation. Execute
 that bytecode in the same VM; registration after compilation cannot alter
 the compile-time type universe.
 `VirtualMachine.register_reflection_native` accepts a trusted constructor and
-optional JSON encoder. Validate the result's exact native type and live handle
+optional host-authorized representation adapter. Validate the result's exact native type and live handle
 state before exposing it, and never manufacture an FFI address from untrusted
-data. `register_json_type`/`register_json_native` are thin delegates to the
-same VM-local registry, not independent JSON type systems. Source code cannot
+data. Libraries consume `RuntimeContext.type_services` to access the same
+VM-local type registry without codec-specific VM entry points. Source code cannot
 declare fresh nominal types at runtime. `lookupRuntimeType?` and
 `runtimeTypeOf?` provide VM-owned witnesses for already declared or
 host-registered types; checked construction and access use existential
@@ -210,6 +219,32 @@ considered. Private nominal runtime type names need provider qualification to
 keep source-free modules and checked casts sound. None of these dependencies
 should enter the caller's source-level symbol or overload environment.
 
+A **locally declared** public object may have a field of a *privately imported*
+external nominal type. Its own `ModuleObject.origin` is local, but that field's
+`Item` spelling belongs to the other provider. Preserve the import's candidate
+`ModuleObject` in `ModuleExports.runtime_dependencies` and preserve the local
+object's `runtime_nominal_origins` map in the interface. Resolve each field
+reference using the owning declaration's map **before** same-namespace lookup.
+Otherwise a one-provider test can appear to work while two providers exporting
+`Item` collide at runtime, particularly after a compiled facade. A recorded
+origin missing from an incomplete interface must not silently match another
+`Item`. Test provider swaps in incremental builds with identically shaped
+objects; their semantic interface hashes must differ.
+
+A public generic whose body contains `uninit[Private[T]]` may be fully checked
+only in a consumer's call-site scope. When importing deferred function bodies,
+carry private object dependencies through public facades and `.vbcm` interfaces;
+register the managed object under its recorded provider-qualified origin in
+that temporary scope. Do not expose it as a source-level import. The alias
+registry must also store a declaration whose `name` is the alias being looked
+up, not reuse an object definition whose `name` is the unqualified original:
+`_resolve_imported_type_names` otherwise erases the provider from reflection
+metadata and may silently merge equal-short-name private objects. Do not apply
+managed-object alias rewriting indiscriminately to variant or enum witnesses:
+variant reflection has distinct runtime identity requirements. Check
+`test_private_generic_construction_*` and source-free variant reflection
+regressions after changing this path.
+
 # High-rank collection and decimal resource boundaries
 
 A list with hundreds of singleton dimensions is tiny in element count but can
@@ -234,3 +269,75 @@ value rather than decimalizing its display string, or equal objects can have
 different hashes. Complex hashes follow Python's signed-width component
 combination rule. Place cheap arithmetic identities before precision inference
 and expensive decimal exponent conversion, including in `**c` execution.
+
+## Module re-exported overload sets
+
+When importing several overload definitions under one name, the analyser may
+merge their runtime payload into one `TypedFunctionNode`. Both the
+`overloads` array **and** its `typ` must describe the complete public
+overload set. `_selected_import_overloads` filters the overload array against
+`typ`; retaining the first overload's `FunctionType` discards the rest at the
+next import hop. Run `tests.test_multimodule_projects` on source and compiled
+facades when changing `handlers/core.py` or module import serialization.
+
+## Recursive compiled module names for nested imports
+
+When `CompilationCoordinator.build_module` recursively builds dependencies,
+pass the **full import path's module identity**, including package segments,
+not `dependency_source.stem`. A source import such as `pkg.core` expects the
+corresponding `.vbcm` to declare `pkg.core`; rebuilding it recursively as
+`core` breaks mixed source/compiled imports even when ordinary source imports
+work. `tests.test_multimodule_interactions` checks nested source, binary and
+mixed imports through a generic object/variant contract.
+
+## Ownership and compiled-module interaction fixtures
+
+The project-level lifetime and concurrency contracts in
+`tools/multimodule_lifetime_concurrency_contracts.py` deliberately compare
+`Receive.Value` payloads to a source-derived nominal schema, including generic
+arguments and fields. `tests/test_multimodule_lifetime_concurrency.py` also
+checks that repeated calls on imported `@nodup` resources use two
+`LOAD_VAR_BORROW` operations, rather than mistaking a normal duplicate for a
+borrow. Changes to interface persistence, callable argument adaptation, or
+channel transfer should rerun the nested compiled-only fixtures.
+
+Imported destructors currently have three independent source-level expected
+failures in `tests/test_multimodule_known_failures.py`: a trait-typed release,
+a bounded-generic release, and nested-object field teardown. These are excluded
+from positive pair coverage. When repairing module runtime linking, first
+compare the same destructor with a single-file declaration, then run all
+three across source and `.vbcm` dependencies and remove the expected-failure
+markers only when stdout and ownership teardown actually agree.
+
+# Imported generic reflection and facade aliases
+
+A public facade may rename an imported generic object without adapting an
+associated generic function imported from a different provider. For example,
+`gateway` can re-export `core.Box as Renamed` alongside `logic.reflect` where
+`reflect(x:Box[T])` was analysed against `core.Box`. The consumer's call
+`reflect(Renamed(9))` currently fails static overload selection, for both
+source providers and `.vbcm` dependencies. Keep this distinct from the runtime
+reflection-layout/cast-spec mismatch: bytecode compilation is never reached
+in that reproducer. The expected-failure tests are in
+`tests/test_multimodule_known_failures.py`. A repair must reconcile selected
+callable signatures and their original provider-qualified identity without
+making unrelated providers' same-short-name generic objects interchangeable.
+
+# Imported lifecycle metadata and nominal aliases
+
+A public object can have a private `~Type` definition. The exported module
+interface must retain its checked implementation for constructor lowering,
+without registering it as a source-callable method. `_renamed_object` carries
+that lifecycle hook across public imports; `import_behaviour_set_objects` must
+also carry it when constructing a trait implementation's callable surface.
+Otherwise the second constructor silently replaces the first with one that
+never executes a destructor. Compare direct, source-free, and nested ownership
+using `tests/test_multimodule_known_failures.py`.
+
+For selective imports that rename a nominal type *and* an exported function
+referring to that type, rewrite the imported callable contract at the import
+boundary. Preserving the function's original, hidden provider spelling in its
+public overload makes valid alias calls fail static resolution. Never merge
+nominal identities based only on unqualified names: two packages may both
+export a different `Item`. The package-alias regression is in
+`tests/test_multimodule_boundary_hardening.py`.

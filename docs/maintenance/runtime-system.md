@@ -1029,6 +1029,31 @@ input cycling.
 This is a good example of keeping one mechanism: `at` does not require a second
 VM iteration language.
 
+## Module-neutral runtime type services
+
+Built-in and standard-library implementations receive a `RuntimeContext`
+containing optional `type_services`, a shared `RuntimeTypeServices` object
+supplied by the VM. The interface exposes checked constructor lookup,
+variant-case lookup, trusted native construction, and host-authorized native
+representation. It intentionally contains no dependency on a particular
+serializer, codec, or source module. Libraries such as `std.json` consume
+these capabilities exactly as any other module can; they do not affect import
+resolution or public visibility.
+
+The analysed `ModuleExports.runtime_dependencies` field stores private
+provider-qualified declarations required by a public type or function. The
+module-neutral resolver computes their transitive closure from static type
+contracts. Importing a public declaration makes the required runtime metadata
+available **without importing its private types into the user's namespace**.
+The same contract is serialized into `.vbcm` analysed interfaces, with distinct
+provider identities even for equal short names or structurally equal types.
+
+Host-facing encoder/decoder convenience entry points live in the relevant
+standard-library Python module, rather than the generic `VirtualMachine` API.
+For example, `valiance.std.json.decode_host(text, target_type,
+vm.runtime_type_services)` consumes registered schemas without adding any
+JSON-only field to AST nodes, compiled modules, or the built-in context.
+
 ## Runtime values and ownership
 
 The VM uses reference-count-style ownership for values that may hold resources,
@@ -1184,6 +1209,13 @@ A lone must-call violation during panic unwinding is attached to the active
 panic. Outside unwinding, `MustCallFault` remains an ordinary catchable panic
 after destruction. A real destructor panic stays primary over the contractual
 fault.
+
+An object destructor is linked only under its owner-qualified runtime key
+(`Type::~Type`), never as an ordinary unqualified `~Type` multimethod. Public
+module interfaces carry the checked private lifecycle implementation so
+compiled-only imports construct objects with the same final-release behavior.
+Rebuilding a constructor from an imported trait-implementation witness must
+preserve this hook; it is *not* a source-visible public member.
 
 ### Destructor effects are part of static function effects
 

@@ -769,6 +769,21 @@ _STRING_REPETITION_DOCUMENTATION = element_documentation(
 
 
 @dataclass(frozen=True)
+class RuntimeTypeServices:
+    """Provider-independent runtime type and native-storage capabilities.
+
+    Modules can use these services without importing a particular codec or
+    exposing private declarations in the source namespace.  The VM owns the
+    registry and its canonical, provider-qualified declaration identities.
+    """
+
+    resolve_constructor: Callable[[str], Any | None]
+    resolve_variant_cases: Callable[[str], tuple[Any, ...]]
+    construct_native: Callable[[str, Any], Any]
+    represent_native: Callable[[Any], Any]
+
+
+@dataclass(frozen=True)
 class RuntimeContext:
     """Runtime services available to built-in element implementations."""
 
@@ -798,10 +813,7 @@ class RuntimeContext:
     )
     index_get: Callable[[Any, Any, bool], Any] | None = None
     index_set: Callable[[Any, Any, Any, bool], Any] | None = None
-    json_constructor: Callable[[str], Any | None] | None = None
-    json_variant_constructors: Callable[[str], tuple[Any, ...]] | None = None
-    json_native_decoder: Callable[[str, Any], Any] | None = None
-    json_native_encoder: Callable[[Any], Any] | None = None
+    type_services: RuntimeTypeServices | None = None
     runtime_reflection: Callable[[str, tuple[Any, ...]], Any] | None = None
 
 

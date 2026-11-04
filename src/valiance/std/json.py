@@ -9,7 +9,7 @@ from functools import lru_cache
 from typing import Any
 
 import valiance.vtypes as T
-from valiance.elements.builtins import RuntimeContext
+from valiance.elements.builtins import RuntimeContext, RuntimeTypeServices
 from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import (
     FFIHandleValue, FFIScalarValue, FFIStructValue, LazyList, ObjectValue, RuntimeNumber, TaggedValue,
@@ -156,7 +156,7 @@ def _render_json_value(
         runtime = value.runtime_type
         # Only explicitly published schemas authorize native object traversal;
         # in particular, a missing schema is not evidence of an empty object.
-        if runtime is None or runtime.json_fields is None:
+        if runtime is None or runtime.declared_fields is None:
             raise _JsonEncodingError("Managed JSON values require checked field metadata")
         if runtime.dup_error is not None:
             raise _JsonEncodingError("Protected values cannot be JSON encoded")
@@ -165,12 +165,12 @@ def _render_json_value(
             raise _JsonEncodingError("Cyclic JSON values cannot be encoded")
         visiting.add(identity)
         try:
-            if len(runtime.json_generics) != len(value.type_args):
+            if len(runtime.declared_generics) != len(value.type_args):
                 raise _JsonEncodingError("Incomplete managed JSON type information")
-            arguments = dict(zip(runtime.json_generics,
+            arguments = dict(zip(runtime.declared_generics,
                                  (_json_type(arg) for arg in value.type_args), strict=True))
             parts = []
-            for name, visibility, field_type in runtime.json_fields:
+            for name, visibility, field_type in runtime.declared_fields:
                 if visibility == "private":
                     continue
                 if name not in value.fields:
@@ -301,8 +301,8 @@ def _encode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
     """Encode runtime data using checked constructor visibility metadata."""
     try:
         expected = _json_type(args[1])
-        return (_render_json_value(args[0], set(), expected, ctx.json_native_encoder),)
-    except _JsonEncodingError as exc:
+        return (_render_json_value(args[0], set(), expected, _type_services(ctx).represent_native),)
+    except (ValueError, _JsonEncodingError) as exc:
         return (ObjectValue("ValueError", {"message": str(exc)}),)
 
 
@@ -393,7 +393,7 @@ def _json_decode_typed(
         return result
     if not isinstance(expected, T.NominalType):
         raise _JsonDecodingError(f"{path}: unsupported JSON target type {expected}")
-    name = expected.name.text
+    name = expected.name.dotted()
     if name == "String":
         if not isinstance(value, str):
             raise _JsonDecodingError(f"{path}: expected JSON string")
@@ -447,22 +447,22 @@ def _json_decode_typed(
             raise _JsonDecodingError(f"{path}: JSON does not match a case of {expected}")
         raise _JsonDecodingError(f"{path}: no checked constructor available for {expected}")
     runtime = constructor.runtime_type
-    if runtime is None or runtime.json_fields is None:
+    if runtime is None or runtime.declared_fields is None:
         raise _JsonDecodingError(f"{path}: missing checked field layout for {expected}")
     if runtime.dup_error is not None:
         raise _JsonDecodingError(f"{path}: protected objects cannot be decoded")
     if constructor.initializer is not None:
         raise _JsonDecodingError(f"{path}: custom-initialized objects cannot be decoded")
-    if len(runtime.json_generics) != len(expected.args):
+    if len(runtime.declared_generics) != len(expected.args):
         raise _JsonDecodingError(f"{path}: generic arguments do not match {name}")
-    arguments = dict(zip(runtime.json_generics, expected.args, strict=True))
-    public_names = {key for key, visibility, _ in runtime.json_fields
+    arguments = dict(zip(runtime.declared_generics, expected.args, strict=True))
+    public_names = {key for key, visibility, _ in runtime.declared_fields
                     if visibility != "private"}
     extras = set(value) - public_names
     if extras:
         raise _JsonDecodingError(f"{path}: unexpected JSON fields {sorted(extras)}")
     fields = dict(constructor.defaults)
-    for key, visibility, declaration in runtime.json_fields:
+    for key, visibility, declaration in runtime.declared_fields:
         if visibility == "private":
             if key not in fields:
                 raise _JsonDecodingError(f"{path}: private field {key!r} has no default")
@@ -477,7 +477,8 @@ def _json_decode_typed(
         fields[key] = _json_decode_typed(value[key], field_type, lookup, f"{path}.{key}", depth + 1, variants, native_decode)
     if set(fields) != set(constructor.fields):
         raise _JsonDecodingError(f"{path}: incomplete object storage")
-    return ObjectValue(name, fields, tuple(str(arg) for arg in expected.args), runtime_type=runtime)
+    return ObjectValue(constructor.type_name, fields,
+                       tuple(str(arg) for arg in expected.args), runtime_type=runtime)
 
 
 def _json_decode_collection(
@@ -549,11 +550,37 @@ def _decode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
     """Parse strict JSON into the requested statically checked target schema."""
     from decimal import Decimal
     try:
+        services = _type_services(ctx)
         decoded = json.loads(args[0], parse_int=Decimal, parse_float=Decimal,
                              parse_constant=_invalid_json_constant,
                              object_pairs_hook=_unique_json_pairs)
-        return (_json_decode_typed(decoded, _json_type(args[1]), ctx.json_constructor,
-                                  variants=ctx.json_variant_constructors,
-                                   native_decode=ctx.json_native_decoder),)
+        return (_json_decode_typed(decoded, _json_type(args[1]), services.resolve_constructor,
+                                  variants=services.resolve_variant_cases,
+                                  native_decode=services.construct_native),)
     except (ValueError, RecursionError) as exc:
         return (ObjectValue("ValueError", {"message": str(exc)}),)
+
+
+def _type_services(ctx: RuntimeContext) -> RuntimeTypeServices:
+    """Require the same module-neutral runtime services as any other codec."""
+    services = ctx.type_services
+    if services is None:
+        raise ValueError("runtime type services are unavailable")
+    return services
+
+
+def decode_host(text: str, target_type: str, services: RuntimeTypeServices) -> Any:
+    """Decode host data using checked runtime metadata, not source visibility."""
+    from types import SimpleNamespace
+    result, = _decode_dynamic((text, target_type), SimpleNamespace(type_services=services))
+    if isinstance(result, ObjectValue) and result.type_name == "ValueError":
+        raise ValueError(result.fields["message"])
+    return result
+
+
+def encode_host(value: Any, services: RuntimeTypeServices,
+                target_type: str | None = None) -> str:
+    """Encode host-held values through the same runtime services as std.json."""
+    return _render_json_value(value, set(),
+                              None if target_type is None else _json_type(target_type),
+                              services.represent_native)

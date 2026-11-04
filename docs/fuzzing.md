@@ -22,6 +22,18 @@ base seed, and iteration number.
   vectors. It compares execution with an
   independent `Decimal` model and requires direct bytecode execution to equal a
   serialize/deserialize execution.
+- `type-directed` builds *accepted* source programs from typed templates for
+  explicit functions, generics, safe and checked casts, branching/matching, and
+  list mutation, including combined generic-call/mutation/cast programs. A separate Python model predicts each result; optimiser and
+  serialization modes are checked independently. Every template also includes
+  a controlled wrong-type call that the analyser must reject. This checks a
+  concrete preservation/progress approximation, not a proof of the full type
+  system (especially ownership and arbitrary generic substitutions).
+- `vm-ownership` generates retain, semantic duplication, borrow, release,
+  and exception-unwind operations for owned nominal objects. An independent
+  reference-count model checks intermediate states, stale borrow rejection,
+  nested field destruction, `@nodup` faults, must-call faults, and both
+  uniquely-owned transfer and shared immutable field reconstruction.
 - `serialization` generates nested bytecode records, functions, function sets,
   dispatch patterns, vector extensions, object constructors, reflection field
   layouts and specialized reflective foreach callbacks, function stack-input
@@ -125,6 +137,65 @@ PYTHONPATH=src:. python -m tools.fuzz \
   --iterations 50000 \
   --max-depth 4
 ```
+
+## Multi-module projects
+
+The filesystem-backed 19-family / six-graph generator and replay runner are
+implemented in `tools/multimodule_fuzzing.py`. It compares independently
+predicted results across source and source-free compiled dependencies,
+optimization settings, and bytecode persistence. Negative import and type
+oracles and incremental tests are in `tests/test_multimodule_projects.py`.
+See [multi-module project correctness](maintenance/multimodule-project-testing.md)
+for the full matrix, commands, and important untested cases.
+
+## Coverage-guided source campaign
+
+`tools.coverage_guided` instruments **real analyser and VM Python code** with
+`sys.settrace`, retaining generated source inputs only when they add previously
+unseen within-frame line-transition arcs. Later candidates mutate those retained
+inputs, including deliberate mutations around `if` thresholds and `match`
+patterns. All candidates continue to be checked against independent results
+before feedback is accepted; reproducing the entire corpus requires the initial
+seed, campaign length, and the same compiler revision. The JSON report also
+contains each accepted source and the values needed to reconstruct it. Run
+`python -m tools.coverage_guided --replay coverage-report.json` to validate
+the retained corpus without requiring the original feedback search.
+
+```text
+PYTHONPATH=src:. python -m tools.coverage_guided \
+  --seed 49406 --iterations 100 --output coverage-report.json
+```
+
+The report includes observed analyser/runtime arcs, retained inputs, and a
+static inventory of source `if`/`match`/loop/`try` branch *sites* that were
+not executed. The latter is an investigation queue, **not** an exact list of
+uncovered feasible branch edges. Some sites may be dead, require unrelated
+features, or be reachable only through invalid programs. Line-level tracing
+also cannot distinguish every edge of an expression on one source line. This
+is reproducible feedback-directed **source** coverage, not instruction-level
+coverage or an instrumented VM bytecode branch fuzzer.
+
+## Deterministic task schedule exploration
+
+`tools.schedule_explorer` systematically enumerates runnable-task choices
+by replaying each prefix on a freshly constructed production `Scheduler`.
+The workload has explicit read/yield/write/yield/completion phases. An
+independent state machine models reads, writes, task completion, cancellation,
+cleanup, and repeatable observation. Serial schedules and lost-update schedules
+have *different* correct outcomes; both are verified rather than insisting all
+runs match. A requested schedule limit fails closed rather than implying an
+incomplete search was exhaustive.
+
+```text
+PYTHONPATH=src:. python -m tools.schedule_explorer --tasks 3
+PYTHONPATH=src:. python -m tools.schedule_explorer --tasks 2 --cancel-at 2
+```
+
+The explorer controls cooperative **scheduler quanta**. It does not interleave
+individual VM bytecode operations, preempt host threads, or prove native FFI
+thread safety. Those remain separate and more expensive test objectives.
+The supplied read/write workload is intentionally racy so the state oracle
+can check schedule-dependent behaviour; it is not a recommended locking pattern.
 
 ## Reproducing a failure
 

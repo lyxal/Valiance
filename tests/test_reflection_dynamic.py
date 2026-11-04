@@ -1,5 +1,7 @@
 """Host-defined reflected types and native construction independent of JSON."""
 
+from valiance.std import json as json_std
+
 import unittest
 from dataclasses import replace
 from valiance.runtime.bytecode import OpCode, ReflectionFieldReference, ReflectionFieldsReference
@@ -14,6 +16,23 @@ from valiance.runtime.vm import _check_duplication_allowed
 
 
 class RuntimeReflectionConstructionTests(unittest.TestCase):
+    def test_runtime_services_are_available_without_a_codec(self):
+        """Other modules can inspect constructors and native representations."""
+        with VirtualMachine(output=lambda _: None) as vm:
+            vm.register_reflection_type("RuntimePerson", (("name", "String"),))
+            services = vm.runtime_type_services
+            self.assertIsNotNone(services.resolve_constructor("RuntimePerson"))
+            self.assertIsNone(services.resolve_constructor("Unknown"))
+            self.assertEqual(services.resolve_variant_cases("RuntimePerson"), ())
+            vm.register_reflection_native(
+                "&Opaque", construct=lambda value: FFIHandleValue("&Opaque", int(value)),
+                encode=lambda value: value.address,
+            )
+            value = services.construct_native("&Opaque", 7)
+            self.assertEqual(services.represent_native(value), 7)
+            with self.assertRaisesRegex(ValueError, "no registered native constructor"):
+                services.construct_native("&Unknown", 4)
+
     def test_host_registered_generic_private_fields_and_typed_failures(self):
         source = '''unsafe =>
   $schema = lookupRuntimeType?("Envelope[String]") ?!
@@ -137,9 +156,9 @@ end'''
             self.assertEqual([(item.fields['name'], item.fields['type'].type_args[0])
                               for item in fields],
                              [('value', 'RuntimeChild'), ('secret', 'String')])
-            self.assertEqual(vm.encode_json(box), '{"value":{"name":"Ada","enabled":true}}')
-            decoded = vm.decode_json('{"value":{"name":"Bee","enabled":false}}',
-                                     'RuntimeBox[RuntimeChild]')
+            self.assertEqual(json_std.encode_host(box, vm.runtime_type_services), '{"value":{"name":"Ada","enabled":true}}')
+            decoded = json_std.decode_host('{"value":{"name":"Bee","enabled":false}}',
+                                     'RuntimeBox[RuntimeChild]', vm.runtime_type_services)
             self.assertEqual(vm.reflected_read(vm.reflected_read(decoded, 'value'), 'name'), 'Bee')
 
     def test_construction_rejects_invalid_fields_and_requires_unsafe_for_private(self):
@@ -171,13 +190,13 @@ end'''
                                           encode=lambda value: {'id': value.address})
             handle = vm.construct_reflected('&Opaque', {'id': 3})
             self.assertEqual(handle.ffi_type, '&Opaque')
-            self.assertEqual(vm.encode_json(handle), '{"id":3}')
-            self.assertEqual(vm.decode_json('{"id":4}', '&Opaque').address, 4)
+            self.assertEqual(json_std.encode_host(handle, vm.runtime_type_services), '{"id":3}')
+            self.assertEqual(json_std.decode_host('{"id":4}', '&Opaque', vm.runtime_type_services).address, 4)
             with self.assertRaisesRegex(ValueError, 'non-null'):
                 vm.construct_reflected('&Opaque', {'id': 0})
             handle.request_destroy()
             with self.assertRaisesRegex(ValueError, 'Released native'):
-                vm.encode_json(handle)
+                json_std.encode_host(handle, vm.runtime_type_services)
 
     def test_source_native_builder_uses_registered_factory(self):
         program = parse("""unsafe =>

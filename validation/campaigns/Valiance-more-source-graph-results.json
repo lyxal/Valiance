@@ -1,0 +1,1346 @@
+[
+  {
+    "family": "mutable_trait_reconstruction",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "mutable_trait_reconstruction",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "mutable_trait_reconstruction",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.29
+  },
+  {
+    "family": "mutable_trait_reconstruction",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.32
+  },
+  {
+    "family": "mutable_trait_reconstruction",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "mutable_trait_reconstruction",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.21
+  },
+  {
+    "family": "mutable_trait_through_variant",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "mutable_trait_through_variant",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "mutable_trait_through_variant",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.27
+  },
+  {
+    "family": "mutable_trait_through_variant",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.29
+  },
+  {
+    "family": "mutable_trait_through_variant",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "mutable_trait_through_variant",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.33
+  },
+  {
+    "family": "mutable_generic_object_in_dictionary",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "mutable_generic_object_in_dictionary",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "mutable_generic_object_in_dictionary",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "mutable_generic_object_in_dictionary",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "mutable_generic_object_in_dictionary",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "mutable_generic_object_in_dictionary",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "mutable_generic_object_in_list",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "mutable_generic_object_in_list",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "mutable_generic_object_in_list",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "mutable_generic_object_in_list",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "mutable_generic_object_in_list",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "mutable_generic_object_in_list",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "trait_duplication_through_generic",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "trait_duplication_through_generic",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "trait_duplication_through_generic",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.18
+  },
+  {
+    "family": "trait_duplication_through_generic",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.17
+  },
+  {
+    "family": "trait_duplication_through_generic",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "trait_duplication_through_generic",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "trait_duplication_from_union",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "trait_duplication_from_union",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "trait_duplication_from_union",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.18
+  },
+  {
+    "family": "trait_duplication_from_union",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.17
+  },
+  {
+    "family": "trait_duplication_from_union",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "trait_duplication_from_union",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "generic_trait_move",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "generic_trait_move",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "generic_trait_move",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "generic_trait_move",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.16
+  },
+  {
+    "family": "generic_trait_move",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "generic_trait_move",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "stack_swap_imported_enum",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "stack_swap_imported_enum",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "stack_swap_imported_enum",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "stack_swap_imported_enum",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "stack_swap_imported_enum",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "stack_swap_imported_enum",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "stack_dup_generic_box",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "stack_dup_generic_box",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "stack_dup_generic_box",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "stack_dup_generic_box",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "stack_dup_generic_box",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "stack_dup_generic_box",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "stack_pop_tagged_generic",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "stack_pop_tagged_generic",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "stack_pop_tagged_generic",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.2
+  },
+  {
+    "family": "stack_pop_tagged_generic",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "stack_pop_tagged_generic",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "stack_pop_tagged_generic",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "spawn_generic_object_field",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "spawn_generic_object_field",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "spawn_generic_object_field",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "spawn_generic_object_field",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "spawn_generic_object_field",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "spawn_generic_object_field",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "spawn_trait_dynamic_dispatch",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "spawn_trait_dynamic_dispatch",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "spawn_trait_dynamic_dispatch",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "spawn_trait_dynamic_dispatch",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.19
+  },
+  {
+    "family": "spawn_trait_dynamic_dispatch",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "spawn_trait_dynamic_dispatch",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "spawn_variant_match",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "spawn_variant_match",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "spawn_variant_match",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "spawn_variant_match",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.18
+  },
+  {
+    "family": "spawn_variant_match",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "spawn_variant_match",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "spawn_enum_overload",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "spawn_enum_overload",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "spawn_enum_overload",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "spawn_enum_overload",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "spawn_enum_overload",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "spawn_enum_overload",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "spawn_trait_default",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "spawn_trait_default",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "spawn_trait_default",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "spawn_trait_default",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "spawn_trait_default",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "spawn_trait_default",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "spawn_generic_higher_order",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "spawn_generic_higher_order",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "spawn_generic_higher_order",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.22
+  },
+  {
+    "family": "spawn_generic_higher_order",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "spawn_generic_higher_order",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "spawn_generic_higher_order",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "spawn_tagged_value",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "spawn_tagged_value",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "spawn_tagged_value",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "spawn_tagged_value",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "spawn_tagged_value",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "spawn_tagged_value",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "channel_generic_object_payload",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "channel_generic_object_payload",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "channel_generic_object_payload",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "channel_generic_object_payload",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "channel_generic_object_payload",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "channel_generic_object_payload",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "channel_trait_payload",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "channel_trait_payload",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "channel_trait_payload",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "channel_trait_payload",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "channel_trait_payload",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "channel_trait_payload",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "channel_enum_payload",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "channel_enum_payload",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "channel_enum_payload",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "channel_enum_payload",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "channel_enum_payload",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "channel_enum_payload",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "channel_variant_payload",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "channel_variant_payload",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "channel_variant_payload",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "channel_variant_payload",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.1
+  },
+  {
+    "family": "channel_variant_payload",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.04
+  },
+  {
+    "family": "channel_variant_payload",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "channel_generic_payload",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.03
+  },
+  {
+    "family": "channel_generic_payload",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "channel_generic_payload",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.19
+  },
+  {
+    "family": "channel_generic_payload",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "channel_generic_payload",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "channel_generic_payload",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "borrowed_nodup_method_repetition",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "borrowed_nodup_method_repetition",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "borrowed_nodup_method_repetition",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "borrowed_nodup_method_repetition",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "borrowed_nodup_method_repetition",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "borrowed_nodup_method_repetition",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "borrowed_nodup_generic_repetition",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "borrowed_nodup_generic_repetition",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "borrowed_nodup_generic_repetition",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "borrowed_nodup_generic_repetition",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.17
+  },
+  {
+    "family": "borrowed_nodup_generic_repetition",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "borrowed_nodup_generic_repetition",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "borrowed_nodup_trait_dispatch",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "borrowed_nodup_trait_dispatch",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "borrowed_nodup_trait_dispatch",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "borrowed_nodup_trait_dispatch",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.14
+  },
+  {
+    "family": "borrowed_nodup_trait_dispatch",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "borrowed_nodup_trait_dispatch",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.11
+  },
+  {
+    "family": "borrowed_nodup_stack_permutation",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "borrowed_nodup_stack_permutation",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "borrowed_nodup_stack_permutation",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "borrowed_nodup_stack_permutation",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "borrowed_nodup_stack_permutation",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "borrowed_nodup_stack_permutation",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.09
+  },
+  {
+    "family": "borrowed_nodup_tag_view",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.05
+  },
+  {
+    "family": "borrowed_nodup_tag_view",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "borrowed_nodup_tag_view",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.23
+  },
+  {
+    "family": "borrowed_nodup_tag_view",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "borrowed_nodup_tag_view",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "borrowed_nodup_tag_view",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.12
+  },
+  {
+    "family": "borrowed_nodup_record_read",
+    "graph": "direct",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.06
+  },
+  {
+    "family": "borrowed_nodup_record_read",
+    "graph": "facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.08
+  },
+  {
+    "family": "borrowed_nodup_record_read",
+    "graph": "deep_facade",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  },
+  {
+    "family": "borrowed_nodup_record_read",
+    "graph": "diamond",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.15
+  },
+  {
+    "family": "borrowed_nodup_record_read",
+    "graph": "nested",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.07
+  },
+  {
+    "family": "borrowed_nodup_record_read",
+    "graph": "alias",
+    "layout": "source",
+    "checks": 4,
+    "error": null,
+    "seconds": 0.13
+  }
+]

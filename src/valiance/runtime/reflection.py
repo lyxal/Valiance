@@ -257,15 +257,15 @@ def _reflection_value_matches(value: object, expected: object, *, depth: int = 0
                 value.type_args != tuple(str(arg) for arg in expected.args)):
             return False
         runtime = value.runtime_type
-        if runtime is None or runtime.json_fields is None or runtime.dup_error is not None:
+        if runtime is None or runtime.declared_fields is None or runtime.dup_error is not None:
             return False
-        if len(runtime.json_generics) != len(expected.args):
+        if len(runtime.declared_generics) != len(expected.args):
             return False
         from valiance.parsing.parser import parse_type
-        arguments = dict(zip(runtime.json_generics, expected.args, strict=True))
-        if set(value.fields) != {key for key, _, _ in runtime.json_fields}:
+        arguments = dict(zip(runtime.declared_generics, expected.args, strict=True))
+        if set(value.fields) != {key for key, _, _ in runtime.declared_fields}:
             return False
-        for key, _, declaration in runtime.json_fields:
+        for key, _, declaration in runtime.declared_fields:
             if declaration is None:
                 return False
             inner = _instantiate_runtime_type(parse_type(declaration), arguments)
@@ -289,15 +289,15 @@ def construct_runtime_object(constructor: object, target_type: str, supplied: di
     parsed = parse_type(target_type)
     runtime = constructor.runtime_type
     if (not isinstance(parsed, T.NominalType) or parsed.name.text != constructor.type_name
-            or runtime is None or runtime.json_fields is None):
+            or runtime is None or runtime.declared_fields is None):
         raise ValueError(f"no runtime reflection layout for {target_type}")
     if constructor.initializer is not None or runtime.dup_error is not None:
         raise ValueError(f"{target_type} cannot be reflectively constructed")
-    if len(runtime.json_generics) != len(parsed.args):
+    if len(runtime.declared_generics) != len(parsed.args):
         raise ValueError(f"generic arguments do not match {target_type}")
-    args = dict(zip(runtime.json_generics, parsed.args, strict=True))
+    args = dict(zip(runtime.declared_generics, parsed.args, strict=True))
     fields = dict(constructor.defaults)
-    entries = {key: (visibility, declaration) for key, visibility, declaration in runtime.json_fields}
+    entries = {key: (visibility, declaration) for key, visibility, declaration in runtime.declared_fields}
     unknown = set(supplied) - set(entries)
     if unknown:
         raise ValueError(f"unknown fields for {target_type}: {sorted(unknown)}")
@@ -311,7 +311,7 @@ def construct_runtime_object(constructor: object, target_type: str, supplied: di
         if not _reflection_value_matches(value, expected):
             raise ValueError(f"field {key!r} does not match {expected}")
         fields[key] = value
-    for key, visibility, declaration in runtime.json_fields:
+    for key, visibility, declaration in runtime.declared_fields:
         if key not in fields:
             raise ValueError(f"missing required field {key!r} for {target_type}")
         if declaration is not None:

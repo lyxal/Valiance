@@ -229,7 +229,8 @@ class CompilationCoordinator:
                     self.build_module(
                         dependency_source,
                         dependency_source.with_suffix(".vbcm"),
-                        module_name=dependency_source.stem,
+                        module_name=(f"{path.root.text}." if path.root is not None else "")
+                        + ".".join(path.parts),
                         optimize=optimize,
                         incremental=incremental,
                         rebuild=rebuild,

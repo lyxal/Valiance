@@ -1,0 +1,44 @@
+{
+  "case_timeout_seconds": 12.0,
+  "case_timeouts": 0,
+  "claim": "Executed family slice, not exhaustive global language testing",
+  "diagnostics_passed": 0,
+  "elapsed_seconds": 7.47,
+  "execution_checks_passed": 12,
+  "failures": [],
+  "families_available": 111,
+  "graphs": [
+    "facade"
+  ],
+  "layout": "alternating_binary",
+  "negative": false,
+  "passed": [
+    {
+      "execution_checks": 4,
+      "family": "stack_pop_tagged_generic",
+      "graph": "facade",
+      "layout": "alternating_binary",
+      "seed": 377
+    },
+    {
+      "execution_checks": 4,
+      "family": "spawn_generic_object_field",
+      "graph": "facade",
+      "layout": "alternating_binary",
+      "seed": 377
+    },
+    {
+      "execution_checks": 4,
+      "family": "spawn_trait_dynamic_dispatch",
+      "graph": "facade",
+      "layout": "alternating_binary",
+      "seed": 377
+    }
+  ],
+  "projects_attempted": 3,
+  "projects_failed": 0,
+  "projects_passed": 3,
+  "seed": 377,
+  "start": 92,
+  "stop": 95
+}

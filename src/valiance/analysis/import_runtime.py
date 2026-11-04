@@ -32,6 +32,7 @@ def with_import_runtime_name(
     *,
     runtime_links: dict[Symbol, Symbol] | None = None,
     runtime_nominal_name: Symbol | None = None,
+    runtime_type_origins: tuple[tuple[Symbol, Symbol], ...] = (),
     imported_supertypes: tuple[Type, ...] = (),
     imported_guarded_supertypes: tuple[
         tuple[Type, tuple[Type | None, ...]], ...
@@ -65,6 +66,7 @@ def with_import_runtime_name(
             imported_supertypes,
             imported_guarded_supertypes,
             runtime_nominal_name=runtime_nominal_name,
+            runtime_type_origins=runtime_type_origins,
             method_bodies=(
                 _rewrite_imported_self_calls(
                     node.method_bodies, node.node.name, runtime_name, runtime_links,
@@ -89,7 +91,11 @@ def _rewrite_imported_self_calls(
             for field in fields(value)
         }
         if isinstance(value.node, ElementNode):
-            if value.node.name == source_name:
+            if (value.node.name == source_name
+                    and value.runtime_name in (None, source_name)):
+                # A provider may have imported a homonymous callable before
+                # this declaration was hoisted.  That already-resolved call
+                # belongs to its original provider, not to the new binding.
                 rewritten["runtime_name"] = runtime_name
             elif runtime_links and value.runtime_name in (None, value.node.name):
                 target = runtime_links.get(value.node.name)

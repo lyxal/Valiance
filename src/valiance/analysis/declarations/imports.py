@@ -265,6 +265,19 @@ class _ImportDeclarations:
                     generic_constraints=_rename_imported_types(
                         overload.generic_constraints, private_nominals
                     ),
+                    # A reflection-specialized generic body is rechecked at
+                    # the call site. Adapt its *typed nominal references* to
+                    # the same selected aliases as its public signature;
+                    # otherwise `fields[Box[T]]` remains inaccessible when
+                    # the only visible spelling is `Renamed[T]`.
+                    call_site_body=(
+                        (overload.call_site_body[0], _rename_imported_types(
+                            overload.call_site_body[1], private_nominals,
+                        ))
+                        if isinstance(overload.call_site_body, tuple)
+                        and len(overload.call_site_body) == 2
+                        else overload.call_site_body
+                    ),
                 )
             self.env.define_overload(name, overload)
             if dependencies and overload.call_site_body is not None and overload.implementation_id is not None:
@@ -384,7 +397,14 @@ class _ImportDeclarations:
             for registry in ("objects", "traits", "variants", "enums", "constructors"):
                 declarations = getattr(self.env, registry)
                 if node.name in declarations:
-                    declarations[obj.name] = declarations[node.name]
+                    # A scoped alias is a separate lookup spelling for the
+                    # same declaration, but its checked descriptor must keep
+                    # the spelling being resolved. Otherwise nominal-type
+                    # resolution rewrites `alpha.Box` back to `Box`, making
+                    # unrelated providers collide during generic reflection.
+                    declarations[obj.name] = replace(
+                        declarations[node.name], name=obj.name,
+                    )
             for overload in self.env.overloads_for(node.name):
                 self.env.define_overload(obj.name, overload)
             if node.kind.text == "enum":
@@ -449,6 +469,9 @@ class _ImportDeclarations:
             definition
             for definition in node.definitions
             if definition not in constructors
+            # Destructor bytecode is linked with an imported constructor, but
+            # the lifecycle hook is never exposed as a callable import.
+            and not definition.name.text.startswith("~")
         )
         self._define_object_shape(
             obj.name,

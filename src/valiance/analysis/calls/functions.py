@@ -734,7 +734,11 @@ class _CallableValues:
             for dependency in dependencies:
                 if isinstance(dependency, TypedImportedObjectNode):
                     provider._register_imported_object(
-                        ModuleObject(dependency.node.name, dependency), dependency.runtime_name,
+                        ModuleObject(
+                            dependency.runtime_nominal_name or dependency.node.name,
+                            dependency,
+                        ),
+                        dependency.runtime_name,
                     )
                 elif isinstance(dependency, TypedImportedFunctionNode):
                     provider._register_imported_definition(

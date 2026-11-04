@@ -16,8 +16,8 @@ from valiance.runtime.serialization import BytecodeFormatError, dumps, loads
 MAGIC_V1 = b"VLNCBM\x01"
 MAGIC = b"VLNCBM\x04"
 FORMAT_VERSION = 4
-COMPILER_ABI = 5
-INTERFACE_ABI = 4
+COMPILER_ABI = 9
+INTERFACE_ABI = 7
 MAX_INTERFACE_BYTES = 64 * 1024 * 1024
 
 
@@ -67,6 +67,10 @@ def _semantic_interface_value(interface: Any | None) -> Any | None:
             item.name,
             item.public,
             item.attached_tag,
+            # A callable's imported nominal origins affect overload matching
+            # even when its printed signature is unchanged. Include them in
+            # semantic cache keys so provider changes invalidate consumers.
+            item.private_nominals,
             tuple((overload.typ, overload.overload) for overload in item.typed.overloads),
         )
         for item in interface.definitions
@@ -83,6 +87,8 @@ def _semantic_interface_value(interface: Any | None) -> Any | None:
                 item.name,
                 item.public,
                 item.import_friendly,
+                item.origin,
+                item.runtime_nominal_origins,
                 bodyless_node,
                 item.typed.typ,
                 tuple(_bodyless_definition(value) for value in item.friendly_definitions),
@@ -114,6 +120,12 @@ def _semantic_interface_value(interface: Any | None) -> Any | None:
         interface.tags,
         interface.overlays,
         implementations,
+        tuple(
+            (item.origin, item.name, item.typed.typ,
+             tuple((field.name, field.typ) for field in item.typed.node.fields)
+             if getattr(item.typed.node, "fields", None) is not None else ())
+            for item in interface.runtime_dependencies
+        ),
     )
 
 

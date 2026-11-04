@@ -12,6 +12,38 @@ from valiance.runtime.concurrency import (
 )
 
 
+class DeterministicScheduleExplorationTests(unittest.TestCase):
+    def test_every_two_task_read_modify_write_interleaving(self):
+        from tools.schedule_explorer import explore_schedules
+
+        report = explore_schedules(tasks=2)
+        self.assertEqual(report.schedules, 20)
+        # An independent read/write oracle predicts both serial and lost-update paths.
+        self.assertEqual(report.final_values, frozenset((1, 2)))
+        three = explore_schedules(tasks=3)
+        self.assertEqual(three.schedules, 1680)
+        self.assertEqual(three.final_values, frozenset((1, 2, 3)))
+
+    def test_cancellation_at_different_quantum_boundaries(self):
+        from tools.schedule_explorer import explore_schedules
+
+        self.assertEqual(
+            explore_schedules(tasks=2, cancellation_at=0).final_values,
+            frozenset((1,)),
+        )
+        self.assertEqual(
+            explore_schedules(tasks=2, cancellation_at=2).final_values,
+            frozenset((1, 2)),
+        )
+        self.assertGreater(explore_schedules(tasks=2, cancellation_at=4).schedules, 0)
+
+    def test_schedule_bounds_cannot_silently_truncate_exploration(self):
+        from tools.schedule_explorer import explore_schedules
+
+        with self.assertRaisesRegex(ValueError, "schedule bound exceeded"):
+            explore_schedules(tasks=2, max_schedules=2)
+
+
 class TaskRuntimeTests(unittest.TestCase):
     def test_integrity_failure_takes_priority_over_recoverable_scope_faults(self):
         from valiance.runtime.runtime_values import ObjectValue, PanicSignal

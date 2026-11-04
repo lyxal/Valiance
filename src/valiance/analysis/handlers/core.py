@@ -73,6 +73,7 @@ from valiance.asts.nodes import (
     WhileNode,
 )
 from valiance.modules_system.modules import (
+    ModuleObject,
     ModuleLoadError,
     import_environment_facts,
     import_objects,
@@ -1359,14 +1360,54 @@ def _import_node(
             )
             + tuple((definition.name, definition.typed) for definition in exports.definitions),
         )
-        from valiance.modules_system.modules import import_constructor_dependencies
         from valiance.analysis.import_runtime import with_import_runtime_name
+        from valiance.modules_system.runtime_dependencies import resolve_runtime_dependencies
+
+        # Resolve runtime dependencies from analysed declaration contracts,
+        # regardless of which library eventually consumes their metadata.
+        # The transitive closure remains private to runtime linkage, and is
+        # carried through public facades in the compiled interface.
+        closure = resolve_runtime_dependencies(
+            exports, objects, definitions, trait_implementations
+        )
         constructor_dependencies = exports.runtime_prelude
-        for dependency in import_constructor_dependencies(exports):
-            runtime_name = self._prelude.add_declaration(dependency.typed, dependency.name)
-            constructor_dependencies += (
-                with_import_runtime_name(dependency.typed, runtime_name),
+        for dependency in closure.declarations:
+            origin = dependency.origin or Symbol(
+                dependency.name.text, tuple(exports.module_name.split('.'))
             )
+            dependency_node = dependency.typed.node
+            # Enum/variant declarations already qualify themselves by their
+            # lexical name; constructors require a distinct nominal identity.
+            if dependency_node.kind == Symbol("object") and dependency_node.target is None:
+                runtime_name = self._prelude.add_declaration(
+                    dependency.typed, dependency.name,
+                    runtime_nominal_name=origin,
+                    runtime_type_origins=closure.origins_for(dependency),
+                )
+                constructor_dependencies += (
+                    with_import_runtime_name(
+                        dependency.typed, runtime_name,
+                        runtime_nominal_name=origin,
+                        runtime_type_origins=closure.origins_for(dependency),
+                    ),
+                )
+            else:
+                # An enum/variant/trait can be required by a constructor's
+                # checked signature without being imported as a public name.
+                # Its private spelling must use the provider namespace when
+                # rechecking default arguments and method contracts.
+                from valiance.modules_system.modules import _renamed_object
+                linked = _renamed_object(dependency, origin)
+                runtime_name = self._prelude.add_declaration(
+                    linked.typed, linked.name,
+                )
+                constructor_dependencies += (
+                    with_import_runtime_name(linked.typed, runtime_name),
+                )
+            if not any(item.origin == origin for item in self._runtime_dependency_objects):
+                self._runtime_dependency_objects.append(
+                    replace(dependency, origin=origin)
+                )
         # Every imported spelling of an object denotes the declaration in its
         # provider, not a fresh nominal constructor.  Keep this separate from
         # unqualified locally defined objects of the same name.
@@ -1379,6 +1420,18 @@ def _import_node(
             self.env.context.nominal_origins[obj.name] = obj.origin or Symbol(
                 original.text, tuple(exports.module_name.split('.'))
             )
+            # An imported nominal used later by one of this module's own
+            # public declarations is an interface-level runtime requirement,
+            # even if this import was private and was not itself re-exported.
+            # Its source visibility is unchanged.
+            provider_identity = self.env.context.nominal_origins[obj.name]
+            if not any(
+                (item.origin or Symbol(item.name.text, tuple(exports.module_name.split('.'))))
+                == provider_identity for item in self._runtime_dependency_objects
+            ):
+                self._runtime_dependency_objects.append(
+                    replace(obj, origin=provider_identity)
+                )
             # Selected owned implementation evidence belongs to the imported
             # constructor as well as to the analyser's nominal Context. A
             # source module's implementation block need not be exported as an
@@ -1420,6 +1473,7 @@ def _import_node(
                 )
             runtime_name = self._prelude.add_declaration(
                 obj.typed, obj.name,
+                runtime_type_origins=closure.origins_for(obj),
                 imported_supertypes=imported_supertypes,
                 imported_guarded_supertypes=imported_guarded_supertypes,
             )
@@ -1435,15 +1489,80 @@ def _import_node(
         for obj in behaviour_objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
+        # A selected nominal alias must also rename matching exported callable
+        # contracts. Otherwise a facade exposes `AliasCode` while its overload
+        # still expects the inaccessible provider spelling `Code`.
+        from valiance.modules_system.modules import _rename_imported_types
+        nominal_aliases = {
+            component.name: component.alias
+            for component in resolved_spec.components
+            if component.alias is not None
+            and any(obj.name == component.alias for obj in objects)
+        }
+        if nominal_aliases:
+            definitions = tuple(replace(
+                definition,
+                typed=replace(
+                    definition.typed,
+                    typ=_rename_imported_types(definition.typed.typ, nominal_aliases),
+                    overloads=tuple(replace(
+                        typing,
+                        overload=_rename_imported_types(typing.overload, nominal_aliases),
+                    ) for typing in definition.typed.overloads),
+                ),
+            ) for definition in definitions)
         definitions_by_name: dict[Symbol, list] = {}
         call_site_dependencies = ()
         if any(overload.overload.call_site_body is not None
                for definition in definitions for overload in definition.typed.overloads):
             dependencies = list(exports.runtime_prelude)
-            for declaration in (*exports.objects, *exports.definitions):
+            for declaration in (
+                *exports.objects, *exports.runtime_dependencies, *exports.definitions
+            ):
                 runtime_name = self._prelude.add_declaration(declaration.typed, declaration.name)
-                dependencies.append(with_import_runtime_name(declaration.typed, runtime_name))
+                # Rechecked generic bodies retain their provider's private
+                # nominal spellings. Make each object available under its
+                # canonical origin only in the temporary call-site scope;
+                # this does not add a public import to the consumer.
+                if (
+                    isinstance(declaration, ModuleObject)
+                    and isinstance(declaration.typed.node, ObjectNode)
+                    and declaration.typed.node.kind == Symbol("object")
+                    and declaration.typed.node.target is None
+                ):
+                    origin = declaration.origin or Symbol(
+                        declaration.name.text, tuple(exports.module_name.split('.'))
+                    )
+                    dependencies.append(with_import_runtime_name(
+                        declaration.typed, runtime_name,
+                        runtime_nominal_name=origin,
+                        runtime_type_origins=closure.origins_for(declaration),
+                    ))
+                else:
+                    dependencies.append(with_import_runtime_name(
+                        declaration.typed, runtime_name,
+                    ))
             call_site_dependencies = tuple(dependencies)
+        # Translate a provider's nominal spellings to the declaration aliases
+        # actually visible in this consumer. A public facade may re-export a
+        # callable and its parameter type under different names, so comparing
+        # only the text of a parameter (or only aliases in this import clause)
+        # loses identity. Keep provider origins in the serialized interface.
+        visible_by_origin: dict[Symbol, list[Symbol]] = {}
+        for visible, origin in self.env.context.nominal_origins.items():
+            visible_by_origin.setdefault(origin, []).append(visible)
+
+        def selected_nominals(definition):
+            substitutions = {}
+            for spelling, origin in definition.private_nominals:
+                visible = visible_by_origin.get(origin, ())
+                substitutions[spelling] = (
+                    spelling if spelling in visible else
+                    sorted(visible, key=lambda value: value.dotted())[0] if visible
+                    else origin
+                )
+            return substitutions
+
         for definition in definitions:
             definitions_by_name.setdefault(definition.name, []).append(definition)
         private_nominals = {
@@ -1453,14 +1572,24 @@ def _import_node(
         reexport_runtime_functions = {}
         for definition_name, definition_group in definitions_by_name.items():
             first_typed = definition_group[0].typed
+            merged_typings = tuple(
+                typing
+                for definition in definition_group
+                for typing in definition.typed.overloads
+                if typing.overload in self._selected_import_overloads(definition.typed)
+            )
+            # A facade is a single runtime function group, but its public
+            # interface must retain *all* of the selected overload signatures.
+            # Keeping the first overload's FunctionType here silently drops
+            # later overloads on the next import hop.
+            merged_type = (
+                T.Overloads(*(entry.overload for entry in merged_typings))
+                if len(merged_typings) > 1 else first_typed.typ
+            )
             merged_typed = TypedFunctionNode(
                 first_typed.node,
-                first_typed.typ,
-                tuple(
-                    overload
-                    for definition in definition_group
-                    for overload in definition.typed.overloads
-                ),
+                merged_type,
+                merged_typings,
                 first_typed.dispatch_plan,
             )
             runtime_name = self._prelude.add_declaration(
@@ -1481,7 +1610,7 @@ def _import_node(
                         definition.typed,
                         runtime_name,
                         call_site_dependencies,
-                        {**private_nominals, **dict(definition.private_nominals)},
+                        {**private_nominals, **selected_nominals(definition)},
                     )
                 except ValueError as exc:
                     self._diagnose(
@@ -1536,6 +1665,7 @@ def _import_node(
                 replace(
                     obj,
                     public=True,
+                    runtime_nominal_origins=closure.origins_for(obj),
                     friendly_definitions=(
                         obj.friendly_definitions
                         + tuple(

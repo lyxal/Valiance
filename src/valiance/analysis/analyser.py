@@ -198,6 +198,9 @@ class _AnalysisPrelude:
     namespace_seed: str
     nodes: list[TypedNode] = field(default_factory=list)
     bindings: list[tuple[TypedNode, Symbol, Symbol]] = field(default_factory=list)
+    binding_origins: dict[
+        Symbol, tuple[Symbol | None, tuple[tuple[Symbol, Symbol], ...]]
+    ] = field(default_factory=dict)
     provider_links: dict[str, dict[Symbol, Symbol]] = field(default_factory=dict)
 
     def add(self, node: TypedNode) -> None:
@@ -211,14 +214,18 @@ class _AnalysisPrelude:
         source_name: Symbol,
         *,
         runtime_links: dict[Symbol, Symbol] | None = None,
+        runtime_nominal_name: Symbol | None = None,
+        runtime_type_origins: tuple[tuple[Symbol, Symbol], ...] = (),
         imported_supertypes: tuple[T.Type, ...] = (),
         imported_guarded_supertypes: tuple[
             tuple[T.Type, tuple[T.Type | None, ...]], ...
         ] = (),
     ) -> Symbol:
         """Hoist one declaration and return its hidden runtime binding."""
+        key = (runtime_nominal_name, runtime_type_origins)
         for existing, existing_source, runtime_name in self.bindings:
-            if existing == node and existing_source == source_name:
+            if (existing == node and existing_source == source_name
+                    and self.binding_origins.get(runtime_name, (None, ())) == key):
                 return runtime_name
         index = len(self.bindings)
         runtime_name = Symbol(
@@ -228,10 +235,13 @@ class _AnalysisPrelude:
         self.nodes.append(with_import_runtime_name(
             node, runtime_name,
             runtime_links=runtime_links,
+            runtime_nominal_name=runtime_nominal_name,
+            runtime_type_origins=runtime_type_origins,
             imported_supertypes=imported_supertypes,
             imported_guarded_supertypes=imported_guarded_supertypes,
         ))
         self.bindings.append((node, source_name, runtime_name))
+        self.binding_origins[runtime_name] = key
         return runtime_name
 
     def add_provider_declarations(
@@ -416,6 +426,7 @@ class Analyser:
         ] = {}
         self._public_import_definitions = []
         self._public_import_objects = []
+        self._runtime_dependency_objects = []
         self._public_import_tags = []
         self._public_import_overlays = []
         self._public_import_trait_implementations = []
@@ -873,6 +884,11 @@ class Analyser:
     def public_import_objects(self) -> tuple:
         """Return object-like declarations made public through public imports."""
         return tuple(self._public_import_objects)
+
+    @property
+    def runtime_dependency_objects(self) -> tuple:
+        """Private runtime requirements retained across compiled facade interfaces."""
+        return tuple(self._runtime_dependency_objects)
 
     @property
     def public_import_tags(self) -> tuple:

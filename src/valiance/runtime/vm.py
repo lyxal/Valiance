@@ -24,6 +24,7 @@ from valiance.elements.builtins import (
     BuiltinElement,
     BuiltinOverload,
     RuntimeContext,
+    RuntimeTypeServices,
     runtime_elements,
     _minus,
     _multiply,
@@ -718,7 +719,7 @@ class VirtualMachine:
             int,
             tuple[ResolvedElementReference, FunctionCode],
         ] = {}
-        # Shared reflection registry: the JSON decoder consults these layouts too.
+        # Shared, provider-qualified runtime type registry for every module.
         self._reflection_constructors: dict[str, ObjectConstructorValue] = {}
         self._runtime_reflection_types: set[str] = set()
         self._reflection_native_factories: dict[str, Callable[[Any], Any]] = {}
@@ -728,6 +729,12 @@ class VirtualMachine:
         # Each element invokes the same VM services. The immutable context can
         # be shared instead of allocating a new set of bound methods for every
         # built-in during startup.
+        self._type_services = RuntimeTypeServices(
+            resolve_constructor=self._runtime_constructor,
+            resolve_variant_cases=self._runtime_variant_cases,
+            construct_native=self._runtime_construct_native,
+            represent_native=self._runtime_represent_native,
+        )
         runtime_context = RuntimeContext(
             self.output,
             self.call_value,
@@ -737,10 +744,7 @@ class VirtualMachine:
             prepare_call=self.prepare_call,
             index_get=self._builtin_index_get,
             index_set=self._builtin_index_set,
-            json_constructor=self._json_constructor,
-            json_variant_constructors=self._json_variant_constructors,
-            json_native_decoder=self._json_native_decode,
-            json_native_encoder=self._json_native_encode,
+            type_services=self._type_services,
             runtime_reflection=self._runtime_reflection_action,
         )
         self.globals = {
@@ -748,12 +752,17 @@ class VirtualMachine:
             for name, element in (runtime_elements() | runtime_stdlib_elements()).items()
         }
 
-    def _json_constructor(self, name: str) -> ObjectConstructorValue | None:
-        """Resolve constructor-checked JSON metadata in this VM instance."""
+    @property
+    def runtime_type_services(self) -> RuntimeTypeServices:
+        """Return the module-neutral constructor and native type services."""
+        return self._type_services
+
+    def _runtime_constructor(self, name: str) -> ObjectConstructorValue | None:
+        """Resolve one checked constructor by its runtime nominal identity."""
         return self._reflection_constructors.get(name)
 
-    def _json_variant_constructors(self, name: str) -> tuple[ObjectConstructorValue, ...]:
-        """Enumerate registered cases of one statically requested variant."""
+    def _runtime_variant_cases(self, name: str) -> tuple[ObjectConstructorValue, ...]:
+        """Enumerate the runtime constructors of a nominal variant."""
         return tuple(constructor for candidate, constructor in self._reflection_constructors.items()
                      if candidate.startswith(name + "."))
 
@@ -817,7 +826,7 @@ class VirtualMachine:
             raise ValueError(f"cannot construct non-nominal type {target_type}")
         constructor = self._reflection_constructors.get(parsed.name.text)
         if (constructor is None or constructor.runtime_type is None
-                or constructor.runtime_type.json_fields is None):
+                or constructor.runtime_type.declared_fields is None):
             raise ValueError(f"no checked reflection layout for {target_type}")
         if not isinstance(value, dict):
             raise ValueError("managed reflection construction requires a field mapping")
@@ -831,16 +840,16 @@ class VirtualMachine:
             raise ValueError("runtime reflection fields require a managed value")
         constructor = self._reflection_constructors.get(value.type_name)
         runtime = None if constructor is None else constructor.runtime_type
-        if runtime is None or value.runtime_type is not runtime or runtime.json_fields is None:
+        if runtime is None or value.runtime_type is not runtime or runtime.declared_fields is None:
             raise ValueError("value has no matching registered reflection layout")
         from valiance.parsing.parser import parse_type
         from valiance.runtime.reflection import _instantiate_runtime_type
         parsed = parse_type(value.type_name + ('[' + ','.join(value.type_args) + ']' if value.type_args else ''))
-        args = dict(zip(runtime.json_generics, parsed.args, strict=True))
+        args = dict(zip(runtime.declared_generics, parsed.args, strict=True))
         layout = ReflectionFieldsReference(
             str(parsed), tuple(ReflectionFieldReference(
                 key, str(_instantiate_runtime_type(parse_type(declaration), args)), visibility
-            ) for key, visibility, declaration in runtime.json_fields)
+            ) for key, visibility, declaration in runtime.declared_fields)
         )
         return make_fields_value(layout)
 
@@ -850,7 +859,7 @@ class VirtualMachine:
             raise TypeError("reflection field name must be a string")
         self.reflected_fields(value)  # Confirm this value belongs to this VM registry.
         metadata = value.runtime_type
-        entry = next((item for item in metadata.json_fields if item[0] == field), None)
+        entry = next((item for item in metadata.declared_fields if item[0] == field), None)
         if entry is None:
             raise KeyError(field)
         if entry[1] == 'private' and not unsafe:
@@ -869,7 +878,7 @@ class VirtualMachine:
 
         self.reflected_fields(value)
         runtime = value.runtime_type
-        entry = next((item for item in runtime.json_fields if item[0] == field), None)
+        entry = next((item for item in runtime.declared_fields if item[0] == field), None)
         if entry is None:
             raise KeyError(field)
         _, visibility, declaration = entry
@@ -877,7 +886,7 @@ class VirtualMachine:
             raise ValueError(f"field {field!r} requires unsafe reflection for writes")
         if declaration is None:
             raise ValueError(f"no checked field type for {field!r}")
-        args = dict(zip(runtime.json_generics, map(parse_type, value.type_args), strict=True))
+        args = dict(zip(runtime.declared_generics, map(parse_type, value.type_args), strict=True))
         expected = _instantiate_runtime_type(parse_type(declaration), args)
         if not _reflection_value_matches(replacement, expected):
             raise ValueError(f"field {field!r} does not match {expected}")
@@ -933,8 +942,8 @@ class VirtualMachine:
             raise ValueError("Reflection defaults must name declared fields")
         metadata = ObjectRuntimeType(
             field_order=tuple(key for key, _, _ in layout),
-            json_fields=tuple(layout),
-            json_generics=generics,
+            declared_fields=tuple(layout),
+            declared_generics=generics,
         )
         constructor = ObjectConstructorValue(
             type_name=name,
@@ -972,12 +981,12 @@ class VirtualMachine:
         for name in sorted(self._runtime_reflection_types):
             constructor = self._reflection_constructors[name]
             runtime = constructor.runtime_type
-            generics = tuple(Symbol(arg) for arg in runtime.json_generics)
-            substitutions = {generic: T.V(generic) for generic in runtime.json_generics}
+            generics = tuple(Symbol(arg) for arg in runtime.declared_generics)
+            substitutions = {generic: T.V(generic) for generic in runtime.declared_generics}
             fields = tuple(T.ObjectAttribute(
                 Symbol(key), _instantiate_runtime_type(parse_type(declaration), substitutions),
                 Symbol(visibility), key in constructor.defaults,
-            ) for key, visibility, declaration in runtime.json_fields)
+            ) for key, visibility, declaration in runtime.declared_fields)
             scope.define_object(Symbol(name), fields, generics=generics)
             # No source constructor overload is invented.  Construction is
             # available through the lexical-unsafe checked Uninit[T] path.
@@ -997,9 +1006,9 @@ class VirtualMachine:
         elif isinstance(parsed, T.NominalType):
             constructor = self._reflection_constructors.get(parsed.name.text)
             if (constructor is None or constructor.runtime_type is None
-                    or constructor.runtime_type.json_fields is None):
+                    or constructor.runtime_type.declared_fields is None):
                 raise ValueError(f"no checked reflection type {target_type}")
-            if len(parsed.args) != len(constructor.runtime_type.json_generics):
+            if len(parsed.args) != len(constructor.runtime_type.declared_generics):
                 raise ValueError(f"generic arguments do not match {target_type}")
         else:
             raise ValueError(f"no runtime reflection type {target_type}")
@@ -1031,14 +1040,14 @@ class VirtualMachine:
             if isinstance(parsed, T.FFINamedType):
                 return ListValue(())
             runtime = self._reflection_constructors[parsed.name.text].runtime_type
-            substitutions = dict(zip(runtime.json_generics, parsed.args, strict=True))
-            if runtime is None or runtime.json_fields is None:
+            substitutions = dict(zip(runtime.declared_generics, parsed.args, strict=True))
+            if runtime is None or runtime.declared_fields is None:
                 raise ValueError(f"type {name} has no checked stored-field layout")
             return ListValue(ObjectValue("RuntimeFieldSpec", {
                 "name": key,
                 "type": str(_instantiate_runtime_type(parse_type(declaration), substitutions)),
                 "visibility": visibility,
-            }) for key, visibility, declaration in runtime.json_fields)
+            }) for key, visibility, declaration in runtime.declared_fields)
         if operation == "construct":
             name = self._checked_runtime_witness(args[0])
             supplied = args[1]
@@ -1088,62 +1097,18 @@ class VirtualMachine:
             return DynamicValue(self.reflected_write(value, args[1], replacement.fields["#value"], unsafe=True))
         raise RuntimeError(f"unsupported runtime reflection action {operation}")
 
-    def register_json_type(
-        self, name: str, fields: tuple[tuple[str, str] | tuple[str, str, str], ...], *,
-        defaults: dict[str, Any] | None = None, generics: tuple[str, ...] = (),
-    ) -> None:
-        """Use the general reflection registry for JSON schema construction."""
-        self.register_reflection_type(name, fields, defaults=defaults, generics=generics)
-
-    def register_json_native(
-        self, ffi_type: str, *, decode: Callable[[Any], Any], encode: Callable[[Any], Any],
-    ) -> None:
-        """Use the general native reflection constructor for JSON reconstruction."""
-        self.register_reflection_native(ffi_type, construct=decode, encode=encode)
-
-    def _json_native_decode(self, ffi_type: str, value: Any) -> Any:
-        """Delegate JSON-native construction to a registered trusted factory."""
+    def _runtime_construct_native(self, ffi_type: str, value: Any) -> Any:
+        """Construct native storage only through a trusted reflection factory."""
         if ffi_type not in self._reflection_native_factories:
-            raise ValueError(f"No JSON adapter for native type {ffi_type}")
-        try:
-            return self.construct_reflected(ffi_type, value)
-        except ValueError as exc:
-            if f"invalid {ffi_type} value" in str(exc):
-                raise ValueError(f"native factory returned an invalid {ffi_type} handle") from exc
-            raise
+            raise ValueError(f"no registered native constructor for {ffi_type}")
+        return self.construct_reflected(ffi_type, value)
 
-    def _json_native_encode(self, value: Any) -> Any:
-        """Encode an FFI value only through its registered host adapter."""
+    def _runtime_represent_native(self, value: Any) -> Any:
+        """Return a host-authorized native representation, never a raw pointer."""
         adapter = self._reflection_native_encoders.get(value.ffi_type)
         if adapter is None:
-            raise ValueError(f"No JSON adapter for native type {value.ffi_type}")
+            raise ValueError(f"no registered native representation for {value.ffi_type}")
         return adapter(value)
-
-    def decode_json(self, text: str, target_type: str) -> Any:
-        """Decode to a runtime-registered type, without requiring a source T.
-
-        Invalid input raises ValueError. The returned value carries checked
-        metadata; the embedding host must not treat it as a statically known T.
-        """
-        from types import SimpleNamespace
-        from valiance.std.json import _decode_dynamic
-
-        context = SimpleNamespace(
-            json_constructor=self._json_constructor,
-            json_variant_constructors=self._json_variant_constructors,
-            json_native_decoder=self._json_native_decode,
-        )
-        result, = _decode_dynamic((text, target_type), context)
-        if isinstance(result, ObjectValue) and result.type_name == "ValueError":
-            raise ValueError(result.fields["message"])
-        return result
-
-    def encode_json(self, value: Any, target_type: str | None = None) -> str:
-        """Encode a host-held runtime value using the same checked traversal."""
-        from valiance.std.json import _json_type, _render_json_value
-        return _render_json_value(value, set(),
-                                  None if target_type is None else _json_type(target_type),
-                                  self._json_native_encode)
 
     def __deepcopy__(self, memo: dict[int, object]) -> "VirtualMachine":
         """Copy VM language state while creating fresh scheduler resources."""
@@ -6431,7 +6396,31 @@ def _store_value(existing: Any, value: Any, vm: VirtualMachine) -> Any:
             if identity is not None and identity in identities:
                 previous = identities[identity]
                 if replace(previous.code, dispatch_types=overload.code.dispatch_types) != overload.code:
-                    raise RuntimeError(f"conflicting function implementation {identity!r}")
+                    # The same private destructor may be imported through
+                    # several facades: one copy can contain checked, resolved
+                    # calls and another the original lexical call sequence.
+                    # Both share a fingerprint of the *source declaration*.
+                    # Keep the checked implementation, but never combine
+                    # different owners or receiver contracts.
+                    if not (
+                        identity.startswith("lifecycle:")
+                        and previous.code.name == overload.code.name
+                        and previous.code.params == overload.code.params
+                        and previous.code.dispatch_types == overload.code.dispatch_types
+                    ):
+                        raise RuntimeError(f"conflicting function implementation {identity!r}")
+                    old_resolved = sum(
+                        instruction.op == OpCode.CALL_RESOLVED_ELEMENT
+                        for instruction in previous.code.instructions
+                    )
+                    new_resolved = sum(
+                        instruction.op == OpCode.CALL_RESOLVED_ELEMENT
+                        for instruction in overload.code.instructions
+                    )
+                    selected = overload if new_resolved > old_resolved else previous
+                    merged[merged.index(previous)] = selected
+                    identities[identity] = selected
+                    continue
                 if previous.code.dispatch_types and overload.code.dispatch_types and previous.code.dispatch_types != overload.code.dispatch_types:
                     raise RuntimeError(f"conflicting dispatch predicates for {identity!r}")
                 selected = overload if overload.code.dispatch_types or not previous.code.dispatch_types else previous
@@ -6498,8 +6487,8 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         return None
     if not isinstance(value, tuple) or len(value) not in {5, 8, 9, 10, 12}:
         raise RuntimeError(f"invalid object runtime metadata {value!r}")
-    json_fields: tuple[tuple[str, str, str | None], ...] | None = None
-    json_generics: tuple[str, ...] = ()
+    declared_fields: tuple[tuple[str, str, str | None], ...] | None = None
+    declared_generics: tuple[str, ...] = ()
     if len(value) == 12:
         raw_fields, raw_generics = value[-2:]
         if (not isinstance(raw_fields, tuple) or any(
@@ -6510,8 +6499,8 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
             for entry in raw_fields
         )):
             raise RuntimeError(f"invalid JSON field metadata {raw_fields!r}")
-        json_fields = raw_fields
-        json_generics = _runtime_string_tuple(raw_generics, "JSON generic parameters")
+        declared_fields = raw_fields
+        declared_generics = _runtime_string_tuple(raw_generics, "JSON generic parameters")
         value = value[:-2]
     has_field_order = len(value) == 10
     offset = 1 if has_field_order else 0
@@ -6599,8 +6588,8 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         type_facts=type_facts,
         generic_supertypes=generic_supertypes,
         field_order=field_order,
-        json_fields=json_fields,
-        json_generics=json_generics,
+        declared_fields=declared_fields,
+        declared_generics=declared_generics,
     )
 
 def _runtime_string_tuple(value: object, description: str) -> tuple[str, ...]:

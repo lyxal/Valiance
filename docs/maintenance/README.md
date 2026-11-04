@@ -132,6 +132,20 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   additional [adversarial generics tests](../../tests/test_generics_adversarial.py)
   use deterministic permutations and cross-mode comparisons to stress `where`,
   union dispatch and ranked list substitution beyond the inventory.
+- [Multi-module project correctness](multimodule-project-testing.md) documents the
+  19-family / six-graph source and binary execution matrix, failure oracles,
+  incremental regressions, and remaining import/type-system risks.
+  The [connected-feature multi-module plan](multimodule-interaction-test-plan.md)
+  defines the connected cross-feature matrix and exposes the unverified
+  pairwise language-interaction backlog.
+  [Lifetime and concurrency integration tests](../../tests/test_multimodule_lifetime_concurrency.py)
+  exercise borrowed non-duplicable resources, spawned imported functions, and
+  channel payload identity across compiled module boundaries.
+- [Fuzzing campaigns](../fuzzing.md) describe type-directed source and VM
+  ownership invariants, the [coverage feedback runner](../../tools/coverage_guided.py),
+  the [scheduler interleaving explorer](../../tools/schedule_explorer.py), and
+  their focused tests in `tests/test_fuzzing.py` and
+  `tests/test_concurrency_runtime.py`.
 - [Performance baselines](performance-benchmarking.md) documents the
   stage-aware benchmark runner, same-machine comparisons, and CI policy.
 - [Declaration-level incremental analysis](declaration-incremental-analysis.md) documents stable semantic products, dependency fingerprints, and targeted invalidation.

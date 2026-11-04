@@ -1,0 +1,71 @@
+{
+  "title": "Multi-module lifetime, ownership, task and channel interaction validation",
+  "date": "2026-11-03",
+  "python": "3.13.5",
+  "required_python": "3.14+",
+  "baseline": {
+    "fixture_defined_pairs": 389,
+    "pair_backlog": 1441,
+    "positive_families": 83,
+    "negative_families": 81
+  },
+  "current": {
+    "fixture_defined_pairs": 479,
+    "pair_backlog": 1351,
+    "new_positive_families": 28,
+    "total_positive_families": 111,
+    "new_negative_contracts": 28,
+    "total_negative_contracts": 109,
+    "finite_positive_configurations": 3330,
+    "potential_positive_mode_checks": 13320,
+    "finite_negative_configurations": 3270
+  },
+  "executed": {
+    "new_source_graph_configs": 168,
+    "source_mode_checks": 672,
+    "new_nested_compiled_only_configs": 28,
+    "nested_compiled_only_mode_checks": 112,
+    "new_mixed_artifact_configs": 9,
+    "mixed_artifact_mode_checks": 36,
+    "distinct_positive_configs_passed": 205,
+    "total_independent_mode_checks_passed": 820,
+    "new_source_negative_configs": 168,
+    "new_compiled_alias_negative_configs": 8,
+    "distinct_negative_configs_passed": 176,
+    "focused_new_unittests_passed": 10,
+    "known_failure_regressions_expected_failure": 5,
+    "new_imported_destructor_expected_failures": 3,
+    "case_timeout_cli_smoke_passed": true,
+    "cross_module_isolated_spawn_rejected_source_and_binary": true,
+    "cross_module_nodup_copy_rejected_source_and_binary": true
+  },
+  "known_unresolved": [
+    "MM-LINK-STDJSON-001: transitive std.json linkage",
+    "MM-ALIAS-ENUM-OVERLOAD-001: renamed enum overload nominal identity",
+    "Imported object destructor missing on release through imported trait",
+    "Imported object destructor missing on bounded generic release",
+    "Imported nested child destructor missing on owner release"
+  ],
+  "unverified": [
+    "full 3330-positive/3270-negative scheduled registry sweep",
+    "complete repository test suite",
+    "Python 3.14+ execution",
+    "all concurrency interleavings",
+    "all mixed-artifact configurations"
+  ],
+  "limitations": [
+    "The 479 fixture-backed pairs are coverage inventory entries, not proofs or complete validation of all graph layouts.",
+    "An earlier broad combined regression command exceeded the local deadline.",
+    "A combined mixed artifact campaign exceeded the local deadline; isolated mixed slices passed."
+  ],
+  "artifacts": {
+    "source_graph_results": "Valiance-more-source-graph-results.json",
+    "binary_compiled_precheck": "Valiance-more-feature-precheck.json",
+    "source_negative_results": "Valiance-more-negative-source-results.json",
+    "mixed_diamond": "Valiance-more-mixed-diamond.json",
+    "mixed_alternating": "Valiance-more-mixed-alternating.json",
+    "mixed_dependent": "Valiance-more-mixed-dependent.json",
+    "focus_unittest_log": "Valiance-more-new-unit-tests.log",
+    "known_failure_log": "Valiance-more-known-failures.log"
+  }
+}
