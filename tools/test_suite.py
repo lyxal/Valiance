@@ -1,15 +1,15 @@
 """Run the unittest suite in balanced, isolated worker processes.
 
-The standard unittest discovery command runs every module in one process.  That
+The standard unittest discovery command runs every module in one process. That
 makes the wall clock time the sum of several mostly independent compiler and
-runtime suites.  This runner partitions modules into a small number of balanced
-batches and executes each batch in its own long-lived subprocess, preserving
-normal unittest semantics within every batch while avoiding one interpreter
-startup per module.
+runtime suites. This runner balances modules into worker subprocesses. Tests
+that explicitly opt in can also be scheduled by method, without skipping the
+rest of their module.
 """
 
 from __future__ import annotations
 
+import ast
 import argparse
 import json
 import math
@@ -26,11 +26,71 @@ from tempfile import TemporaryDirectory
 
 
 @dataclass(frozen=True)
-class TestBatch:
-    """A group of test files assigned to one worker."""
+class TestTarget:
+    """Run a whole module, one test method, or everything but selected methods."""
 
-    files: tuple[Path, ...]
+    path: Path
+    method: str | None = None
+    exclude: tuple[str, ...] = ()
+
+    def argument(self) -> str:
+        if self.method is not None:
+            return f"{self.path}::{self.method}"
+        if self.exclude:
+            return f"{self.path}::!{','.join(self.exclude)}"
+        return str(self.path)
+
+
+@dataclass(frozen=True)
+class TestBatch:
+    """A group of disjoint test targets assigned to one worker."""
+
+    targets: tuple[TestTarget, ...]
     estimated_weight: float
+
+    @property
+    def files(self) -> tuple[Path, ...]:
+        """Paths represented in this batch (not necessarily complete modules)."""
+        return tuple(target.path for target in self.targets)
+
+
+def _parallel_safe_methods(path: Path) -> tuple[str, ...]:
+    """Read a module's explicit opt-in without importing its test dependencies.
+
+    Tests using global state or class fixtures must not opt in: each selected
+    method may execute in a different process from the remaining methods.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    methods = {
+        f"{node.name}.{child.name}"
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        for child in node.body
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and child.name.startswith("test_")
+    }
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            continue
+        if targets[0].id != "PARALLEL_SAFE_METHODS":
+            continue
+        declared = ast.literal_eval(node.value)
+        if (
+            not isinstance(declared, tuple)
+            or any(not isinstance(name, str) for name in declared)
+            or len(set(declared)) != len(declared)
+        ):
+            raise ValueError(
+                f"{path}: PARALLEL_SAFE_METHODS must be unique method names"
+            )
+        missing = set(declared) - methods
+        if missing:
+            raise ValueError(f"{path}: missing parallel-safe methods: {sorted(missing)}")
+        return declared
+    return ()
 
 
 def _test_weight(path: Path) -> int:
@@ -51,13 +111,21 @@ def discover_test_files(test_dir: Path, patterns: Sequence[str]) -> tuple[Path, 
 
 
 def partition_test_files(
-    files: Sequence[Path], workers: int, timings: Mapping[str, float] | None = None
+    files: Sequence[Path],
+    workers: int,
+    timings: Mapping[str, float] | None = None,
+    test_timings: Mapping[str, float] | None = None,
 ) -> tuple[TestBatch, ...]:
-    """Greedily balance work using observed module durations when available."""
+    """Balance whole modules and explicitly opted-in method-level targets.
+
+    Opted-in methods execute in their own selections. All other tests from
+    that module remain in an exclusion-filtered selection, so new tests are
+    still discovered and run without changing the runner's configuration.
+    """
     if workers < 1:
         raise ValueError("workers must be at least 1")
-    slots: list[list[Path]] = [[] for _ in range(min(workers, len(files)))]
-    weights = [0.0 for _ in slots]
+    if not files:
+        return ()
     estimates = {path: _test_weight(path) for path in files}
     observed = {
         path: timings[path.as_posix()]
@@ -68,36 +136,61 @@ def partition_test_files(
         and math.isfinite(timings[path.as_posix()])
         and timings[path.as_posix()] > 0
     }
-    # Normalize estimates to measured seconds for new or previously unmeasured files.
     scale = (
         median(observed[path] / estimates[path] for path in observed)
         if observed
         else 1.0
     )
-    weighted = sorted(
-        ((observed.get(path, estimates[path] * scale), path) for path in files),
-        reverse=True,
-    )
-    for weight, path in weighted:
+    weighted: list[tuple[float, TestTarget]] = []
+    for path in files:
+        total = observed.get(path, estimates[path] * scale)
+        selected = _parallel_safe_methods(path)
+        if not selected:
+            weighted.append((total, TestTarget(path)))
+            continue
+
+        # Per-method measurements are available after the first run with the
+        # v2 timing report. Earlier reports still supply useful module totals.
+        measured: dict[str, float] = {}
+        for name in selected:
+            key = f"{path.as_posix()}::{name}"
+            value = test_timings.get(key) if test_timings is not None else None
+            if type(value) in (int, float) and math.isfinite(value) and value > 0:
+                measured[name] = value
+        missing_slots = len(selected) + 1 - len(measured)
+        # Preserve a positive allowance for the rest of the module and for
+        # tests with missing per-method history.
+        unmeasured_weight = max(
+            total - sum(measured.values()), total / (len(selected) + 1) * 0.1
+        ) / missing_slots
+        for name in selected:
+            weighted.append(
+                (measured.get(name, unmeasured_weight), TestTarget(path, method=name))
+            )
+        weighted.append((unmeasured_weight, TestTarget(path, exclude=selected)))
+
+    slots: list[list[TestTarget]] = [[] for _ in range(min(workers, len(weighted)))]
+    weights = [0.0 for _ in slots]
+    for weight, target in sorted(weighted, key=lambda row: row[0], reverse=True):
         index = min(range(len(slots)), key=weights.__getitem__)
-        slots[index].append(path)
+        slots[index].append(target)
         weights[index] += weight
     return tuple(
-        TestBatch(tuple(sorted(batch)), weight)
+        TestBatch(tuple(batch), weight)
         for batch, weight in zip(slots, weights, strict=True)
         if batch
     )
 
 
 def _worker_command(
-    files: Sequence[Path], *, verbose: bool, timings_file: Path | None = None
+    targets: Sequence[TestTarget], *, verbose: bool, timings_file: Path | None = None
 ) -> list[str]:
     command = [sys.executable, "-m", "tools.test_worker"]
     if verbose:
         command.append("--verbose")
     if timings_file is not None:
         command.extend(("--timings-file", str(timings_file)))
-    command.extend(str(path) for path in files)
+    command.extend(target.argument() for target in targets)
     return command
 
 
@@ -110,7 +203,7 @@ def _run_batch(
     timings_file: Path | None = None,
 ) -> tuple[int, TestBatch, int, str]:
     completed = subprocess.run(
-        _worker_command(batch.files, verbose=verbose, timings_file=timings_file),
+        _worker_command(batch.targets, verbose=verbose, timings_file=timings_file),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -142,6 +235,7 @@ def run_batches(
     results: dict[int, tuple[TestBatch, int, str]] = {}
     measured_modules: dict[str, float] = {}
     measured_tests: list[dict[str, str | float]] = []
+    measured_test_durations: dict[str, float] = {}
     # Worker-side measurements capture individual tests, not merely total batch
     # times, so subsequent runs can distribute expensive modules more evenly.
     with TemporaryDirectory() as directory:
@@ -164,7 +258,7 @@ def run_batches(
                 status = "FAILED" if returncode else "passed"
                 print(
                     f"worker batch {index}/{len(batches)}: {status} "
-                    f"({len(batch.files)} modules)",
+                    f"({len(set(batch.files))} modules, {len(batch.targets)} selections)",
                     flush=True,
                 )
                 if returncode and fail_fast:
@@ -174,12 +268,21 @@ def run_batches(
         if timing_dir:
             for path in sorted(timing_dir.glob("*.json")):
                 data = json.loads(path.read_text(encoding="utf-8"))
-                measured_modules.update(data["modules"])
+                for module, seconds in data["modules"].items():
+                    measured_modules[module] = measured_modules.get(module, 0.0) + seconds
                 measured_tests.extend(data["tests"])
+                measured_test_durations.update(data.get("test_durations", {}))
         if timings_file is not None:
             timings_file.parent.mkdir(parents=True, exist_ok=True)
             timings_file.write_text(
-                json.dumps({"version": 1, "modules": measured_modules}, indent=2)
+                json.dumps(
+                    {
+                        "version": 2,
+                        "modules": measured_modules,
+                        "tests": measured_test_durations,
+                    },
+                    indent=2,
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -232,7 +335,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timings",
         type=Path,
-        help="read previous module timings and save fresh timings for the next run",
+        help="reuse previous module/method timings and save new timings",
     )
     parser.add_argument(
         "--durations",
@@ -260,20 +363,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     # module's true runtime differs from its cheap static estimate. Each batch
     # still amortizes interpreter startup across several modules.
     timings = None
+    test_timings = None
     if args.timings and args.timings.is_file():
         try:
             data = json.loads(args.timings.read_text(encoding="utf-8"))
-            if data["version"] != 1 or not isinstance(data["modules"], dict):
+            if data["version"] not in (1, 2) or not isinstance(data["modules"], dict):
                 raise ValueError("unrecognized timings format")
             timings = data["modules"]
+            test_timings = data.get("tests", {}) if data["version"] == 2 else None
+            if test_timings is not None and not isinstance(test_timings, dict):
+                raise ValueError("invalid per-test timings")
         except (OSError, ValueError, KeyError, TypeError) as error:
-            print(f"warning: cannot read timings ({error}); using estimates", file=sys.stderr)
-    batches = partition_test_files(files, min(len(files), args.workers * 4), timings)
+            print(
+                f"warning: cannot read timings ({error}); using estimates",
+                file=sys.stderr,
+            )
+    try:
+        batches = partition_test_files(files, args.workers * 4, timings, test_timings)
+    except (OSError, SyntaxError, ValueError) as error:
+        print(f"error: cannot schedule tests ({error})", file=sys.stderr)
+        return 2
     if args.list:
         for index, batch in enumerate(batches, start=1):
             print(f"worker {index} (weight {batch.estimated_weight}):")
-            for path in batch.files:
-                print(f"  {path}")
+            for target in batch.targets:
+                print(f"  {target.argument()}")
         return 0
     return run_batches(
         batches,

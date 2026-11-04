@@ -57,6 +57,16 @@ uv run python -m tools.test_suite --workers 4 --durations 20 --timings .test-tim
 The timing report lists individual test durations (excluding class/module
 fixtures) and measured module totals. Its JSON file is reused on subsequent
 runs; unmeasured modules use estimates scaled to the observed durations.
+Timing reports from the earlier module-only format remain readable; the current
+format additionally records per-test durations.
+
+Tests that do not share mutable module/class state may opt into method-level
+parallelism with a top-level `PARALLEL_SAFE_METHODS` tuple of
+`"ClassName.test_method"` identifiers. The runner schedules each listed
+method independently and **still runs every other test in that module** in a
+separate selection. `tests/test_multimodule_interactions.py` uses this to
+spread its three longest tests across workers. Do not opt in tests that rely
+on `setUpClass`, shared module state, or execution order across methods.
 Keep the isolated trait and generics oracle campaigns as distinct CI gates;
 they run concurrently with the standard suite on GitHub Actions.
 

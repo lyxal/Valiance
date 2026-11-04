@@ -22,6 +22,15 @@ from valiance.runtime import loads, run
 from valiance.runtime.compiled_module import load_module_file
 
 
+# These tests use independent TemporaryDirectory fixtures and no shared class
+# state. Allow the parallel runner to distribute their expensive methods while
+# executing all remaining tests in this module as another selection.
+PARALLEL_SAFE_METHODS = (
+    "MultiModuleInteractionTests.test_each_connected_interaction_across_every_source_graph",
+    "MultiModuleInteractionTests.test_each_interaction_through_compiled_nested_provider",
+    "MultiModuleInteractionTests.test_semantic_negative_mutations_preserved_after_compilation",
+)
+
 class MultiModuleInteractionTests(unittest.TestCase):
     def test_each_connected_interaction_across_every_source_graph(self):
         for family in INTERACTIONS:

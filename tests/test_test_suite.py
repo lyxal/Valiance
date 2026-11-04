@@ -12,6 +12,7 @@ from subprocess import CompletedProcess, TimeoutExpired
 
 from tools.test_suite import (
     TestBatch,
+    TestTarget,
     discover_test_files,
     partition_test_files,
     run_batches,
@@ -81,21 +82,124 @@ class ParallelTestSuiteTests(unittest.TestCase):
             report = root / "timings.json"
             with redirect_stdout(StringIO()) as output:
                 status = run_batches(
-                    (TestBatch((case,), 1),), workers=1, verbose=False,
+                    (TestBatch((TestTarget(case),), 1),), workers=1, verbose=False,
                     fail_fast=False, timings_file=report, durations=1,
                 )
             data = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(status, 0)
-        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["version"], 2)
         self.assertIn("test_timing_probe.py", data["modules"])
+        self.assertEqual(len(data["tests"]), 1)
+        self.assertIn("test_timing_probe.py::TimingProbe.test_ok", data["tests"])
         self.assertIn("TimingProbe.test_ok", output.getvalue())
+
+    def test_parallel_safe_methods_execute_exactly_once_across_workers(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            case = root / "test_sharded.py"
+            case.write_text(
+                "import unittest\n"
+                "PARALLEL_SAFE_METHODS = ('Example.test_slow_a', 'Example.test_slow_b')\n"
+                "class Example(unittest.TestCase):\n"
+                "    def test_slow_a(self): self.assertTrue(True)\n"
+                "    def test_slow_b(self): self.assertTrue(True)\n"
+                "    def test_remainder(self): self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            batches = partition_test_files((case,), 3)
+            self.assertCountEqual(
+                [target.method for batch in batches for target in batch.targets],
+                ["Example.test_slow_a", "Example.test_slow_b", None],
+            )
+            remainder = next(target for batch in batches for target in batch.targets
+                             if target.method is None)
+            self.assertEqual(remainder.exclude,
+                             ("Example.test_slow_a", "Example.test_slow_b"))
+            report = root / "timings.json"
+            with redirect_stdout(StringIO()):
+                status = run_batches(
+                    batches, workers=3, verbose=False, fail_fast=False,
+                    timings_file=report,
+                )
+            data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(status, 0)
+        self.assertEqual(len(data["tests"]), 3)
+        self.assertEqual(set(data["tests"]), {
+            "test_sharded.py::Example.test_slow_a",
+            "test_sharded.py::Example.test_slow_b",
+            "test_sharded.py::Example.test_remainder",
+        })
+        self.assertEqual(len(data["modules"]), 1)
+
+    def test_measured_methods_are_scheduled_independently(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test_optin.py"
+            path.write_text(
+                "PARALLEL_SAFE_METHODS = ('Example.test_one', 'Example.test_two')\n"
+                "class Example:\n"
+                "    def test_one(self): pass\n"
+                "    def test_two(self): pass\n"
+                "    def test_three(self): pass\n",
+                encoding="utf-8",
+            )
+            batches = partition_test_files(
+                (path,), 3, {path.as_posix(): 65},
+                {f"{path.as_posix()}::Example.test_one": 45,
+                 f"{path.as_posix()}::Example.test_two": 15},
+            )
+        durations = sorted(batch.estimated_weight for batch in batches)
+        self.assertEqual(durations, [5, 15, 45])
+
+    def test_invalid_parallel_opt_in_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test_typo.py"
+            path.write_text(
+                "PARALLEL_SAFE_METHODS = ('Example.test_missing',)\n"
+                "class Example:\n"
+                "    def test_present(self): pass\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "missing parallel-safe methods"):
+                partition_test_files((path,), 2)
+
+    def test_failing_selected_method_causes_suite_failure(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "test_failure.py"
+            path.write_text(
+                "import unittest\n"
+                "PARALLEL_SAFE_METHODS = ('Example.test_fail',)\n"
+                "class Example(unittest.TestCase):\n"
+                "    def test_fail(self): self.fail('expected failure')\n"
+                "    def test_pass(self): self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            batches = partition_test_files((path,), 2)
+            with redirect_stdout(StringIO()) as output:
+                status = run_batches(batches, workers=2, verbose=False, fail_fast=False)
+        self.assertEqual(status, 1)
+        self.assertIn("expected failure", output.getvalue())
+
+    def test_v1_timings_remain_compatible(self):
+        from tools.test_suite import main
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "test_v1.py").write_text("def test_one(): pass\n")
+            timings = root / "v1.json"
+            timings.write_text(json.dumps({"version": 1, "modules": {
+                str(root / "test_v1.py"): 7.0,
+            }}))
+            with redirect_stdout(StringIO()) as output:
+                status = main(["--test-dir", str(root), "--workers", "1",
+                               "--timings", str(timings), "--list"])
+        self.assertEqual(status, 0)
+        self.assertIn("weight 7.0", output.getvalue())
 
     def test_partition_rejects_zero_workers(self):
         with self.assertRaisesRegex(ValueError, "at least 1"):
             partition_test_files((), 0)
 
     def test_worker_search_path_includes_shared_test_fixtures(self):
-        batch = TestBatch((Path("tests/test_bytecode_serialization.py"),), 1)
+        batch = TestBatch((TestTarget(Path("tests/test_bytecode_serialization.py")),), 1)
         with patch("tools.test_suite._run_batch", return_value=(1, batch, 0, "")) as worker:
             self.assertEqual(run_batches((batch,), workers=1, verbose=False, fail_fast=False), 0)
         search_path = worker.call_args.kwargs["env"]["PYTHONPATH"].split(os.pathsep)

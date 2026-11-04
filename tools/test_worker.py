@@ -49,17 +49,57 @@ def _load_module(path: Path, index: int):
     return module
 
 
+def _test_name(test: unittest.TestCase) -> str:
+    return f"{type(test).__qualname__}.{test._testMethodName}"
+
+
+def _flatten(suite: unittest.TestSuite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from _flatten(test)
+        else:
+            yield test
+
+
+def _target(argument: str) -> tuple[Path, str | None, tuple[str, ...]]:
+    """Decode a module selection; unqualified modules retain full discovery."""
+    filename, sep, selector = argument.partition("::")
+    if not filename or (sep and not selector):
+        raise ValueError(f"invalid test target: {argument}")
+    if not sep:
+        return Path(filename), None, ()
+    if selector.startswith("!"):
+        excluded = tuple(selector[1:].split(","))
+        if not all(excluded):
+            raise ValueError(f"invalid exclusions: {argument}")
+        return Path(filename), None, excluded
+    return Path(filename), selector, ()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--timings-file", type=Path)
-    parser.add_argument("files", nargs="+", type=Path)
+    parser.add_argument("files", nargs="+", help="module paths with optional ::Class.method selector")
     args = parser.parse_args(argv)
 
     loader = unittest.defaultTestLoader
     suite = unittest.TestSuite()
-    for index, path in enumerate(args.files):
-        suite.addTests(loader.loadTestsFromModule(_load_module(path, index)))
+    loaded: dict[Path, list[unittest.TestCase]] = {}
+    for index, argument in enumerate(args.files):
+        path, method, excluded = _target(argument)
+        if path not in loaded:
+            loaded[path] = list(_flatten(loader.loadTestsFromModule(_load_module(path, index))))
+        tests = loaded[path]
+        if method is not None:
+            matching = [test for test in tests if _test_name(test) == method]
+            if len(matching) != 1:
+                raise ValueError(f"{path}: expected one test named {method}, found {len(matching)}")
+            suite.addTests(matching)
+        elif excluded:
+            suite.addTests(test for test in tests if _test_name(test) not in excluded)
+        else:
+            suite.addTests(tests)
     runner = unittest.TextTestRunner(
         verbosity=2 if args.verbose else 1,
         resultclass=TimedTestResult if args.timings_file else None,
@@ -68,11 +108,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.timings_file:
         modules: dict[str, float] = {}
         slow_tests = []
+        test_durations: dict[str, float] = {}
         for filename, name, elapsed in result.timings:
             modules[filename] = modules.get(filename, 0.0) + elapsed
             slow_tests.append({"name": name, "seconds": elapsed})
+            test_id = f"{filename}::{name.removeprefix(Path(filename).stem + '.')}"
+            test_durations[test_id] = elapsed
         args.timings_file.write_text(
-            json.dumps({"modules": modules, "tests": slow_tests}),
+            json.dumps({"modules": modules, "tests": slow_tests,
+                        "test_durations": test_durations}),
             encoding="utf-8",
         )
     return 0 if result.wasSuccessful() else 1
