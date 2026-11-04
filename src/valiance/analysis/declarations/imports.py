@@ -187,6 +187,21 @@ class _ImportDeclarations:
             ))
         return tuple(result)
 
+    def _is_redundant_imported_object(self, obj) -> bool:
+        """Identify two paths to the *same* declaration, not same-named types.
+
+        A diamond may re-export `base.Pair` through both `left.Pair` and
+        `right.Pair`. The public spelling is identical, and the recorded
+        provider origin proves they are one nominal declaration. Do not
+        register its constructors or methods twice. Two different providers
+        declaring `Pair` must still trigger the ordinary conflict diagnostic.
+        """
+        return (
+            obj.origin is not None
+            and obj.name in self._imported_object_sources
+            and self.env.context.nominal_origins.get(obj.name) == obj.origin
+        )
+
     def _validate_import_conflicts(
         self,
         resolved_spec: ImportSpec,
@@ -216,7 +231,8 @@ class _ImportDeclarations:
             previous = self._imported_object_sources.get(obj.name)
             current_pending = pending_objects.get(obj.name)
             conflict = previous or current_pending
-            if conflict is not None and conflict != source:
+            if (conflict is not None and conflict != source
+                    and not self._is_redundant_imported_object(obj)):
                 return (
                     f"conflicting imported symbol '{obj.name}': provided by "
                     f"`{conflict}` and `{source}`\n"
@@ -366,6 +382,22 @@ class _ImportDeclarations:
                         self._register_imported_object(
                             dependency_object, dependency.runtime_name,
                         )
+                        # Compiled provider metadata records canonical qualified
+                        # declarations (e.g. std.file.Encoding), while an
+                        # imported constructor's checked defaults can use the
+                        # provider-local spelling (file.Encoding). Both names
+                        # must resolve to the *same* private declaration when
+                        # checking that constructor. Never install the alias
+                        # in the consumer's public environment.
+                        canonical = dependency.node.name
+                        if len(canonical.namespace) > 1:
+                            local_name = Symbol(
+                                canonical.text, (canonical.namespace[-1],),
+                            )
+                            self._register_imported_object(
+                                replace(dependency_object, name=local_name),
+                                dependency.runtime_name,
+                            )
                     elif isinstance(dependency, TypedImportedFunctionNode):
                         self._register_imported_definition(
                             dependency.node.name, dependency,
@@ -391,6 +423,18 @@ class _ImportDeclarations:
         if not isinstance(node, ObjectNode):
             return
         if obj.name != node.name:
+            self.env.runtime_nominal_names[obj.name] = node.name
+            # The provider's qualified declaration spelling can still appear
+            # in another imported callable's checked signature. Record its
+            # nominal origin separately from the caller-visible alias so both
+            # names denote the same declaration during overload selection.
+            # Do not install a source-visible import for the provider spelling.
+            if node.name.namespace:
+                origin = getattr(obj, "origin", None)
+                if origin is not None:
+                    existing = self.env.context.nominal_origins.get(node.name)
+                    if existing is None or existing == origin:
+                        self.env.context.nominal_origins[node.name] = origin
             self._register_imported_object(replace(obj, name=node.name), runtime_name)
             # A selected native object has a source alias, but its values must
             # keep the nominal identity used by native module signatures.
@@ -406,13 +450,33 @@ class _ImportDeclarations:
                         declarations[node.name], name=obj.name,
                     )
             for overload in self.env.overloads_for(node.name):
-                self.env.define_overload(obj.name, overload)
+                # Constructor aliases are lexical names for their provider's
+                # nominal type. Preserve the caller-visible spelling in their
+                # checked result, while keeping the original runtime binding.
+                from valiance.modules_system.modules import _rename_imported_types
+                self.env.define_overload(obj.name, replace(
+                    overload,
+                    returns=_rename_imported_types(
+                        overload.returns, {node.name: obj.name},
+                    ),
+                ))
             if node.kind.text == "enum":
                 for member in node.enum_members:
                     canonical = Symbol(f"\\{member.name.text}", (*node.name.namespace, node.name.text))
                     visible = Symbol(f"\\{member.name.text}", (*obj.name.namespace, obj.name.text))
                     for overload in self.env.overloads_for(canonical):
-                        self.env.define_overload(visible, overload)
+                        # An alias is a lexical spelling of the same nominal
+                        # enum. Its member constructors must return the alias
+                        # type expected by imported constructor defaults.
+                        # The runtime binding remains the provider's canonical
+                        # member, so no new enum identity is created.
+                        from valiance.modules_system.modules import _rename_imported_types
+                        self.env.define_overload(visible, replace(
+                            overload,
+                            returns=_rename_imported_types(
+                                overload.returns, {node.name: obj.name},
+                            ),
+                        ))
                     self.env.bind_runtime_name(visible, canonical)
             return
         kind = node.kind.text

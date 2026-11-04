@@ -354,6 +354,7 @@ class _MatchAnalysis:
             case_guard_arities=tuple(
                 tuple(len(inputs) for inputs in guards) for guards in case_guard_inputs
             ),
+            runtime_nominal_names=self.env.runtime_nominal_spellings(),
         )),))
 
     def _match_value_patterns_are_self_contained(

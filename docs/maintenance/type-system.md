@@ -111,6 +111,19 @@ prelude without exposing those names to the caller. Explicit argument expression
 still use the caller's environment. `Environment.default_argument_scope` restores
 the provider environment only while analysing an omitted default, so selected
 and aliased imports work with source and persisted module interfaces alike.
+The type context also records the provider-qualified spelling of each imported
+nominal, even if the caller only selects a shorter alias. Overload arguments
+compare by declaration origin rather than textual spelling. Checked casts and
+runtime match patterns retain the analyser's alias-to-runtime-name mapping as
+part of their typed evidence, including inside nested functions; bytecode must
+never guess identity from a short name. This mapping does not make private
+provider declarations available to the importing source program.
+A diamond re-export may introduce the same selected nominal through two facades.
+If both paths have the **same canonical origin**, the analyser registers that
+object and its constructor surface once, while still importing distinct trait
+implementation evidence from the two paths. Identical visible names from
+**different canonical origins** remain a hard import conflict; matching object
+shapes and matching short names are not evidence of identity.
 Rebuilding an already checked imported object does not replay warnings from its
 method bodies; warning annotations still apply when the importer calls a method.
 

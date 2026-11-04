@@ -745,7 +745,10 @@ def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranc
             witnesses = proof
     stack = T.TypeStack((*branch.stack.items[:-1], result))
     return _core.BranchSet((branch.with_stack(stack).emit(
-        TypedCastNode(node, result, witnesses),
+        TypedCastNode(
+            node, result, witnesses,
+            self.env.runtime_nominal_spellings(),
+        ),
     ),))
 
 
@@ -1327,6 +1330,13 @@ def _import_node(
         if conflict is not None:
             self._diagnose(conflict, node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+        # Collapse diamond imports of one canonical declaration before linking
+        # constructors/methods. This leaves distinct trait implementation
+        # evidence from the second path available below.
+        objects = tuple(
+            obj for obj in objects
+            if not self._is_redundant_imported_object(obj)
+        )
         # Native helpers used from imported stdlib object bodies are not part
         # of ordinary source-level imports. Install their real overloads before
         # those bodies are analysed; source wrappers can finish in `$self` and
@@ -1348,33 +1358,56 @@ def _import_node(
         install_native_default_dependencies(self.env, definitions)
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
+        from valiance.modules_system.runtime_dependencies import (
+            provider_runtime_object, resolve_runtime_dependencies,
+        )
+        from valiance.analysis.import_runtime import with_import_runtime_name
+
+        # Discover checked executable references as well as signature-only
+        # requirements. A public helper may construct a public sibling that
+        # was not selected by the consumer; its implementation still needs a
+        # private runtime binding. This does not grant source-level visibility.
+        closure = resolve_runtime_dependencies(
+            exports, objects, definitions, trait_implementations
+        )
         provider_runtime_links = self._prelude.add_provider_declarations(
             exports.module_name,
             tuple(
-                (obj.name, obj.typed)
-                for obj in exports.objects
-                if not obj.public
+                (obj.name, provider_runtime_object(obj))
+                for obj in (*exports.objects, *closure.executable_objects)
+                if (not obj.public or obj in closure.executable_objects)
                 and isinstance(obj.typed.node, ObjectNode)
                 and obj.typed.node.kind == Symbol("object")
                 and obj.typed.node.target is None
             )
             + tuple((definition.name, definition.typed) for definition in exports.definitions),
         )
-        from valiance.analysis.import_runtime import with_import_runtime_name
-        from valiance.modules_system.runtime_dependencies import resolve_runtime_dependencies
-
-        # Resolve runtime dependencies from analysed declaration contracts,
-        # regardless of which library eventually consumes their metadata.
-        # The transitive closure remains private to runtime linkage, and is
-        # carried through public facades in the compiled interface.
-        closure = resolve_runtime_dependencies(
-            exports, objects, definitions, trait_implementations
-        )
         constructor_dependencies = exports.runtime_prelude
+        from valiance.asts.nodes import TypedImportedObjectNode
         for dependency in closure.declarations:
             origin = dependency.origin or Symbol(
                 dependency.name.text, tuple(exports.module_name.split('.'))
             )
+            # A provider may already have linked this very declaration as a
+            # private import. Reconstructing it a second time under a new
+            # nominal spelling registers duplicate methods (which can have
+            # incompatible receiver predicates). Reuse the provider's runtime
+            # prelude instead of emitting another copy of the same origin.
+            already_linked = any(
+                isinstance(prior, TypedImportedObjectNode)
+                and (
+                    prior.runtime_nominal_name == origin
+                    or any(canonical == origin
+                           for _spelling, canonical in prior.runtime_type_origins)
+                )
+                for prior in exports.runtime_prelude
+            )
+            if already_linked:
+                if not any(item.origin == origin for item in self._runtime_dependency_objects):
+                    self._runtime_dependency_objects.append(
+                        replace(dependency, origin=origin)
+                    )
+                continue
             dependency_node = dependency.typed.node
             # Enum/variant declarations already qualify themselves by their
             # lexical name; constructors require a distinct nominal identity.
@@ -1407,6 +1440,22 @@ def _import_node(
             if not any(item.origin == origin for item in self._runtime_dependency_objects):
                 self._runtime_dependency_objects.append(
                     replace(dependency, origin=origin)
+                )
+        # Publicly selected declaration types are visible at the import site,
+        # but the provider-owned scope used to check *default argument bodies*
+        # intentionally excludes the caller's imports. Retain those selected
+        # nominal declarations as private checking evidence as well. This is
+        # necessary when one selected object uses another selected enum or
+        # variant in its constructor defaults; it does not export extra names.
+        for selected in objects:
+            if (isinstance(selected.typed.node, ObjectNode)
+                    and selected.typed.node.kind in (Symbol("enum"), Symbol("variant"))):
+                selected_runtime = self._prelude.add_declaration(
+                    selected.typed, selected.name,
+                    runtime_type_origins=closure.origins_for(selected),
+                )
+                constructor_dependencies += (
+                    with_import_runtime_name(selected.typed, selected_runtime),
                 )
         # Every imported spelling of an object denotes the declaration in its
         # provider, not a fresh nominal constructor.  Keep this separate from

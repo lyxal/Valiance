@@ -8,11 +8,12 @@ not an import surface and never grants source-level visibility.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from typing import Iterable
 
 import valiance.vtypes as T
-from valiance.asts import ObjectNode, Symbol
+from valiance.asts import ASTNode, ObjectNode, Symbol
+from valiance.asts.nodes import TypedElementNode, TypedNode
 from valiance.modules_system.modules import (
     ModuleDefinition, ModuleExports, ModuleObject, ModuleTraitImplementation,
 )
@@ -24,6 +25,7 @@ class RuntimeDependencyClosure:
     """Required declarations and their canonical identities for one import."""
 
     declarations: tuple[ModuleObject, ...]
+    executable_objects: tuple[ModuleObject, ...]
     origins: tuple[tuple[Symbol, Symbol], ...]
 
     def origins_for(self, declaration: ModuleObject) -> tuple[tuple[Symbol, Symbol], ...]:
@@ -37,6 +39,30 @@ class RuntimeDependencyClosure:
             (spelling, canonical) for spelling, canonical in self.origins
             if canonical.namespace == origin.namespace
         )
+
+
+
+def provider_runtime_object(declaration: ModuleObject) -> TypedNode:
+    """Include owned implementation methods in the private executable surface.
+
+    A module's object declaration and its ``object X as Trait`` blocks are
+    analysed separately. The public type surface stays unchanged, but a
+    provider's imported callable still needs the checked method bodies when
+    it dispatches on a private receiver. The module interface already carries
+    their checked identities in ``declaration.typed``; preserve the matching
+    source definitions for code generation without exposing an import name.
+    """
+    typed = declaration.typed
+    node = typed.node
+    if (not isinstance(node, ObjectNode)
+            or node.kind != Symbol("object")
+            or node.target is not None
+            or not declaration.friendly_definitions
+            or node.definitions == declaration.friendly_definitions):
+        return typed
+    return replace(typed, node=replace(
+        node, definitions=declaration.friendly_definitions,
+    ))
 
 
 def _identity(declaration: ModuleObject, module_name: str) -> Symbol:
@@ -97,6 +123,77 @@ def _references(types: Iterable[T.Type]) -> Iterable[Symbol]:
         for part in nested_types(typ):
             if isinstance(part, T.NominalType):
                 yield part.name
+
+
+
+def _checked_calls(value: object) -> Iterable[Symbol]:
+    """Find direct lexical calls in checked executable bodies, not source text.
+
+    Imported calls that already carry a different runtime binding are not
+    provider-local references. Only their original provider may link them.
+    """
+    visited: set[int] = set()
+
+    def visit(item: object) -> Iterable[Symbol]:
+        if isinstance(item, TypedElementNode):
+            name = item.node.name
+            if item.runtime_name in (None, name):
+                yield name
+        if isinstance(item, (ASTNode, T.Type, str, bytes)):
+            return
+        if isinstance(item, (tuple, list, frozenset)):
+            for child in item:
+                yield from visit(child)
+        elif isinstance(item, dict):
+            for child in item.values():
+                yield from visit(child)
+        elif is_dataclass(item):
+            identity = id(item)
+            if identity in visited:
+                return
+            visited.add(identity)
+            for field in fields(item):
+                if field.name in ("node", "typ", "overload", "dispatch_plan"):
+                    continue
+                yield from visit(getattr(item, field.name))
+
+    yield from visit(value)
+
+
+def _executable_object_dependencies(
+    exports: ModuleExports,
+) -> tuple[ModuleObject, ...]:
+    """Find provider-owned constructors referenced by checked executable bodies.
+
+    The provider prelude is cached once per module, even when its declarations
+    are selected in separate import clauses. Compute its lexical dependencies
+    from the *whole provider interface*, not the currently selected exports,
+    so import order cannot change which hidden bindings get linked.
+    """
+    provider = tuple(exports.module_name.split("."))
+    local_objects = {
+        obj.name: obj for obj in exports.objects
+        if isinstance(obj.typed.node, ObjectNode)
+        and obj.typed.node.kind == Symbol("object")
+        and obj.typed.node.target is None
+        and _identity(obj, exports.module_name).namespace == provider
+    }
+    pending: list[object] = [
+        *(definition.typed for definition in exports.definitions),
+        *(obj.typed for obj in exports.objects),
+        *(implementation.method_bodies for implementation in exports.trait_implementations),
+    ]
+    required: dict[Symbol, ModuleObject] = {}
+    while pending:
+        for name in _checked_calls(pending.pop()):
+            obj = local_objects.get(name)
+            if obj is None:
+                continue
+            origin = _identity(obj, exports.module_name)
+            if origin not in required:
+                required[origin] = obj
+                pending.append(obj.typed)
+    return tuple(required.values())
 
 
 def resolve_runtime_dependencies(
@@ -211,4 +308,5 @@ def resolve_runtime_dependencies(
             pair = (declaration.name, identity)
             if pair not in origins:
                 origins.append(pair)
-    return RuntimeDependencyClosure(tuple(required), tuple(origins))
+    executable = _executable_object_dependencies(exports)
+    return RuntimeDependencyClosure(tuple(required), executable, tuple(origins))

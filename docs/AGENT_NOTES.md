@@ -1,3 +1,16 @@
+# Canonical diamond imports and trait evidence
+
+A public diamond can re-export the *same* object declaration under the same
+visible name via two facades while each facade contributes different trait
+implementations. Compare `ModuleObject.origin` with
+`Environment.context.nominal_origins`, not intermediary facade paths: the
+nominal constructor/method surface must be registered only once, but the
+second path's trait implementation evidence must still be linked. Do not
+permit same-short-name types from different providers to unify. Check
+`test_diamond_reexports_same_generic_nominal_with_split_trait_evidence` and
+the negative cross-provider diamond regression in
+`test_multimodule_generic_trait_executable_closure.py`.
+
 # Trait implication dispatch and generic bound evidence
 
 Multiple imported `trait[T: Bound] Source as Target[T]` implementations may
@@ -341,3 +354,46 @@ public overload makes valid alias calls fail static resolution. Never merge
 nominal identities based only on unqualified names: two packages may both
 export a different `Item`. The package-alias regression is in
 `tests/test_multimodule_boundary_hardening.py`.
+
+## Provider-private trait implementation methods
+
+When debugging `undefined name '<method>'` for a public helper that constructs
+and invokes traits on a private object, check the runtime prelude's **method
+source definitions** as well as `TypedObjectNode.method_bodies`. Implementations
+are checked in separate `object X as Trait` blocks; their checked metadata may
+already be present on the exported object, but code generation still needs the
+corresponding `friendly_definitions` to emit runtime method bindings. Use the
+module-neutral `provider_runtime_object` projection, not a library-specific
+import hook. Runtime multimethod overloads must preserve canonical receiver
+dispatch evidence; otherwise identical short names from different providers
+collide. See the multi-provider regressions in
+`tests/test_multimodule_alias_identity_repairs.py`.
+
+An imported public helper can construct a public sibling without the consumer
+selecting that constructor. `resolve_runtime_dependencies` collects checked
+executable constructor calls from the entire provider interface (not one import
+clause), because `_AnalysisPrelude.add_provider_declarations` memoizes the
+provider's hidden bindings across repeated imports. The retained public object
+must be **provider-qualified in the private prelude** just like a private
+object, otherwise two modules' identically named constructors can collide
+at destructor or trait dispatch. None of this grants the constructor a visible
+source import. The source, compiled, facade, alias, and two-provider regressions
+are in `tests/test_multimodule_known_failures.py`.
+
+## Imported nominal spelling in checked casts and default arguments
+
+A selected object can be exposed as `Path` or `Location` while another imported
+signature still refers to its provider-local `path.Path`. Recording only the
+selected alias in `Context.nominal_origins` makes otherwise valid calls fail
+with `no overloads`; register the provider-qualified spelling as a *relation
+fact* without making it a public source import. The private scope for omitted
+constructor defaults must also retain provider-local enum member expressions.
+
+Runtime match patterns are different: their bytecode type evidence must use the
+actual runtime nominal spelling (`path.Path`), not the source alias (`Location`)
+and not necessarily the full compiled-provider identity (`std.path.Path`).
+`TypedMatchNode` and `TypedCastNode` carry the analyser's lexical alias map to
+runtime lowering. Do not fix this by accepting all matching short names in the
+VM: independent providers can define indistinguishable-looking `Item` types.
+Run `tests.test_std_file_integration` and the alias identity module tests after
+changes to import scopes, pattern lowering or nominal overload matching.

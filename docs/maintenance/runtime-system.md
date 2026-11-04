@@ -289,6 +289,32 @@ The imported function's checked implementation identity remains unchanged when
 its private calls are retargeted, so runtime linking still verifies the chosen
 overload. Keep this path covered with both optimized and serialized execution.
 
+Executable provider dependencies are discovered from **checked call bodies** as
+well as type signatures. A public `fetch` function that internally constructs a
+public `Box` still needs the `Box` constructor when a consumer selects only
+`fetch`. The module-level executable closure includes locally referenced
+constructors, without making them source imports. It is derived from the whole
+analysed provider interface, not from a single import clause, because a module's
+hidden runtime bindings are shared across repeated/selective imports. Provider
+object instances use qualified nominal identities in that private prelude,
+including when their declarations are public: `alpha.Box` and `beta.Box` must
+not share methods, destructor dispatch, or generic instantiations. This is
+independent of type-only dependencies, which remain available to runtime
+reflection and reconstruction without requiring all implementations.
+
+Provider-private objects also carry *owned trait implementation methods* in
+module interfaces. Those methods are analysed on separate `object X as Trait`
+blocks, so a private object declaration's raw `definitions` alone is not a
+complete executable implementation. `provider_runtime_object` restores its
+checked friendly methods before importing it into the private runtime prelude;
+no source-level import permission is granted. Runtime code generation records
+the declaration's nominal receiver in each object-friendly method's compiled
+dispatch signature. In particular, `alpha.Box` and `beta.Box` must select
+different `size` implementations even if both are private, have identical
+structural fields and are only reachable via public callables. Ordinary traits,
+variants and generic return types remain independent of a library-specific
+linker path. See `tests/test_multimodule_alias_identity_repairs.py`.
+
 A public re-export must retain the checked body's links to its **original**
 provider-private runtime declarations, even after several facade modules rename
 or re-export that function. The facade's lexical declarations are not a
@@ -593,7 +619,11 @@ checked contract. See **Trait value witnesses (0x33)** for the representation.
 
 `DispatchKind.NOMINAL_TRAIT` dispatch uses each method's compiled
 `dispatch_types` and `dispatch_bounds`. The latter stores the receiver position,
-its nominal source trait, and generic bound templates. When a concrete object
+its nominal source trait, and generic bound templates. The compiler retains method-owner type variables (such as the `T` in
+`Box[T]`) in each checked method's generic parameter set. The runtime binds
+them consistently to concrete receiver type arguments; it never treats `T`
+as a concrete class name or matches a trait using an unrelated provider's
+short-name alias. When a concrete object
 is passed, the VM projects it through its declared generic supertypes, checks
 the bounds on the *instantiated trait arguments*, and admits only matching
 implementations. It rejects absent or inconsistent projections and reports

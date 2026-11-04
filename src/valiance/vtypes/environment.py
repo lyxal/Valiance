@@ -272,6 +272,10 @@ class Environment:
     tag_validator_static_results: dict[Symbol, dict[str, bool]] = field(
         default_factory=dict[Symbol, dict[str, bool]]
     )
+    # Source aliases for nominal declarations retain their provider's runtime
+    # spelling for checked casts and patterns.  These are lexical facts, not
+    # additional public imports or permission to resolve a private name.
+    runtime_nominal_names: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     runtime_names: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     overload_runtime_names: dict[tuple[Symbol, Overload], Symbol] = field(
         default_factory=dict[tuple[Symbol, Overload], Symbol]
@@ -307,6 +311,23 @@ class Environment:
     def lexical_child_scope(self) -> Environment:
         """Return a child frame whose declarations and relation facts are local."""
         return Environment(context=self.context.copy(), parent=self, reflection_universe=self.reflection_universe)
+
+    def runtime_nominal_spelling(self, name: Symbol) -> Symbol:
+        """Resolve a visible alias to the runtime name of its declaration."""
+        if name in self.runtime_nominal_names:
+            return self.runtime_nominal_names[name]
+        if self.parent is not None:
+            return self.parent.runtime_nominal_spelling(name)
+        return name
+
+    def runtime_nominal_spellings(self) -> tuple[tuple[Symbol, Symbol], ...]:
+        """Snapshot visible nominal aliases for a checked runtime operation."""
+        inherited = (
+            dict(self.parent.runtime_nominal_spellings())
+            if self.parent is not None else {}
+        )
+        inherited.update(self.runtime_nominal_names)
+        return tuple(sorted(inherited.items(), key=lambda item: item[0].dotted()))
 
     def bind_runtime_name(
         self,

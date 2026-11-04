@@ -275,7 +275,6 @@ class _AnalysisPrelude:
                     if isinstance(object_node, ObjectNode)
                     and object_node.kind == Symbol("object")
                     and object_node.target is None
-                    and object_node.visibility != Symbol("public")
                     else None
                 )
                 self.nodes.append(with_import_runtime_name(

@@ -1054,6 +1054,10 @@ class _Compiler:
             case ElementTagDeclarationNode() | TagOverlayNode():
                 pass
             case CastNode(typ, checked, optional):
+                if isinstance(typed_node, TypedCastNode):
+                    typ = _runtime_nominal_type(
+                        typ, dict(typed_node.runtime_nominal_names),
+                    )
                 if optional:
                     proof = (
                         typed_node.structural_witnesses
@@ -1613,8 +1617,17 @@ class _Compiler:
             signature_types=signature_types,
             result_signature_types=result_signature_types,
             implementation_id=implementation_id,
-            generic_type_parameters=tuple(generic.text for generic in definition.generics),
+            generic_type_parameters=tuple(dict.fromkeys((
+                *owner_generics, *(generic.text for generic in definition.generics)
+            ))),
         )
+        if isinstance(code, FunctionCode) and owner_generics:
+            # Imported checked implementations may take the typed-overload
+            # compilation path, which does not carry the source owner's type
+            # variables into the function code. Dispatch still needs them.
+            code = replace(code, generic_type_parameters=tuple(dict.fromkeys((
+                *owner_generics, *code.generic_type_parameters,
+            ))))
         # Destructors are private lifecycle hooks. They have one qualified
         # runtime binding (Type::~Type), not an ordinary unqualified multimethod
         # binding. An unqualified `~Type` collides when an alias/facade imports
@@ -1625,11 +1638,14 @@ class _Compiler:
                 replace(
                     code,
                     multi=True,
-                    dispatch_types=(
-                        tuple(owner if index == receiver_index else None
-                              for index in range(len(function.params)))
-                        if variant_dispatch
-                        else ()
+                    # Object-friendly methods select their nominal receiver
+                    # at runtime, even when the same method name is supplied
+                    # by multiple imported private providers. Keeping the
+                    # checked short spelling here would merge unrelated
+                    # provider implementations into one dispatch slot.
+                    dispatch_types=tuple(
+                        receiver if index == receiver_index else None
+                        for index in range(len(function.params))
                     ),
                     dispatch_bounds=dispatch_bounds,
                 ),
@@ -1641,8 +1657,14 @@ class _Compiler:
             signature_types=signature_types,
             result_signature_types=result_signature_types,
             implementation_id=implementation_id,
-            generic_type_parameters=tuple(generic.text for generic in definition.generics),
+            generic_type_parameters=tuple(dict.fromkeys((
+                *owner_generics, *(generic.text for generic in definition.generics)
+            ))),
         )
+        if isinstance(qualified_code, FunctionCode) and owner_generics:
+            qualified_code = replace(qualified_code, generic_type_parameters=tuple(dict.fromkeys((
+                *owner_generics, *qualified_code.generic_type_parameters,
+            ))))
         if is_destructor and isinstance(qualified_code, FunctionCode):
             # Imported checked method bodies retain their provider's original
             # receiver spelling. The compiled runtime constructor, however,
@@ -1923,7 +1945,13 @@ class _Compiler:
             compiled_patterns = tuple(
                 ("catch_all",)
                 if catch_all and isinstance(pattern, WildcardPatternNode)
-                else _compile_match_pattern(pattern, guard_blocks, guard_arities)
+                else _compile_match_pattern(
+                    pattern, guard_blocks, guard_arities,
+                    runtime_nominals=(
+                        dict(typed_node.runtime_nominal_names)
+                        if isinstance(typed_node, TypedMatchNode) else {}
+                    ),
+                )
                 for pattern in case.patterns
             )
             if guard_blocks is not None:
@@ -3607,8 +3635,10 @@ def _compile_match_pattern(
     *,
     extracting: bool = False,
     root: bool = False,
+    runtime_nominals: dict[Symbol, Symbol] | None = None,
 ) -> object:
     """Compile one pattern, consuming analysed guards in traversal order."""
+    runtime_nominals = runtime_nominals or {}
     match pattern:
         case ExtractPatternNode(inner):
             return (
@@ -3619,6 +3649,7 @@ def _compile_match_pattern(
                     guard_arities,
                     extracting=True,
                     root=True,
+                    runtime_nominals=runtime_nominals,
                 ),
             )
         case LiteralPatternNode(value):
@@ -3647,13 +3678,13 @@ def _compile_match_pattern(
             return (
                 "bind",
                 name.text,
-                _compile_match_pattern(inner, typed_guards, guard_arities, extracting=False, root=False),
+                _compile_match_pattern(inner, typed_guards, guard_arities, extracting=False, root=False, runtime_nominals=runtime_nominals),
             )
         case OrPatternNode(options):
             return (
                 "or",
                 tuple(
-                    _compile_match_pattern(option, typed_guards, guard_arities, extracting=extracting, root=root)
+                    _compile_match_pattern(option, typed_guards, guard_arities, extracting=extracting, root=root, runtime_nominals=runtime_nominals)
                     for option in options
                 ),
             )
@@ -3661,7 +3692,7 @@ def _compile_match_pattern(
             return (
                 "list",
                 tuple(
-                    _compile_match_pattern(item, typed_guards, guard_arities, extracting=extracting, root=False)
+                    _compile_match_pattern(item, typed_guards, guard_arities, extracting=extracting, root=False, runtime_nominals=runtime_nominals)
                     for item in items
                 ),
             )
@@ -3673,10 +3704,10 @@ def _compile_match_pattern(
                 )
             return (
                 "type",
-                None if typ is None else _cast_type_spec(typ),
+                None if typ is None else _cast_type_spec(_runtime_nominal_type(typ, runtime_nominals)),
                 None if name is None else name.text,
                 tuple(
-                    _compile_match_pattern(field, typed_guards, guard_arities, extracting=extracting, root=False)
+                    _compile_match_pattern(field, typed_guards, guard_arities, extracting=extracting, root=False, runtime_nominals=runtime_nominals)
                     for field in fields
                 ),
                 compiled_guard,
@@ -3767,6 +3798,31 @@ def _runtime_tag_contract_spec(typ: Type) -> object:
     if isinstance(typ, (NoVecType, ExactType)):
         return _runtime_tag_contract_spec(typ.inner)
     return ("any",)
+
+
+def _runtime_nominal_type(typ: Type, aliases: dict[Symbol, Symbol]) -> Type:
+    """Resolve checked source aliases for runtime type evidence.
+
+    The analyser records the exact alias-to-provider binding at the use site,
+    including inside nested functions. Runtime casts and patterns must not
+    perform loose short-name matching across unrelated providers.
+    """
+    if not aliases:
+        return typ
+    if isinstance(typ, NominalType) and not isinstance(typ, FFINamedType):
+        resolved = aliases.get(typ.name)
+        if resolved is not None:
+            typ = replace(typ, name=resolved)
+    if is_dataclass(typ):
+        return replace(typ, **{
+            field.name: _runtime_nominal_type(getattr(typ, field.name), aliases)
+            for field in fields(typ) if field.init
+        })
+    if isinstance(typ, tuple):
+        return tuple(_runtime_nominal_type(item, aliases) for item in typ)
+    if isinstance(typ, frozenset):
+        return frozenset(_runtime_nominal_type(item, aliases) for item in typ)
+    return typ
 
 
 def _cast_type_spec(typ: Type) -> object:

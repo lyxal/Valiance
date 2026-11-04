@@ -86,6 +86,20 @@ value updates, and bytecode-link freshness.
     through public facades. Aliasing two unrelated `Item` declarations never
     makes their identities equal.
 
+The cross-module identity suite additionally tests private trait implementations
+used by exported functions, through deep facades, generic return types,
+exception paths, source-free modules, mixed dependency layouts and independent
+providers declaring identically named receivers. It also checks private variant
+payloads remain usable at runtime without becoming publicly importable.
+
+Provider executable closure tests verify that an imported public helper can
+construct an *unselected public* sibling object without a runtime undefined-name
+fault. The constructor is linked through checked provider calls, not exported
+into the consumer's namespace. The same module can be imported in separate
+clauses or through aliases and compiled facades. Independent providers with
+identically named constructors must keep separate runtime destructor bindings.
+See `tests/test_multimodule_known_failures.py`.
+
 ## Commands
 
 From the repository root, with Python 3.14 or newer:
@@ -196,14 +210,11 @@ binary-layout coverage, not new semantic contract families. In particular,
 they do not reduce the unimplemented 1,265-pair backlog merely by counting
 additional executions.
 
-`tests/test_multimodule_known_failures.py` keeps imported generic-reflection
-calls through a renamed facade and runtime destructor dispatch through a
-renamed object as explicit expected failures (each in source and compiled-only
-layouts). The generic reflection alias currently fails *during static overload
-resolution*, before its bytecode reflection path is reached. Expected failures
-are not passing behavior, and fixing only the runtime cast would not resolve
-that analyser-level issue. Do not loosen nominal matching to short names:
-unrelated provider types with identical structure must remain distinct.
+`tests/test_multimodule_known_failures.py` retains permanent, ordinary
+regressions for imported generic reflection, aliased destructor dispatch, and
+unselected executable constructors. Source and compiled-only layouts must pass
+rather than report expected failures. Do not loosen nominal matching to short
+names: unrelated provider types with identical structure must remain distinct.
 
 Run this focused suite with:
 

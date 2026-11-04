@@ -94,6 +94,7 @@ class TypedCastNode(TypedNode):
     structural_witnesses: tuple[
         tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
     ] = ()
+    runtime_nominal_names: tuple[tuple[Symbol, Symbol], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +227,7 @@ class TypedMatchNode(TypedNode):
     ] = ()
     case_pattern_arities: tuple[tuple[int, ...], ...] = ()
     case_guard_arities: tuple[tuple[int, ...], ...] = ()
+    runtime_nominal_names: tuple[tuple[Symbol, Symbol], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

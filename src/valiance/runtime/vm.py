@@ -7369,6 +7369,74 @@ def _function_overloads(
     return value.overloads
 
 
+def _matches_declared_generic_dispatch(
+    args: tuple[Any, ...],
+    overload: FunctionValue,
+) -> bool:
+    """Match a checked generic method's receiver pattern with consistent bindings.
+
+    A declared ``Box[T]`` implementation accepts the concrete ``Box[Int]``
+    receiver, but never ``other.Box[Int]`` or inconsistent occurrences of T.
+    Type variables come from the *compiled declaration*, not guessed from a
+    capitalized short name in a runtime type string.
+    """
+    generic_vars = frozenset(overload.code.generic_type_parameters)
+    declared = overload.code.dispatch_types
+    if not generic_vars or len(declared) != len(args):
+        return False
+    bindings: dict[str, str] = {}
+
+    def match(expected: RuntimeTypePattern, actual: RuntimeTypePattern) -> bool:
+        if (expected.kind == "nominal" and not expected.children
+                and expected.name in generic_vars):
+            rendered = _render_structural_type(actual)
+            previous = bindings.setdefault(expected.name, rendered)
+            return previous == rendered
+        if (expected.kind != "nominal" or actual.kind != "nominal"
+                or expected.name != actual.name
+                or len(expected.children) != len(actual.children)):
+            return False
+        return all(
+            match(expected_child, actual_child)
+            for expected_child, actual_child in zip(
+                expected.children, actual.children, strict=True,
+            )
+        )
+
+    for value, expected in zip(args, declared, strict=True):
+        if expected is None:
+            continue
+        name = _runtime_type_name(value)
+        if name is None:
+            return False
+        unwrapped = unwrap_runtime_value(value)
+        facts = (unwrapped.runtime_type.type_facts
+                 if isinstance(unwrapped, ObjectValue)
+                 and unwrapped.runtime_type is not None else ())
+        expected_pattern = _parse_runtime_type_pattern(expected, facts)
+        actual_pattern = _parse_runtime_type_pattern(name, facts)
+        if (isinstance(unwrapped, ObjectValue)
+                and expected_pattern.kind == "nominal"
+                and actual_pattern.kind == "nominal"
+                and actual_pattern.name != expected_pattern.name):
+            # An implementation of Source[T] may receive a Box[Int] when
+            # checked type facts prove Box[Int] implements Source[Int]. Use
+            # only that provider-supplied projection; never accept a name
+            # resemblance or discard the actual generic parameters.
+            projection = _runtime_project_nominal_args(
+                unwrapped, expected_pattern.name, facts,
+            )
+            if projection is not None:
+                projected = (
+                    f"{expected_pattern.name}[{', '.join(projection)}]"
+                    if projection else expected_pattern.name
+                )
+                actual_pattern = _parse_runtime_type_pattern(projected, facts)
+        if not match(expected_pattern, actual_pattern):
+            return False
+    return True
+
+
 def _select_declared_dispatch_overload(
     value: OverloadedFunctionValue,
     args: tuple[Any, ...],
@@ -7395,6 +7463,13 @@ def _select_declared_dispatch_overload(
                 expected is None or _runtime_argument_type_matches(argument, expected, constraints=True)
                 for argument, expected in zip(args, overload.code.dispatch_types, strict=True)
             )
+            and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
+        )
+    if not matches and nominal_trait:
+        matches = tuple(
+            overload for overload in value.overloads
+            if len(overload.code.params) == len(args)
+            and _matches_declared_generic_dispatch(args, overload)
             and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
         )
     if not matches:
