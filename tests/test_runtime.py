@@ -45,6 +45,8 @@ from valiance.runtime.vm import (
     _retain_runtime_reference,
     _run_object_cleanup,
     _set_field,
+    _store_value,
+    _runtime_argument_type_matches,
     _truthy,
 )
 from valiance.runtime.runtime_values import (
@@ -5551,6 +5553,46 @@ through Foo
                 self.assertEqual(list(result[0]), ["integer", "string"])
                 task = vm.scheduler.root_scope.spawn(lambda: vm._task_call_runner(value, (RuntimeNumber(1),), None))
                 self.assertEqual(vm.scheduler.wait(task), ("integer",))
+
+    def test_reimported_method_receivers_share_one_checked_implementation(self):
+        """Provider and consumer spellings must both match one method ID."""
+        code = FunctionCode(
+            (Instruction(OpCode.PUSH_CONST, "found"), Instruction(OpCode.RETURN)),
+            params=("self",), name="read", multi=True,
+            dispatch_types=("Item",), signature_types=("Item",),
+            implementation_id="test:shared-read", return_count=1,
+        )
+        for first, second in (("Item", "core.Item"), ("core.Item", "Item")):
+            with self.subTest(first=first):
+                visible = FunctionValue(replace(code, dispatch_types=(first,)), {})
+                provider = FunctionValue(replace(code, dispatch_types=(second,)), {})
+                with VirtualMachine() as vm:
+                    result = _store_value(visible, provider, vm)
+                    self.assertIsInstance(result, OverloadedFunctionValue)
+                    self.assertEqual(len(result.overloads), 1)
+                    self.assertIs(result.overloads[0], visible)
+                    compiled = result.overloads[0].code
+                    self.assertEqual(compiled.implementation_id, "test:shared-read")
+                    for name in ("Item", "core.Item"):
+                        self.assertTrue(_runtime_argument_type_matches(
+                            ObjectValue(name, {}), compiled.dispatch_types[0]
+                        ))
+                    self.assertFalse(_runtime_argument_type_matches(
+                        ObjectValue("other.Item", {}), compiled.dispatch_types[0]
+                    ))
+
+    def test_reimported_method_does_not_widen_multiple_receiver_positions(self):
+        """Distinct multi-argument dispatch contracts must not form a product."""
+        code = FunctionCode(
+            (Instruction(OpCode.RETURN),), params=("first", "second"),
+            name="merge", multi=True, dispatch_types=("A", "B"),
+            implementation_id="test:two-receivers", return_count=0,
+        )
+        first = FunctionValue(code, {})
+        second = FunctionValue(replace(code, dispatch_types=("C", "D")), {})
+        with VirtualMachine() as vm:
+            with self.assertRaisesRegex(RuntimeError, "conflicting dispatch predicates"):
+                _store_value(first, second, vm)
 
     def test_positional_callable_selectors_are_rejected(self):
         function = FunctionValue(FunctionCode(

@@ -80,6 +80,31 @@ class AliasedNominalRepairs(unittest.TestCase):
                     )
                     self.assertEqual(actual, [[2, 3]] * 4)
 
+    def test_public_method_works_with_private_and_visible_provider_imports(self):
+        """One method body is shared across consumer and provider runtime names."""
+        modules = {
+            "core": (
+                "public object Item =>\n"
+                " public $value:Int\n"
+                " public define read -> Int => $self.value end\n"
+                "end\n"
+            ),
+            "logic": (
+                "import {core.Item}\n"
+                "public define \\readInternal -> Int => Item(8) read end\n"
+            ),
+        }
+        for layout in ("source", "compiled", frozenset({"core"})):
+            with self.subTest(layout=layout):
+                values = project_runner.ReconstructedMultiModuleRepairs.run_project(
+                    modules,
+                    "import {core.Item,logic.\\readInternal}\n"
+                    "Item(4) read\n"
+                    "\\readInternal\n",
+                    layout,
+                )
+                self.assertEqual(values, [[4, 8]] * 4)
+
     def test_private_destructor_survives_repeated_facade_renames_once(self):
         (_features, provider, _names, dependent, _dependent_names,
          _consumer, _values, _stdout) = IMPORTED_DESTRUCTOR_REGRESSIONS[

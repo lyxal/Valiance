@@ -302,6 +302,13 @@ not share methods, destructor dispatch, or generic instantiations. This is
 independent of type-only dependencies, which remain available to runtime
 reflection and reconstruction without requiring all implementations.
 
+A single object-friendly implementation may be loaded with the consumer's
+nominal spelling (`Item`) and with its provider-private runtime spelling
+(`core.Item`). The VM merges equal checked implementation identities into one
+callable, retaining both exact receiver predicates. It must not drop one spelling
+or use short-name matching: the implementation ID establishes declaration
+identity, while its dispatch predicate still protects distinct providers.
+
 Provider-private objects also carry *owned trait implementation methods* in
 module interfaces. Those methods are analysed on separate `object X as Trait`
 blocks, so a private object declaration's raw `definitions` alone is not a

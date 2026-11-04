@@ -6421,8 +6421,41 @@ def _store_value(existing: Any, value: Any, vm: VirtualMachine) -> Any:
                     merged[merged.index(previous)] = selected
                     identities[identity] = selected
                     continue
-                if previous.code.dispatch_types and overload.code.dispatch_types and previous.code.dispatch_types != overload.code.dispatch_types:
-                    raise RuntimeError(f"conflicting dispatch predicates for {identity!r}")
+                if (
+                    previous.code.dispatch_types and overload.code.dispatch_types
+                    and previous.code.dispatch_types != overload.code.dispatch_types
+                ):
+                    # The same checked implementation can be imported under
+                    # both the consumer's nominal spelling and its provider's
+                    # qualified spelling. They have identical bytecode, but
+                    # each runtime constructor can produce its own spelling.
+                    # Retain both predicates on the single implementation so
+                    # checked calls remain unambiguous by implementation ID.
+                    differing = [
+                        index for index, (left, right) in enumerate(zip(
+                            previous.code.dispatch_types, overload.code.dispatch_types,
+                            strict=True,
+                        )) if left != right
+                    ]
+                    if not previous.code.multi or len(differing) != 1:
+                        raise RuntimeError(f"conflicting dispatch predicates for {identity!r}")
+                    index = differing[0]
+                    left = previous.code.dispatch_types[index]
+                    right = overload.code.dispatch_types[index]
+                    if left is None or right is None:
+                        raise RuntimeError(f"conflicting dispatch predicates for {identity!r}")
+                    variants = tuple(sorted(set((
+                        *_split_runtime_type_args(left, "|"),
+                        *_split_runtime_type_args(right, "|"),
+                    ))))
+                    predicates = list(previous.code.dispatch_types)
+                    predicates[index] = " | ".join(variants)
+                    # Preserve the closure's ownership and captured globals;
+                    # cloning a FunctionValue would create an untracked owner.
+                    previous.code = replace(
+                        previous.code, dispatch_types=tuple(predicates),
+                    )
+                    continue
                 selected = overload if overload.code.dispatch_types or not previous.code.dispatch_types else previous
                 merged[merged.index(previous)] = selected
                 identities[identity] = selected
@@ -8051,6 +8084,15 @@ def _runtime_multimethod_types_match(
 def _runtime_argument_type_matches(value: Any, expected: str, *, constraints: bool = False) -> bool:
     """Return the Boolean result of runtime argument type matches during virtual-machine execution."""
     value = unwrap_runtime_value(value)
+    # A checked implementation linked through more than one import path can
+    # have several exact runtime receiver spellings. The alternatives are
+    # represented as one union dispatch predicate, not duplicate overload IDs.
+    alternatives = _split_runtime_type_args(expected, "|")
+    if len(alternatives) > 1:
+        return any(
+            _runtime_argument_type_matches(value, alternative, constraints=constraints)
+            for alternative in alternatives
+        )
     if isinstance(value, ObjectValue) and value.type_name == expected:
         return True
     if constraints:
