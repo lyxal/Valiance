@@ -2173,6 +2173,9 @@ vectorisation adapts any prepared strategy to this interface, including
 constant, identity, resolved-builtin, straight-line, direct-leaf, and general
 plans. The vector walker therefore depends on a stable arity/multiplicity kernel
 rather than on the kind or spelling of the function being vectorised.
+Direct-leaf and general VM kernels borrow vector-owned inputs for each scalar
+invocation and materialize returned accesses. Scalar-frame cleanup must preserve
+collection elements and broadcast arguments needed by subsequent invocations.
 
 Lazy pipelines now support a generic `PipelineTerminal` state machine with
 initial, consume, early-stop, and finish operations. Existing reducing terminals

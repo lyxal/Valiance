@@ -9125,7 +9125,7 @@ def _vectorize_function(
         _function_return_multiplicity(callee.code),
     )
     kernel = ScalarKernel.from_prepared(prepared)
-    if prepared.strategy == "general":
+    if prepared.strategy in {"general", "direct-leaf"}:
         scalar = kernel
 
         def invoke_borrowed(item_args: tuple[Any, ...]) -> tuple[Any, ...]:
