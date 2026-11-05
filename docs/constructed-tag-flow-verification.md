@@ -86,9 +86,7 @@ The unit and integration suite exercises:
 - disjoint constructed tags using left-to-right input order;
 - recursive runtime tag canonicalization.
 
-The data-tag fuzzer now cycles through all 32 modes. Earlier, its modulus was
-20, which accidentally left the newer constructed-flow modes unreachable. Its
-randomized constructed-flow modes generate arbitrary safe tag names, arities up
+The data-tag fuzzer's randomized constructed-flow modes generate arbitrary safe tag names, arities up
 to 12, random tagged argument positions, multiple returns, optimized programs,
 and bytecode round trips.
 
@@ -108,6 +106,3 @@ PYTHONPATH=src python -m tools.fuzz --target serialization --seed 2246822519 --i
 PYTHONPATH=src python -m tools.fuzz --target type-relations --seed 2654435761 --iterations 3000 --max-depth 3
 PYTHONPATH=src python -m tools.fuzz --target malformed-bytecode --seed 362436069 --iterations 2000 --max-depth 3
 ```
-
-Verified result: 985 tests and 326 subtests passed, plus 14,000 deterministic
-fuzz cases across the four listed targets.

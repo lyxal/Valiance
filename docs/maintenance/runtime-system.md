@@ -331,6 +331,36 @@ runtime prelude through source-free `.vbcm` dependencies. Importing two provider
 that independently declare `Secret[T]` must not let either constructor resolve
 against the other's private binding.
 
+### Nominal aliases and persisted interfaces
+
+Re-exporting or renaming an object preserves its original provider identity.
+Callable signatures retain the origins of their nominal spellings, including
+generic arguments. A generic body rechecked at a consumer's call site must use
+the same aliases as its signature so reflection descriptors and receiver types
+agree. Equal short names or structural fields never establish nominal equality.
+
+Destructors remain private lifecycle hooks. Facade imports compile them against
+their actual receiver binding and deduplicate repeated imports by source
+declaration identity, preferring checked implementations over equivalent
+source-form replays.
+
+`ModuleDefinition.private_nominals` carries all relevant imported nominal
+origins, including public types. Its semantic interface hash includes that map,
+so an origin-only change invalidates consumers even if printed signatures are
+unchanged. Cache compatibility follows `COMPILER_ABI` and `INTERFACE_ABI` in
+`runtime/compiled_module.py`; incompatible dependency artifacts need rebuilding.
+
+Runtime `ObjectValue.type_name` may still reflect an imported spelling. A fully
+canonical identity across VM values and instructions remains broader work;
+the amount of provider qualification exposed in user-visible reflection is an
+open design question. Keep identity separate from diagnostic display spelling.
+
+Cover facade chains in source, compiled-only and mixed layouts, optimized and
+unoptimized execution, serialization, destructor counts, distinct providers,
+negative overload selection and origin-sensitive cache keys. See
+`tests/test_multimodule_alias_identity_repairs.py` and
+`tests/test_multimodule_known_failures.py` for executable regressions.
+
 ### `stdlib_native.py`: Python-backed imported functions
 
 Native standard-library functions use the same runtime implementation shape as

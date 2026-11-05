@@ -89,10 +89,9 @@ For terminal editor changes, start with the affected methods/classes in
 `tests.test_docstring_coverage` when production modules/functions change. Use
 `$env:UV_CACHE_DIR="$PWD\.uv-cache"` on Windows. Pilot tests validate delivered
 keys, layout and process boundaries; pair them with physical terminal review for
-actual modified-key/mouse/clipboard delivery. The historical baseline and native
-DLL-loading limitations are recorded in the
-[feasibility report](terminal-editor-feasibility.md) and
-[stage validation](terminal-editor-implementation-plan.md).
+actual modified-key/mouse/clipboard delivery. See the implementation plan's
+[outstanding terminal acceptance](terminal-editor-implementation-plan.md#outstanding-terminal-acceptance)
+checklist. Skip local Windows FFI tests and leave native validation to CI.
 
 A particular test can be named directly:
 

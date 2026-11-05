@@ -29,60 +29,15 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 
 - [Architecture tour](architecture.md) explains the major packages and the
   ownership boundaries between them.
-- [Terminal editor and REPL design](terminal-editor-design.md) records the
-  current terminal behavior/shortcuts, the completed-product contract and
-  remaining implementation work.
-  Its [interactive HTML/CSS reference](terminal-editor-reference/index.html)
-  illustrates the proposed layouts with simulated semantic data.
-  The [staged implementation plan](terminal-editor-implementation-plan.md) maps
-  that design onto the compiler, session services, and terminal UI.
-  [Stage 0 feasibility evidence](terminal-editor-feasibility.md) documents the
-  runnable Textual/process harness, measurements and outstanding terminal gates.
-  Its subsystem coverage lives in [terminal editor tests](../../tests/test_terminal_editor.py).
-  Stage 1 uses the [shared session service](../../src/valiance/sessions/service.py)
-  and [immutable event/worker contracts](../../src/valiance/sessions/events.py),
-  [workspace source snapshots](../../src/valiance/incremental/snapshots.py), and
-  [document/session models](../../src/valiance/terminal_editor/models.py).
-  The [process transport](../../src/valiance/sessions/worker.py) and
-  [editor runtime adapter](../../src/valiance/terminal_editor/runtime.py) connect
-  fresh file runs, persistent commands, program stdin and bounded Stop/exit.
-  Stage 2's [application](../../src/valiance/terminal_editor/app.py) uses
-  [file transactions/preferences](../../src/valiance/terminal_editor/files.py),
-  [protected file dialogs](../../src/valiance/terminal_editor/dialogs.py),
-  [source editing actions](../../src/valiance/terminal_editor/editing.py), and
-  [terminal styles](../../src/valiance/terminal_editor/editor.tcss).
-  The [internal launch route](../../src/valiance/terminal_editor/__main__.py)
-  is `uv run python -m valiance.terminal_editor`; it starts blank and does not
-  change the public CLI entry points. File/Edit/View dropdowns use a common
-  inset toolbar row, anchor before their first frame and leave background panes
-  unchanged. Stage 3 adds [recoverable compiler inspection products](../../src/valiance/analysis/inspection.py)
-  and a [coalesced background analysis adapter](../../src/valiance/terminal_editor/analysis.py).
-  [Shared source queries](../../src/valiance/source_queries.py) supply selected
-  overload documentation and definition navigation to both the editor and LSP.
-  Parser source spans/chain gaps are sidecar products, leaving executable AST and
-  bytecode formats unchanged. F9/Shift+F9 navigate errors, F11 opens the error list,
-  and F12 navigates definitions. F10/Shift+F10 remain indentation shortcuts.
-  Stage 4's [optional analyser traces](../../src/valiance/analysis/traces.py)
-  retain end-surviving worlds, generic refinements and control-flow ancestry.
-  The State pane synchronizes numbered world selection within a function;
-  Alt+Left/Alt+Right cycle worlds and Alt+Up/Alt+Down cycle local states.
-  Stage 5 adds [selectable semantic transcript rendering](../../src/valiance/terminal_editor/transcript.py),
-  Enter lock, persisted command recall, Clear/Reset/Save Transcript controls and
-  automatic focus/reveal after a committed load. The
-  [session command adapter](../../src/valiance/sessions/commands.py) retains runtime
-  branch commands and type queries without borrowing the legacy frontend.
-  [Process containment](../../src/valiance/sessions/process_scope.py) reclaims
-  ordinary worker descendants on Stop, Reset, fault and exit. Real Windows
-  Valiance FFI cancellation is validated in CI, not on the local machine.
-  Stage 6 adds [compiler-backed completion queries](../../src/valiance/analysis/completion.py)
-  and a [coalesced completion overlay](../../src/valiance/terminal_editor/completion.py).
-  Source suggestions use selected surviving-world checkpoints; unfinished calls
-  are checked against the complete function. REPL previews copy session types
-  inside the existing worker without execution. Errors are grouped by file;
-  selected details emphasize source, minimize to a pin on cursor movement and
-  dismiss on edits, including undo/redo.
-  Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
-  and [compilation database tests](../../tests/test_compilation_database.py).
+- [Terminal editor and REPL design](terminal-editor-design.md) describes current
+  behavior and the product contract. The [implementation plan](terminal-editor-implementation-plan.md)
+  maps subsystem ownership, delivered stages, and remaining acceptance gates.
+  The [interactive reference](terminal-editor-reference/index.html) illustrates
+  proposed layouts with simulated data. Start the internal editor with
+  `uv run python -m valiance.terminal_editor`; regression coverage lives in
+  [terminal editor tests](../../tests/test_terminal_editor.py),
+  [CLI/session tests](../../tests/test_main.py), and
+  [compilation database tests](../../tests/test_compilation_database.py).
 - [Testing and debugging](testing-and-debugging.md) includes the discovered
   regression suites and the [source fixture inventory](../../tests/fixtures/regressions/README.md).
   The detailed contracts are documented under
@@ -92,6 +47,8 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 - [Understanding the type system](type-system.md) gives a human-first mental
   model of type relations, generic solving, overload application, and branch
   analysis, with traced examples and an API decision table.
+- [Type-system counterexample testing](type-soundness-counterexamples.md)
+  explains the executable plan registry, coverage rules, and campaign commands.
 - [Reflection metadata](type-system.md#reflection-metadata) describes the
   [compiler descriptor model](../../src/valiance/vtypes/reflection.py), generic
   storage queries, [runtime metadata](../../src/valiance/runtime/reflection.py),

@@ -1,9 +1,8 @@
-# Standard filesystem library — integration status
+# Standard filesystem library
 
-This checkout extends the existing archive (including its terminal editor and
-`@nodup` work) with a usable, **integrated** `std.path` / `std.file` (sequential file I/O and native paths).
+`std.path` and `std.file` provide native paths and sequential file I/O.
 
-## Supported and verified
+## Supported behavior
 
 * `path.Path(String)` stores native-path spelling for filesystem use;
   on POSIX, surrogate-escaped string storage round-trips arbitrary legal
@@ -122,8 +121,3 @@ PYTHONPATH=src python -m unittest tests.test_std_file_integration tests.test_fil
 PYTHONPATH=src python -m unittest tests.test_runtime -q
 PYTHONPATH=src python -m unittest tests.test_analyser tests.test_analysis_calls tests.test_analysis_expressions tests.test_analysis_state tests.test_import_conflicts tests.test_reference_docs tests.test_compiled_modules tests.test_trait_implementation_imports tests.test_std_file_integration tests.test_filesystem_core tests.test_stdlib_native -q
 ```
-
-Focused file/path tests, the runtime regression suite, the analyser/import
-regression suite, and the language-program suite passed separately. A combined
-suite invocation exceeded the execution time limit without completing; no
-claim is made that it or an entire repository-wide discovery run passed.

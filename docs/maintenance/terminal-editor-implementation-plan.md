@@ -2,9 +2,7 @@
 
 Status: Stage 0 accepted by the user, 10 October 2026. The isolated Textual/process
 harness and reusable editor widgets are implemented, including the requested
-resize-discoverability adjustment. See the
-[feasibility evidence](terminal-editor-feasibility.md) for measurements and
-remaining validation. Stage 1 service extraction and independent state models
+resize-discoverability adjustment. Stage 1 service extraction and independent state models
 are implemented. Stage 2's document editor is available through the internal
 launch route, including basic file runs/persistent commands pulled forward from
 Stage 5 during feedback. Stage 3 diagnostics/basic inspection are implemented;
@@ -659,3 +657,27 @@ These are explicit implementation decisions with owners and gates, not reasons
 to reopen already confirmed interactions. Stage 0 was accepted after user review;
 Stages 1–6 have implementation coverage. Stage 5's real native-call CI and
 physical-terminal validation gates remain open before public-default acceptance.
+
+## Outstanding terminal acceptance
+
+Physical-terminal acceptance remains pending for Windows Terminal/PowerShell,
+a Unix local terminal, and an SSH session. Pilot-injected keys demonstrate
+application handling, not physical key, mouse, clipboard, or terminal-protocol
+support. In each environment:
+
+- Type and paste multiline text, copy a Unicode selection, click wrapped rows,
+  drag dividers, cycle focus, resize through 80x24, 120x40 and 160x50, and edit
+  while the worker is busy.
+- Record delivery of Alt+X, Ctrl+Enter, Shift+Enter, Ctrl+H, Ctrl+[, Ctrl+],
+  Ctrl+Shift+S, Ctrl+PageUp and Ctrl+PageDown. Preserve menu/configurable-key
+  fallbacks when chords alias Backspace, Escape or Enter.
+- Verify colors/redraw, installed worker startup and packaging, and production
+  cooperative/forced cleanup of native calls and child processes. Native-call
+  cancellation requires CI evidence; a blocking host C-call probe alone does
+  not establish Valiance FFI cleanup guarantees.
+
+The development harness remains runnable with `uv run python -m tools.terminal_editor`;
+`uv run python -m tools.terminal_editor.measure` produces fresh probe measurements.
+Harness measurements and shortcuts describe the probe, not production performance
+or bindings. Transcript selection/export and retained structured output must be
+validated in the production editor rather than inferred from its RichLog probe.
