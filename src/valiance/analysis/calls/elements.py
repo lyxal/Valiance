@@ -2,112 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import (
-    dataclass,
-    field,
-    fields,
-    is_dataclass,
-    replace,
-)
-from enum import Enum, auto
-from hashlib import sha1
-from itertools import count
-from pathlib import Path
-from typing import cast
+from dataclasses import field, replace
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
+from valiance.vtypes.relations import _contains_type_var
 from valiance.vtypes.relations import implementation_target_providers
-import valiance.analysis.contracts.where_clauses as static_where
-from valiance.elements.builtins import default_environment
-from valiance.analysis.lints import (
-    DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
-    BlockLintContext,
-    LintFinding,
-    LintRegistry,
-    MatchLintContext,
-    NodeLintContext,
-)
-from valiance.asts import (
-    AnnotationNode,
-    ASTNode,
-    BindingPatternNode,
-    DefineNode,
-    ElementExtension,
-    ElementNode,
-    EnumMemberNode,
-    FileLintSuppressionNode,
-    FunctionNode,
-    FunctionOverloadTyping,
-    FunctionParam,
-    ImportComponent,
-    ImportPath,
-    ImportSpec,
-    ListPatternNode,
-    MatchCaseNode,
-    MatchNode,
-    MatchPatternNode,
-    ObjectNode,
-    OrPatternNode,
-    PopNNode,
-    SourceLocation,
-    TraitRequirementNode,
-    TryHandlerNode,
-    TryNode,
-    TypePatternNode,
-    TypedCallNode,
-    TypedElementExtension,
-    TypedElementNode,
-    TypedExtensionPatternRule,
-    TypedFunctionNode,
-    TypedImportedFunctionNode,
-    TypedImportedObjectNode,
-    TypedMatchNode,
-    TypedNode,
-    TypedTagApplicationNode,
-    TypedTryNode,
-    VariantMemberNode,
-    is_catch_all_match_case,
-)
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
-from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
-from valiance.asts.object_constructors import (
-    constructor_definitions,
-    definitely_initialized_fields,
-    prepare_constructor_body,
-)
+from valiance.asts import ElementNode
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.default_types import Boolean
 
 from ..calls import candidates as _calls
-from ..calls import callable_values as _functions
 from ..control_flow import patterns as _patterns
 from ..support import analysis_utils as _utils
-from ..state import (
-    AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
-    DiagnosticSeverity, InputMode, VariableWrite,
-)
-from .models import (
-    CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
-    ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
-)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+from ..state import AnalysisBranch, BranchSet
+from .models import ModifierArgumentAnalysis
 
 
 class _ElementCalls:
@@ -167,7 +75,7 @@ class _ElementCalls:
         generic_overload_set = (
             isinstance(stack_callable, T.OverloadSetType)
             and any(
-                _functions._contains_type_var(item)
+                _contains_type_var(item)
                 for overload in stack_callable.overloads
                 for item in (*overload.params, *overload.returns)
             )
@@ -339,7 +247,7 @@ class _ElementCalls:
                 self._diagnose("conversion target expression must have Type[T] evidence", node)
                 continue
             unresolved = next((typ for typ in (bound, *branch.stack, *source_branch.inputs)
-                               if _functions._contains_type_var(typ)), None)
+                               if _contains_type_var(typ)), None)
             if unresolved is not None:
                 if self.defer_reflection:
                     raise ReflectionSpecializationRequired(unresolved)
@@ -351,7 +259,7 @@ class _ElementCalls:
             choices = []
             joined = None
             possible = sorted({T.normalize(item.conversion_target) for item in overloads
-                               if not _functions._contains_type_var(item.conversion_target)
+                               if not _contains_type_var(item.conversion_target)
                                and T.assignable(item.conversion_target, bound, self.env.context)}, key=T.show)
             diagnostics = len(self.diagnostics)
             for target in possible:

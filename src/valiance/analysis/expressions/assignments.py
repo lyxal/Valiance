@@ -2,84 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import replace
-from typing import cast
 
-import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.contracts.release_effects import (
     release_effects,
     released_types_effects,
 )
-from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
-from valiance.asts import (
-    AnnotationNode,
-    AssertNode,
-    AtNode,
-    CastNode,
-    DictLiteralNode,
-    ElementTagDeclarationNode,
-    FileLintSuppressionNode,
-    FunctionNode,
-    FunctionParam,
-    ImportNode,
-    IndexAccessNode,
-    IndexSetNode,
-    ListLiteralNode,
-    LintSuppressionNode,
-    NumberLiteralNode,
-    ObjectNode,
-    PopNNode,
-    RecordLiteralNode,
-    ReturnNode,
-    StackShuffleNode,
-    StringInterpolationNode,
-    StringLiteralNode,
-    TagApplicationNode,
-    TagDeclarationNode,
-    TagOverlayNode,
-    TupleLiteralNode,
-    TypedAssertNode,
-    TypedAtNode,
-    TypedCallNode,
-    TypedForNode,
-    TypedFunctionNode,
-    TypedIfNode,
-    TypedNode,
-    TypedSetVariableNode,
-    TypedTagApplicationNode,
-    TypedUnfoldNode,
-    TypedWhileNode,
-    UnfoldNode,
-)
-from valiance.asts.nodes import (
-    BreakNode,
-    CallNode,
-    FieldAccessNode,
-    FieldSetNode,
-    ForNode,
-    GetVariableNode,
-    IfNode,
-    SetVariableNode,
-    SetVariablesNode,
-    WhileNode,
-)
-from valiance.modules_system.modules import (
-    ModuleLoadError,
-    import_environment_facts,
-    import_objects,
-)
+from valiance.asts import TypedNode, TypedSetVariableNode
+from valiance.asts.nodes import GetVariableNode, SetVariableNode, SetVariablesNode
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.default_types import Boolean
-from valiance.vtypes.relations import merge_stacks
 
 from .. import analyser as _core
 from ..calls import callable_values as _functions
-from ..calls import candidates as _calls
-from ..control_flow import patterns as _patterns
 from ..support import analysis_utils as _utils
-
 
 
 @_core.register(GetVariableNode)
@@ -111,7 +47,6 @@ def _get_variable(
         )
 
     return _core.BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
-
 
 
 def _behaviour_set_ambiguity_message(

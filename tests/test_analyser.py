@@ -16,7 +16,7 @@ from valiance.analysis import (
     analyse_function_details,
     default_environment,
 )
-from valiance.analysis.analyser import _branch_argument_substitution
+from valiance.analysis.calls.vectorisation import _branch_argument_substitution
 from valiance.analysis.support.analysis_utils import (
     _duplication_requirement,
     _stack_duplications,

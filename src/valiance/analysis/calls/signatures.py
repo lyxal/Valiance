@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable
 from dataclasses import field, fields, is_dataclass, replace
 from typing import cast
 
@@ -81,27 +81,16 @@ from valiance.asts import (
     CallArgument,
     ElementNode,
     FunctionNode,
-    FunctionOverloadTyping,
     FunctionParam,
     ListLiteralNode,
     MatchNode,
     ReturnNode,
     TryNode,
-    TypedNode,
 )
-from valiance.asts.nodes import (
-    ForNode,
-    GetVariableNode,
-    IfNode,
-    SetVariableNode,
-    SetVariablesNode,
-)
+from valiance.asts.nodes import ForNode, GetVariableNode, IfNode
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
-from . import candidates as _calls
-from ..support import analysis_utils as _utils
-
 
 
 def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:

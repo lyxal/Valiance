@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from valiance.vtypes.identities import overload_implementation_id
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import field, fields, replace
-from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
@@ -16,26 +15,16 @@ _function_param_names_for_overload = function_param_names_for_overload
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
-    CallArgument,
     ElementNode,
     FunctionNode,
     FunctionOverloadTyping,
     TypedFunctionNode,
     TypedElementNode,
     FunctionParam,
-    ListLiteralNode,
-    MatchNode,
-    ReturnNode,
-    TryNode,
     TypedNode,
 )
-from valiance.asts.nodes import (
-    ForNode,
-    GetVariableNode,
-    IfNode,
-    SetVariableNode,
-    SetVariablesNode,
-)
+from valiance.asts.nodes import ForNode, GetVariableNode, SetVariableNode, SetVariablesNode
+from valiance.vtypes.relations import _contains_named_type_var
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
@@ -473,8 +462,6 @@ def _is_bare_function_type(typ: T.Type) -> bool:
     )
 
 
-
-
 def _function_param_defaults_for_overload(
     node: FunctionNode,
     inputs: tuple[T.Type, ...],
@@ -511,74 +498,6 @@ def _type_contains_rank_var(typ: T.Type) -> bool:
     if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _type_contains_rank_var(typ.inner)
     return False
-
-
-def _contains_type_var(typ: T.Type) -> bool:
-    """Return whether the value contains type var."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.VarType):
-        return True
-    if isinstance(typ, T.CollectionType):
-        return _contains_type_var(typ.base)
-    if isinstance(typ, T.NominalType):
-        return any(_contains_type_var(arg) for arg in typ.args)
-    if isinstance(typ, (T.UnionType, T.IntersectionType)):
-        return any(_contains_type_var(item) for item in typ.items)
-    if isinstance(typ, T.TupleType):
-        return any(_contains_type_var(item) for item in typ.params)
-    if isinstance(typ, T.VariadicTupleType):
-        return any(_contains_type_var(item.typ) for item in typ.items)
-    if isinstance(typ, T.FunctionType):
-        return any(_contains_type_var(item) for item in typ.params or ()) or any(
-            _contains_type_var(item) for item in typ.returns or ()
-        )
-    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
-        return _contains_type_var(typ.inner)
-    return False
-
-
-def _contains_named_type_var(typ: T.Type, name: str) -> bool:
-    """Return whether the value contains named type var."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.VarType):
-        return typ.name == name
-    if isinstance(typ, T.CollectionType):
-        return _contains_named_type_var(typ.base, name)
-    if isinstance(typ, T.NominalType):
-        return any(_contains_named_type_var(arg, name) for arg in typ.args)
-    if isinstance(typ, (T.UnionType, T.IntersectionType)):
-        return any(_contains_named_type_var(item, name) for item in typ.items)
-    if isinstance(typ, T.TupleType):
-        return any(_contains_named_type_var(item, name) for item in typ.params)
-    if isinstance(typ, T.VariadicTupleType):
-        return any(_contains_named_type_var(item.typ, name) for item in typ.items)
-    if isinstance(typ, T.RowType):
-        return _contains_named_type_var(typ.base, name) or any(
-            _contains_named_type_var(field.typ, name) for field in typ.fields
-        )
-    if isinstance(typ, T.FunctionType):
-        if typ.params is None or typ.returns is None:
-            return _element_tags_contain_named_type_var(typ.element_tags, name)
-        return any(
-            _contains_named_type_var(item, name) for item in typ.params + typ.returns
-        ) or _element_tags_contain_named_type_var(typ.element_tags, name)
-    if isinstance(typ, T.AnonymousTraitType):
-        return any(
-            _contains_named_type_var(item, name)
-            for requirement in typ.requirements
-            for item in requirement.overload.params + requirement.overload.returns
-        )
-    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
-        return _contains_named_type_var(typ.inner, name)
-    return False
-
-
-def _element_tags_contain_named_type_var(
-    tags: frozenset[T.ElementTag],
-    name: str,
-) -> bool:
-    """Return whether element tags contain a named type variable."""
-    return any(_contains_named_type_var(arg, name) for tag in tags for arg in tag.args)
 
 
 def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
@@ -1425,21 +1344,13 @@ def _same_returns(
     )
 
 
-
 from .signatures import (
     _resolve_function_type_names,
     _resolve_imported_type_names,
     _genericize_overload,
     _genericize_function_node,
     _contextualize_function_empty_returns,
-    _contextualize_return_block,
-    _contextualize_explicit_return,
-    _contextualize_return_expression,
-    _empty_list_return_type,
     _substitute_rank_variables_in_ast,
-    _substitute_rank_variables_in_ast_value,
-    _genericize_ast_node,
-    _genericize_ast_value,
     _genericize_attribute,
     _genericize_requirement,
     _transform_overload_types,
@@ -1447,16 +1358,8 @@ from .signatures import (
     _genericize_type,
     _anonymous_trait_overloads,
     _anonymous_trait_subject_view,
-    _anonymous_trait_subject_name,
-    _first_type_var_name,
     _contains_anonymous_trait,
-    _collect_anonymous_trait_overloads,
-    _genericize_element_tags,
     _declared_or_inferred_variance,
     _variance_from_marker,
-    _infer_generic_variance,
-    _record_variance_use,
     _anonymous_type_var,
-    _anonymous_type_indices,
-    _collect_anonymous_type_indices,
 )

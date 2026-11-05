@@ -846,59 +846,6 @@ def _ordered_type_vars(*types: Type) -> tuple[VarType, ...]:
     return tuple(variables)
 
 
-def _ordered_type_var_names(*types: Type) -> tuple[str, ...]:
-    """Return nested type-variable names in stable first-occurrence order."""
-    names: list[str] = []
-
-    def visit(typ: Type) -> None:
-        """Append variables found in one normalized type tree."""
-        typ = normalize(typ)
-        if isinstance(typ, VarType):
-            if typ.name not in names:
-                names.append(typ.name)
-            return
-        if isinstance(typ, NominalType):
-            for arg in typ.args:
-                visit(arg)
-        elif isinstance(typ, (UnionType, IntersectionType)):
-            for item in typ.items:
-                visit(item)
-        elif isinstance(typ, TupleType):
-            for item in typ.params:
-                visit(item)
-        elif isinstance(typ, VariadicTupleType):
-            for item in typ.items:
-                visit(item.typ)
-        elif isinstance(typ, RowType):
-            visit(typ.base)
-            for item in typ.fields:
-                visit(item.typ)
-        elif isinstance(typ, CollectionType):
-            visit(typ.base)
-        elif isinstance(typ, FunctionType):
-            if typ.params is not None:
-                for item in typ.params:
-                    visit(item)
-            if typ.returns is not None:
-                for item in typ.returns:
-                    visit(item)
-            for tag in typ.element_tags:
-                for arg in tag.args:
-                    visit(arg)
-        elif isinstance(typ, AnonymousTraitType):
-            for generic in typ.generics:
-                visit(generic)
-            for requirement in typ.requirements:
-                for item in requirement.overload.params + requirement.overload.returns:
-                    visit(item)
-        elif isinstance(typ, (TaggedType, NoVecType, ExactType)):
-            visit(typ.inner)
-
-    for typ in types:
-        visit(typ)
-    return tuple(names)
-
-
 def _first_type_var_name(typ: Type) -> str | None:
     """Return the first nested type-variable name, if any."""
     typ = normalize(typ)

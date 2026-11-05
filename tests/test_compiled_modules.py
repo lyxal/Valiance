@@ -15,6 +15,12 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_rejects_obsolete_module_container_versions(self):
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(BytecodeFormatError, "not a Valiance bytecode module"):
+                    loads_module(b"VLNCBM" + bytes((version,)))
+
     def test_explicit_receiver_recursion_survives_source_free_module(self):
         from valiance.incremental import CompilationCoordinator
         from valiance.runtime import compile_program, dumps, loads, run

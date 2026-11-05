@@ -22,6 +22,11 @@ The reference is the detailed implementation contract. This guide explains the
 mental model, the main APIs, and how to debug the pipeline without treating the
 VM as a black box.
 
+The module loader accepts the current version-4 container. Earlier container
+versions are rejected and must be rebuilt from source. Object-constructor
+bytecode carries `ObjectConstructorReference` records; positional tuple payloads
+are rejected by the VM.
+
 ## How to use this guide
 
 You do not need to read it all at once.

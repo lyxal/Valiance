@@ -2,30 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field, replace
-from itertools import count, permutations
-from typing import cast
+from collections.abc import Callable, Iterable
+from dataclasses import field, replace
+from itertools import count
 
 import valiance.vtypes as T
+from valiance.vtypes.relations import _contains_type_var
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
-    ASTNode,
-    CallArgument,
     ElementNode,
     FunctionNode,
-    GetVariableNode,
-    FunctionOverloadTyping,
     TypedFunctionNode,
     TypedFunctionDispatchNode,
     TypedNode,
 )
+from valiance.vtypes.builders import _show_tag
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
 from . import callable_values as _functions
-from ..support import analysis_utils as _utils
-
 
 
 _MAX_RANK_BINDING_CANDIDATES = 1_024
@@ -934,12 +929,6 @@ def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
         else typ.inner
     )
 
-def _show_tag(tag: T.DataTag) -> str:
-    """Format tag during static analysis."""
-    prefix = "#-" if tag.absent else "#"
-    depth = "+" * tag.depth
-    return f"{prefix}{tag.name}{depth}"
-
 def _validator_overload_ok(overload: T.Overload, ctx: T.Context) -> bool:
     """Return the Boolean result of validator overload ok during static analysis."""
     return len(overload.returns) == 1 and T.assignable(
@@ -1058,7 +1047,7 @@ def _branch_argument_substitution(
         if (
             isinstance(T.normalize(param), T.FunctionType)
             and isinstance(T.normalize(arg), (T.FunctionType, T.OverloadSetType))
-            and not _functions._contains_type_var(arg)
+            and not _contains_type_var(arg)
         ):
             deferred.append((arg, param))
             continue
@@ -1073,7 +1062,7 @@ def _branch_argument_substitution(
             solve_arg = _substitute_branch_type(arg, substitution)
             solve_param = _substitute_branch_type(param, substitution)
         constraints = _solve_branch_argument(solve_arg, solve_param, ctx)
-        if not constraints and ctx.type_var_upper_bounds and _functions._contains_type_var(solve_param):
+        if not constraints and ctx.type_var_upper_bounds and _contains_type_var(solve_param):
             upper_view = _substitute_branch_type(solve_arg, ctx.type_var_upper_bounds)
             if upper_view != solve_arg:
                 # Explicit upper bounds may solve *callee* variables; never
@@ -1082,7 +1071,7 @@ def _branch_argument_substitution(
                     upper_view, solve_param, ctx, adapt_min_rank=adapt_min_rank,
                 )
         if constraints is None or (
-            not constraints and _functions._contains_type_var(solve_param)
+            not constraints and _contains_type_var(solve_param)
         ):
             constraints = _solve_type_argument(
                 solve_arg, solve_param, ctx, adapt_min_rank=adapt_min_rank,
@@ -1275,8 +1264,8 @@ def _solve_branch_argument(
             and expected.params is not None
             and expected.returns is not None
             and (
-                _functions._contains_type_var(actual)
-                or _functions._contains_type_var(expected)
+                _contains_type_var(actual)
+                or _contains_type_var(expected)
             )
         ):
             return (

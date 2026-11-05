@@ -13,7 +13,6 @@ from valiance.runtime.bytecode import Program
 from valiance.runtime.interface_serialization import dumps_interface, loads_interface
 from valiance.runtime.serialization import BytecodeFormatError, dumps, loads
 
-MAGIC_V1 = b"VLNCBM\x01"
 MAGIC = b"VLNCBM\x04"
 FORMAT_VERSION = 4
 COMPILER_ABI = 13
@@ -217,35 +216,8 @@ def dumps_module(module: CompiledModule) -> bytes:
     )
 
 
-def _load_v1(data: bytes) -> CompiledModule:
-    """Load the source-interface-only format for backwards compatibility."""
-    header = len(MAGIC_V1)
-    if len(data) < header + 8:
-        raise BytecodeFormatError("truncated Valiance bytecode module")
-    metadata_size, bytecode_size = struct.unpack(">II", data[header : header + 8])
-    start = header + 8
-    end_metadata = start + metadata_size
-    end_bytecode = end_metadata + bytecode_size
-    if end_bytecode != len(data):
-        raise BytecodeFormatError("invalid Valiance bytecode module section lengths")
-    try:
-        metadata = json.loads(data[start:end_metadata].decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BytecodeFormatError("invalid Valiance bytecode module metadata") from exc
-    source = metadata.get("interface_source")
-    module_name = metadata.get("module")
-    source_hash = metadata.get("source_hash")
-    if not all(isinstance(value, str) for value in (source, module_name, source_hash)):
-        raise BytecodeFormatError("invalid Valiance bytecode module metadata")
-    if hashlib.sha256(source.encode()).hexdigest() != source_hash:
-        raise BytecodeFormatError("Valiance bytecode module interface hash mismatch")
-    return CompiledModule(module_name, source, loads(data[end_metadata:end_bytecode]), source_hash)
-
-
 def loads_module(data: bytes) -> CompiledModule:
     """Decode and validate a Valiance bytecode module."""
-    if data.startswith(MAGIC_V1):
-        return _load_v1(data)
     if not data.startswith(MAGIC):
         raise BytecodeFormatError("not a Valiance bytecode module")
     header = len(MAGIC)

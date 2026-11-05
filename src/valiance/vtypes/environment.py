@@ -632,17 +632,6 @@ class Environment:
 
         return reflection_requires_unsafe(owner, self)
 
-    def lookup_attribute_definition(
-        self,
-        object_name: Symbol,
-        attribute_name: Symbol,
-    ) -> ObjectAttribute | None:
-        """Return the declared attribute metadata of ``object_name.attribute``."""
-        definition = self.lookup_object(object_name)
-        if definition is None:
-            return None
-        return definition.attribute(attribute_name)
-
     def has_attribute(self, object_name: Symbol, attribute_name: Symbol) -> bool:
         """Return whether an object declares the requested attribute."""
         return self.lookup_attribute(object_name, attribute_name) is not None
@@ -740,23 +729,6 @@ class Environment:
                 name, candidate.implementation_id,
             )
             for candidate in self.overloads_for(name)
-        )
-
-    def has_local_non_object_friendly_overload(
-        self,
-        name: Symbol,
-        overload: Overload,
-    ) -> bool:
-        """Return whether this scope already defines the requested overload.
-
-        User definitions live in a child scope above built-ins and imports. A
-        same-shaped local definition must therefore be registered so it shadows
-        the parent callable at both analysis and runtime.
-        """
-        friendly = self.object_friendly_overloads.get(name, set())
-        return any(
-            candidate == overload and candidate.implementation_id not in friendly
-            for candidate in self.overloads.get(name, ())
         )
 
     def protocol_providers(self, protocol: str) -> tuple[ProtocolProvider, ...]:

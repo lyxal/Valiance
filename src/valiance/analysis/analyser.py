@@ -1,8 +1,8 @@
 """Branch-based static analysis, type inference, and overload resolution.
 
 The public analyser API and branch model live here. Large implementation
-families are split into sibling ``_analyser_*`` modules and intentionally remain
-private implementation details.
+families live in focused subsystem packages and remain private implementation
+details.
 """
 
 from __future__ import annotations
@@ -15,15 +15,10 @@ from dataclasses import (
     is_dataclass,
     replace,
 )
-from enum import Enum, auto
-from hashlib import sha1
-from itertools import count
 from pathlib import Path
-from typing import cast
 
-import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
-import valiance.analysis.contracts.where_clauses as static_where
+from valiance.vtypes.relations import _contains_type_var
 from valiance.elements.builtins import default_environment
 from valiance.analysis.import_runtime import prelude_seed, with_import_runtime_name
 from valiance.analysis.transfer import (
@@ -35,27 +30,19 @@ from valiance.analysis.lints import (
     BlockLintContext,
     LintFinding,
     LintRegistry,
-    MatchLintContext,
     NodeLintContext,
 )
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
     BindingPatternNode,
-    ConcurrentNode,
     DefineNode,
-    ElementExtension,
     ElementNode,
     StackShuffleNode,
     EnumMemberNode,
     FileLintSuppressionNode,
     FunctionNode,
-    FunctionOverloadTyping,
-    FunctionParam,
-    ImportComponent,
     ImportNode,
-    ImportPath,
-    ImportSpec,
     ListPatternNode,
     LinkNode,
     LinkTypeNode,
@@ -79,44 +66,22 @@ from valiance.asts import (
     TypedCancelNode,
     TypedChannelNode,
     TypedTimeoutNode,
-    TypedConcurrentNode,
-    TypedElementExtension,
     TypedElementNode,
-    TypedExtensionPatternRule,
     TypedFunctionNode,
-    TypedImportedFunctionNode,
-    TypedImportedObjectNode,
-    TypedMatchNode,
     TypedNode,
     TypedSpawnNode,
     TypedWaitNode,
     TypedTagApplicationNode,
-    TypedTryNode,
     VariantMemberNode,
-    is_catch_all_match_case,
 )
-from valiance.asts.nodes import (
-    GetVariableNode, ObjectFieldNode, SetVariableNode, SetVariablesNode,
-)
-from valiance.modules_system.modules import (
-    ModuleExports, ModuleLoader, ModuleLoadError, import_definitions,
-)
-from valiance.asts.object_constructors import (
-    constructor_definitions,
-    definitely_initialized_fields,
-    prepare_constructor_body,
-)
+from valiance.asts.nodes import ObjectFieldNode, SetVariableNode, SetVariablesNode
+from valiance.modules_system.modules import ModuleExports, ModuleLoader
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.default_types import Boolean
 
-from .calls import candidates as _calls
 from .calls import callable_values as _functions
 from .control_flow import patterns as _patterns
 from .support import analysis_utils as _utils
-from .state import (
-    AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
-    DiagnosticSeverity, InputMode, VariableWrite,
-)
+from .state import AnalysisBranch, BranchSet, BranchVariables, InputMode
 from .declarations import DeclarationAnalyser
 from .calls import CallAnalyser
 from .control_flow import ControlFlowAnalyser
@@ -126,22 +91,6 @@ from .calls.models import (
     CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
     ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication, ReflectionSpecializationRequired,
 )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 NodeHandler = Callable[
@@ -175,20 +124,6 @@ def register(node_type: type[ASTNode]) -> Callable[[NodeHandler], NodeHandler]:
         return handler
 
     return decorate
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @dataclass
@@ -1133,7 +1068,7 @@ class Analyser:
 
     def require_reflection_permission(self, owner: T.Type, node: ASTNode) -> bool:
         """Enforce the transitive ownership gate at a lexical reflection site."""
-        if self.defer_reflection and _functions._contains_type_var(owner):
+        if self.defer_reflection and _contains_type_var(owner):
             raise ReflectionSpecializationRequired(owner)
         if not self.reflection_unsafe and self.env.reflection_requires_unsafe(owner):
             self._diagnose(
@@ -1227,7 +1162,6 @@ class Analyser:
                 )
 
 
-
     @register(DefineNode)
     def _define(
         self,
@@ -1236,52 +1170,6 @@ class Analyser:
     ) -> BranchSet:
         """Delegate function declaration registration to its owning subsystem."""
         return self.declarations._define(node, branch)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     @register(ElementNode)
@@ -1598,17 +1486,6 @@ class Analyser:
         return self.control_flow._try(node, branch)
 
 
-
-
-
-
-
-
-
-
-
-
-
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
         """Update diagnose state during static analysis."""
         diagnostic = _utils._diagnostic_message(message, node)
@@ -1645,7 +1522,6 @@ class Analyser:
         """Clear both the legacy strings and structured lint findings."""
         self.lints.clear()
         self.lint_findings.clear()
-
 
 
 def _spawn_unique_inputs(
@@ -1731,27 +1607,3 @@ from .contracts import tag_handlers as _tag_handlers  # noqa: E402
 from .expressions import assignments as _assignments  # noqa: E402
 from .expressions import access_handlers as _access_handlers  # noqa: E402
 from .expressions import collections as _collections  # noqa: E402
-
-_ANALYSER_PARTS = (
-    _functions, _calls, _patterns, _utils, _handlers,
-    _control_blocks, _control_loops, _tag_handlers,
-    _assignments, _access_handlers, _collections,
-)
-
-
-def __getattr__(name: str):
-    """Preserve access to private helpers moved out of this façade module."""
-    for part in _ANALYSER_PARTS:
-        try:
-            return getattr(part, name)
-        except AttributeError:
-            continue
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    """Include moved implementation names in interactive module discovery."""
-    names = set(globals())
-    for part in _ANALYSER_PARTS:
-        names.update(vars(part))
-    return sorted(names)

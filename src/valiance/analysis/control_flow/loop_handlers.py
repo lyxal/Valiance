@@ -4,80 +4,30 @@ from __future__ import annotations
 
 from valiance.analysis.contracts.release_effects import released_types_effects
 
-from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
 
-import valiance.analysis.contracts.annotations as annotation_hooks
-from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
+from valiance.vtypes.relations import _contains_type_var
 from valiance.asts import (
     AnnotationNode,
-    AssertNode,
-    AtNode,
-    CastNode,
-    DictLiteralNode,
-    ElementTagDeclarationNode,
-    FileLintSuppressionNode,
     FunctionNode,
     FunctionParam,
-    ImportNode,
-    IndexAccessNode,
-    IndexSetNode,
-    ListLiteralNode,
-    LintSuppressionNode,
-    NumberLiteralNode,
-    ObjectNode,
-    PopNNode,
-    RecordLiteralNode,
-    ReturnNode,
-    StackShuffleNode,
-    StringInterpolationNode,
-    StringLiteralNode,
-    TagApplicationNode,
-    TagDeclarationNode,
-    TagOverlayNode,
-    TupleLiteralNode,
-    TypedAssertNode,
-    TypedAtNode,
-    TypedCallNode,
     TypedForNode,
     TypedReflectiveForNode,
     TypedFunctionNode,
-    TypedIfNode,
-    TypedNode,
-    TypedTagApplicationNode,
     TypedUnfoldNode,
-    TypedWhileNode,
     UnfoldNode,
 )
-from valiance.asts.nodes import (
-    BreakNode,
-    CallNode,
-    FieldAccessNode,
-    FieldSetNode,
-    ForNode,
-    GetVariableNode,
-    IfNode,
-    SetVariableNode,
-    SetVariablesNode,
-    WhileNode,
-)
-from valiance.modules_system.modules import (
-    ModuleLoadError,
-    import_environment_facts,
-    import_objects,
-)
+from valiance.asts.nodes import ForNode, GetVariableNode
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
-from valiance.vtypes.relations import merge_stacks
 
 from .. import analyser as _core
 from ..calls import callable_values as _functions
 from ..calls import candidates as _calls
 from . import patterns as _patterns
 from ..support import analysis_utils as _utils
-
 
 
 def _loop_iterable_requirement(
@@ -253,7 +203,7 @@ def _analyse_for_item(
     )
     if (
         refined_item_type is not None
-        and _functions._contains_type_var(item_type)
+        and _contains_type_var(item_type)
         and not T.same(item_type, refined_item_type)
     ):
         body_branch = body_branch.refine_type(item_type, refined_item_type)
@@ -337,7 +287,7 @@ def _reflective_for_node(
 
     if not self.require_reflection_permission(owner, node):
         return _core.BranchSet()
-    if _functions._contains_type_var(owner):
+    if _contains_type_var(owner):
         if self.defer_reflection:
             raise _core.ReflectionSpecializationRequired(owner)
         self._diagnose("reflective iteration requires concrete field layouts at a call site", node)

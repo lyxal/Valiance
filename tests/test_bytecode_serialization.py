@@ -28,6 +28,17 @@ from valiance.runtime.serialization import MAGIC
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_runtime_rejects_positional_constructor_metadata(self):
+        for payload in (("Example", (), (), (), ()), ("Example", (), (), (), (), None)):
+            with self.subTest(payload=payload):
+                program = Program(FunctionCode((
+                    Instruction(OpCode.MAKE_OBJECT_CONSTRUCTOR, payload),
+                    Instruction(OpCode.RETURN),
+                ), name="main"))
+                for executable in (program, loads(dumps(program))):
+                    with self.assertRaisesRegex(RuntimeError, "invalid object constructor metadata"):
+                        run(executable)
+
     def test_bounded_trait_dispatch_metadata_is_validated_and_serialized(self):
         guards = ((0, "Source", (("$0", "Number"),)),)
         function = FunctionCode(

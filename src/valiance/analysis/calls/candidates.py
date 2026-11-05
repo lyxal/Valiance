@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterator
+from dataclasses import field, replace
 from itertools import permutations, product
 from typing import cast
 
 import valiance.vtypes as T
+from valiance.vtypes.relations import _contains_type_var
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
@@ -19,7 +20,6 @@ from valiance.asts import (
     FunctionOverloadTyping,
     TypedFunctionNode,
     TypedFunctionDispatchNode,
-    TypedNode,
 )
 from valiance.vtypes.symbols import Symbol
 
@@ -778,7 +778,7 @@ def _specialized_modifier_orders(
             not T.same(original_expected, specialized_expected)
             and not _has_unresolved_callable_inputs(modifiers[position].typ)
             and all(
-                not _functions._contains_type_var(value)
+                not _contains_type_var(value)
                 for value in current_substitution.values()
             )
         ):
@@ -2063,7 +2063,6 @@ def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
     )
 
 
-
 from .vectorisation import (
     _call_site_body_arguments,
     _call_site_explicit_args_match,
@@ -2071,28 +2070,11 @@ from .vectorisation import (
     _call_site_consumed_count,
     _propagated_element_tags,
     _initial_rank_value_candidates,
-    _rank_value_candidates,
-    _rank_candidates_for_pairs,
-    _extend_rank_candidates,
-    _variadic_tuple_rank_candidates,
-    _rank_binding_key,
-    _deduplicate_rank_binding_keys,
-    _deduplicate_rank_candidates,
-    _match_variadic_tuple_types,
     _evaluate_where_clause,
     _substitute_overload_ranks,
-    _substitute_rank_values,
-    _substitute_rank_values_in_element_tags,
     _row_views_for_arguments,
-    _row_view_for_argument,
     _specialize_branch_arguments,
     _apply_data_tag_flow,
-    _constructed_tag_source_ranks,
-    _guaranteed_constructed_tag_sources,
-    _constructed_flow_is_suppressed,
-    _has_exact_tag_contract,
-    _explicit_tags,
-    _strip_implicit_computed_tags,
     _with_data_tags,
     _remove_data_tag,
     _show_tag,
@@ -2101,14 +2083,9 @@ from .vectorisation import (
     _disjoint_data_tags,
     _type_rank,
     _refine_branch_like,
-    _branch_pair_substitution,
     _branch_argument_substitution,
     _static_type_substitution,
-    _collect_static_element_bindings,
-    _solve_type_argument,
-    _solve_branch_argument,
     _substitute_branch_type,
-    _substitute_branch_element_tags,
     _dominates,
     _returns_result_type,
     _consistent_function_returns,

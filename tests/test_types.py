@@ -96,6 +96,27 @@ ParseError = N(PARSE_ERROR)
 
 
 class TypeLibraryTests(unittest.TestCase):
+    def test_generic_variable_queries_cover_structural_fields_and_callable_effects(self):
+        from valiance.vtypes.relations import _contains_type_var, _contains_named_type_var
+
+        variable = V("T")
+        shapes = (
+            T.Row(Foo, Field(Symbol("value"), variable)),
+            T.RecordType(Foo, (Field(Symbol("value"), variable),)),
+            T.FunctionType((), (), frozenset((ElementTag(Symbol("Panic"), (variable,)),))),
+            T.FunctionType(None, None, frozenset((ElementTag(Symbol("Panic"), (variable,)),))),
+            T.AnonymousTraitType(requirements=(T.AnonymousTraitRequirement(
+                Symbol("read"), Overload((Foo,), (variable,)),
+            ),)),
+        )
+        for shape in shapes:
+            with self.subTest(shape=shape):
+                self.assertTrue(_contains_type_var(shape))
+                self.assertTrue(_contains_named_type_var(shape, "T"))
+                self.assertFalse(_contains_named_type_var(shape, "U"))
+        self.assertFalse(_contains_type_var(T.Row(Foo, Field(Symbol("value"), Int))))
+        self.assertFalse(_contains_type_var(T.FunctionType((), (Int,))))
+
     def test_nominal_generic_inference_uses_a_refined_rows_base(self):
         """Structural evidence does not erase nominal generic arguments."""
         variable = T.V("Value", T.TypeVarId(98765, 0))

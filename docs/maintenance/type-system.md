@@ -518,6 +518,11 @@ This is the policy-heavy core. It owns:
 - overload application and specificity; and
 - branch-type merging.
 
+Generic-variable queries also belong here. Analyser subsystems use the shared
+`_contains_type_var` and `_contains_named_type_var` queries so structural fields,
+anonymous trait requirements, and callable effect arguments receive the same
+traversal as ordinary type arguments.
+
 ### `types/stack.py`: stack-effect convenience
 
 `TypeStack` is an immutable tuple wrapper with `push`, `pop`, and overload

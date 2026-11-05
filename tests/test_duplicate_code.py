@@ -8,7 +8,7 @@ from pathlib import Path
 
 class DuplicateCodeTests(unittest.TestCase):
     def test_production_functions_do_not_duplicate_substantial_bodies(self):
-        """Reject novec duplicate function bodies large enough to require one owner."""
+        """Reject substantial duplicate implementations regardless of docstrings."""
         source_root = Path(__file__).parents[1] / "src" / "valiance"
         implementations: dict[str, list[str]] = {}
         for path in source_root.rglob("*.py"):
@@ -16,8 +16,14 @@ class DuplicateCodeTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
+                # Module-level lazy exports intentionally repeat this small hook.
+                if node.name == "__getattr__" and node in tree.body:
+                    continue
+                statements = node.body
+                if ast.get_docstring(node) is not None:
+                    statements = statements[1:]
                 body = ast.dump(
-                    ast.Module(body=node.body, type_ignores=[]),
+                    ast.Module(body=statements, type_ignores=[]),
                     include_attributes=False,
                 )
                 if len(body) < 350:

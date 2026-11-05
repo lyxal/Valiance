@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import replace
 from functools import lru_cache
 from typing import cast
 

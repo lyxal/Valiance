@@ -2,92 +2,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import (
-    dataclass,
-    field,
-    fields,
-    is_dataclass,
-    replace,
-)
-from enum import Enum, auto
-from hashlib import sha1
-from itertools import count
-from pathlib import Path
-from typing import cast
+from dataclasses import field, replace
 
-import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
-import valiance.analysis.contracts.where_clauses as static_where
-from valiance.elements.builtins import default_environment
-from valiance.analysis.lints import (
-    DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
-    BlockLintContext,
-    LintFinding,
-    LintRegistry,
-    MatchLintContext,
-    NodeLintContext,
-)
 from valiance.asts import (
-    AnnotationNode,
-    ASTNode,
-    BindingPatternNode,
     DefineNode,
-    ElementExtension,
     ElementNode,
-    EnumMemberNode,
-    FileLintSuppressionNode,
-    FunctionNode,
-    FunctionOverloadTyping,
-    FunctionParam,
     ImportComponent,
     ImportPath,
     ImportSpec,
-    ListPatternNode,
-    MatchCaseNode,
-    MatchNode,
-    MatchPatternNode,
     ObjectNode,
-    OrPatternNode,
-    PopNNode,
-    SourceLocation,
-    TraitRequirementNode,
-    TryHandlerNode,
-    TryNode,
-    TypePatternNode,
-    TypedCallNode,
-    TypedElementExtension,
-    TypedElementNode,
-    TypedExtensionPatternRule,
     TypedFunctionNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
     TypedObjectNode,
-    TypedMatchNode,
     TypedNode,
-    TypedTagApplicationNode,
-    TypedTryNode,
-    VariantMemberNode,
-    is_catch_all_match_case,
 )
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
-from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, ModuleObject, import_definitions
-from valiance.asts.object_constructors import (
-    constructor_definitions,
-    definitely_initialized_fields,
-    prepare_constructor_body,
-)
+from valiance.modules_system.modules import ModuleLoadError, ModuleObject, import_definitions
+from valiance.asts.object_constructors import constructor_definitions
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.default_types import Boolean
 
-from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
-from ..control_flow import patterns as _patterns
-from ..support import analysis_utils as _utils
-from ..state import (
-    AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
-    DiagnosticSeverity, InputMode, VariableWrite,
-)
+from ..state import AnalysisBranch
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -127,7 +63,7 @@ class _ImportDeclarations:
         visible_name: Symbol,
     ) -> str:
         """Render the source component that introduced an imported name."""
-        path = _show_import_path(spec.path)
+        path = spec.path.show()
         for component in spec.components:
             if (component.alias or component.name) == visible_name:
                 return f"{path}.{component.name}"
@@ -142,7 +78,7 @@ class _ImportDeclarations:
         """Add concrete removal and namespacing fixes to an import conflict."""
         current = self._import_source_text(spec, name)
         previous = self._imported_definition_sources.get(name)
-        current_module = _show_import_path(spec.path)
+        current_module = spec.path.show()
         current_namespace = spec.alias or Symbol(spec.path.parts[-1])
         if previous is None:
             return (
@@ -566,10 +502,3 @@ class _ImportDeclarations:
                     if isinstance(obj.typed, TypedObjectNode) else None
                 ),
             )
-
-
-
-def _show_import_path(path: ImportPath) -> str:
-    """Render an import path using source-level root syntax."""
-    prefix = "" if path.root is None else f"{path.root}."
-    return prefix + ".".join(path.parts)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
 
@@ -10,9 +9,9 @@ import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.contracts.release_effects import released_types_effects
 from valiance.analysis.lints import canonical_lint_code, finding
 import valiance.vtypes as T
+from valiance.vtypes.relations import _contains_type_var
 from valiance.asts import (
     AnnotationNode,
-    AssertNode,
     AtNode,
     CastNode,
     ConcurrentNode,
@@ -21,15 +20,10 @@ from valiance.asts import (
     TypedFieldsNode,
     TypedTypeMetadataNode,
     TypedUnsafeNode,
-    DictLiteralNode,
-    ElementTagDeclarationNode,
     FileLintSuppressionNode,
     FunctionNode,
     FunctionParam,
     ImportNode,
-    IndexAccessNode,
-    IndexSetNode,
-    ListLiteralNode,
     LinkNode,
     LinkTypeNode,
     LintSuppressionNode,
@@ -37,41 +31,16 @@ from valiance.asts import (
     MinimumRankNode,
     ObjectNode,
     PopNNode,
-    RecordLiteralNode,
-    ReturnNode,
     StackShuffleNode,
-    StringInterpolationNode,
     StringLiteralNode,
-    TagApplicationNode,
-    TagDeclarationNode,
-    TagOverlayNode,
-    TupleLiteralNode,
-    TypedAssertNode,
     TypedAtNode,
     TypedCallNode,
     TypedCastNode,
     TypedConcurrentNode,
-    TypedForNode,
     TypedFunctionNode,
-    TypedIfNode,
     TypedNode,
-    TypedTagApplicationNode,
-    TypedUnfoldNode,
-    TypedWhileNode,
-    UnfoldNode,
 )
-from valiance.asts.nodes import (
-    BreakNode,
-    CallNode,
-    FieldAccessNode,
-    FieldSetNode,
-    ForNode,
-    GetVariableNode,
-    IfNode,
-    SetVariableNode,
-    SetVariablesNode,
-    WhileNode,
-)
+from valiance.asts.nodes import CallNode, GetVariableNode
 from valiance.modules_system.modules import (
     ModuleObject,
     ModuleLoadError,
@@ -82,8 +51,6 @@ from valiance.modules_system.modules import (
     import_behaviour_set_objects,
 )
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.default_types import Boolean
-from valiance.vtypes.relations import merge_stacks
 
 from .. import analyser as _core
 from ..calls import callable_values as _functions
@@ -175,22 +142,6 @@ def _string_literal(
 ) -> _core.BranchSet:
     """Analyse a `StringLiteralNode` node and return the surviving branches."""
     return _core.BranchSet((branch.push(T.String).emit(TypedNode(node, T.String)),))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _at_collection_view(typ: T.Type) -> T.CollectionType | None:
@@ -496,7 +447,7 @@ def _fields_node(
                 self._diagnose(f"field enumeration requires complete generic arguments for {nested.name}", node)
                 return _core.BranchSet()
     if node.operation != "fields":
-        if _functions._contains_type_var(owner):
+        if _contains_type_var(owner):
             if self.defer_reflection:
                 raise _core.ReflectionSpecializationRequired(owner)
             self._diagnose("type metadata requires concrete type evidence", node)
@@ -509,7 +460,7 @@ def _fields_node(
         raise _core.ReflectionSpecializationRequired(owner)
     if not self.require_reflection_permission(owner, node):
         return _core.BranchSet()
-    if _functions._contains_type_var(owner):
+    if _contains_type_var(owner):
         if self.defer_reflection:
             raise _core.ReflectionSpecializationRequired(owner)
         self._diagnose("field enumeration requires concrete owner evidence at a call site", node)
@@ -871,14 +822,6 @@ def _stack_shuffle_node(
     )
 
 
-
-
-
-
-
-
-
-
 @_core.register(CallNode)
 def _call_node(
     self: _core.Analyser,
@@ -960,47 +903,6 @@ def _call_node(
             ),
         )
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _show_import_path_for_diagnostic(path) -> str:
-    """Render an import path with canonical resolution-root spelling."""
-    prefix = "" if path.root is None else f"{path.root}."
-    return prefix + ".".join(path.parts)
-
 
 
 def _ffi_storage_type(typ: T.Type) -> tuple[str, bool] | None:
@@ -1316,7 +1218,7 @@ def _import_node(
         self._failed_imports.pop(namespace, None)
         if not resolved_spec.components:
             namespace_name = resolved_spec.alias or Symbol(resolved_spec.path.parts[-1])
-            source = _show_import_path_for_diagnostic(resolved_spec.path)
+            source = resolved_spec.path.show()
             previous = self._imported_namespace_sources.get(namespace_name)
             if previous is not None and previous != source:
                 self._diagnose(
@@ -1522,7 +1424,7 @@ def _import_node(
                 imported_guarded_supertypes=imported_guarded_supertypes,
             )
             self._register_imported_object(obj, runtime_name, constructor_dependencies)
-            module_source = _show_import_path_for_diagnostic(resolved_spec.path)
+            module_source = resolved_spec.path.show()
             for definition in obj.private_friendly_definitions:
                 candidate = (obj.name, module_source)
                 candidates = self._private_imported_friendly_elements.setdefault(
@@ -1699,7 +1601,7 @@ def _import_node(
         if not resolved_spec.components:
             namespace_name = resolved_spec.alias or Symbol(resolved_spec.path.parts[-1])
             self._imported_namespace_sources[namespace_name] = (
-                _show_import_path_for_diagnostic(resolved_spec.path)
+                resolved_spec.path.show()
             )
             self._imported_namespace_exports[namespace_name] = exports
         reexport = node.public and self._scope_depth == 0

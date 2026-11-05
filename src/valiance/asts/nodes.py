@@ -885,6 +885,11 @@ class ImportPath:
     parts: tuple[str, ...]
     root: Symbol | None = None
 
+    def show(self) -> str:
+        """Render the path using source-level resolution-root spelling."""
+        prefix = "" if self.root is None else f"{self.root}."
+        return prefix + ".".join(self.parts)
+
 
 @dataclass(frozen=True)
 class ImportComponent:

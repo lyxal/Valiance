@@ -751,12 +751,6 @@ class FFIStructValue:
                 return value
         raise KeyError(name)
 
-    def with_field(self, name: str, value: Any) -> "FFIStructValue":
-        """Return a reconstructed native structure with one field replaced."""
-        if name not in {field_name for field_name, _ in self.fields}:
-            raise KeyError(name)
-        return FFIStructValue(self.ffi_type, tuple((field_name, value if field_name == name else current) for field_name, current in self.fields))
-
     def __str__(self) -> str:
         """Return the user-facing representation of this FFI value."""
         return self.ffi_type + "{" + ", ".join(f"{name}: {format_runtime_value(value)}" for name, value in self.fields) + "}"
@@ -1638,3 +1632,10 @@ def object_type_name(value: ObjectValue) -> str:
     if not value.type_args:
         return value.type_name
     return f"{value.type_name}[{', '.join(value.type_args)}]"
+
+
+def is_none_value(value: Any) -> bool:
+    """Return whether a value represents Valiance absence."""
+    return value is None or (
+        isinstance(value, ObjectValue) and value.type_name.rsplit(".", 1)[-1] == "None"
+    )

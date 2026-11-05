@@ -39,6 +39,7 @@ from valiance.runtime.runtime_values import (
     format_runtime_value,
     is_finite_list_like,
     is_list_like,
+    is_none_value as _is_none_value,
     runtime_collection_rank,
     unwrap_runtime_value,
     RuntimeNumber,
@@ -1159,13 +1160,6 @@ def _is_err_value(value: Any) -> bool:
         value.type_name == "Err"
         or value.type_name.endswith("Error")
         or value.type_name.rsplit(".", 1)[-1].endswith("Error")
-    )
-
-
-def _is_none_value(value: Any) -> bool:
-    """Return whether the value is none value."""
-    return value is None or (
-        isinstance(value, ObjectValue) and value.type_name.rsplit(".", 1)[-1] == "None"
     )
 
 

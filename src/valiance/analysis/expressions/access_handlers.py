@@ -2,88 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import replace
 from decimal import DecimalException, InvalidOperation
-from typing import cast
 
-import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.contracts.release_effects import release_effects
-from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
+from valiance.vtypes.relations import _contains_type_var
 from valiance.asts import (
-    AnnotationNode,
-    AssertNode,
-    AtNode,
-    CastNode,
-    DictLiteralNode,
     ElementNode,
-    ElementTagDeclarationNode,
-    FileLintSuppressionNode,
-    FunctionNode,
-    FunctionParam,
-    ImportNode,
     IndexAccessNode,
     IndexSetNode,
     IndexUpdateNode,
     ListLiteralNode,
-    LintSuppressionNode,
     NumberLiteralNode,
-    ObjectNode,
     PopNNode,
-    RecordLiteralNode,
-    ReturnNode,
-    StackShuffleNode,
-    StringInterpolationNode,
-    StringLiteralNode,
-    TagApplicationNode,
-    TagDeclarationNode,
-    TagOverlayNode,
     TupleLiteralNode,
-    TypedAssertNode,
-    TypedAtNode,
-    TypedCallNode,
-    TypedForNode,
-    TypedFunctionNode,
-    TypedIfNode,
     TypedNode,
     TypedElementNode,
     TypedProtocolIndexNode,
     TypedReflectiveReadNode,
     TypedReflectiveWriteNode,
-    TypedTagApplicationNode,
-    TypedUnfoldNode,
-    TypedWhileNode,
-    UnfoldNode,
 )
-from valiance.asts.nodes import (
-    BreakNode,
-    CallNode,
-    FieldAccessNode,
-    FieldSetNode,
-    ForNode,
-    GetVariableNode,
-    IfNode,
-    SetVariableNode,
-    SetVariablesNode,
-    WhileNode,
-)
-from valiance.modules_system.modules import (
-    ModuleLoadError,
-    import_environment_facts,
-    import_objects,
-)
+from valiance.asts.nodes import FieldAccessNode, FieldSetNode, GetVariableNode, SetVariableNode
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.default_types import Boolean
 from valiance.runtime.runtime_values import RuntimeNumber
-from valiance.vtypes.relations import merge_stacks
 
 from .. import analyser as _core
-from ..calls import callable_values as _functions
-from ..calls import candidates as _calls
 from ..control_flow import patterns as _patterns
 from ..support import analysis_utils as _utils
-
 
 
 @_core.register(FieldAccessNode)
@@ -313,8 +258,6 @@ def _literal_path_pattern_depth(
     return len(expression.items) if isinstance(expression, (ListLiteralNode, TupleLiteralNode)) else None
 
 
-
-
 def _simple_protocol_selectors(node: IndexAccessNode | IndexSetNode) -> bool:
     """Return whether every selector is one ordinary provider argument."""
     return bool(node.selectors) and all(
@@ -489,7 +432,7 @@ def _index_access_node(
             return _core.BranchSet()
         if not self.require_reflection_permission(owner, node):
             return _core.BranchSet()
-        if _functions._contains_type_var(owner):
+        if _contains_type_var(owner):
             if self.defer_reflection:
                 raise _core.ReflectionSpecializationRequired(owner)
             self._diagnose("reflective reads require concrete field layout evidence at a call site", node)
@@ -700,10 +643,10 @@ def _index_set_node(
             return _core.BranchSet()
         if not self.require_reflection_permission(owner, node):
             return _core.BranchSet()
-        if _functions._contains_type_var(owner):
+        if _contains_type_var(owner):
             self._diagnose("reflective writes require concrete owner evidence", node)
             return _core.BranchSet()
-        if self.defer_reflection and _functions._contains_type_var(value_type):
+        if self.defer_reflection and _contains_type_var(value_type):
             raise _core.ReflectionSpecializationRequired(value_type)
         from valiance.vtypes.reflection import fields_for_value
         metadata = fields_for_value(owner, self.env)

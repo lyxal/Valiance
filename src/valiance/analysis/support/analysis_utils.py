@@ -4,55 +4,28 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
-from decimal import Decimal, InvalidOperation
+from decimal import InvalidOperation
 from itertools import count, product
-from typing import cast
 
 from valiance.runtime.runtime_values import RuntimeNumber
 import valiance.vtypes as T
 from valiance.asts import (
-    AnnotationNode,
     ASTNode,
-    FunctionOverloadTyping,
     FunctionParam,
-    ListLiteralNode,
     ObjectNode,
     StackShuffleNode,
-    StringLiteralNode,
     TraitRequirementNode,
-    TypedAtNode,
-    TypedCallNode,
-    TypedElementExtension,
-    TypedElementNode,
-    TypedExtensionPatternRule,
-    TypedFunctionNode,
-    TypedIfNode,
-    TypedImportedFunctionNode,
-    TypedImportedObjectNode,
     TypedLiteralNode,
-    TypedNode,
-    TypedTagApplicationNode,
-    TypedUnfoldNode,
 )
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
 from ..state.transformations import (
-    _assignment_error,
-    _assignment_stored_type,
     _child_symbol,
     _erase_absent_tag_requirements,
     _lookup,
     _mustcall_methods,
-    _refine_input_requirement_items,
-    _refine_items,
-    _refine_stack,
-    _refine_typed_body,
-    _refine_typed_extension,
-    _refine_typed_node,
     _set_item,
-    _set_symbol_flag,
-    _sorted_items,
 )
 from ..calls import callable_values as _functions
 
@@ -663,11 +636,6 @@ def _stack_duplication_diagnostic(
     )
 
 
-def _noncopyable_reason(typ: T.Type, env: T.Environment) -> str | None:
-    """Return a reason only when every runtime value of the type is noncopyable."""
-    return _duplication_requirement(typ, env).reason
-
-
 def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:
     """Return the declared duplication error for a nominal object type."""
     definition = env.lookup_object(name)
@@ -693,16 +661,6 @@ def _row_field_type(row: T.RowType, name: Symbol) -> T.Type | None:
         if row_field.name == name:
             return row_field.typ
     return None
-
-
-
-
-
-
-
-
-
-
 
 
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
@@ -762,10 +720,6 @@ def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     )
 
 
-
-
-
-
 def _stack_assignable(
     actual: T.TypeStack,
     expected: T.TypeStack,
@@ -800,19 +754,5 @@ def _return_value_shape(typ: T.Type) -> T.Type:
     if isinstance(normalized, T.TaggedType):
         return normalized.inner
     return normalized
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

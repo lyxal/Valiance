@@ -12,10 +12,8 @@ from valiance.asts import (
     MatchPatternNode,
     NumberLiteralNode,
     OrPatternNode,
-    RestPatternNode,
     StringLiteralNode,
     TypePatternNode,
-    WildcardPatternNode,
     is_catch_all_match_case,
 )
 from ..contexts import MatchLintContext

@@ -34,8 +34,8 @@ checkpoints and surviving-world inspection are separate, unfinished editor stage
 - `src/valiance/analysis/declarations/` for declaration registration and type shapes
 - `src/valiance/analysis/analyser.py` for orchestration
   Public façade for analysis. It owns branch state, diagnostics, the handler
-  registry, the `Analyser` orchestration class, and compatibility access to
-  private helpers.
+  registry and the `Analyser` orchestration class. Private helpers are imported
+  directly from their owning subsystem modules.
 
 - `src/valiance/analysis/handlers/core.py`
   Contains the concrete raw-AST node handlers registered with the façade.

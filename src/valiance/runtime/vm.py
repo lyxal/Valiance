@@ -73,6 +73,7 @@ from valiance.runtime.runtime_values import (
     format_runtime_value,
     is_eager_sequence,
     is_list_like,
+    is_none_value as _is_none_result_value,
     is_recoverable_fault,
     object_type_name,
     runtime_collection_rank,
@@ -3841,7 +3842,9 @@ class VirtualMachine:
                             frame.stack.extend(branch_results)
                             _exit_cycle(frame)
                         case OpCode.MAKE_OBJECT_CONSTRUCTOR:
-                            constructor = _object_constructor_reference(instruction.arg)
+                            constructor = instruction.arg
+                            if not isinstance(constructor, ObjectConstructorReference):
+                                raise RuntimeError("invalid object constructor metadata")
                             initializer = (
                                 None
                                 if constructor.initializer is None
@@ -6637,57 +6640,6 @@ def _runtime_string_tuple(value: object, description: str) -> tuple[str, ...]:
     return value
 
 
-def _object_constructor_reference(value: object) -> ObjectConstructorReference:
-    """Normalize named and legacy positional constructor bytecode payloads."""
-    if isinstance(value, ObjectConstructorReference):
-        return value
-    if isinstance(value, tuple):
-        if len(value) == 5:
-            type_name, fields, required, defaults, runtime_metadata = value
-            initializer = None
-        elif len(value) == 6:
-            (
-                type_name,
-                fields,
-                required,
-                defaults,
-                runtime_metadata,
-                initializer,
-            ) = value
-        else:
-            raise RuntimeError(f"invalid object constructor metadata {value!r}")
-        if not isinstance(type_name, str):
-            raise RuntimeError(f"invalid object constructor type {type_name!r}")
-        if not isinstance(fields, tuple) or not all(
-            isinstance(field, str) for field in fields
-        ):
-            raise RuntimeError(f"invalid object constructor fields {fields!r}")
-        if not isinstance(required, tuple) or not all(
-            isinstance(field, str) for field in required
-        ):
-            raise RuntimeError(
-                f"invalid object constructor required fields {required!r}"
-            )
-        if not isinstance(defaults, tuple):
-            raise RuntimeError(f"invalid object constructor defaults {defaults!r}")
-        if initializer is not None and not isinstance(
-            initializer,
-            (FunctionCode, FunctionSetCode),
-        ):
-            raise RuntimeError(
-                f"invalid object constructor initializer {initializer!r}"
-            )
-        return ObjectConstructorReference(
-            type_name,
-            fields,
-            required,
-            defaults,
-            runtime_metadata,
-            initializer,
-        )
-    raise RuntimeError(f"invalid object constructor metadata {value!r}")
-
-
 def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> None:
     """Release stack tail during VM execution."""
     if count <= 0:
@@ -8839,13 +8791,6 @@ def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
             return False
     stack.append(value)
     return False
-
-
-def _is_none_result_value(value: Any) -> bool:
-    """Return whether the value is none result value."""
-    return value is None or (
-        isinstance(value, ObjectValue) and value.type_name.rsplit(".", 1)[-1] == "None"
-    )
 
 
 def _is_error_result_value(value: Any) -> bool:

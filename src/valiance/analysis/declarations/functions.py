@@ -2,94 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import (
-    dataclass,
-    field,
-    fields,
-    is_dataclass,
-    replace,
-)
-from enum import Enum, auto
+from collections.abc import Iterator
+from dataclasses import fields, is_dataclass, replace
 from functools import cache
-from hashlib import sha1
 from itertools import count
-from pathlib import Path
-from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.contracts.mustcall_flow import prove_local_mustcall
 import valiance.vtypes as T
-import valiance.analysis.contracts.where_clauses as static_where
-from valiance.elements.builtins import default_environment
-from valiance.analysis.lints import (
-    DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
-    BlockLintContext,
-    LintFinding,
-    LintRegistry,
-    MatchLintContext,
-    NodeLintContext,
-)
-from valiance.asts import (
-    AnnotationNode,
-    ASTNode,
-    BindingPatternNode,
-    DefineNode,
-    ElementExtension,
-    ElementNode,
-    EnumMemberNode,
-    FileLintSuppressionNode,
-    FunctionNode,
-    FunctionOverloadTyping,
-    FunctionParam,
-    ImportComponent,
-    ImportPath,
-    ImportSpec,
-    ListPatternNode,
-    MatchCaseNode,
-    MatchNode,
-    MatchPatternNode,
-    ObjectNode,
-    OrPatternNode,
-    PopNNode,
-    SourceLocation,
-    TraitRequirementNode,
-    TryHandlerNode,
-    TryNode,
-    TypePatternNode,
-    TypedCallNode,
-    TypedElementExtension,
-    TypedElementNode,
-    TypedExtensionPatternRule,
-    TypedFunctionNode,
-    TypedImportedFunctionNode,
-    TypedImportedObjectNode,
-    TypedMatchNode,
-    TypedNode,
-    TypedTagApplicationNode,
-    TypedTryNode,
-    VariantMemberNode,
-    is_catch_all_match_case,
-)
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
-from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
-from valiance.asts.object_constructors import (
-    constructor_definitions,
-    definitely_initialized_fields,
-    prepare_constructor_body,
-)
+from valiance.asts import ASTNode, DefineNode, FunctionNode, TypedFunctionNode, TypedNode
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
 
 from ..overload_identity import declaration_id
 from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
-from ..control_flow import patterns as _patterns
-from ..support import analysis_utils as _utils
-from ..state import (
-    AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
-    DiagnosticSeverity, InputMode, VariableWrite,
-)
+from ..state import AnalysisBranch, BranchSet
 def _nominal_type_names(value: object) -> Iterator[Symbol]:
     """Visit nested type records without depending on their layouts."""
     if isinstance(value, T.NominalType) and not isinstance(value, T.FFINamedType):
@@ -530,7 +458,6 @@ class _FunctionDeclarations:
             node,
         )
         return None
-
 
 
 def _counted_word(count: int, singular: str) -> str:

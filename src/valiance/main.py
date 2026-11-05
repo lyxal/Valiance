@@ -1410,11 +1410,6 @@ class _ReplSession(SessionService):
         return self.execute(result.prepared).successful
 
 
-def _format_type_stack(stack: T.TypeStack) -> str:
-    """Format type stack for CLI and REPL orchestration."""
-    return "[" + ", ".join(T.show(item) for item in stack) + "]"
-
-
 def _read_source_file(filename: str) -> str | None:
     """Read source file for CLI and REPL orchestration."""
     try:

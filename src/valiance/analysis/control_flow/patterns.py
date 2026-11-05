@@ -27,7 +27,6 @@ from valiance.asts import (
     TypePatternNode,
     WildcardPatternNode,
     has_repeated_match_bindings,
-    is_catch_all_match_case,
     is_catch_all_match_pattern,
 )
 from valiance.asts.nodes import GetVariableNode

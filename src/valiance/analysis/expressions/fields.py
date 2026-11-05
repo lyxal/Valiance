@@ -2,113 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import (
-    dataclass,
-    field,
-    fields,
-    is_dataclass,
-    replace,
-)
-from enum import Enum, auto
-from hashlib import sha1
-from itertools import count
-from pathlib import Path
-from typing import cast
+from dataclasses import field, replace
 
-import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
-import valiance.analysis.contracts.where_clauses as static_where
-from valiance.elements.builtins import default_environment
-from valiance.analysis.lints import (
-    DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
-    BlockLintContext,
-    LintFinding,
-    LintRegistry,
-    MatchLintContext,
-    NodeLintContext,
-)
-from valiance.asts import (
-    AnnotationNode,
-    ASTNode,
-    BindingPatternNode,
-    DefineNode,
-    ElementExtension,
-    ElementNode,
-    EnumMemberNode,
-    FileLintSuppressionNode,
-    FunctionNode,
-    FunctionOverloadTyping,
-    FunctionParam,
-    ImportComponent,
-    ImportPath,
-    ImportSpec,
-    ListPatternNode,
-    MatchCaseNode,
-    MatchNode,
-    MatchPatternNode,
-    ObjectNode,
-    OrPatternNode,
-    PopNNode,
-    SourceLocation,
-    TraitRequirementNode,
-    TryHandlerNode,
-    TryNode,
-    TypePatternNode,
-    TypedCallNode,
-    TypedElementExtension,
-    TypedElementNode,
-    TypedExtensionPatternRule,
-    TypedFunctionNode,
-    TypedImportedFunctionNode,
-    TypedImportedObjectNode,
-    TypedMatchNode,
-    TypedNode,
-    TypedTagApplicationNode,
-    TypedTryNode,
-    VariantMemberNode,
-    is_catch_all_match_case,
-)
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
+from valiance.vtypes.relations import _contains_type_var
 from valiance.asts.nodes import FieldAccessNode
-from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
-from valiance.asts.object_constructors import (
-    constructor_definitions,
-    definitely_initialized_fields,
-    prepare_constructor_body,
-)
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.structural import nested_types
 from valiance.vtypes.reflection import field_type_evidence
-from valiance.vtypes.default_types import Boolean
 
 from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
 from ..control_flow import patterns as _patterns
 from ..support import analysis_utils as _utils
-from ..state import (
-    AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
-    DiagnosticSeverity, InputMode, VariableWrite,
-)
-
-
-
-from ..calls.models import (
-    CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
-    ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
-)
-
-
-
-
-
-
-
-
-
-
-
-
+from ..state import AnalysisBranch, InputMode
 
 
 class _FieldExpressions:
@@ -236,7 +143,7 @@ class _FieldExpressions:
         if isinstance(metadata_base, T.NominalType) and metadata_base.name == Symbol("TypeInfo"):
             if write or len(metadata_base.args) != 1:
                 return None, None
-            if _functions._contains_type_var(metadata_base.args[0]):
+            if _contains_type_var(metadata_base.args[0]):
                 if self.defer_reflection:
                     from valiance.analysis.calls.models import ReflectionSpecializationRequired
                     raise ReflectionSpecializationRequired(metadata_base.args[0])
@@ -250,7 +157,7 @@ class _FieldExpressions:
             owner, witness = evidence
             if write or not self.require_reflection_permission(owner, FieldAccessNode(name)):
                 return None, None
-            if name == Symbol("type") and witness is None and _functions._contains_type_var(owner):
+            if name == Symbol("type") and witness is None and _contains_type_var(owner):
                 if self.defer_reflection:
                     from valiance.analysis.calls.models import ReflectionSpecializationRequired
                     raise ReflectionSpecializationRequired(owner)

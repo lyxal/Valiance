@@ -74,22 +74,6 @@ class BranchVariables:
             result[name] = typ
         return _ops._sorted_items(result.items())
 
-    def constant_items(self) -> tuple[tuple[Symbol, T.Type], ...]:
-        """Return visible immutable bindings that are safe to read in functions."""
-        constant_names = set(self.function_constants) | set(self.block_constants)
-        return tuple(
-            (name, typ)
-            for name, typ in self.visible_items()
-            if name in constant_names
-        )
-
-    def nonconstant_names(self) -> frozenset[Symbol]:
-        """Return visible binding names that may change after function creation."""
-        constant_names = set(self.function_constants) | set(self.block_constants)
-        return frozenset(
-            name for name, _typ in self.visible_items() if name not in constant_names
-        )
-
     def read(self, name: Symbol) -> T.Type | None:
         """Read a variable using block, function, parameter, capture order."""
         for scope in (
