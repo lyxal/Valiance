@@ -293,6 +293,10 @@ def _literal_branch_results(
                     node,
                     typ,
                     tuple(item.typed_body for item in combo),
+                    tuple(item.consumed + len(item.branch.inputs) - len(branch.inputs)
+                          for item in combo),
+                    tuple(len(item.branch.stack) - len(branch.stack) + item.consumed
+                          for item in combo),
                 )
             )
             .with_element_tags(element_tags)

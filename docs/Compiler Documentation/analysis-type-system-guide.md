@@ -1369,7 +1369,7 @@ applied overload.
 
 ## Literals
 
-List and tuple literals analyse their item expressions from the same incoming branch and act like an implicit fork. Record fields and dictionary key/value expressions instead begin from independent empty stacks. They cannot consume the outer stack, and a dictionary key cannot contribute stack values to its value. The outer stack is preserved unchanged and receives only the completed literal.
+List, tuple, record, and dictionary literals analyse their item expressions from the same incoming branch and act like an implicit fork. Every item, record field, dictionary key, and dictionary value sees the incoming stack independently; a dictionary key cannot contribute stack values to its value. The completed literal consumes the maximum stack arity consumed by any expression and pushes its constructed value. Expressions that consume no inputs preserve the incoming stack.
 
 For list literals:
 
@@ -1387,7 +1387,7 @@ literal as `Number+` and then validates it against the declared `Number*`
 return. The same contextualisation is applied to explicit `return` values and
 terminal `if`, `match`, and `try` branches.
 
-Tuple literals reuse the forked item machinery. Record and dictionary literals use isolated item analysis and retain one typed body per independent expression.
+Tuple, record, and dictionary literals reuse the forked item machinery and retain one typed body per independent expression. Dictionary keys and values participate as separate expressions in source order.
 
 ### Explicit parameter cycling and caller-stack functions
 

@@ -1148,6 +1148,7 @@ class _Compiler:
                     compiled_items,
                     OpCode.BUILD_LIST,
                     argument=(len(compiled_items), rank),
+                    literal=typed_node,
                 )
             case TupleLiteralNode(items):
                 compiled_items = (
@@ -1155,34 +1156,21 @@ class _Compiler:
                     if isinstance(typed_node, TypedLiteralNode)
                     else items
                 )
-                self.collection(compiled_items, OpCode.BUILD_TUPLE)
+                self.collection(compiled_items, OpCode.BUILD_TUPLE, literal=typed_node)
             case RecordLiteralNode(fields):
-                typed_items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
-                keys = []
-                for index, (key, expr) in enumerate(fields):
-                    self.emit(OpCode.ISOLATE_STACK_BEGIN)
-                    previous_storage = self._literal_storage
-                    self._literal_storage = "a record field"
-                    try:
-                        self.expression(typed_items[index] if typed_items else expr)
-                    finally:
-                        self._literal_storage = previous_storage
-                    self.emit(OpCode.ISOLATE_STACK_END)
-                    keys.append(key.text)
-                self.emit(OpCode.BUILD_RECORD, (tuple(keys), show(typed_node.typ)))
+                items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else tuple(
+                    expr for _, expr in fields
+                )
+                self.collection(
+                    items, OpCode.BUILD_RECORD,
+                    argument=(tuple(key.text for key, _ in fields), show(typed_node.typ)),
+                    literal=typed_node,
+                )
             case DictLiteralNode(entries):
-                typed_items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
-                expressions = tuple(expr for entry in entries for expr in entry)
-                for index, expr in enumerate(expressions):
-                    self.emit(OpCode.ISOLATE_STACK_BEGIN)
-                    previous_storage = self._literal_storage
-                    self._literal_storage = "a dictionary entry"
-                    try:
-                        self.expression(typed_items[index] if typed_items else expr)
-                    finally:
-                        self._literal_storage = previous_storage
-                    self.emit(OpCode.ISOLATE_STACK_END)
-                self.emit(OpCode.BUILD_DICT, len(entries))
+                items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else tuple(
+                    expr for entry in entries for expr in entry
+                )
+                self.collection(items, OpCode.BUILD_DICT, argument=len(entries), literal=typed_node)
             case ObjectNode():
                 runtime_name = (
                     typed_node.runtime_name
@@ -1309,26 +1297,53 @@ class _Compiler:
         op: OpCode,
         *,
         argument: object | None = None,
+        literal: TypedNode | None = None,
     ) -> None:
-        """Compile collection items as isolated expressions."""
+        """Fork checked input suffixes and collect each expression's top result."""
+        input_counts = literal.input_counts if isinstance(literal, TypedLiteralNode) else ()
+        output_counts = literal.output_counts if isinstance(literal, TypedLiteralNode) else ()
+        arity = max(input_counts, default=0)
+        inputs = []
+        uses = [sum(count >= arity - offset for count in input_counts)
+                for offset in range(arity)]
+        if arity:
+            self.emit(OpCode.SOURCE_ARGS, arity)
+            for _ in range(arity):
+                name = f"\x00literal_input_{self._temporary_index}"
+                self._temporary_index += 1
+                self.emit(OpCode.STORE_VAR, name)
+                inputs.append(name)
+            inputs.reverse()
         temporaries: list[str] = []
-        for item in items:
+        for index, item in enumerate(items):
             name = f"\x00literal_{self._temporary_index}"
             self._temporary_index += 1
+            count = input_counts[index] if input_counts else 0
+            for offset in range(len(inputs) - count, len(inputs)):
+                uses[offset] -= 1
+                self.emit(
+                    OpCode.LOAD_VAR if uses[offset] else OpCode.LOAD_VAR_FORWARD,
+                    inputs[offset],
+                )
             self.emit(OpCode.CYCLE_BEGIN, ("current", 0))
             previous_storage = self._literal_storage
-            self._literal_storage = (
-                "a list element" if op is OpCode.BUILD_LIST else "a tuple element"
-            )
+            self._literal_storage = {
+                OpCode.BUILD_LIST: "a list element",
+                OpCode.BUILD_TUPLE: "a tuple element",
+                OpCode.BUILD_RECORD: "a record field",
+                OpCode.BUILD_DICT: "a dictionary entry",
+            }[op]
             try:
                 self.expression(item)
             finally:
                 self._literal_storage = previous_storage
             self.emit(OpCode.CYCLE_END)
             self.emit(OpCode.STORE_VAR, name)
+            if output_counts and output_counts[index] > 1:
+                self.emit(OpCode.POP_N, output_counts[index] - 1)
             temporaries.append(name)
         for name in temporaries:
-            self.emit(OpCode.LOAD_VAR, name)
+            self.emit(OpCode.LOAD_VAR_FORWARD, name)
         self.emit(op, len(items) if argument is None else argument)
 
     def _register_runtime_tag_declaration(self, node: TagDeclarationNode) -> None:

@@ -47,9 +47,11 @@ class TypedNode:
 
 @dataclass(frozen=True, slots=True)
 class TypedLiteralNode(TypedNode):
-    """A literal whose item expressions retain their typed child nodes."""
+    """A literal retaining typed expressions and their forked input/output arities."""
 
     items: tuple[tuple[TypedNode, ...], ...] = ()
+    input_counts: tuple[int, ...] = ()
+    output_counts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

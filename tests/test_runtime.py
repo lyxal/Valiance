@@ -10659,16 +10659,48 @@ println
         self.assertEqual(format_runtime_value(dictionary), '{"label" => 1}')
         self.assertEqual(format_runtime_value(record), "record{label => 1}")
 
-    def test_record_and_dict_expressions_cannot_read_outer_stack(self):
-        for source in (
-            "3 5 record{foo => +}",
-            "3 5 dict{top => top}",
-            '3 5 dict{"key" => +}',
+    def test_collection_literals_fork_the_incoming_stack(self):
+        cases = (
+            ('"keep" 3 5 [+, double]', ['keep', [RuntimeNumber('8'), RuntimeNumber('10')]]),
+            ('3 5 record{value => 7 9}', [RuntimeNumber('3'), RuntimeNumber('5'), {'value': RuntimeNumber('9')}]),
+            ('3 5 record{}', [RuntimeNumber('3'), RuntimeNumber('5'), {}]),
+            ('3 5 dict{}', [RuntimeNumber('3'), RuntimeNumber('5'), {}]),
+            ('"keep" 3 5 {+, double}', ['keep', (RuntimeNumber('8'), RuntimeNumber('10'))]),
+            ('"keep" 3 5 record{sum => +, twice => double}',
+             ['keep', {'sum': RuntimeNumber('8'), 'twice': RuntimeNumber('10')}]),
+            ('"keep" 3 5 dict{+ => double, 1 => +}',
+             ['keep', {RuntimeNumber('8'): RuntimeNumber('10'), RuntimeNumber('1'): RuntimeNumber('8')}]),
+            ('3 5 dict{top => top}', [RuntimeNumber('3'), {RuntimeNumber('5'): RuntimeNumber('5')}]),
+            ('3 5 record{nested => {+, double}, sum => +}',
+             [{'nested': (RuntimeNumber('8'), RuntimeNumber('10')), 'sum': RuntimeNumber('8')}]),
+        )
+        for source, expected in cases:
+            for optimize in (False, True):
+                with self.subTest(source=source, optimize=optimize):
+                    analyser = Analyser()
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    program = compile_program(typed, optimize=optimize)
+                    self.assertEqual(run(program), expected)
+                    self.assertEqual(run(loads(dumps(program))), expected)
+
+    def test_collection_literal_items_infer_shared_function_inputs(self):
+        for literal, expected in (
+            ('{+, double}', [(RuntimeNumber('8'), RuntimeNumber('10'))]),
+            ('record{sum => +, twice => double}',
+             [{'sum': RuntimeNumber('8'), 'twice': RuntimeNumber('10')}]),
+            ('dict{+ => double}', [{RuntimeNumber('8'): RuntimeNumber('10')}]),
         ):
-            with self.subTest(source=source):
-                analyser = Analyser()
-                analyser.analyse(parse(source))
-                self.assertTrue(analyser.diagnostics)
+            with self.subTest(literal=literal):
+                self.assertEqual(
+                    execute(f'define combine => {literal} end 3 5 combine'), expected,
+                )
+
+    def test_collection_literal_forwards_inputs_on_their_last_use(self):
+        declaration = '@nodup("resource") object Resource => end\n'
+        for literal in ('[top]', '{top}', 'record{item => top}', 'dict{1 => top}'):
+            with self.subTest(literal=literal):
+                self.assertEqual(execute(declaration + f'Resource | {literal} pop'), [])
 
     def test_dictionary_key_and_value_are_isolated_from_each_other(self):
         analyser = Analyser()

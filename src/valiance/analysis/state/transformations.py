@@ -230,6 +230,8 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.node,
             typ,
             items,
+            typed_node.input_counts,
+            typed_node.output_counts,
         )
     if isinstance(typed_node, TypedSpawnNode):
         callable_type = (

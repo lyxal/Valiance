@@ -952,7 +952,12 @@ declared variance. Data-tag predicates use `TaggedValue` evidence retained by
 tag application and by tagged function/builtin returns.
 
 Typed list, tuple, record, and dictionary literals retain the typed nodes for
-their item expressions. This ensures constructor calls nested inside literals
+their item expressions. Each expression cycles the same incoming stack;
+the literal consumes the maximum input arity used by any expression. Dictionary
+keys and values cycle independently, as do record fields. The typed literal
+records each expression's input and output arities. Code generation saves the
+shared input suffix once, forwards each input on its last use, and retains only
+the top result of each expression. This ensures constructor calls nested inside literals
 carry resolved generic arguments into `ObjectValue.type_args` instead of
 falling back to an erased dynamic constructor call.
 
