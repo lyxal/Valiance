@@ -9053,6 +9053,33 @@ Multiply a number by itself.
 import {std.arithmetic.square} 3 square
 ```
 
+## std.cmdline
+
+### `std.cmdline.\argv`
+
+Return the arguments passed to the Valiance program.
+
+**Overloads**
+
+- `std.cmdline.\argv() -> String+`
+
+  **Example**
+
+  ```vlnc
+  import { std.cmdline } cmdline.\argv
+  ```
+  Returns the arguments supplied by the caller.
+
+
+**Returns:** Program arguments, excluding interpreter arguments.
+
+**Example**
+
+```vlnc
+import { std.cmdline } cmdline.\argv
+```
+Returns the arguments supplied by the caller.
+
 ## std.file
 
 ### `std.file.#byte`

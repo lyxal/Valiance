@@ -13225,6 +13225,49 @@
     },
     {
       "aliases": [],
+      "category": "General",
+      "description": [],
+      "examples": [
+        {
+          "description": "Returns the arguments supplied by the caller.",
+          "result": null,
+          "source": "import { std.cmdline } cmdline.\\argv"
+        }
+      ],
+      "module": "std.cmdline",
+      "name": "\\argv",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "General",
+          "description": [],
+          "examples": [
+            {
+              "description": "Returns the arguments supplied by the caller.",
+              "result": null,
+              "source": "import { std.cmdline } cmdline.\\argv"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": "Program arguments, excluding interpreter arguments.",
+          "see_also": [],
+          "summary": "Return the arguments passed to the Valiance program."
+        }
+      ],
+      "overloads": [
+        "std.cmdline.\\argv() -> String+"
+      ],
+      "parameters": [],
+      "qualified_name": "std.cmdline.\\argv",
+      "returns": "Program arguments, excluding interpreter arguments.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/cmdline.py",
+      "summary": "Return the arguments passed to the Valiance program."
+    },
+    {
+      "aliases": [],
       "category": "File",
       "description": [
         "Validate that a byte is an Int in the inclusive range 0 to 255."
