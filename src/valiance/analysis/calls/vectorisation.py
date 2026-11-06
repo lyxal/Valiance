@@ -159,7 +159,7 @@ def _call_site_checked_overload_signature(
                     if len(candidates) != 1:
                         continue
                     concrete = candidates[0]
-                    if checked_bodies is not None and _functions._has_reflection_plan(analysis.overloads):
+                    if checked_bodies is not None:
                         checked_bodies.append(_functions._checked_reflection_function(node, analysis, candidate))
                     return T.Overload(
                         (*concrete.params, function_type),
@@ -254,8 +254,7 @@ def _call_site_checked_overload_signature(
         overloads = _functions._callable_overloads(analysis.typ)
         if len(overloads) != 1:
             return None
-        if checked_bodies is not None and (
-                overload.specialize_body or _functions._has_reflection_plan(analysis.overloads)):
+        if checked_bodies is not None:
             checked_bodies.append(_functions._checked_reflection_function(node, analysis, overload))
         return _substitute_overload_ranks(overloads[0], rank_values or {})
     if len(call_params) < len(overload.params):

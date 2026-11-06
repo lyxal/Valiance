@@ -283,6 +283,7 @@ class TypedReturnNode(TypedNode):
 class TypedFunctionNode(TypedNode):
     overloads: tuple[FunctionOverloadTyping, ...] = ()
     dispatch_plan: UnionDispatchPlan | None = None
+    checked_stack_inputs: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

@@ -12521,6 +12521,50 @@ class MinimumRankAssuranceTests(unittest.TestCase):
 
 
 class FirstClassOverloadSetCallRuntimeTests(unittest.TestCase):
+    def test_checked_deferred_body_preserves_ambient_stack_inputs(self):
+        source = '''
+$dip = fn (function: Function) =>
+  $temp = top
+  $function()
+  $temp
+end
+1 2 3 $dip(fn => +)
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimized in (False, True):
+            program = compile_program(typed, optimize=optimized)
+            for serialized in (False, True):
+                with self.subTest(optimized=optimized, serialized=serialized):
+                    self.assertEqual(
+                        run(loads(dumps(program)) if serialized else program),
+                        [RuntimeNumber(3), RuntimeNumber(3)],
+                    )
+
+    def test_deferred_calls_preserve_direct_and_vectorised_selection(self):
+        source = (
+            '$f = fn (x) => {$x([1, 2]), $x(["a", "b"])}\n'
+            'println $f(fn => reverse)\n'
+            'println $f(fn => length)\n'
+            '$g = fn (x) => $x(["ab", "c"])\n'
+            'println $g(fn(s: String) => $s length)'
+        )
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimized in (False, True):
+            program = compile_program(typed, optimize=optimized)
+            for serialized in (False, True):
+                with self.subTest(optimized=optimized, serialized=serialized):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        run(loads(dumps(program)) if serialized else program)
+                    self.assertEqual(
+                        output.getvalue(),
+                        "([2, 1], ['b', 'a'])\n(2, 2)\n[2, 1]\n",
+                    )
+
     def test_empty_variable_call_executes_generic_list_overload_at_higher_rank(self):
         self.assertEqual(
             execute("""

@@ -96,7 +96,10 @@ class _ElementCalls:
             return BranchSet.collect(terminal)
         if not sources and len(self.diagnostics) > diagnostics_before:
             return BranchSet()
+        failure_start = len(self.call_site_failures)
         candidates = self.element_call_candidates(node, overloads, sources)
+        body_failures = tuple(dict.fromkeys(self.call_site_failures[failure_start:]))
+        del self.call_site_failures[failure_start:]
         if _allow_no_match and not candidates:
             return BranchSet.collect(terminal)
         if node.name in (Symbol("field?"), Symbol("length")) and not self.reflection_unsafe:
@@ -125,6 +128,8 @@ class _ElementCalls:
                 node, stack_before, overloads, modifier_args
             )
             overload_list = _utils._show_overload_list(node.name, overloads)
+            if body_failures:
+                overload_list += "\nrejected function bodies:\n" + "\n".join(body_failures)
             if node.call_args:
                 call_shape = self._explicit_call_shape_message(node, overloads)
                 if call_shape is not None:

@@ -1599,6 +1599,14 @@ keeps the `Int+`, `Real+`, and `Number+` input contracts; a concrete integer cal
 can then choose the integer specialization without excluding later real calls.
 Concrete callable-value invocations retain the selected implementation identity
 and vectorisation plan through bytecode generation, including anonymous functions.
+Explicit callable-value candidates also retain the callable's parameter match
+scores: wrapping a call with concrete argument types must not turn every
+candidate into an exact match. Deferred function calls retain their checked
+bodies so inner overload decisions survive lowering, even without reflection.
+`TypedFunctionNode.checked_stack_inputs` records deferred bodies whose ambient
+inputs start on the stack rather than participating in parameter cycling.
+Lowering restores those inputs from their concrete bindings and preserves the
+residual stack contract for stack-consuming functions.
 `both` selects one callback overload that accepts both argument groups and
 records its identity plus each group's invocation plan. `sequence` instead
 selects its two callbacks independently.
@@ -1962,6 +1970,12 @@ human-facing strings are accumulated at the session boundary.
 
 Do not emit speculative diagnostics for candidates that are expected to lose.
 Diagnose after the candidate set proves that no valid interpretation survives.
+
+Deferred function-body checking retains rejected body diagnostics separately
+from primary diagnostics. When an element has no viable candidate, its error
+includes the concrete function arguments and the inner failure's source
+location and overload choices. Successful selection discards this evidence;
+errors from a rejected alternative must not invalidate a successful call.
 
 ## The API decision table
 

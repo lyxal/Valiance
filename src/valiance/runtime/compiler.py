@@ -2306,6 +2306,28 @@ def _compile_checked_specialization(
     code = _compile_function_value(body, name)
     if not isinstance(code, FunctionCode):
         raise CompileError("checked specialization must have one function body")
+    if body.checked_stack_inputs:
+        # Deferred checking begins with ambient arguments on the stack and
+        # named parameters in locals, without implicit parameter cycling.
+        stack_count = len(body.overloads[0].typ.params or ()) - len(
+            _function_ast(body).params or ()
+        )
+        code = replace(
+            code,
+            instructions=(
+                *(Instruction(OpCode.LOAD_VAR, parameter)
+                  for parameter in code.params[:stack_count]),
+                *code.instructions,
+            ),
+            cycle_params=False,
+            cycle_param_offset=len(code.params),
+            # Stack-consuming deferred functions preserve their residual stack,
+            # just as their unspecialized accepts_stack_inputs bodies do.
+            return_count=None if stack_count else code.return_count,
+            return_tags=() if stack_count else code.return_tags,
+            return_tag_specs=() if stack_count else code.return_tag_specs,
+            return_collection_ranks=() if stack_count else code.return_collection_ranks,
+        )
     names = _ast_static_param_names(_function_ast(body))
     missing = tuple(name for name in names if name not in code.params)
     if not missing:

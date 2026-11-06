@@ -364,7 +364,7 @@ def _checked_reflection_function(node: FunctionNode, analysis, overload: T.Overl
         replace(typing, overload=replace(typing.overload,
                 implementation_id=overload.implementation_id))
         for typing in analysis.overloads
-    ))
+    ), checked_stack_inputs=not overload.specialize_body)
 
 
 def _is_call_site_checked_type(typ: T.Type) -> bool:

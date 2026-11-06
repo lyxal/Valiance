@@ -1222,6 +1222,7 @@ def _renamed_definition(
         definition.typed.typ,
         definition.typed.overloads,
         definition.typed.dispatch_plan,
+        checked_stack_inputs=definition.typed.checked_stack_inputs,
     )
     return replace(definition, name=name, typed=typed)
 
@@ -1470,6 +1471,7 @@ def _select_overloads(
         T.Overloads(*selected),
         definition.typed.overloads,
         definition.typed.dispatch_plan,
+        checked_stack_inputs=definition.typed.checked_stack_inputs,
     )
     return ModuleDefinition(
         definition.name,

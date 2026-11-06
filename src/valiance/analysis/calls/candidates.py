@@ -517,7 +517,9 @@ def _call_element_candidates(
                     concrete_application.params,
                     concrete_application.returns,
                     actual_returns,
-                    concrete_application.scores,
+                    # Rank the callable's declared parameters, before the call
+                    # wrapper replaces them with the concrete argument types.
+                    (*callable_application.scores, T.Specificity.EXACT),
                     concrete_application.vectorised,
                     concrete_application.vectorised_depths,
                     callable_application.rank_values,

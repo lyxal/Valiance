@@ -6576,6 +6576,36 @@ class NeverDiagnosticRecoveryTests(unittest.TestCase):
 
 
 class SmartDiagnosticTests(unittest.TestCase):
+    def test_deferred_body_prefers_direct_length_over_vectorisation(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            '$f = fn (x) => {$x([1, 2]), $x(["a", "b"])}\n'
+            'println $f(fn => reverse)\n'
+            'println $f(fn => length)'
+        ))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_deferred_body_failure_reports_other_operations(self):
+        analyser = Analyser()
+        analyser.analyse(parse('$f = fn (x) => $x("a")\n$f(fn => 1 +)'))
+
+        [message] = analyser.diagnostics
+        self.assertIn("rejected function bodies:", message)
+        self.assertIn("1:16: no overloads", message)
+        self.assertIn("match stack [String,", message)
+
+    def test_successful_deferred_call_does_not_leak_failure_evidence(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            '$f = fn (x) => {$x([1, 2]), $x(["a", "b"])}\n'
+            'println $f(fn => reverse)\n'
+            '1 + "text"'
+        ))
+
+        [message] = analyser.diagnostics
+        self.assertNotIn("rejected function bodies:", message)
+
     def test_unknown_element_ranks_the_nearest_typo_first(self):
         analyser = Analyser()
 

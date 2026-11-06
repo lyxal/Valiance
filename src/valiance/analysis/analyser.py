@@ -340,6 +340,7 @@ class Analyser:
         self.observer = observer
         self.recover_declarations = recover_declarations
         self.diagnostics: list[str] = []
+        self.call_site_failures: list[str] = []
         self.warnings: list[str] = []
         self.lints: list[str] = []
         self.lint_findings: list[LintFinding] = []

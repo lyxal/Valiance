@@ -204,6 +204,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             ),
             typed_node.dispatch_plan,
             typed_node.runtime_name,
+            checked_stack_inputs=typed_node.checked_stack_inputs,
         )
     if isinstance(typed_node, TypedFunctionNode):
         return TypedFunctionNode(
@@ -218,6 +219,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
                 for overload in typed_node.overloads
             ),
             typed_node.dispatch_plan,
+            checked_stack_inputs=typed_node.checked_stack_inputs,
         )
     if isinstance(typed_node, TypedLiteralNode):
         items = tuple(_refine_typed_body(item, old, new) for item in typed_node.items)

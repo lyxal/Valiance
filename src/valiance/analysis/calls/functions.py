@@ -676,12 +676,14 @@ class _CallableValues:
                     provider._register_imported_definition(
                         dependency.node.name, dependency, dependency.runtime_name, dependencies,
                     )
-            return provider._analyse_function_at_call_site(
+            result = provider._analyse_function_at_call_site(
                 outer, node, call_params, rank_values=rank_values, type_values=type_values,
                 where_evaluated=where_evaluated, static_values=static_values,
                 friendly_owners=friendly_owners,
                 specialize_body=specialize_body,
             )
+            self.call_site_failures.extend(provider.call_site_failures)
+            return result
         typed_node = cast(
             FunctionNode,
             _functions._substitute_rank_variables_in_ast(
@@ -790,6 +792,11 @@ class _CallableValues:
         )
         signatures = self._function_signatures(call_site_node, final)
         if function_analyser.diagnostics:
+            arguments = ", ".join(T.show(param) for param in call_params)
+            self.call_site_failures.append(
+                f"while checking function body with arguments ({arguments}):\n"
+                + "\n".join(function_analyser.diagnostics)
+            )
             return None
         return _functions._function_analysis_from_signatures(signatures, self.env.context)
 
