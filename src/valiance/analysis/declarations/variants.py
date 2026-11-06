@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
-from valiance.asts import DefineNode, FunctionNode, FunctionParam, ObjectNode, TypedNode
+from valiance.asts import DefineNode, FunctionNode, FunctionParam, ObjectNode, TypedFunctionNode, TypedNode
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.structural import nested_types
 
@@ -425,5 +425,14 @@ class _VariantDeclarations:
             Symbol(f"{owner}::{definition.name}"),
             replace(concrete, is_multi=False),
         )
-        return typed_branch
+        runtime_overload = replace(
+            concrete,
+            param_names=(Symbol("self"), *concrete.param_names[1:]),
+        )
+        return self._attach_method_bodies(typed_branch, ((
+            concrete.implementation_id,
+            TypedFunctionNode(function_node, typing.typ, (
+                replace(typing, overload=runtime_overload),
+            )),
+        ),))
 

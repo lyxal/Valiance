@@ -1023,6 +1023,14 @@ class _ObjectDeclarations:
                         Symbol(f"{owner}::{definition.name}"),
                         self.env.overloads[name][-1],
                     )
+        return self._attach_method_bodies(typed_branch, tuple(checked_bodies))
+
+    def _attach_method_bodies(
+        self,
+        typed_branch: AnalysisBranch,
+        checked_bodies: tuple[tuple[str, TypedFunctionNode], ...],
+    ) -> AnalysisBranch:
+        """Retain checked method implementations on their owning declaration."""
         if checked_bodies:
             items = list(typed_branch.typed_body)
             for index in range(len(items) - 1, -1, -1):

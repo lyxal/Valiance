@@ -469,6 +469,28 @@ $shapes: Shape++ = [[Square(2), Rectangle(3, 4)], [Rectangle(4, 5), Square(3)]]
 area $shapes
 ''', [[[4, 12], [20, 9]]])
 
+    def test_recursive_variant_method_dispatches_collection_fields(self):
+        self.assert_executes('''
+variant Entry =>
+  extend storedBytes -> Int
+  File =>
+    $fileSize: Int
+    define storedBytes => $self.fileSize
+  end
+  Shortcut =>
+    $target: String
+    define storedBytes => 0
+  end
+  Folder =>
+    $entries: Entry+
+    define storedBytes => sum storedBytes $self.entries
+  end
+end
+Folder([File(1200), File(4500), Folder([File(8000), File(6000)]), Shortcut("essay")]) storedBytes
+Folder([] as[Entry+]) storedBytes
+Folder([Folder([Shortcut("essay")]), File(3)]) storedBytes
+''', [19700, 0, 3])
+
     def test_variant_collection_dispatch_broadcasts_other_arguments(self):
         self.assert_executes('''
 variant Entry =>

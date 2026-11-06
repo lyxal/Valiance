@@ -96,6 +96,11 @@ The analyser has already decided:
 Code generation converts those decisions into explicit records and opcodes. The
 VM should not infer them again.
 
+Variant case implementations retain checked bodies on `TypedObjectNode`, just
+like object methods. This includes implementations of `extend` requirements:
+lowering their raw syntax would lose nested call plans, including vectorisation
+and trait dispatch through recursive collection fields.
+
 At runtime, the VM repeatedly performs one simple step:
 
 ```text
