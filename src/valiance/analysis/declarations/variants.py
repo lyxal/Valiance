@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..overload_identity import declaration_id
+from ..overload_identity import declaration_id, declaration_prefix
 
 from dataclasses import replace
 
@@ -10,6 +10,7 @@ import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
 from valiance.asts import DefineNode, FunctionNode, FunctionParam, ObjectNode, TypedNode
 from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.structural import nested_types
 
 from ..calls import callable_values as _functions
 from ..support import analysis_utils as _utils
@@ -85,9 +86,6 @@ class _VariantDeclarations:
         members = self._define_variant_shape(node, member_aliases=True)
         if members is None:
             return BranchSet((branch.emit(TypedNode(node, None)),))
-        generic_constraints = _functions._generic_constraints(
-            node.generics, node.generic_variances, node.generic_constraints,
-        )
         requirements = _utils._trait_requirements(node)
 
         current = branch.emit(
@@ -96,6 +94,7 @@ class _VariantDeclarations:
         requirements_by_name = {
             requirement.name: requirement for requirement in requirements
         }
+        default_names = {definition.name for definition in node.definitions}
         for member, member_name in zip(node.variants, members, strict=True):
             definitions_by_name: dict[Symbol, list[DefineNode]] = {}
             for definition in member.definitions:
@@ -103,7 +102,7 @@ class _VariantDeclarations:
 
             for requirement in requirements:
                 implementations = definitions_by_name.get(requirement.name, ())
-                if not implementations:
+                if not implementations and requirement.name not in default_names:
                     self._diagnose(
                         f"variant member '{member.name}' must implement element "
                         f"'{requirement.name}'",
@@ -116,14 +115,71 @@ class _VariantDeclarations:
                         member,
                     )
 
+            # Abstract member implementations are visible when checking defaults,
+            # so a shared body can call an `extend` through its variant receiver.
             for definition in member.definitions:
-                current = self._register_variant_member_definition(
-                    current,
-                    node,
-                    member_name,
-                    definition,
-                    requirements_by_name.get(definition.name),
+                if definition.name in requirements_by_name:
+                    current = self._register_variant_member_definition(
+                        current, node, member_name, definition,
+                        requirements_by_name[definition.name],
+                        expose_member_receiver=definition.name in default_names,
+                    )
+
+        # A variant-level definition is the ordinary, non-multi fallback.
+        # Concrete member implementations may specialize it, but the default
+        # must not compete with those specializations in runtime dispatch.
+        for definition in node.definitions:
+            current = self._register_friendly_definition(
+                current, node.name, definition,
+                requirements_by_name.get(definition.name), owner_node=node,
+            )
+
+        defaults_by_name: dict[Symbol, T.TraitRequirement] = {}
+        for definition in node.definitions:
+            name = Symbol(f"{node.name}::{definition.name}")
+            candidates = self.env.overloads_for(name)
+            prefix = (declaration_prefix(self.source_file, definition.location)
+                      if definition.location is not None else "synthetic:")
+            for overload in candidates:
+                if not overload.implementation_id or not overload.implementation_id.startswith(prefix):
+                    continue
+                receiver = next(iter(definition.function.explicit_receiver_indices), 0)
+                defaults_by_name[definition.name] = T.TraitRequirement(
+                    definition.name,
+                    replace(
+                        overload,
+                        params=tuple(param for index, param in enumerate(overload.params)
+                                     if index != receiver),
+                        param_names=tuple(param for index, param in enumerate(overload.param_names)
+                                          if index != receiver),
+                        implementation_id=None,
+                    ),
                 )
+
+        for member, member_name in zip(node.variants, members, strict=True):
+            for definition in member.definitions:
+                if definition.name in requirements_by_name:
+                    continue
+                current = self._register_variant_member_definition(
+                    current, node, member_name, definition,
+                    defaults_by_name.get(definition.name),
+                    expose_member_receiver=definition.name in defaults_by_name,
+                )
+
+        # A selected parent default must remain dynamically dispatched, even
+        # when generic receiver variables use distinct analyser binder IDs.
+        # The emitted default itself stays a non-multi fallback.
+        for definition in node.definitions:
+            name = definition.name
+            qualified = Symbol(f"{node.name}::{name}")
+            identities = {item.implementation_id for item in self.env.overloads_for(qualified)}
+            if not identities:
+                continue
+            self.env.overloads[name] = [
+                replace(overload, is_multi=True)
+                if overload.implementation_id in identities else overload
+                for overload in self.env.overloads_for(name)
+            ]
 
         return BranchSet((self._attach_method_results(current, node),))
 
@@ -134,10 +190,31 @@ class _VariantDeclarations:
         owner: Symbol,
         definition: DefineNode,
         requirement: T.TraitRequirement | None,
+        *,
+        expose_member_receiver: bool = False,
     ) -> AnalysisBranch:
         """Register variant member definition during static analysis."""
         if requirement is None:
             return self._register_friendly_definition(branch, owner, definition)
+        if expose_member_receiver and variant.generics:
+            # Defaults were checked in their own generic scope. A case override
+            # uses the variant's generics, not the default method's binder.
+            generic_names = {generic.text for generic in variant.generics}
+
+            def member_generic_type(typ: T.Type) -> T.Type:
+                substitutions = {
+                    T.type_var_key(item): T.V(item.name)
+                    for item in nested_types(typ)
+                    if isinstance(item, T.VarType) and item.name in generic_names
+                }
+                return T._substitute(typ, substitutions)
+
+            contract = requirement.overload
+            requirement = replace(requirement, overload=replace(
+                contract,
+                params=tuple(member_generic_type(param) for param in contract.params),
+                returns=tuple(member_generic_type(result) for result in contract.returns),
+            ))
         if not self._validate_annotations(definition.annotations, "define", definition):
             return branch.emit(TypedNode(definition, None))
 
@@ -158,13 +235,34 @@ class _VariantDeclarations:
             )
             return branch.emit(TypedNode(definition, None))
 
+        # The variant's generic binder can be specialized independently while
+        # checking a shared default and a case override. Compare owner type
+        # variables by their declared names, not those temporary binder IDs.
+        owner_generic_names = {generic.text for generic in variant.generics}
+
+        def same_signature_type(left: T.Type, right: T.Type) -> bool:
+            def normalize_owner_generics(typ: T.Type) -> T.Type:
+                if (isinstance(typ, T.NominalType) and not typ.args
+                        and not typ.name.namespace and typ.name.text in owner_generic_names):
+                    return T.V(typ.name.text)
+                substitutions = {
+                    T.type_var_key(item): T.V(item.name)
+                    for item in nested_types(typ)
+                    if isinstance(item, T.VarType) and item.name in owner_generic_names
+                }
+                return T._substitute(typ, substitutions)
+
+            return T.same(
+                normalize_owner_generics(left), normalize_owner_generics(right)
+            )
+
         contextual_params: list[FunctionParam] = []
         for source, required in zip(
             explicit_params,
             requirement.overload.params,
             strict=True,
         ):
-            if source.typ is not None and not T.same(source.typ, required):
+            if source.typ is not None and not same_signature_type(source.typ, required):
                 self._diagnose(
                     f"variant member element '{definition.name}' parameter type "
                     f"{T.show(source.typ)} does not match required type "
@@ -177,7 +275,7 @@ class _VariantDeclarations:
         if definition.function.returns is not None and (
             len(definition.function.returns) != len(requirement.overload.returns)
             or any(
-                not T.same(actual, required)
+                not same_signature_type(actual, required)
                 for actual, required in zip(
                     definition.function.returns,
                     requirement.overload.returns,
@@ -213,7 +311,9 @@ class _VariantDeclarations:
                 )
                 return current
             params = list(concrete.params)
-            params[receiver_index] = _utils._declared_nominal(variant.name, variant.generics)
+            params[receiver_index] = _utils._declared_nominal(
+                owner if expose_member_receiver else variant.name, variant.generics,
+            )
             exposed = replace(concrete, params=tuple(params), is_multi=True)
             self.env.overloads[definition.name][-1] = exposed
             self.env.context.define_structural_overload(definition.name, exposed)
@@ -310,7 +410,8 @@ class _VariantDeclarations:
         variant_type = _utils._declared_nominal(variant.name, variant.generics)
         exposed = replace(
             concrete,
-            params=(variant_type, *requirement.overload.params),
+            params=(self_type if expose_member_receiver else variant_type,
+                    *requirement.overload.params),
             returns=requirement.overload.returns,
             param_names=(None, *requirement.overload.param_names),
             is_multi=True,

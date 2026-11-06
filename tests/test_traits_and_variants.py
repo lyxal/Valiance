@@ -345,6 +345,118 @@ Square(3) measure
 Rectangle(4, 5) measure
 ''', [9, 20])
 
+    def test_variant_default_calls_abstract_method_and_supports_overrides(self):
+        self.assert_executes('''
+variant Shape =>
+  extend area -> Int
+  define doubled -> Int => ($self area) * 2
+  define label -> String => "shape"
+  Square =>
+    $side: Int
+    define area => $self.side * $self.side
+  end
+  Rectangle =>
+    $width: Int
+    $height: Int
+    define area => $self.width * $self.height
+    define label -> String => "rectangle"
+  end
+end
+define describe(shape: Shape) -> String => $shape label end
+Square(3) doubled
+Rectangle(2, 3) doubled
+Square(2) label
+Rectangle(2, 3) label
+Square(4) describe
+Rectangle(4, 5) describe
+''', [18, 12, "shape", "rectangle", "shape", "rectangle"])
+
+    def test_variant_extend_may_supply_default_and_be_overridden(self):
+        self.assert_executes('''
+variant Choice =>
+  extend score -> Int
+  define score -> Int => 2
+  First => $id: Int end
+  Second =>
+    $id: Int
+    define score => 9
+  end
+end
+define value(item: Choice) -> Int => $item score end
+First(1) score
+Second(2) score
+First(3) value
+Second(4) value
+''', [2, 9, 2, 9])
+
+    def test_generic_variant_default_specializes_overrides(self):
+        self.assert_executes('''
+variant[T] Choice =>
+  define score -> Int => 3
+  First => $value: T end
+  Second =>
+    $value: T
+    define score -> Int => 5
+  end
+end
+First(1) score
+Second(2) score
+Second("text") score
+First("text") score
+''', [3, 5, 5, 3])
+
+    def test_generic_variant_default_parameter_and_result_types(self):
+        self.assert_executes('''
+variant[T] Value =>
+  define fallback(value: T) -> T => $value
+  First => $value: T end
+  Second =>
+    $value: T
+    define fallback(value: T) -> T => $self.value
+  end
+end
+First(8) | fallback 9
+Second(8) | fallback 9
+First("a") | fallback "b"
+Second("a") | fallback "b"
+''', [9, 8, "b", "a"])
+
+    def test_generic_variant_default_can_call_abstract_method(self):
+        self.assert_executes('''
+variant[T] Value =>
+  extend read -> T
+  define keep -> T => $self read
+  First =>
+    $value: T
+    define read => $self.value
+  end
+  Second =>
+    $value: T
+    define read => $self.value
+  end
+end
+First(8) keep
+Second("a") keep
+''', [8, "a"])
+
+    def test_variant_default_override_must_match_signature(self):
+        for implementation, diagnostic in (
+            ('define score(value: String) -> Int => 2', 'parameter type'),
+            ('define score(value: Int) -> String => "bad"', 'return signature'),
+            ('define score -> Int => 2', 'explicit parameter'),
+        ):
+            with self.subTest(implementation=implementation):
+                self.assert_rejected('''
+variant Choice =>
+  define score(value: Int) -> Int => $value
+  First => $id: Int end
+  Second =>
+    $id: Int
+''' + implementation + '''
+  end
+end
+''', diagnostic)
+
     def test_heterogeneous_variant_collection_dispatch(self):
         self.assert_executes(self.SHAPES + '''
 $shapes: Shape+ = [Square(2), Rectangle(3, 4)]

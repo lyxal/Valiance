@@ -283,8 +283,9 @@ class _ObjectDeclarations:
         signatures = []
         method_ids = {}
         definitions = (
-            tuple((Symbol(f"{node.name}.{member.name}"), definition)
-                  for member in node.variants for definition in member.definitions)
+            (tuple((node.name, definition) for definition in node.definitions)
+             + tuple((Symbol(f"{node.name}.{member.name}"), definition)
+                     for member in node.variants for definition in member.definitions))
             if node.kind == Symbol("variant") else tuple((node.name, definition) for definition in node.definitions)
         )
         for owner, definition in definitions:

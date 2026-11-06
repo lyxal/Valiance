@@ -1294,7 +1294,11 @@ def _renamed_object(
         _qualify_provider_enum_references(node.fields, enum_names, enum_namespace),
         definitions,
         node.requirements,
-        node.variants,
+        (tuple(replace(member, definitions=_renamed_friendly_definitions(
+            member.definitions, friendly_prefix,
+        )) for member in node.variants)
+         if node.kind == Symbol("variant") and friendly_prefix is not None
+         else node.variants),
         node.enum_members,
         node.annotations,
         node.generic_variances,

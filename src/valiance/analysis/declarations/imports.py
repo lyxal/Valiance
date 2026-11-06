@@ -454,6 +454,46 @@ class _ImportDeclarations:
 
         if kind == "variant":
             self._define_variant_shape(node)
+            if obj.import_friendly:
+                self._register_imported_friendly_runtime_elements(
+                    obj.name, node.definitions,
+                )
+                bodies = (dict(obj.typed.method_bodies)
+                          if isinstance(obj.typed, TypedObjectNode) else {})
+                identities = (dict(obj.typed.method_ids)
+                              if isinstance(obj.typed, TypedObjectNode) else {})
+                for definition in node.definitions:
+                    if definition.visibility != Symbol("public"):
+                        continue
+                    records = dict(identities.get(definition.name.text, ()))
+                    location = (definition.location.offset
+                                if definition.location is not None else None)
+                    for _shape, identity in records.get(location, ()):
+                        checked = bodies.get(identity)
+                        if checked is None:
+                            continue
+                        for overload in self._selected_import_overloads(checked):
+                            from valiance.modules_system.modules import _rename_imported_types
+                            original_owner = Symbol(node.name.text)
+                            renamed_types = {original_owner: obj.name}
+                            overload = replace(
+                                overload,
+                                params=_rename_imported_types(overload.params, renamed_types),
+                                returns=_rename_imported_types(overload.returns, renamed_types),
+                                implementation_id=identity, is_multi=True,
+                            )
+                            qualified = Symbol(f"{obj.name}::{definition.name}")
+                            runtime_method = definition.name
+                            self.env.define_overload(
+                                definition.name, overload, object_friendly=True,
+                            )
+                            self.env.define_overload(qualified, overload)
+                            self.env.bind_runtime_name(
+                                definition.name, runtime_method, overload,
+                            )
+                            self.env.bind_runtime_name(
+                                qualified, runtime_method, overload,
+                            )
             return
         if kind != "object" or node.target is not None:
             return

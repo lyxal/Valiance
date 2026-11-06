@@ -2384,13 +2384,15 @@ end
 ```
 variant[<generics>] <name> =>
   <extend declarations>
+  <shared default method definitions>
   <member definitions>
 end
 ```
 
 - `generics` is optional and contains only generic names.
-- `extend` declarations come first, declaring the interface that every member must implement.
-- Member definitions follow, each providing their own fields and implementations.
+- `extend` declarations specify methods that every member must provide, either by its own implementation or by a variant-level default.
+- Variant-level `define` methods provide shared default implementations. A default may call `extend` methods through `$self`, and individual members may override the default with a compatible signature.
+- Member definitions follow, each providing their own fields and any additional implementations or overrides.
 - Example:
 
 ```
@@ -2409,7 +2411,7 @@ variant Shape =>
 end
 ```
 
-- A compile error is raised if any member does not implement all `extend` declarations.
+- A compile error is raised if a member is missing an `extend` implementation and the variant does not provide a default for it. Overrides must satisfy the declared method signature.
 - The benefit of variants over traits is in pattern matching:
 
 ```

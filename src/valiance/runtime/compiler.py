@@ -1452,6 +1452,28 @@ class _Compiler:
                         )
             case "variant":
                 required_names = {requirement.name for requirement in node.requirements}
+                default_names = {definition.name for definition in node.definitions}
+                for definition in node.definitions:
+                    records = dict((method_ids or {}).get(definition.name.text, ()))
+                    alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
+                    for identity in tuple(identity for _shape, identity in alternatives) or (None,):
+                        self.friendly_definition(
+                            _symbol_runtime_name(node.name), definition,
+                            variant_dispatch=True,
+                            runtime_specialization=False,
+                            owner_generics=tuple(generic.text for generic in node.generics),
+                            owner_constraints=_runtime_generic_constraint_guards(
+                                node.generics, node.generic_constraints,
+                            ),
+                            implementation_id=identity,
+                            result_signature_types=(method_results or {}).get(identity, ()),
+                            checked_function=(method_bodies or {}).get(identity),
+                        )
+                    if definition.name.namespace:
+                        # Checked provider bodies still reference their original
+                        # unqualified method spelling after a namespaced import.
+                        self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(definition.name))
+                        self.emit(OpCode.STORE_VAR, definition.name.text)
                 for member in node.variants:
                     runtime_name = (
                         f"{_symbol_runtime_name(node.name)}."
@@ -1479,11 +1501,19 @@ class _Compiler:
                         for identity in tuple(identity for _shape, identity in alternatives) or (None,):
                             self.friendly_definition(
                                 runtime_name, definition,
-                                variant_dispatch=definition.name in required_names,
+                                variant_dispatch=definition.name in required_names or definition.name in default_names,
+                                dispatch_receiver=runtime_name,
+                                owner_generics=tuple(generic.text for generic in node.generics),
+                                owner_constraints=_runtime_generic_constraint_guards(
+                                    node.generics, node.generic_constraints,
+                                ),
                                 implementation_id=identity,
                                 result_signature_types=(method_results or {}).get(identity, ()),
                                 checked_function=(method_bodies or {}).get(identity),
                             )
+                        if definition.name.namespace:
+                            self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(definition.name))
+                            self.emit(OpCode.STORE_VAR, definition.name.text)
             case "enum":
                 enum_name = _symbol_runtime_name(node.name)
                 for member in node.enum_members:
@@ -1568,6 +1598,8 @@ class _Compiler:
         definition: DefineNode,
         *,
         variant_dispatch: bool = False,
+        runtime_specialization: bool = True,
+        dispatch_receiver: str | None = None,
         owner_generics: tuple[str, ...] = (),
         result_signature_types: tuple[str, ...] = (),
         implementation_id: str | None = None,
@@ -1652,14 +1684,14 @@ class _Compiler:
                 OpCode.MAKE_FUNCTION,
                 replace(
                     code,
-                    multi=True,
+                    multi=runtime_specialization,
                     # Object-friendly methods select their nominal receiver
                     # at runtime, even when the same method name is supplied
                     # by multiple imported private providers. Keeping the
                     # checked short spelling here would merge unrelated
                     # provider implementations into one dispatch slot.
                     dispatch_types=tuple(
-                        receiver if index == receiver_index else None
+                        (dispatch_receiver or receiver) if index == receiver_index else None
                         for index in range(len(function.params))
                     ),
                     dispatch_bounds=dispatch_bounds,

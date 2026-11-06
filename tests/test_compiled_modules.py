@@ -358,6 +358,56 @@ $metadata["number"].owner
                 self.assertEqual(stack[:2], [['number'], [['number'], ['number']]])
                 self.assertEqual(stack[2].type_args, ('A',))
 
+    def test_variant_defaults_and_overrides_survive_source_free_imports(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "shapes.vlnc"
+            library.write_text('''
+public variant Shape =>
+  extend area -> Int
+  public define doubled -> Int => ($self area) * 2
+  public define label -> String => "shape"
+  Square =>
+    $side: Int
+    define area => $self.side * $self.side
+  end
+  Rectangle =>
+    $width: Int
+    $height: Int
+    define area => $self.width * $self.height
+    public define label -> String => "rectangle"
+  end
+end
+''', encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln([
+                    "compile-module", "--file", str(library),
+                    "--output", str(library.with_suffix(".vbcm")),
+                ]), 0)
+            library.unlink()
+            for import_line, owner, method in (
+                ("import {shapes.Shape}", "Shape", ""),
+                ("import {shapes}", "shapes.Shape", "shapes."),
+            ):
+                with self.subTest(import_line=import_line):
+                    source = import_line + f'''
+{owner}.Square(3) {method}doubled
+{owner}.Rectangle(2, 3) {method}doubled
+{owner}.Square(4) {method}label
+{owner}.Rectangle(4, 5) {method}label
+'''
+                    analyser = Analyser(source_file=root / "main.vlnc")
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    for optimize in (False, True):
+                        with self.subTest(optimize=optimize):
+                            program = compile_program(typed, optimize=optimize)
+                            self.assertEqual(run(loads(dumps(program))), [
+                                18, 12, "shape", "rectangle",
+                            ])
+
     def test_variant_reflection_specializes_from_source_free_modules(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
