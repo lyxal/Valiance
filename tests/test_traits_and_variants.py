@@ -40,6 +40,31 @@ class SemanticTestCase(unittest.TestCase):
 
 
 class TraitSemanticTests(SemanticTestCase):
+    def test_variant_implementation_target_diagnostic(self):
+        for target in ("Entry", "Entry[Int]"):
+            with self.subTest(target=target):
+                source = (
+                    "variant[T] Entry => File => end end\n"
+                    "object \\NotAFile => end\n"
+                    f"object \\NotAFile as {target} => end\n"
+                )
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertIn(
+                    "3:21: cannot implement 'Entry': it is a variant, not a trait",
+                    analyser.diagnostics,
+                )
+
+    def test_invalid_implementation_target_location(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            "object \\Item => end\nobject \\Item as Missing => end\n"
+        ))
+        self.assertIn(
+            "2:17: trait implementation target must be a named trait",
+            analyser.diagnostics,
+        )
+
     def test_multiple_requirements_and_receiver_arguments(self):
         self.assert_executes('''
 trait Counter =>

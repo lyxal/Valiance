@@ -202,6 +202,7 @@ class _VariantDeclarations:
             generic_names = {generic.text for generic in variant.generics}
 
             def member_generic_type(typ: T.Type) -> T.Type:
+                """Rebind the variant's type variables to the override scope."""
                 substitutions = {
                     T.type_var_key(item): T.V(item.name)
                     for item in nested_types(typ)
@@ -241,7 +242,9 @@ class _VariantDeclarations:
         owner_generic_names = {generic.text for generic in variant.generics}
 
         def same_signature_type(left: T.Type, right: T.Type) -> bool:
+            """Compare member contracts modulo variant generic binder identity."""
             def normalize_owner_generics(typ: T.Type) -> T.Type:
+                """Normalize owner generics to their declaration names."""
                 if (isinstance(typ, T.NominalType) and not typ.args
                         and not typ.name.namespace and typ.name.text in owner_generic_names):
                     return T.V(typ.name.text)

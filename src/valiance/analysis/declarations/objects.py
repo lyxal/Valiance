@@ -78,7 +78,13 @@ class _ObjectDeclarations:
         if node.target is not None:
             target = T.normalize(node.target)
             if not isinstance(target, T.NominalType) or self.env.lookup_trait(target.name) is None:
-                self._diagnose("trait implementation target must be a named trait", node)
+                message = "trait implementation target must be a named trait"
+                if isinstance(target, T.NominalType) and self.env.lookup_variant(target.name) is not None:
+                    message = f"cannot implement '{target.name}': it is a variant, not a trait"
+                self._diagnose(
+                    message,
+                    replace(node, location=node.target_location or node.location),
+                )
                 return BranchSet((branch.emit(TypedNode(node, None)),))
             if self.env.lookup_object(node.name) is None:
                 self._diagnose(f"object '{node.name}' needs a base definition before a trait implementation", node)

@@ -1147,3 +1147,6 @@ class ObjectNode(ASTNode):
     generic_constraints: tuple[Type | None, ...] = ()
     visibility: Symbol | None = None
     generic_scope_id: int | None = field(default=None, compare=False)
+    target_location: SourceLocation | None = field(
+        default=None, compare=False, kw_only=True,
+    )

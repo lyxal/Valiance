@@ -2335,6 +2335,12 @@ def _compile_checked_specialization(
     return replace(
         code,
         params=(*code.params, *missing),
+        # A checked stack-input body has no cycling inputs. The hidden `where`
+        # binders are locals, not residual operands on the function stack.
+        cycle_param_offset=(
+            len(code.params) + len(missing)
+            if body.checked_stack_inputs else code.cycle_param_offset
+        ),
         param_collection_ranks=(*code.param_collection_ranks, *(None for _ in missing)),
     )
 

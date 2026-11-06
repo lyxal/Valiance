@@ -642,7 +642,7 @@ source_cases(GenericsPlanSourceTests, [
       '  define Box(value:T) => $self.value = $value end\n'
       'end\n'
       'Box(3) $.value\nBox("hi") $.value', [3, 'hi']),
-    C('CS-002', 'define invoke(f: Function) => $f call end\n'
+    C('CS-002', '@returnAll define invoke(f: Function) => $f call end\n'
       'fn -> => end invoke\n'
       'fn -> Int, String => 3 "x" end invoke', [3, 'x']),
     C('CP-007', 'define[T] inspect(xs: T+4 exact) -> T+4 => $xs end\n'
@@ -873,7 +873,7 @@ class GenericsContinuationProperties(TraitPlanTestCase):
                 self.check_case(C('GD-019', program, [3, 'x']))
 
     def test_CS_016(self):
-        declared = 'define invoke(f:Function) => $f call end\n'
+        declared = '@returnAll define invoke(f:Function) => $f call end\n'
         empty = 'fn -> => end invoke'
         pair = 'fn -> Int,String => 3 "x" end invoke'
         for calls in ((empty, pair), (pair, empty)):
