@@ -256,6 +256,19 @@ end
 
 
 class VariantSemanticTests(SemanticTestCase):
+    def test_niladic_member_constructors(self):
+        self.assert_executes(r'''
+variant Colour =>
+  \RED => end
+  \GREEN => end
+  \BLUE => end
+end
+define code(value: Colour) -> Int => 1 end
+\RED code
+\GREEN code
+\BLUE code
+''', [1, 1, 1])
+
     def test_nullary_and_payload_members_are_both_executed(self):
         self.assert_executes('''
 variant Choice =>

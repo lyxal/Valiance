@@ -1023,7 +1023,7 @@ class Parser:
             if self._check_ident("end"):
                 self._consume_optional_end()
                 return (), (), (), ()
-            if kind == "variant" and self._check(TokenKind.IDENT):
+            if kind == "variant" and self._check(TokenKind.IDENT, TokenKind.OP):
                 variants.append(self._variant_member())
             else:
                 item = self._object_body_item(owner)
@@ -1040,7 +1040,7 @@ class Parser:
         while not self._check(TokenKind.EOF) and not self._check_ident("end"):
             if (
                 kind == "variant"
-                and self._check(TokenKind.IDENT)
+                and self._check(TokenKind.IDENT, TokenKind.OP)
                 and self._peek(1).kind == TokenKind.FAT_ARROW
             ):
                 variants.append(self._variant_member())

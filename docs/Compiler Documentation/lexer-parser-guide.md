@@ -649,6 +649,10 @@ This lets `{A..., B, C...}` lower to a single variadic tuple pattern with mixed
 fixed and repeated segments. The three dots must be pairwise adjacent; whitespace
 breaks the ellipsis.
 
+Variant member names use the same symbol syntax as element declarations,
+including backslash-prefixed niladic names such as `\RED => end`. Both inline
+and multiline variant bodies accept these names.
+
 ## Generic Parameter Lists
 
 Object-like declarations and function definitions parse generic parameter lists

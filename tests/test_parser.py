@@ -1437,6 +1437,21 @@ end
             ),
         )
 
+    def test_variant_niladic_member_names(self):
+        for source, names in (
+            (r"variant Colour => \RED => end end", (r"\RED",)),
+            (
+                "variant Colour =>\n  \\RED => end\n  \\GREEN => end\n  \\BLUE => end\nend",
+                (r"\RED", r"\GREEN", r"\BLUE"),
+            ),
+        ):
+            with self.subTest(source=source):
+                [colour] = parse(source)
+                self.assertEqual(
+                    colour.variants,
+                    tuple(VariantMemberNode(Symbol(name)) for name in names),
+                )
+
     def test_enum_niladic_member_and_postfix_field_end_chains(self):
         nodes = parse(r"""enum[String] TokenType => NUMBER = "Number" end
 println TokenType.\NUMBER.value
