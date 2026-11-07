@@ -11,6 +11,7 @@ from valiance.modules_system.modules import ModuleLoader
 from valiance.modules_system.runtime_dependencies import resolve_runtime_dependencies
 from valiance.incremental.coordinator import CompilationCoordinator
 from valiance.parsing import parse
+from valiance.runtime import compile_program, run
 from valiance.vtypes.symbols import Symbol
 
 
@@ -20,6 +21,23 @@ class PublicReExportTests(unittest.TestCase):
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         return typed
+
+    def test_exported_field_retains_qualified_variant_case_type(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "library.vlnc").write_text('''
+public variant Entry => Shortcut => $target: String end end
+public object Box => $entries: Shortcut+ end
+public define readEntries(box: Box) -> Shortcut+ => $box.entries end
+''', encoding="utf-8")
+
+            typed = self.analyse(root, '''
+import { library.[Entry, Box, readEntries] }
+$entries = readEntries(Box([Entry.Shortcut("file.txt")]))
+$shortcut = $entries $[0]
+$shortcut.target
+''')
+            self.assertEqual(run(compile_program(typed)), ["file.txt"])
 
     def test_selective_public_import_reexports_function(self):
         with TemporaryDirectory() as tmp:

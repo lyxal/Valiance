@@ -223,6 +223,7 @@ class Environment:
     variants: dict[Symbol, VariantDefinition] = field(
         default_factory=dict[Symbol, VariantDefinition]
     )
+    variant_case_aliases: dict[Symbol, set[Symbol]] = field(default_factory=dict)
     constructors: dict[Symbol, ConstructorDefinition] = field(
         default_factory=dict[Symbol, ConstructorDefinition]
     )
@@ -557,6 +558,15 @@ class Environment:
             return self.variants[name]
         if self.parent is not None:
             return self.parent.lookup_variant(name)
+        return None
+
+    def lookup_variant_case_alias(self, name: Symbol) -> Symbol | None:
+        """Resolve a short case name when its lexical scope has one candidate."""
+        candidates = self.variant_case_aliases.get(name)
+        if candidates is not None:
+            return next(iter(candidates)) if len(candidates) == 1 else None
+        if self.parent is not None:
+            return self.parent.lookup_variant_case_alias(name)
         return None
 
     def object_exists(self, name: Symbol) -> bool:

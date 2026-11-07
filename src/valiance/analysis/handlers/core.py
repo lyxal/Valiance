@@ -1663,6 +1663,18 @@ def _object_node(
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
     node = annotation_hooks.DEFAULT_REGISTRY.transform_object(node)
+    bound_names = frozenset(node.generics)
+    node = replace(
+        node,
+        fields=_functions._resolve_imported_type_names(node.fields, self.env, bound_names),
+        variants=tuple(
+            replace(member, fields=_functions._resolve_imported_type_names(
+                member.fields, self.env, bound_names,
+            ))
+            for member in node.variants
+        ),
+        requirements=_functions._resolve_imported_type_names(node.requirements, self.env, bound_names),
+    )
     kind = node.kind.text
     if kind == "object":
         if node.enclosing_variant is not None:

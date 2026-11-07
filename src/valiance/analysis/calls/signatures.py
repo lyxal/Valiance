@@ -21,8 +21,14 @@ _anonymous_trait_subject_name = anonymous_trait_subject_name
 
 def _resolve_imported_type_names(
     value, environment: T.Environment, bound_names: frozenset[Symbol] = frozenset(),
+    *, case_aliases: bool = True,
 ):
-    """Resolve source aliases to the nominal names of imported declarations."""
+    """Resolve source aliases to canonical nominal names."""
+    if isinstance(value, MatchPatternNode):
+        # Short case patterns are resolved against the matched variant.
+        case_aliases = False
+    if isinstance(value, T.AnonymousTraitType):
+        bound_names = bound_names.union(value.generics)
     if (
         isinstance(value, T.NominalType) and not isinstance(value, T.FFINamedType)
         and value.name not in bound_names
@@ -35,22 +41,37 @@ def _resolve_imported_type_names(
             if declaration is not None:
                 value = replace(value, name=declaration.name)
                 break
+        else:
+            case_name = environment.lookup_variant_case_alias(value.name) if case_aliases else None
+            if case_name is not None:
+                from ..declarations.functions import _builtin_type_names
+
+                if value.name not in _builtin_type_names():
+                    value = replace(value, name=case_name)
+
+    def resolve(item):
+        """Resolve a nested component under the current lexical rules."""
+        return _resolve_imported_type_names(
+            item, environment, bound_names, case_aliases=case_aliases,
+        )
+
     if isinstance(value, tuple):
-        return tuple(_resolve_imported_type_names(item, environment, bound_names) for item in value)
+        return tuple(resolve(item) for item in value)
     if isinstance(value, frozenset):
-        return frozenset(_resolve_imported_type_names(item, environment, bound_names) for item in value)
+        return frozenset(resolve(item) for item in value)
     if is_dataclass(value) and (
-        not isinstance(value, (ASTNode, Symbol)) or isinstance(value, MatchPatternNode)
+        not isinstance(value, (ASTNode, Symbol))
+        or isinstance(value, (MatchPatternNode, ObjectFieldNode, TraitRequirementNode))
     ):
         return replace(value, **{
-            item.name: _resolve_imported_type_names(getattr(value, item.name), environment, bound_names)
+            item.name: resolve(getattr(value, item.name))
             for item in fields(value)
         })
     return value
 
 
 def _resolve_function_type_names(node: FunctionNode, environment: T.Environment) -> FunctionNode:
-    """Resolve imported aliases in signatures after generic binders are assigned."""
+    """Resolve nominal aliases in signatures after generic binders are assigned."""
     return replace(node, **{
         name: _resolve_imported_type_names(getattr(node, name), environment, frozenset(node.generics))
         for name in ("params", "returns", "overloads", "generic_constraints")
@@ -84,7 +105,9 @@ from valiance.asts import (
     FunctionParam,
     ListLiteralNode,
     MatchNode,
+    ObjectFieldNode,
     ReturnNode,
+    TraitRequirementNode,
     TryNode,
 )
 from valiance.asts.nodes import ForNode, GetVariableNode, IfNode

@@ -20,6 +20,7 @@ from valiance.asts.nodes import GetVariableNode
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
+from ..calls import callable_values as _functions
 from ..support import analysis_utils as _utils
 
 
@@ -116,7 +117,7 @@ def _list_literal_node(
         return _core.BranchSet()
     if not node.items:
         if node.typ is not None:
-            typ = T.normalize(node.typ)
+            typ = T.normalize(_functions._resolve_imported_type_names(node.typ, self.env))
             if not isinstance(typ, T.CollectionType):
                 self._diagnose(
                     f"empty list cast needs a list type, got {T.show(typ)}",

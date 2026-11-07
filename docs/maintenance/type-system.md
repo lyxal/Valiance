@@ -102,6 +102,10 @@ metadata. Empty and literal-backed cases also expose qualified niladic
 constructors such as `Colour.\RED`. Their case names remain ordinary names
 in exhaustive-match metadata. Backing values are readable object fields, and
 case `name` is an observational property unless explicitly stored by the case.
+An unambiguous short case name from a local variant constructor also works in
+type annotations. It resolves to the qualified case type, including inside
+collection annotations. Qualify the type when multiple local variants use the
+same case name. Explicitly named types take precedence over short case names.
 
 Imported constructors retain a private provider scope for omitted argument
 defaults. Locally declared sibling variant types and nested variant expressions

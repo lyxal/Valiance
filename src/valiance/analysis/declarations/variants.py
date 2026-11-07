@@ -109,6 +109,7 @@ class _VariantDeclarations:
             self.env.define_overload(member_name, overload)
             if member_aliases:
                 self.env.define_overload(member.name, overload)
+                self.env.variant_case_aliases.setdefault(member.name, set()).add(member_name)
             if not constructor_attributes and not member.name.text.startswith("\\"):
                 niladic_name = _utils._child_symbol(node.name, Symbol(f"\\{member.name.text}"))
                 self.env.define_constructor_metadata(

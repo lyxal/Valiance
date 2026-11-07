@@ -176,7 +176,7 @@ class _FunctionDeclarations:
         # A complete declared signature is an interface in its own right.
         # Publish it before body analysis so recursion and subsequent recovery
         # do not depend on finding a particular reference shape in the body.
-        declared_signature_node = function_node
+        declared_signature_node = _functions._resolve_function_type_names(function_node, self.env)
         if name.text.startswith("\\") and declared_signature_node.params is None:
             declared_signature_node = replace(declared_signature_node, params=())
         declared_overload = _functions._fully_typed_overload(declared_signature_node)

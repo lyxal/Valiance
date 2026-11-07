@@ -256,6 +256,28 @@ end
 
 
 class VariantSemanticTests(SemanticTestCase):
+    def test_short_case_type_preserves_identity_through_list_updates(self):
+        self.assert_executes('''
+trait Stringable => extend toString -> String end
+variant Entry =>
+  Shortcut =>
+    $name: String
+    $target: String
+  end
+  Shortcut as Stringable =>
+    define toString => "Shortcut(${$self.name}) -> ${$self.target}"
+  end
+end
+define first(values: Shortcut+) -> Entry.Shortcut => $values $[0] end
+define display(:Stringable) -> String => toString end
+$shortcuts: Shortcut+ = []
+["s1", "s2"] foreach (name) =>
+  $shortcuts := append Shortcut($name, "file.txt")
+end
+display(first($shortcuts))
+display $shortcuts
+''', ['Shortcut(s1) -> file.txt', ['Shortcut(s1) -> file.txt', 'Shortcut(s2) -> file.txt']])
+
     def test_case_constructors_pass_directly_to_trait_parameters(self):
         self.assert_executes(r'''
 trait Drawable => extend draw -> String end
@@ -314,13 +336,14 @@ combined(First.Item(3), First.Item(4))
 combined(Second.Item(3), Second.Item(4))
 ''', [7, 12])
 
-    def test_nested_case_type_alias_does_not_escape_implementation(self):
+    def test_ambiguous_case_type_requires_qualification_outside_implementation(self):
         self.assert_rejected('''
 trait Measurable => extend measure -> Int end
 variant Shape =>
   Circle => $radius: Int end
   Circle as Measurable => define measure => $self.radius end
 end
+variant Outline => Circle => $radius: Int end end
 define outside(circle: Circle) -> Int => 0
 ''', "undefined type 'Circle'")
 
