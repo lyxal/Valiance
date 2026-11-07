@@ -40,7 +40,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x47  # Instantiated generic trait dispatch bounds.
+BYTECODE_VERSION = 0x48  # Unified object-backed variant cases.
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -67,7 +67,6 @@ _OP_TO_BYTE = {
     OpCode.BUILD_RECORD: 0x0A,
     OpCode.BUILD_DICT: 0x0B,
     OpCode.MAKE_OBJECT_CONSTRUCTOR: 0x0C,
-    OpCode.MAKE_ENUM_MEMBER: 0x0D,
     OpCode.GET_FIELD: 0x0E,
     OpCode.SET_FIELD: 0x0F,
     OpCode.JUMP: 0x10,
@@ -204,7 +203,7 @@ def loads(data: bytes) -> Program:
         if prefix != MAGIC_PREFIX:
             raise BytecodeFormatError("invalid Valiance bytecode magic")
         version = reader.u8()
-        if version not in (0x43, 0x44, 0x45, 0x46, BYTECODE_VERSION):
+        if version not in (0x43, 0x44, 0x45, 0x46, 0x47, BYTECODE_VERSION):
             raise BytecodeFormatError(
                 f"unsupported Valiance bytecode version {version}; "
                 f"expected 0x43 through {BYTECODE_VERSION}"

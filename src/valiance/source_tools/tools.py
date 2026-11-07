@@ -698,7 +698,6 @@ def _format_frame_kind(identifiers: Sequence[str]) -> str:
         "object",
         "trait",
         "variant",
-        "enum",
         "at",
     }:
         return first

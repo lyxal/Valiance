@@ -15,6 +15,46 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_compact_variant_cases_survive_source_free_alias_imports(self):
+        from valiance.incremental import CompilationCoordinator
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'tokens.vlnc'
+            library.write_text('''
+public variant Token =>
+  Empty
+  NUMBER = "number"
+  Item => $value: Int end
+end
+''', encoding='utf-8')
+            CompilationCoordinator(root).build_module(
+                library, library.with_suffix('.vbcm'), module_name='tokens',
+            )
+            library.unlink()
+            for import_line, owner in (
+                ('import {tokens.Token}', 'Token'),
+                ('import {tokens.Token as Kind}', 'Kind'),
+                ('import {tokens}', 'tokens.Token'),
+            ):
+                with self.subTest(import_line=import_line):
+                    source = import_line + '\n' + rf'''
+{owner}.\NUMBER match =>
+  as :{owner}.NUMBER(value) => $value
+  as :{owner}.Empty => "empty"
+  as :{owner}.Item => "item"
+end
+dict{{{owner}.\Empty => 7}} $[{owner}.\Empty]
+'''
+                    analyser = Analyser(source_file=root / 'main.vlnc')
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    for optimize in (False, True):
+                        self.assertEqual(run(loads(dumps(compile_program(
+                            typed, optimize=optimize,
+                        )))), ['number', 7])
+
     def test_rejects_obsolete_module_container_versions(self):
         for version in (1, 2, 3):
             with self.subTest(version=version):
@@ -175,14 +215,14 @@ $metadata.arguments[0]
                 self.assertEqual(stack[:3], [['value'], ['value'], ['z', 'a']])
                 self.assertEqual(stack[3].type_args, ('Int',))
 
-    def test_imported_enum_members_are_niladic_elements(self):
+    def test_imported_compact_variant_members_are_niladic_elements(self):
         from valiance.runtime import compile_program, dumps, loads, run
 
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "palette.vlnc").write_text(
-                'public enum Colour => RED GREEN end\n'
-                'public enum[String] TokenType => NUMBER = "Number" end\n',
+                'public variant Colour => RED GREEN end\n'
+                'public variant TokenType => NUMBER = "Number" end\n',
                 encoding="utf-8",
             )
             for source in (
@@ -195,7 +235,7 @@ $metadata.arguments[0]
                 self.assertEqual(analyser.diagnostics, [])
                 for optimize in (False, True):
                     result = run(loads(dumps(compile_program(typed, optimize=optimize))))
-                    self.assertEqual(result[0].fields['name'], 'RED')
+                    self.assertEqual(result[0].type_name.rsplit('.', 1)[-1], 'RED')
             analyser = Analyser(source_file=root / 'main.vlnc')
             typed = analyser.analyse(parse(
                 r'import {palette}' + '\n' + r'palette.TokenType.\NUMBER.value'
@@ -791,7 +831,7 @@ summary("fieldless")
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             library = root / 'provider.vlnc'
-            library.write_text('''enum Mode => First Second end
+            library.write_text('''variant Mode => First Second end
 public object[T] Holder =>
   $value: T
   $modes: Mode+
@@ -813,7 +853,7 @@ end
                 with self.subTest(source_free=source_free):
                     analyser = Analyser(source_file=root / 'main.vlnc')
                     typed = analyser.analyse(parse('''import {provider.[Holder as Box]}
-enum Mode => Local end
+variant Mode => Local end
 $input = 67
 $box = Box($input)
 $box.value
@@ -824,11 +864,11 @@ $box.modes
                     for candidate in (program, loads(dumps(program))):
                         values = run(candidate)
                         self.assertEqual(values[0], 67)
-                        self.assertEqual(values[1][0].type_name, 'provider.Mode')
-                        self.assertEqual(values[1][0].fields['name'], 'First')
+                        self.assertEqual(values[1][0].type_name, 'provider.Mode.First')
+                        self.assertEqual(values[1][0].type_name.rsplit('.', 1)[-1], 'First')
                     invalid = Analyser(source_file=root / 'main.vlnc')
                     invalid.analyse(parse('''import {provider.[Holder as Box]}
-enum Mode => Local end
+variant Mode => Local end
 Box(67, [Mode.\\Local])
 '''))
                     self.assertTrue(any(
@@ -1524,7 +1564,7 @@ $f writeLine "World"
         first = dumps_interface(exports)
         second = dumps_interface(exports)
         self.assertEqual(first, second)
-        self.assertTrue(first.startswith(b"VLNI\x0d"))
+        self.assertTrue(first.startswith(b"VLNI\x0e"))
         self.assertNotIn(b"pickle", first.lower())
         command = (
             "from valiance.modules_system.modules import ModuleExports; "
@@ -1541,10 +1581,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0d{"schema":13,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x0e{"schema":15,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x0d{"schema":13,"value":null}trailing'
+                b'VLNI\x0e{"schema":15,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -1552,7 +1592,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0d{"schema":13,"value":')
+            loads_interface(b'VLNI\x0e{"schema":15,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

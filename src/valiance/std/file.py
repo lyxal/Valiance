@@ -27,10 +27,10 @@ _handle_lock = RLock()
 
 
 def _encoding(value: Any) -> Encoding:
-    """Validate a language Encoding enum and return its native encoding selection."""
-    if not isinstance(value, ObjectValue) or value.type_name.split('.')[-1] != 'Encoding':
+    """Validate a language Encoding case and return its native encoding selection."""
+    if not isinstance(value, ObjectValue) or value.type_name.split('.')[-2:-1] != ['Encoding']:
         raise TypeError('expected file.Encoding')
-    key = value.fields.get('name')
+    key = value.type_name.rsplit('.', 1)[-1]
     names = {'UTF8': Encoding.UTF8, 'UTF16LE': Encoding.UTF16LE,
              'UTF16BE': Encoding.UTF16BE, 'Latin1': Encoding.LATIN1}
     try:

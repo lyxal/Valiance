@@ -44,7 +44,6 @@ _KEYWORDS = frozenset(
         "eager",
         "else",
         "end",
-        "enum",
         "exact",
         "except",
         "extend",

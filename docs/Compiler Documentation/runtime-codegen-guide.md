@@ -81,9 +81,9 @@ The runtime implementation is small, but several files must evolve together.
 - List literals compile to `BUILD_LIST`.
 - Record fields and dictionary keys/values are wrapped in `ISOLATE_STACK_BEGIN` / `ISOLATE_STACK_END`; the VM hides the caller stack, requires one result, restores the caller stack, and appends that result.
 - Object and variant declarations compile constructor globals with
-  `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
-  `MAKE_ENUM_MEMBER` under their `\`-prefixed element names; the member's
-  optional backing value is a field on the enum object.
+  `MAKE_OBJECT_CONSTRUCTOR`. Literal-backed cases store their backing value
+  as a fixed constructor default; zero-parameter cases also expose qualified
+  `\`-prefixed niladic constructor bindings.
 - `MAKE_OBJECT_CONSTRUCTOR` also carries runtime lifecycle metadata for
   destructors, duplication faults, and `@mustcall` protocol contracts.
 - When an object declares same-name definitions, codegen stores those compiled
@@ -179,7 +179,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 - User functions are represented as `FunctionValue`.
 - Built-ins are represented as `BuiltinValue`.
 - Object constructors are represented as `ObjectConstructorValue`, and nominal
-  object/variant/enum member values are represented as `ObjectValue`.
+  object/variant member values are represented as `ObjectValue`.
 - Function calls and built-in calls both source arguments from the current
   stack. Explicit-parameter functions can also source missing arguments from the
   parameter cycle.

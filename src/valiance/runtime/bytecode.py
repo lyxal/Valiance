@@ -52,7 +52,6 @@ class OpCode(Enum):
     MATCH_BRANCH_BEGIN = "match_branch_begin"
     MATCH_BRANCH_END = "match_branch_end"
     MAKE_OBJECT_CONSTRUCTOR = "make_object_constructor"
-    MAKE_ENUM_MEMBER = "make_enum_member"
     GET_FIELD = "get_field"
     SET_FIELD = "set_field"
     GET_INDEX = "get_index"

@@ -23,6 +23,7 @@ from valiance.asts.object_constructors import constructor_definitions
 from valiance.vtypes.symbols import Symbol
 
 from ..calls import callable_values as _functions
+from ..support import analysis_utils as _utils
 from ..state import AnalysisBranch
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
@@ -374,7 +375,7 @@ class _ImportDeclarations:
             self._register_imported_object(replace(obj, name=node.name), runtime_name)
             # A selected native object has a source alias, but its values must
             # keep the nominal identity used by native module signatures.
-            for registry in ("objects", "traits", "variants", "enums", "constructors"):
+            for registry in ("objects", "traits", "variants", "constructors"):
                 declarations = getattr(self.env, registry)
                 if node.name in declarations:
                     # A scoped alias is a separate lookup spelling for the
@@ -396,24 +397,21 @@ class _ImportDeclarations:
                         overload.returns, {node.name: obj.name},
                     ),
                 ))
-            if node.kind.text == "enum":
-                for member in node.enum_members:
-                    canonical = Symbol(f"\\{member.name.text}", (*node.name.namespace, node.name.text))
-                    visible = Symbol(f"\\{member.name.text}", (*obj.name.namespace, obj.name.text))
-                    for overload in self.env.overloads_for(canonical):
-                        # An alias is a lexical spelling of the same nominal
-                        # enum. Its member constructors must return the alias
-                        # type expected by imported constructor defaults.
-                        # The runtime binding remains the provider's canonical
-                        # member, so no new enum identity is created.
-                        from valiance.modules_system.modules import _rename_imported_types
-                        self.env.define_overload(visible, replace(
-                            overload,
-                            returns=_rename_imported_types(
-                                overload.returns, {node.name: obj.name},
-                            ),
-                        ))
-                    self.env.bind_runtime_name(visible, canonical)
+            if node.kind == Symbol("variant"):
+                self._define_variant_shape(replace(node, name=obj.name))
+                for member in node.variants:
+                    names = [member.name]
+                    if (
+                        all(member.fixed_value and field.name == Symbol("value")
+                            for field in member.fields)
+                        and not member.name.text.startswith("\\")
+                    ):
+                        names.append(Symbol(f"\\{member.name.text}"))
+                    for name in names:
+                        canonical = _utils._child_symbol(node.name, name)
+                        visible = _utils._child_symbol(obj.name, name)
+                        self.env.bind_runtime_name(visible, canonical)
+                        self.env.runtime_nominal_names[visible] = canonical
             return
         kind = node.kind.text
         if kind == "trait":
@@ -439,19 +437,6 @@ class _ImportDeclarations:
                             self.env.bind_runtime_name(qualified, runtime_method, overload)
                             self.env.bind_runtime_name(definition.name, runtime_method, overload)
             return
-        if kind == "enum":
-            value_type = T.V(node.generics[0].text) if node.generics else None
-            members = tuple(
-                T.EnumMemberDefinition(
-                    Symbol(member.name.text, (*obj.name.namespace, obj.name.text)),
-                    value_type,
-                    bool(member.value),
-                )
-                for member in node.enum_members
-            )
-            self.env.define_enum(obj.name, members, value_type=value_type)
-            return
-
         if kind == "variant":
             self._define_variant_shape(node)
             if obj.import_friendly:

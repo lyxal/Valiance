@@ -684,12 +684,12 @@ def import_objects(
     """Return exported object-like declarations selected by an import spec."""
     public = exports.public_objects()
     # Constructor signatures are re-analysed at the import site. Preserve
-    # references to enums declared beside the imported object, including
-    # enum-valued defaults, when the provider acquires an import namespace.
-    enum_names = frozenset(
+    # references to variants declared beside the imported object, including
+    # variant-valued defaults, when the provider acquires an import namespace.
+    variant_names = frozenset(
         obj.name.text for obj in exports.objects
         if isinstance(obj.typed.node, ObjectNode)
-        and obj.typed.node.kind == Symbol("enum")
+        and obj.typed.node.kind == Symbol("variant")
     )
     provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
     native_module = exports.module_name.startswith("std.")
@@ -707,8 +707,8 @@ def import_objects(
                     obj,
                     component.alias or component.name,
                     import_friendly=True,
-                    enum_names=enum_names,
-                    enum_namespace=provider,
+                    variant_names=variant_names,
+                    variant_namespace=provider,
                     nominal_name=(
                         _namespaced_symbol(obj.name, provider)
                         if native_module else None
@@ -726,8 +726,8 @@ def import_objects(
             _namespaced_symbol(obj.name, namespace),
             friendly_prefix=namespace,
             import_friendly=True,
-            enum_names=enum_names,
-            enum_namespace=provider if native_module else namespace,
+            variant_names=variant_names,
+            variant_namespace=provider if native_module else namespace,
             nominal_name=_namespaced_symbol(obj.name, provider) if native_module else None,
         ), origin=obj.origin or Symbol(obj.name.text, tuple(exports.module_name.split('.'))))
         for obj in public
@@ -1233,8 +1233,8 @@ def _renamed_object(
     *,
     friendly_prefix: Symbol | None = None,
     import_friendly: bool = False,
-    enum_names: frozenset[str] = frozenset(),
-    enum_namespace: Symbol | None = None,
+    variant_names: frozenset[str] = frozenset(),
+    variant_namespace: Symbol | None = None,
     nominal_name: Symbol | None = None,
 ) -> ModuleObject:
     """Compute renamed object during module loading and import resolution."""
@@ -1247,8 +1247,8 @@ def _renamed_object(
         obj.friendly_definitions,
     )
     renamed_constructors = tuple(
-        _qualify_provider_enum_references(
-            _renamed_define_node(definition, owner), enum_names, enum_namespace,
+        _qualify_provider_variant_references(
+            _renamed_define_node(definition, owner), variant_names, variant_namespace,
         )
         for definition in explicit_constructors
     )
@@ -1292,7 +1292,7 @@ def _renamed_object(
         owner,
         node.generics,
         node.target,
-        _qualify_provider_enum_references(node.fields, enum_names, enum_namespace),
+        _qualify_provider_variant_references(node.fields, variant_names, variant_namespace),
         definitions,
         node.requirements,
         (tuple(replace(member, definitions=_renamed_friendly_definitions(
@@ -1300,7 +1300,6 @@ def _renamed_object(
         )) for member in node.variants)
          if node.kind == Symbol("variant") and friendly_prefix is not None
          else node.variants),
-        node.enum_members,
         node.annotations,
         node.generic_variances,
         node.generic_constraints,
@@ -1341,36 +1340,36 @@ def _rename_imported_types(value, renames: dict[Symbol, Symbol]):
     return value
 
 
-def _qualify_provider_enum_references(
-    value, enum_names: frozenset[str], namespace: Symbol | None,
+def _qualify_provider_variant_references(
+    value, variant_names: frozenset[str], namespace: Symbol | None,
 ):
-    """Qualify sibling enum references through nested annotations and expressions."""
-    if namespace is None or not enum_names:
+    """Qualify sibling variant references through nested annotations and expressions."""
+    if namespace is None or not variant_names:
         return value
     prefix = (*namespace.namespace, namespace.text)
     if (isinstance(value, T.NominalType) and not value.name.namespace
-            and value.name.text in enum_names):
+            and value.name.text in variant_names):
         value = replace(value, name=Symbol(value.name.text, prefix))
     elif (isinstance(value, ElementNode) and value.name.namespace
-            and value.name.namespace[0] in enum_names):
+            and value.name.namespace[0] in variant_names):
         value = replace(
             value, name=Symbol(value.name.text, (*prefix, *value.name.namespace)),
         )
     if is_dataclass(value):
         return replace(value, **{
-            item.name: _qualify_provider_enum_references(
-                getattr(value, item.name), enum_names, namespace,
+            item.name: _qualify_provider_variant_references(
+                getattr(value, item.name), variant_names, namespace,
             )
             for item in fields(value)
         })
     if isinstance(value, tuple):
         return tuple(
-            _qualify_provider_enum_references(item, enum_names, namespace)
+            _qualify_provider_variant_references(item, variant_names, namespace)
             for item in value
         )
     if isinstance(value, frozenset):
         return frozenset(
-            _qualify_provider_enum_references(item, enum_names, namespace)
+            _qualify_provider_variant_references(item, variant_names, namespace)
             for item in value
         )
     return value

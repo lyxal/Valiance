@@ -25,8 +25,8 @@ and the explicit gaps inventory, see [the interaction plan](multimodule-interact
 | Generic trait | generic object, two distinct generic trait instantiations |
 | Generic variant | generic payload constructor and exhaustive match |
 | Non-generic variant | fixed payload constructor and exhaustive match |
-| Valued enum | imported niladic members and stored values |
-| Plain enum | imported niladic members and names |
+| Literal-backed variant | imported niladic members and stored values |
+| Bare variant | imported niladic members and names |
 | Computed tag | explicit tag import and tag-restricted callable |
 | Constructed tag | sticky evidence and explicit tag removal |
 | Unit tag | unit evidence and explicit unit removal |
@@ -163,7 +163,7 @@ source-free and re-exported interfaces. The object is registered under its
 canonical provider-qualified name for this check, not exposed as a new import
 in the consumer. Internal aliases must retain the selected nominal spelling
 in checked descriptors: an `alpha.Box` lookup must not silently normalize to
-`Box` and collide with `beta.Box`. Enum, variant and trait dependency loading
+`Box` and collide with `beta.Box`. Variant and trait dependency loading
 continues to use the ordinary import contracts; this managed-object scoped
 recheck does not rewrite their runtime identities. See the managed-construction
 and provider-isolation regressions in `tests/test_compiled_modules.py`.

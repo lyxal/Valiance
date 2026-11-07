@@ -38,7 +38,7 @@ be replayed across all supported import graphs and dependency artifact layouts.
   previously unrepresented pairs to the previous 479. Counts represent defined
   independent contracts, not certification of every project layout.
 
-The previously added 42 compositions exercise enum values in generic boxes, variants,
+The previously added 42 compositions exercise variant case values in generic boxes, variants,
 lists, records, dictionaries, and tuples; variant values transported through
 objects, options, collections and mutation; inherited defaults through variants;
 trait dispatch from collections, higher-order callbacks and optional values;
@@ -100,7 +100,7 @@ corrupted interface rejection, and incremental nested-package relinking.
 **These checks are tracked separately from source-language pair coverage**;
 they do not prove ABI integration against a native library. One package
 function-alias signature regression is an expected failure, separate from
-previously tracked destructor, transitive JSON, and enum-alias issues.
+previously tracked destructor, transitive JSON, and variant-alias issues.
 
 The 61 new families passed all six source graphs (366 projects / 1,464
 execution-mode checks), all 61 nested compiled-only projects (244 checks),
@@ -115,11 +115,11 @@ have been run. The CI scheduler uses `--all`, so an expanding registry does not
 leave test cases outside the scheduled matrix. Local results are reported
 separately, not mistaken for completed scheduled CI validation.
 
-The earlier 30 contract families cover: inherited trait default with an imported enum;
+The earlier 30 contract families cover: inherited trait default with an imported compact variant;
 trait-constrained generics; nominal object unions; optional and asserted
 casts; higher-order generic object transport; structural record constraints;
 records and dictionaries of imported objects; lists and dictionaries of
-variants; optional generic objects; tuples; enum branching; loops over
+variants; optional generic objects; tuples; variant branching; loops over
 imported object fields; exception handlers; higher-order method calls; unit
 and computed variant tags; overloads with trait defaults; trait intersections;
 generic list overloads and ranks; overloaded tag validators; constructed tag
@@ -186,9 +186,9 @@ value, type, or dispatch obligation across feature kinds or module boundaries.
 | Connected family | Observable contract (positive oracle) |
 | --- | --- |
 | `generic_object_variant` | A generic `Box[Int]` is a field in a variant payload defined in a different module; matching reads the original integer |
-| `generic_enum_identity` | A valued enum member passes through an imported generic function and retains its value/type |
+| `generic_enum_identity` | A literal-backed variant case passes through an imported generic function and retains its value/type |
 | `constructed_tag_generic` | A constructed tag survives generic identity and can be explicitly removed |
-| `enum_object_field` | A valued enum member initializes an object declared in another module; reading the object returns the independent expected string |
+| `enum_object_field` | A literal-backed variant case initializes an object declared in another module; reading the object returns the independent expected string |
 | `trait_variant_dispatch` | An object stored in a separately declared variant can be matched, cast to its imported trait and dynamically dispatched |
 | `generic_trait_variant` | A generic object carrying a generic trait implementation passes through a generic variant and returns its typed payload |
 | `overload_enum` | An imported enum and overloaded function interact; dispatch distinguishes `Token` from `Int` |
@@ -202,7 +202,7 @@ in Python from the seed. The generator is deterministic and can recreate
 exact files from a case identifier. A separate negative oracle registry
 requires nine **specific** error classes: generic nominal mismatch, unsupported
 overload, absent tag removal, invalid generic variant payload, unknown tag,
-invalid enum member, wrong generic-object overload, wrong constructor type,
+invalid variant case, wrong generic-object overload, wrong constructor type,
 and incompatible generic-trait cast.
 
 ### Exact finite enumeration
@@ -292,7 +292,7 @@ co-occurring, risk tiers:
 | P0 | tag validator → generic call → overload/vectorisation → re-export | validator checked for each required element and checked path |
 | P0 | incremental provider edit → compiled facade → generic instance → serialized caller | old specialization is invalidated; value matches new source |
 | P0 | source+binary hybrid → direct/indirect recursive import → public/private visibility | private contract never leaks; recursion is resolved or diagnosed by spec |
-| P1 | enum → variant → tagged generic object → reflection/JSON round trip | case/discriminant/payload and runtime type preserved |
+| P1 | literal-backed variant → payload variant → tagged generic object → reflection/JSON round trip | case/discriminant/payload and runtime type preserved |
 | P1 | nested lazy list → generic overload → branch/exception → repeated traversal | lazy replays preserve values/errors and no extra evaluation |
 | P1 | task/channel → borrowed trait object → cancellation/exception | no double drops; permitted schedules give modelled results |
 | P1 | FFI → object construction → imported destructor → source-free load | ABI and lifetime contract preserved across module boundaries |
@@ -366,7 +366,7 @@ Maintain at least one independent model or clearly stated semantic law for
 all checks:
 
 - exact-decimal `Decimal`/rational arithmetic and explicit boundary values;
-- pure Python algebraic model for variant/enum values and match arms;
+- pure Python algebraic model for variant/variant case values and match arms;
 - trait dispatch table keyed by *(provider identity, specialization, trait)*;
 - nominal object identity under aliases and re-exports;
 - reference-count/state machine for creation, borrow, move, retain, release,

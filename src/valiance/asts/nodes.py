@@ -869,14 +869,7 @@ class VariantMemberNode(ASTNode):
     name: Symbol
     fields: tuple[ObjectFieldNode, ...] = ()
     definitions: tuple[DefineNode, ...] = ()
-
-
-@dataclass(frozen=True)
-class EnumMemberNode(ASTNode):
-    """One member of an enum declaration."""
-
-    name: Symbol
-    value: tuple[ASTNode, ...] = ()
+    fixed_value: bool = False
 
 
 @dataclass(frozen=True)
@@ -1141,7 +1134,6 @@ class ObjectNode(ASTNode):
     definitions: tuple[DefineNode, ...] = ()
     requirements: tuple[TraitRequirementNode, ...] = ()
     variants: tuple[VariantMemberNode, ...] = ()
-    enum_members: tuple[EnumMemberNode, ...] = ()
     annotations: tuple[ASTNode, ...] = ()
     generic_variances: tuple[Symbol | None, ...] = ()
     generic_constraints: tuple[Type | None, ...] = ()

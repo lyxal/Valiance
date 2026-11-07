@@ -8,32 +8,32 @@ Syntax is intentionally literal: failing grammar/type variants are not counted.
 COMPOSITION_CONTRACTS = {
     "enum_in_generic_box": (
         ("enum", "generic", "generic_specialisation", "object", "construction", "field", "nominal"),
-        'public enum[String] Token =>\n YES = "yes"\n NO = "no"\nend\n', ("Token",),
+        'public variant Token =>\n YES = "yes"\n NO = "no"\nend\n', ("Token",),
         'public object[T] Box => public $value:T end\n', ("Box",),
         '$box=Box(Token.\\YES)\n$token=$box.value\n$token.value\n', ("yes",)),
     "enum_in_generic_variant": (
         ("enum", "variant", "generic", "generic_specialisation", "match", "nominal"),
-        'public enum[String] Token =>\n YES = "yes"\n NO = "no"\nend\n', ("Token",),
+        'public variant Token =>\n YES = "yes"\n NO = "no"\nend\n', ("Token",),
         'public variant[T] Choice =>\n Present => public $value:T end\n Empty => end\nend\n', ("Choice",),
         'Choice.Present(Token.\\YES) match =>\n as :Present(token) => $token.value\n as :Empty => "no"\nend\n', ("yes",)),
     "enum_through_list": (
         ("enum", "finite_list", "generic", "element", "nominal", "type_inference"),
-        'public enum[Int] Code => GOOD = @N@ end\n', ("Code",),
+        'public variant Code => GOOD = @N@ end\n', ("Code",),
         'public define[T] select(values:T+ novec)->T=>$values[0] end\n', ("select",),
         '$code=select([Code.\\GOOD,Code.\\GOOD])\n$code.value\n', ("@N@",)),
     "enum_through_dictionary": (
         ("enum", "dictionary", "generic", "element", "nominal", "type_inference"),
-        'public enum[Int] Code => GOOD = @N@ end\n', ("Code",),
+        'public variant Code => GOOD = @N@ end\n', ("Code",),
         'public define[T] identity(value:T)->T=>$value end\n', ("identity",),
         '$map=identity(dict{"code"=>Code.\\GOOD})\n$code=$map["code"]\n$code.value\n', ("@N@",)),
     "enum_through_record": (
         ("enum", "record", "generic", "element", "field", "type_inference"),
-        'public enum[Int] Code => GOOD = @N@ end\n', ("Code",),
+        'public variant Code => GOOD = @N@ end\n', ("Code",),
         'public define[T] identity(value:T)->T=>$value end\n', ("identity",),
         '$row=identity(record{code=>Code.\\GOOD})\n$code=$row.code\n$code.value\n', ("@N@",)),
     "enum_through_tuple": (
         ("enum", "tuple", "generic", "element", "type_inference", "nominal"),
-        'public enum[Int] Code => GOOD = @N@ end\n', ("Code",),
+        'public variant Code => GOOD = @N@ end\n', ("Code",),
         'public define[T] identity(value:T)->T=>$value end\n', ("identity",),
         '$pair=identity({Code.\\GOOD,Code.\\GOOD})\n$code=$pair[1]\n$code.value\n', ("@N@",)),
     "variant_stored_in_object": (
@@ -99,7 +99,7 @@ COMPOSITION_CONTRACTS = {
     "trait_default_overload_from_enum": (
         ("trait", "trait_default", "overload", "enum", "object", "dispatch", "strings"),
         'public trait Named=>public define label->String=>"default" end end\npublic object Item=>public $value:Int end\nobject Item as Named=>end\n', ("Named","Item"),
-        'import {core.[Named,Item]}\npublic enum[Int] Code => GOOD = @N@ end\npublic define show(x:Item)->String=>$x as[Named] | label end\npublic define show(x:Code)->Int=>$x.value+1 end\n', ('show', 'Code'),
+        'import {core.[Named,Item]}\npublic variant Code => GOOD = @N@ end\npublic define show(x:Item)->String=>$x as[Named] | label end\npublic define show(x:Code)->Int=>$x.value+1 end\n', ('show', 'Code'),
         'show(Item(@N@))\nshow(Code.\\GOOD)\n', ('default', '@N_PLUS_ONE@')),
     "union_object_list_match": (
         ("union", "object", "finite_list", "match", "nominal", "construction"),
@@ -153,7 +153,7 @@ COMPOSITION_CONTRACTS = {
         'repeat(Choice.Present(@N@))\n', ("@N_TRIPLE@",)),
     "enum_in_branch_loop": (
         ("enum", "branch", "loop", "numbers", "generic", "element"),
-        'public enum[Int] Code=>GOOD = @N@ end\n', ("Code",),
+        'public variant Code=>GOOD = @N@ end\n', ("Code",),
         'import {core.Code}\npublic define[T] count(x:T)->Int=>\n $i=0\n while ($i < $x.value)=>$i := + 1 end\n $i\nend\n', ("count",),
         'count(Code.\\GOOD)\n', ("@N@",)),
     "variant_in_exception_handler": (
@@ -164,7 +164,7 @@ COMPOSITION_CONTRACTS = {
     "tag_on_enum_via_generic": (
         ("tag", "computed", "enum", "generic", "element", "nominal"),
         'public tag #marked as computed\n', ("#marked",),
-        'public enum[Int] Code=>GOOD = @N@ end\npublic define[T] identity(v:T)->T=>$v end\n', ("Code","identity"),
+        'public variant Code=>GOOD = @N@ end\npublic define[T] identity(v:T)->T=>$v end\n', ("Code","identity"),
         'identity(Code.\\GOOD.value) #marked | #-marked\n', ("@N@",)),
     "constructed_tag_through_tuple": (
         ("tag", "constructed", "tuple", "generic", "element", "type_inference"),
@@ -203,12 +203,12 @@ COMPOSITION_CONTRACTS = {
         'read(Box(@N@))\n', ("@N@",)),
     "json_enum_value": (
         ("json", "enum", "strings", "element", "generic", "nominal"),
-        'public enum[Int] Code => GOOD = @N@ end\n', ('Code',),
+        'public variant Code => GOOD = @N@ end\n', ('Code',),
         'public object Holder => public $value:Int end\n', ('Holder',),
         'import {std.json}\njson.encode(Holder(Code.\\GOOD.value)) ?!\n', ('{"value":@N@}',)),
     "lazy_enum_list": (
         ("lazy_list", "finite_list", "higher_order", "enum", "nominal", "element"),
-        'public enum[Int] Code=>GOOD = @N@ end\n', ("Code",),
+        'public variant Code=>GOOD = @N@ end\n', ("Code",),
         'import {core.Code}\npublic define select(xs:Code+ novec)->Int=>\n $ys=$xs map: fn(x:Code)->Code=>$x end\n $ys[0].value\nend\n', ("select",),
         'select([Code.\\GOOD,Code.\\GOOD])\n', ("@N@",)),
     "lazy_object_trait_dispatch": (

@@ -60,7 +60,7 @@ SPECS: dict[str, InteractionSpec] = {
     ),
     "generic_enum_identity": InteractionSpec(
         ("generic", "element", "enum", "nominal"),
-        "public enum[String] Token =>\n YES = \"yes\"\n NO = \"no\"\nend\n", ("Token",),
+        "public variant Token =>\n YES = \"yes\"\n NO = \"no\"\nend\n", ("Token",),
         "public define[T] identity(value:T)->T=>$value end\n", ("identity",),
         "$v=identity(Token.\\YES)\n$v.value\n", ("yes",),
     ),
@@ -72,7 +72,7 @@ SPECS: dict[str, InteractionSpec] = {
     ),
     "enum_object_field": InteractionSpec(
         ("enum", "object", "field", "construction"),
-        "public enum[String] Token =>\n YES = \"yes\"\n NO = \"no\"\nend\n", ("Token",),
+        "public variant Token =>\n YES = \"yes\"\n NO = \"no\"\nend\n", ("Token",),
         "public object Envelope => public $code:String end\n", ("Envelope",),
         "$v=Envelope(Token.\\YES.value)\n$v.code\n", ("yes",),
     ),
@@ -98,7 +98,7 @@ SPECS: dict[str, InteractionSpec] = {
     ),
     "overload_enum": InteractionSpec(
         ("overload", "enum", "element", "dispatch"),
-        "public enum[String] Token =>\n YES = \"yes\"\n NO = \"no\"\nend\n", ("Token",),
+        "public variant Token =>\n YES = \"yes\"\n NO = \"no\"\nend\n", ("Token",),
         "import {core.Token}\n"
         "public define inspect(value:Int)->Int=>$value+1 end\n"
         "public define inspect(value:Token)->String=>$value.value end\n", ("inspect",),

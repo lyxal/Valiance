@@ -195,8 +195,8 @@ $f writeLine "World"
         for candidate in (program, loads(dumps(program))):
             values = run(candidate)
             self.assertEqual(values[0], 67)
-            self.assertEqual(values[1].type_name, 'file.Encoding')
-            self.assertEqual(values[1].fields['name'], 'UTF8')
+            self.assertEqual(values[1].type_name, 'file.Encoding.UTF8')
+            self.assertEqual(values[1].type_name.rsplit('.', 1)[-1], 'UTF8')
     def test_default_encoding_constructors_accept_positional_path(self):
         # A single explicit argument binds to `path`; the trailing enum
         # default is filled, rather than treating `path` as `encoding`.

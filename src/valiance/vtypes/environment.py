@@ -164,24 +164,6 @@ class VariantDefinition:
 
 
 @dataclass(frozen=True)
-class EnumMemberDefinition:
-    """One statically declared enum member."""
-
-    name: Symbol
-    typ: Type | None = None
-    has_value: bool = False
-
-
-@dataclass(frozen=True)
-class EnumDefinition:
-    """The static facts known about an enum."""
-
-    name: Symbol
-    value_type: Type | None = None
-    members: tuple[EnumMemberDefinition, ...] = ()
-
-
-@dataclass(frozen=True)
 class ConstructorDefinition:
     """Runtime constructor metadata for a nominal structured value."""
 
@@ -240,9 +222,6 @@ class Environment:
     )
     variants: dict[Symbol, VariantDefinition] = field(
         default_factory=dict[Symbol, VariantDefinition]
-    )
-    enums: dict[Symbol, EnumDefinition] = field(
-        default_factory=dict[Symbol, EnumDefinition]
     )
     constructors: dict[Symbol, ConstructorDefinition] = field(
         default_factory=dict[Symbol, ConstructorDefinition]
@@ -578,31 +557,6 @@ class Environment:
             return self.variants[name]
         if self.parent is not None:
             return self.parent.lookup_variant(name)
-        return None
-
-    def define_enum(
-        self,
-        name: Symbol,
-        members: tuple[EnumMemberDefinition, ...],
-        *,
-        value_type: Type | None = None,
-    ) -> None:
-        """Register an enum and niladic overloads for its members."""
-        self.enums[name] = EnumDefinition(name, value_type, members)
-        for member in members:
-            # The member name remains unprefixed in enum metadata (for matches),
-            # but its generated element is explicitly niladic in source syntax.
-            self.define_overload(
-                Symbol(f"\\{member.name.text}", member.name.namespace),
-                Overload((), (NominalType(name),)),
-            )
-
-    def lookup_enum(self, name: Symbol) -> EnumDefinition | None:
-        """Return an enum definition, if visible."""
-        if name in self.enums:
-            return self.enums[name]
-        if self.parent is not None:
-            return self.parent.lookup_enum(name)
         return None
 
     def object_exists(self, name: Symbol) -> bool:

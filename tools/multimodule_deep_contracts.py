@@ -21,7 +21,7 @@ ITEM = 'public object Item => public $value:Int end\n'
 BOX = 'public object[T] Box => public $value:T end\n'
 CHOICE = ('public variant Choice =>\n Present => public $value:Int end\n'
           ' Empty => end\nend\n')
-CODE = 'public enum[Int] Code => GOOD = @N@ end\n'
+CODE = 'public variant Code => GOOD = @N@ end\n'
 SIZED = ('public trait Sized => extend size -> Int end\n'
          'public object Item => public $value:Int end\n'
          'object Item as Sized => define size => $self.value end\n')

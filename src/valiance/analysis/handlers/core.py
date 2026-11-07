@@ -1306,7 +1306,7 @@ def _import_node(
                     )
                 continue
             dependency_node = dependency.typed.node
-            # Enum/variant declarations already qualify themselves by their
+            # Variant declarations already qualify themselves by their
             # lexical name; constructors require a distinct nominal identity.
             if dependency_node.kind == Symbol("object") and dependency_node.target is None:
                 runtime_name = self._prelude.add_declaration(
@@ -1322,7 +1322,7 @@ def _import_node(
                     ),
                 )
             else:
-                # An enum/variant/trait can be required by a constructor's
+                # An variant/trait can be required by a constructor's
                 # checked signature without being imported as a public name.
                 # Its private spelling must use the provider namespace when
                 # rechecking default arguments and method contracts.
@@ -1342,11 +1342,11 @@ def _import_node(
         # but the provider-owned scope used to check *default argument bodies*
         # intentionally excludes the caller's imports. Retain those selected
         # nominal declarations as private checking evidence as well. This is
-        # necessary when one selected object uses another selected enum or
+        # necessary when one selected object uses another selected
         # variant in its constructor defaults; it does not export extra names.
         for selected in objects:
             if (isinstance(selected.typed.node, ObjectNode)
-                    and selected.typed.node.kind in (Symbol("enum"), Symbol("variant"))):
+                    and selected.typed.node.kind == Symbol("variant")):
                 selected_runtime = self._prelude.add_declaration(
                     selected.typed, selected.name,
                     runtime_type_origins=closure.origins_for(selected),
@@ -1668,8 +1668,6 @@ def _object_node(
         return self._trait_definition(branch, node)
     if kind == "variant":
         return self._variant_definition(branch, node)
-    if kind == "enum":
-        return self._enum_definition(branch, node)
 
     self._diagnose(f"unknown object-like declaration '{node.kind}'", node)
     return _core.BranchSet((branch.emit(TypedNode(node, None)),))

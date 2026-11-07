@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from valiance.analysis.service_facade import AnalysisServiceFacade
 
-from .enums import _EnumDeclarations
 from .functions import _FunctionDeclarations
 from .imports import _ImportDeclarations
 from .objects import _ObjectDeclarations
@@ -16,7 +15,6 @@ _DECLARATION_OWNERS = (
     _ObjectDeclarations,
     _TraitDeclarations,
     _VariantDeclarations,
-    _EnumDeclarations,
     _ImportDeclarations,
 )
 

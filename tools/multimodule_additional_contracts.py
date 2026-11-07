@@ -14,7 +14,7 @@ ADDITIONAL_CONTRACTS = {
         "public object Item => public $value:Int end\n"
         "object Item as Child => define size => $self.value end\n",
         ("Parent", "Child", "Item"),
-        "public enum[Int] Code =>\n GOOD = @N@\nend\n", ("Code",),
+        "public variant Code =>\n GOOD = @N@\nend\n", ("Code",),
         "Item(Code.\\GOOD.value) as[Parent] | doubled\n", ("@N_DOUBLE@",),
     ),
     "bounded_generic_trait": (
@@ -116,7 +116,7 @@ ADDITIONAL_CONTRACTS = {
     ),
     "branch_enum_generic": (
         ("enum", "branch", "generic", "element", "strings", "nominal"),
-        "public enum[Int] Code =>\n GOOD = @N@\n BAD = -1\nend\n", ("Code",),
+        "public variant Code =>\n GOOD = @N@\n BAD = -1\nend\n", ("Code",),
         "public define[T] choose(x:T)->T=>$x end\n", ("choose",),
         "if (Code.\\GOOD.value > 0) => choose(Code.\\GOOD.value) + 1\n"
         "else => 0 end\n", ("@N_PLUS_ONE@",),
@@ -150,7 +150,7 @@ ADDITIONAL_CONTRACTS = {
     "unit_tag_enum": (
         ("tag", "unit", "enum", "generic", "element", "nominal"),
         "public tag #metres as unit\n", ("#metres",),
-        "public enum[Int] Distance => FAR = @N@ end\n"
+        "public variant Distance => FAR = @N@ end\n"
         "public define[T] identity(x:T)->T=>$x end\n", ("Distance", "identity"),
         "Distance.\\FAR.value #metres | #-metres | identity\n", ("@N@",),
     ),

@@ -72,7 +72,7 @@ class _FunctionDeclarations:
                 continue
             if any(lookup(name) is not None for lookup in (
                 environment.lookup_object, environment.lookup_trait,
-                environment.lookup_variant, environment.lookup_enum,
+                environment.lookup_variant,
             )):
                 continue
             locations = tuple(

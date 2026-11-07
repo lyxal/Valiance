@@ -510,6 +510,10 @@ class TaggedValue:
         """Return whether this tagged value equals another value."""
         return self.value == unwrap_runtime_value(other)
 
+    def __hash__(self) -> int:
+        """Keep hashable payloads hashable through equality-transparent tag views."""
+        return hash(self.value)
+
 
 def unwrap_runtime_value(value: Any) -> Any:
     """Return the payload beneath runtime evidence and temporary access wrappers."""
@@ -829,6 +833,10 @@ class ObjectValue:
     destructor_borrowed: bool = field(default=False, compare=False, repr=False)
     destroyed: bool = field(default=False, compare=False, repr=False)
     ownership_transferred: bool = field(default=False, compare=False, repr=False)
+
+    def __hash__(self) -> int:
+        """Hash nominal identity and hashable stored values, excluding lifecycle state."""
+        return hash((self.type_name, self.type_args, frozenset(self.fields.items())))
 
     @property
     def mustcall_called(self) -> frozenset[str]:

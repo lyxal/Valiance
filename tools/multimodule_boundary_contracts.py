@@ -17,7 +17,7 @@ ITEM = 'public object Item=>public $value:Int end\n'
 BOX = 'public object[T] Box=>public $value:T end\n'
 VARIANT = ('public variant Choice=>\n'
            ' Present=>public $value:Int end\n Empty=>end\nend\n')
-CODE = 'public enum[Int] Code=>GOOD=@N@ end\n'
+CODE = 'public variant Code=>GOOD=@N@ end\n'
 SIZED = ('public trait Sized=>extend size->Int end\n'
          'public object Item=>public $value:Int end\n'
          'object Item as Sized=>define size=>$self.value end\n')
@@ -109,7 +109,7 @@ add('tag_validator_record', 'tag tag_validator computed record generic field', V
     '$row=identity(record{x=>@N@ #valid | #-valid})\n$row.x\n', ['@N@'],
     '@N@ #unknown\n', 'unknown data tag')
 add('tag_constructed_enum', 'tag constructed enum nominal element', 'public tag #sticky as constructed\n', '#sticky',
-    'public enum[Int] Code=>GOOD=@N@ end\n', 'Code',
+    'public variant Code=>GOOD=@N@ end\n', 'Code',
     '$value=Code.\\GOOD.value\n$value #sticky | #-sticky\n', ['@N@'],
     '@N@ #missing\n', 'unknown data tag')
 add('tag_overlay_object', 'tag tag_overlay constructed object field construction', STICKY_TAG, '#sticky increment',

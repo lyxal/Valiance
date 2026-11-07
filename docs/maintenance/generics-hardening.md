@@ -77,7 +77,7 @@ therefore has no completed success result in this pass.
 
 The additions include rank-four `exact`, generic `novec` broadcasting,
 function-value `exact`, ranked/rugged rejection, two-argument generic
-inference, object-friendly generic methods, generic variants and enum
+inference, object-friendly generic methods, generic variants and literal-backed case
 payloads, generic indexing/update providers, multi-result functions,
 import arity/conflicts, and nested immutable reconstruction.
 
@@ -86,9 +86,9 @@ being treated as valid bytecode inputs:
 
 * `@update(Box[T])` providers must return the same instantiated target
   `Box[T]`, not an unrelated `T` or different generic owner.
-* Valued enum members must match the declared value type; unvalued enums
-  cannot contain payloads and valued enums require a payload on every member.
-  The analyser checks the literal forms supported by enum bytecode lowering.
+* Variant field defaults must match their declared types. Literal backing
+  values are fixed constructor defaults and cannot be overridden by arguments.
+  Bare cases must satisfy the parent's required friendly elements.
 
 ## Hardening continuation (third pass, 2026-11-02)
 

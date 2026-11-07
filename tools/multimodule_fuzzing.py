@@ -119,11 +119,11 @@ def _fixture(family: str, seed: int) -> tuple[str, tuple[str, ...], str, tuple[A
                 "  as :Value(value) => $value\n  as :Empty => 0\nend\n",
                 (n,))
     if family == "enum":
-        return ("public enum[String] Token =>\n"
+        return ("public variant Token =>\n"
                 '  YES = "yes"\n  NO = "no"\nend\n', ("Token",),
                 'Token.\\YES.value\nToken.\\NO.value\n', ('yes', 'no'))
     if family == "plain_enum":
-        return ("public enum Colour => RED GREEN end\n", ("Colour",),
+        return ("public variant Colour => RED GREEN end\n", ("Colour",),
                 'Colour.\\RED.name\nColour.\\GREEN.name\n', ('RED', 'GREEN'))
     if family == "tag":
         return ("public tag #marked as computed\n"

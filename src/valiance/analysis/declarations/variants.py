@@ -43,21 +43,45 @@ class _VariantDeclarations:
                 return None
             member_payloads.extend(object_attributes)
             variant_type = _utils._declared_nominal(node.name, node.generics)
+            defaults = frozenset(field.name for field in member.fields if field.default)
+            constructor_fields = tuple(
+                field for field in member.fields
+                if not (member.fixed_value and field.name == Symbol("value"))
+            )
+            parameter_names = tuple(field.name for field in constructor_fields)
+            constructor_attributes = tuple(
+                attribute for attribute in object_attributes
+                if attribute.name in parameter_names
+            )
             self._define_object_shape(
                 member_name,
-                node,
+                replace(node, fields=member.fields),
                 object_attributes,
                 result_type=variant_type,
                 generic_constraints=generic_constraints,
+                defaults=defaults,
+                synthesize_constructor=False,
             )
+            overload = T.Overload(
+                params=tuple(attribute.typ for attribute in constructor_attributes),
+                returns=(variant_type,),
+                generic_constraints=generic_constraints,
+                param_names=parameter_names,
+                param_defaults=tuple(field.default or None for field in constructor_fields),
+            )
+            self.env.define_overload(member_name, overload)
             if member_aliases:
+                self.env.define_overload(member.name, overload)
+            if not constructor_attributes and not member.name.text.startswith("\\"):
+                niladic_name = _utils._child_symbol(node.name, Symbol(f"\\{member.name.text}"))
+                self.env.define_constructor_metadata(
+                    niladic_name, object_attributes,
+                    defaults=defaults,
+                    generic_constraints=generic_constraints,
+                )
                 self.env.define_overload(
-                    member.name,
-                    T.Overload(
-                        params=tuple(attribute.typ for attribute in object_attributes),
-                        returns=(variant_type,),
-                        generic_constraints=generic_constraints,
-                    ),
+                    niladic_name,
+                    T.Overload((), (variant_type,), generic_constraints=generic_constraints),
                 )
         self.env.define_variant(
             node.name,

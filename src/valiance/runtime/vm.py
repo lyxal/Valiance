@@ -3868,12 +3868,6 @@ class VirtualMachine:
                                 )
                             self._reflection_constructors[constructor.type_name] = constructed
                             frame.stack.append(constructed)
-                        case OpCode.MAKE_ENUM_MEMBER:
-                            enum_name, member_name, value = instruction.arg
-                            fields = {"name": member_name}
-                            if value is not None:
-                                fields["value"] = value
-                            frame.stack.append(ObjectValue(enum_name, fields))
                         case OpCode.GET_FIELD:
                             field, optional_safe = _field_instruction_arg(
                                 instruction.arg
@@ -8749,6 +8743,8 @@ def _read_object_field(receiver: ObjectValue, field: str) -> Any:
     """Read an object field without creating or releasing an occurrence."""
     if isinstance(receiver, RecordValue):
         return receiver[field]
+    if field == "name" and field not in receiver.fields:
+        return receiver.type_name.rsplit(".", 1)[-1].lstrip("\\")
     try:
         value = receiver.fields[field]
     except KeyError as exc:
@@ -8760,12 +8756,7 @@ def _read_object_field(receiver: ObjectValue, field: str) -> Any:
 
 def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:
     """Compute extract object field during VM execution."""
-    try:
-        value = receiver.fields[field]
-    except KeyError as exc:
-        raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
-    if value is _UNINITIALIZED_OBJECT_FIELD:
-        raise RuntimeError(f"{receiver.type_name} field '{field}' is not initialized")
+    value = _read_object_field(receiver, field)
     retained = _duplicate_occurrence(value)
     _release_value(receiver, vm)
     return retained
@@ -11181,10 +11172,7 @@ def _get_field(receiver: Any, field: str) -> Any:
     """Compute get field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
     if isinstance(receiver, ObjectValue):
-        try:
-            return receiver.fields[field]
-        except KeyError as exc:
-            raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
+        return _read_object_field(receiver, field)
     if isinstance(receiver, dict):
         try:
             return receiver[field]

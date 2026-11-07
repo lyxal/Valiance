@@ -29,7 +29,7 @@ def _resolve_imported_type_names(
     ):
         for lookup in (
             environment.lookup_object, environment.lookup_trait,
-            environment.lookup_variant, environment.lookup_enum,
+            environment.lookup_variant,
         ):
             declaration = lookup(value.name)
             if declaration is not None:

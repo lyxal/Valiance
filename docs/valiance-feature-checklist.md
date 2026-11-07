@@ -155,7 +155,7 @@ Status markers:
 - [x] Support overload-set types.
 - [x] Support generic types.
 - [x] Support trait types.
-- [~] Support object, variant, enum, record, dictionary, tuple, task, channel, result, and FFI types.
+- [~] Support object, variant, record, dictionary, tuple, task, channel, result, and FFI types.
 - [x] Canonicalise union and intersection types.
 - [~] Reject invalid or unsatisfiable type combinations where specified.
 
@@ -410,7 +410,7 @@ Status markers:
 - [x] Pad missing branch results with `None`.
 - [x] Require exhaustive matching.
 - [x] Recognise wildcard cases as exhaustive.
-- [x] Support exhaustive checking for variants and enums.
+- [x] Support exhaustive checking for variants.
 
 ## 25. Assertions and conditionals
 
@@ -536,16 +536,15 @@ Status markers:
 - [x] Integrate variants with exhaustive pattern matching.
 - [x] Support generic variants.
 
-## 31. Enums
+## 31. Compact variant cases
 
-- [x] Parse enum declarations.
-- [x] Support enums without backing values.
-- [x] Support enums with a declared backing type.
-- [x] Require every member to have a value when a backing type is declared.
-- [x] Support member access through `Enum.Member`.
-- [x] Support backing-value access through `.value`.
-- [x] Allow enum names to be used as types.
-- [x] Integrate enums with exhaustive pattern matching.
+- [x] Parse bare object cases without empty bodies.
+- [x] Support fixed literal backing fields with inferred types.
+- [x] Support qualified niladic member access.
+- [x] Expose backing values and case names.
+- [x] Preserve friendly elements and trait implementations on every case.
+- [x] Integrate all cases with exhaustive matching and dictionary keys.
+- [x] Reject the removed enum declaration syntax.
 
 ## 32. Generics and unification
 

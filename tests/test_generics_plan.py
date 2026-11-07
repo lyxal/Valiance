@@ -466,9 +466,9 @@ source_cases(GenericsPlanSourceTests, [
       'apply(fn(x: Int) -> Int => $x end, 4)', [4]),
     C('RK-009', 'define[T] strict(x: T+2 exact) -> T+2 => $x end\n'
       'strict([1, [2, 3]])', reject=('strict',)),
-    C('VA-008', 'enum[Int] Token => A = "bad" end', reject=('incompatible',)),
-    C('VA-012', 'enum Colour => RED = "red" end', reject=('cannot store a value',)),
-    C('VA-013', 'enum[String] Token => A end', reject=('requires a value',)),
+    C('VA-008', 'variant Token => A => $value: Int = "bad" end end', reject=('not assignable',)),
+    C('VA-012', 'variant Colour => RED = "red" end\nColour.RED(1)', reject=('no overloads',)),
+    C('VA-013', 'variant Token =>\n extend label -> String\n A\nend', reject=('must implement',)),
 
     # Second hardening pass: previously uncovered P0 compiler/runtime oracles.
     C('CP-005','define[T] deep(x: T+4 exact) -> T+4 => $x end\n[[[[1]]]] deep', [[[[[1]]]]]),
@@ -485,7 +485,7 @@ source_cases(GenericsPlanSourceTests, [
     C('VA-002','variant[T] Maybe =>\n Some => $value: T end\n Empty => end\nend\nEmpty[Int] match =>\n as :Empty => 1\n as :Some(value) => 0\nend',[1]),
     C('VA-003','variant[T] Maybe =>\n Some => $value: T end\n Empty => end\nend\nSome[Int]("bad")',reject=('Some',)),
     C('VA-006','variant[T, U] Either =>\n Both =>\n $left: T\n $right: U\n end\nend\nBoth(9, "good") match =>\n as :Both(a, b) => $a $b\nend',[9,'good']),
-    C('VA-007','enum[String] Token =>\n A = "apple"\n B = "banana"\nend\nToken.\\A.value\nToken.\\B.value',['apple','banana']),
+    C('VA-007','variant Token =>\n A = "apple"\n B = "banana"\nend\nToken.\\A.value\nToken.\\B.value',['apple','banana']),
     C('RK-002','define[T] same(x: T+2 novec) -> T+2 => $x end\nsame([[1,2],[3,4]])', [[[1,2],[3,4]]]),
     C('RK-006','define add(a: Int, b: Int) -> Int => $a + $b end\nadd([[1,2],[3,4]], [[10],[30,40]])',fault='VectorisationFault'),
     C('FV-004','define[T,U] fold(xs: T+, initial: U, f: Function[U,T -> U]) -> U => $initial end\nfold([1, 2], "init", fn(a: String, b: Int) -> String => $a end)',['init']),

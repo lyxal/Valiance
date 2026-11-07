@@ -273,13 +273,13 @@ The first smoke run should include **GD-001/002/009**, **UN-001/006/007/008/013/
 | **VA-004** | P0 | C+R | Exhaustive match on `Option[Int]` with `Some` and `None` | Correct branch and bound `Int` payload. |
 | **VA-005** | P0 | C+R | Nested `Option[Option[Int]]` | One and two absence levels distinguished. |
 | **VA-006** | P0 | C+R | Generic variant member has two distinct type parameters | Destructuring preserves each bound type. |
-| **VA-007** | P0 | C+R | Generic enum with value type `String` | All values read with declared type. |
-| **VA-008** | P0 | C− | Generic enum member value incompatible with declared generic type | Reject member definition. |
+| **VA-007** | P0 | C+R | Literal-backed variant with string values | All backing values retain their inferred string type. |
+| **VA-008** | P0 | C− | Variant field default incompatible with declared type | Reject member definition. |
 | **VA-009** | P1 | C+R | Generic variant and a union of differently instantiated variants | Correct branch identity and legal union normalization. |
 | **VA-010** | P1 | C+R | Generic variant in a collection where element type is a supertype | Runtime member evidence retained. |
 | **VA-011** | P1 | C+R | Variant generic parameter occurring in immutable readable positions | Infer variance only where declaration actually permits. |
-| **VA-012** | P1 | C− | Non-generic enum member incorrectly assigned a stored value | Reject per enum rule. |
-| **VA-013** | P1 | C− | Generic enum member omitted required value | Reject per generic enum rule. |
+| **VA-012** | P1 | C− | Attempt to override a fixed variant backing value through construction | Reject the constructor arguments. |
+| **VA-013** | P1 | C− | Bare case omits a required friendly implementation | Reject the case declaration. |
 | **VA-014** | P1 | C+R | `Result[T,E]` generic result with disjoint success/error payloads | Preserve `T` and `E`, no accidental swapping or flattening. |
 | **VA-015** | P2 | P | Construct same generic variant across modules and pattern-match after re-export | Same type identity and payload interpretation. |
 

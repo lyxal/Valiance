@@ -27,14 +27,14 @@ _PATH = T.N(Symbol('Path', ('path',)))
 _ENCODING = T.N(Symbol('Encoding', ('file',)))
 _DEFAULT_ENCODING = (ElementNode(Symbol('nativeDefaultEncoding', ('std', 'file_do'))),)
 
-# A default argument must be a genuine typed Encoding enum value, even when
+# A default argument must be a genuine typed Encoding case, even when
 # std.file.do is imported directly (without importing std.file separately).
 @stdlib_element('nativeDefaultEncoding', (), (_ENCODING,), exported=False)
 def _default_encoding(args, ctx):
-    """Construct the UTF-8 language enum without requiring a separate file import."""
+    """Construct the UTF-8 language case without requiring a separate file import."""
     del args, ctx
     from valiance.runtime.runtime_values import ObjectValue
-    return (ObjectValue('file.Encoding', {'name': 'UTF8'}),)
+    return (ObjectValue('file.Encoding.UTF8', {}),)
 
 
 

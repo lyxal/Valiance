@@ -97,15 +97,14 @@ code stops looking magical.
 
 ## A map of the implementation
 
-Enum declarations register niladic overloads under `\`-prefixed names such as
-`Colour.\RED`, while enum member metadata keeps the ordinary name (`RED`)
-for exhaustive pattern matching. An enum member's backing `value` is checked
-as a read-only field of its nominal enum type; it is not another global nilad.
-Imported and aliased enums preserve the generated member names through the
-normal runtime-name binding mechanism.
+Variant cases use the ordinary nominal-object registry and constructor
+metadata. Empty and literal-backed cases also expose qualified niladic
+constructors such as `Colour.\RED`. Their case names remain ordinary names
+in exhaustive-match metadata. Backing values are readable object fields, and
+case `name` is an observational property unless explicitly stored by the case.
 
 Imported constructors retain a private provider scope for omitted argument
-defaults. Sibling enum types and nested enum expressions are qualified before
+defaults. Sibling variant types and nested variant expressions are qualified before
 rebuilding the constructor; their runtime declarations travel in the import
 prelude without exposing those names to the caller. Explicit argument expressions
 still use the caller's environment. `Environment.default_argument_scope` restores
@@ -432,12 +431,12 @@ field enumeration and access retain their existing authorization gates.
 | `parameters`, `returns`, `signatures` | Function stack rows and overload signatures |
 | `outputs`, `effects` | Task output row and function/task effect facts |
 | `tags`, `base` | Tag name/depth/absence records and underlying wrapper/row evidence |
-| `members`, `protected` | Enum member names and the object's own nodup annotation flag |
+| `members`, `protected` | Variant case names and the object's own nodup annotation flag |
 
 Type sequences are ordinary lists whose item type is a union of exact witnesses,
 not a witness for the union itself. Inapplicable sequences are empty; rank and
 protection flags are zero when inapplicable, and `rankMode` is empty for nonlists.
-Union order follows normalized type spelling; variant and enum order follows the
+Union order follows normalized type spelling; variant case order follows the
 declaration. None of these categories fabricates stored object fields.
 
 ```valiance
@@ -484,7 +483,7 @@ overload solving.
 - objects and their fields;
 - constructors;
 - traits and requirements;
-- variants and enums;
+- variants;
 - data tags and element tags; and
 - object-friendly overload metadata.
 
@@ -1841,6 +1840,18 @@ are retained for both implicit and explicit receivers so lowering preserves thes
 call and vectorisation decisions.
 
 ### Variants
+
+Bare cases and explicit empty case bodies share the ordinary object shape.
+Literal-backed cases additionally carry a readable inferred `value` field,
+excluded from the constructor's parameters but retained in storage and
+constructor-default metadata. Each member's own fields supply its constructor
+defaults, including when restoring imported shapes. Zero-parameter cases also
+register a qualified backslash-prefixed constructor alias, preserving the
+parser's explicit niladic chain boundary.
+
+A variant parent exposes a readable field only when every member exposes it;
+the resulting type is the union of the instantiated member field types. This
+does not authorize writes or expose a field absent from another case.
 
 `Context.variant_members` maps a member nominal type to its variant parent. This
 makes a member a subtype of the variant when its generic arguments satisfy the

@@ -16,7 +16,7 @@
   never changes the original path, resolves symlinks, or accesses the disk.
   Trailing separators are ignored for component inspection; filesystem roots
   have no name or parent.
-* `file.Encoding.\UTF8`, `UTF16LE`, `UTF16BE`, and `Latin1` are importable enum
+* `file.Encoding.\UTF8`, `UTF16LE`, `UTF16BE`, and `Latin1` are importable variant
   members.
 * `file.ReadFile`, `file.WriteFile`, `file.AppendFile` are `@nodup` objects,
   backed by native handles and real Valiance destructor methods. The
@@ -25,7 +25,7 @@
 * Their Valiance-defined constructors use an actual typed default
   `encoding: Encoding = Encoding.\UTF8`, not a sentinel or a native overload.
   Both `file.WriteFile(path.Path("x"))` and a two-positional-argument call
-  with a `file.Encoding` enum value work, alongside named argument calls.
+  with a `file.Encoding` variant value work, alongside named argument calls.
   The `path` parameter is nominally typed as `path.Path`; a `String`, `Int`,
   or `Encoding` is rejected during analysis rather than at the native boundary.
 * Stateful `file.readLine`, `readLines`, `readText`, `readBytes`,

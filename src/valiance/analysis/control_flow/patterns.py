@@ -575,9 +575,6 @@ def _closed_match_members(
     variant = env.lookup_variant(name)
     if variant is not None:
         return variant.members
-    enum = env.lookup_enum(name)
-    if enum is not None:
-        return tuple(member.name for member in enum.members)
     return None
 
 

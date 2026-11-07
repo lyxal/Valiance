@@ -408,7 +408,6 @@ def type_metadata(owner: T.Type, env: Environment, operation: str = "typeInfo") 
     nominal = storage if isinstance(storage, T.NominalType) else None
     variant = None if nominal is None else env.lookup_variant(nominal.name)
     definition = None if nominal is None else env.lookup_object(nominal.name)
-    enum = None if nominal is None else env.lookup_enum(nominal.name)
     alternatives = sorted(storage.items, key=T.show) if isinstance(storage, T.UnionType) else ()
     optional_payloads = tuple(item.args[0] for item in alternatives
                               if isinstance(item, T.NominalType) and item.name == Symbol("Some") and len(item.args) == 1)
@@ -432,7 +431,6 @@ def type_metadata(owner: T.Type, env: Environment, operation: str = "typeInfo") 
         "task" if isinstance(storage, T.TaskType) else
         "trait" if isinstance(storage, T.AnonymousTraitType) or nominal is not None and env.lookup_trait(nominal.name) is not None else
         "variant" if variant is not None else
-        "enum" if nominal is not None and env.lookup_enum(nominal.name) is not None else
         "primitive" if storage in (T.Int, T.Real, T.Number, T.String) else
         "none" if isinstance(storage, T.NoneTypeNode) else
         "never" if isinstance(storage, T.NeverType) else
@@ -463,9 +461,9 @@ def type_metadata(owner: T.Type, env: Environment, operation: str = "typeInfo") 
                          (storage.base,) if isinstance(storage, T.RowType) else ()),
         "rankMode": (T.String, ("text", {T.ListExactType: "exact", T.ListMinType: "minimum", T.ListRuggedType: "rugged"}.get(type(storage), ""))),
     }
-    members = () if enum is None else enum.members
+    members = () if variant is None else variant.members
     properties["members"] = (T.ExactList(T.String),
-                              ("list", tuple(("text", member.name.text) for member in members)))
+                              ("list", tuple(("text", member.text.lstrip("\\")) for member in members)))
     tag_type = T.RecordType(T.N(Symbol("record")), (T.Field(Symbol("name"), T.String),
                            T.Field(Symbol("depth"), T.Int), T.Field(Symbol("absent"), T.Int)))
     properties["tags"] = (T.ExactList(tag_type), ("list", tuple(

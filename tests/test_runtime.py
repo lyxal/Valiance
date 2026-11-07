@@ -1106,7 +1106,7 @@ fields[Int | String] | length
     def test_category_metadata_exposes_tags_optionals_tasks_and_resources(self):
         source = '''
 tag #marked as computed
-enum Mode => First Second end
+variant Mode => First Second end
 @nodup("protected")
 object Resource => end
 typeInfo[#marked Int].tags[0].name
@@ -10337,10 +10337,10 @@ Person("Ada")
         self.assertEqual(maker.op, OpCode.MAKE_FUNCTION)
         self.assertIn("Eager", maker.arg.element_tags)
 
-    def test_executes_enum_member_value_access(self):
+    def test_executes_compact_variant_member_value_access(self):
         self.assertEqual(
             execute("""
-enum[String] TokenType =>
+variant TokenType =>
   NUMBER = "Number"
 end
 TokenType.\\NUMBER.value
@@ -10348,8 +10348,8 @@ TokenType.\\NUMBER.value
             ["Number"],
         )
 
-    def test_executes_enum_niladic_access_in_chains(self):
-        source = r"""enum Colour => RED GREEN end
+    def test_executes_compact_variant_niladic_access_in_chains(self):
+        source = r"""variant Colour => RED GREEN end
 Colour.\RED
 Colour.\GREEN.name
 """
@@ -10359,22 +10359,22 @@ Colour.\GREEN.name
             self.assertEqual(analyser.diagnostics, [])
             result = run(loads(dumps(compile_program(typed, optimize=optimize))))
             self.assertIsInstance(result[0], ObjectValue)
-            self.assertEqual(result[0].fields["name"], "RED")
+            self.assertEqual(result[0].type_name.rsplit(".", 1)[-1], "RED")
             self.assertEqual(result[1], "GREEN")
 
-        self.assertEqual(execute(r"""enum[String] TokenType => NUMBER = "Number" end
+        self.assertEqual(execute(r"""variant TokenType => NUMBER = "Number" end
 TokenType.\NUMBER.value
 """), ["Number"])
-        mapped = execute(r"""enum Colour => RED GREEN end
+        mapped = execute(r"""variant Colour => RED GREEN end
 [1, 2, 3] map: Colour.\RED
 """)
-        self.assertEqual([member.fields["name"] for member in mapped[0]],
+        self.assertEqual([member.type_name.rsplit(".", 1)[-1] for member in mapped[0]],
                          ["RED", "RED", "RED"])
 
-    def test_executes_match_on_enum_and_variant_members(self):
+    def test_executes_match_on_compact_and_payload_variant_members(self):
         self.assertEqual(
             execute(r"""
-enum Colour => RED GREEN end
+variant Colour => RED GREEN end
 Colour.\GREEN
 match =>
   as :RED => "red"

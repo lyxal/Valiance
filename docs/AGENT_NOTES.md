@@ -90,7 +90,7 @@ transitive declaration closure. `modules_system/runtime_dependencies.py` derives
 this closure from checked object field types, generic constraints, callable
 signatures and implementation patterns; it is **not** tied to the library that
 may consume the metadata. Public import surfaces must not expose the private
-required declarations. The linker loads checked constructor/variant/enum
+required declarations. The linker loads checked constructor/variant
 metadata for the runtime without granting source access.
 
 `ObjectRuntimeType.declared_fields` and `declared_generics` are the authoritative
@@ -253,7 +253,7 @@ registry must also store a declaration whose `name` is the alias being looked
 up, not reuse an object definition whose `name` is the unqualified original:
 `_resolve_imported_type_names` otherwise erases the provider from reflection
 metadata and may silently merge equal-short-name private objects. Do not apply
-managed-object alias rewriting indiscriminately to variant or enum witnesses:
+managed-object alias rewriting indiscriminately to variant witnesses:
 variant reflection has distinct runtime identity requirements. Check
 `test_private_generic_construction_*` and source-free variant reflection
 regressions after changing this path.
@@ -387,7 +387,7 @@ signature still refers to its provider-local `path.Path`. Recording only the
 selected alias in `Context.nominal_origins` makes otherwise valid calls fail
 with `no overloads`; register the provider-qualified spelling as a *relation
 fact* without making it a public source import. The private scope for omitted
-constructor defaults must also retain provider-local enum member expressions.
+constructor defaults must also retain provider-local variant member expressions.
 
 Runtime match patterns are different: their bytecode type evidence must use the
 actual runtime nominal spelling (`path.Path`), not the source alias (`Location`)

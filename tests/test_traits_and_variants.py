@@ -256,6 +256,133 @@ end
 
 
 class VariantSemanticTests(SemanticTestCase):
+    def test_bare_and_explicit_empty_cases_have_the_same_value_behavior(self):
+        self.assert_executes(r'''
+variant Colour =>
+  RED
+  GREEN => end
+end
+Colour.\RED Colour.\RED ===
+Colour.\RED Colour.\GREEN ===
+dict{Colour.\RED => 7, Colour.\GREEN => 9} $[Colour.\RED]
+''', [1, 0, 7])
+
+    def test_inline_bare_cases_are_exhaustive_objects(self):
+        self.assert_executes(r'''
+variant Colour => RED GREEN BLUE end
+define code(value: Colour) -> Int =>
+  $value match =>
+    as :RED => 1
+    as :GREEN => 2
+    as :BLUE => 3
+  end
+end
+Colour.\GREEN code
+''', [2])
+
+    def test_backing_values_are_readable_nominal_object_fields(self):
+        self.assert_executes(r'''
+variant Token =>
+  NUMBER = "number"
+  DIGIT = "number"
+  SYMBOL = "+"
+end
+Token.\NUMBER.value
+Token.\NUMBER Token.\DIGIT ===
+dict{Token.\NUMBER => 7, Token.\DIGIT => 9} $[Token.\DIGIT]
+''', ['number', 0, 9])
+
+    def test_backing_value_cases_support_friendly_implementations(self):
+        self.assert_executes(r'''
+variant Colour =>
+  extend label -> String
+  define twice -> String => ($self label) + ($self label)
+  RED = "red" =>
+    define label => $self.value
+  end
+  GREEN = "green" =>
+    define label => $self.value
+  end
+end
+Colour.\RED twice
+''', ['redred'])
+
+    def test_bare_cases_mix_with_generic_payload_objects(self):
+        self.assert_executes(r'''
+variant[T] Choice =>
+  Empty
+  Item => $value: T end
+end
+define unwrap(value: Choice[Int]) -> Int =>
+  $value match =>
+    as :Empty => 0
+    as :Item(item) => $item
+  end
+end
+Choice.\Empty[Int] unwrap
+Item(8) unwrap
+dict{Item(3) => 9} $[Item(3)]
+''', [0, 8, 9])
+
+    def test_bare_cases_can_implement_additional_traits(self):
+        self.assert_executes(r'''
+trait Named => extend label -> String end
+variant Colour => RED GREEN end
+object Colour.RED as Named => define label => "red" end
+define read(value: Named) -> String => $value label end
+Colour.\RED match =>
+  as :RED => read
+  as :GREEN => "green"
+end
+''', ['red'])
+
+    def test_backing_value_cannot_be_supplied_as_a_constructor_argument(self):
+        self.assert_rejected('''
+variant Token => NUMBER = "number" end
+Token.NUMBER("other")
+''', 'no overloads')
+
+    def test_backing_value_cases_can_store_additional_payload_fields(self):
+        self.assert_executes(r'''
+variant Code =>
+  Entry = 1 => $message: String end
+end
+$entry = Code.Entry("hello")
+$entry.value
+$entry.message
+dict{Code.Entry("hello") => 7} $[Code.Entry("hello")]
+''', [1, 'hello', 7])
+
+    def test_tagged_object_payloads_preserve_dictionary_key_equality(self):
+        self.assert_executes('''
+variant Entry => Item => $value: #boolean Int end end
+dict{Item(true) => 7} $[Item(true)]
+''', [7])
+
+    def test_parent_field_access_requires_the_field_on_every_case(self):
+        self.assert_rejected(r'''
+variant Choice =>
+  Empty
+  Item => $value: Int end
+end
+Choice.\Empty.value
+''', 'value')
+
+    def test_backing_value_is_read_only(self):
+        self.assert_rejected(r'''
+variant Token => NUMBER = "number" end
+$token = Token.\NUMBER
+$token.value = "other"
+''', 'value')
+
+    def test_bare_cases_still_require_exhaustive_matching(self):
+        self.assert_rejected('''
+variant Choice => First Second end
+define choose(value: Choice) -> Int =>
+  $value match => as :First => 1 end
+end
+''', 'exhaustive')
+
     def test_niladic_member_constructors(self):
         self.assert_executes(r'''
 variant Colour =>

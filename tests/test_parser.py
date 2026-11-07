@@ -17,7 +17,6 @@ from valiance.asts import (
     ExtractPatternNode,
     FieldAccessNode,
     ElementTagDeclarationNode,
-    EnumMemberNode,
     ForNode,
     FunctionNode,
     GetVariableNode,
@@ -1427,13 +1426,13 @@ end
             ),
         )
 
-        [colour] = parse("enum Colour => RED GREEN BLUE end")
+        [colour] = parse("variant Colour => RED GREEN BLUE end")
         self.assertEqual(
-            colour.enum_members,
+            colour.variants,
             (
-                EnumMemberNode(Symbol("RED")),
-                EnumMemberNode(Symbol("GREEN")),
-                EnumMemberNode(Symbol("BLUE")),
+                VariantMemberNode(Symbol("RED")),
+                VariantMemberNode(Symbol("GREEN")),
+                VariantMemberNode(Symbol("BLUE")),
             ),
         )
 
@@ -1452,8 +1451,39 @@ end
                     tuple(VariantMemberNode(Symbol(name)) for name in names),
                 )
 
+    def test_bare_variant_members_lower_to_empty_object_cases(self):
+        for source in (
+            "variant Colour => RED GREEN BLUE end",
+            "variant Colour =>\n RED\n GREEN => end\n BLUE\nend",
+        ):
+            with self.subTest(source=source):
+                [colour] = parse(source)
+                self.assertEqual(colour.variants, tuple(
+                    VariantMemberNode(Symbol(name)) for name in ('RED', 'GREEN', 'BLUE')
+                ))
+
+    def test_variant_backing_value_lowers_to_a_readable_field(self):
+        [token] = parse('variant Token => NUMBER = "number" end')
+        self.assertEqual(token.variants, (
+            VariantMemberNode(Symbol('NUMBER'), (
+                ObjectFieldNode(Symbol('value'), default=(StringLiteralNode('number'),)),
+            ), fixed_value=True),
+        ))
+
+    def test_variant_backing_value_requires_one_literal(self):
+        for expression in ('', '1 2', 'unknown', '[1, 2]'):
+            with self.subTest(expression=expression):
+                with self.assertRaisesRegex(ParseError, 'single number or string literal'):
+                    parse(f'variant Token => NUMBER = {expression} end')
+
+    def test_enum_declarations_are_rejected(self):
+        for source in ('enum Colour => RED end', 'public enum[String] Token => A = "a" end'):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(ParseError, 'removed; use variant'):
+                    parse(source)
+
     def test_enum_niladic_member_and_postfix_field_end_chains(self):
-        nodes = parse(r"""enum[String] TokenType => NUMBER = "Number" end
+        nodes = parse(r"""variant TokenType => NUMBER = "Number" end
 println TokenType.\NUMBER.value
 TokenType.\NUMBER.name println
 """)

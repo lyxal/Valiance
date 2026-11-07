@@ -307,7 +307,6 @@ class SessionService:
                 (env.objects, "object"),
                 (env.traits, "trait"),
                 (env.variants, "variant"),
-                (env.enums, "enum"),
             ):
                 for name in collection:
                     text = name.text

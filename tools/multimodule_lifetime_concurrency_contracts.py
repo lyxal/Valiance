@@ -23,7 +23,7 @@ CHOICE = ('public variant Choice =>\n'
           ' Present => public $value:Int end\n'
           ' Empty => end\nend\n')
 BOX = 'public object[T] Box => public $value:T end\n'
-CODE = 'public enum[Int] Code =>\n GOOD = @N@\n BAD = -1\nend\n'
+CODE = 'public variant Code =>\n GOOD = @N@\n BAD = -1\nend\n'
 
 # Valid contracts: features, provider, exports, dependent, exports, caller,
 # expected stack (and optionally exact destructor stdout).

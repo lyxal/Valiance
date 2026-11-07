@@ -23,7 +23,7 @@ class _ExhaustivenessAnalysis:
             return True
         if len(subject_types) != 1:
             self._diagnose(
-                "match without `_` requires one enum or variant value",
+                "match without `_` requires one variant value",
                 node,
             )
             return False
@@ -79,11 +79,11 @@ class _ExhaustivenessAnalysis:
             return False
         closed_name = _patterns._nominal_name(subject_type)
         if closed_name is None:
-            self._diagnose("match without `_` requires enum or variant value", node)
+            self._diagnose("match without `_` requires variant value", node)
             return False
         expected = _patterns._closed_match_members(self.env, closed_name)
         if expected is None:
-            self._diagnose("match without `_` requires enum or variant value", node)
+            self._diagnose("match without `_` requires variant value", node)
             return False
         covered = {
             member

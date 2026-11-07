@@ -208,7 +208,7 @@ def resolve_runtime_dependencies(
 ) -> RuntimeDependencyClosure:
     """Resolve the transitive, provider-scoped declaration graph of an import.
 
-    The graph covers object/enum/variant/trait declarations and signature
+    The graph covers object/variant/trait declarations and signature
     references through generics, unions, collections and structural types.
     It is computed from an analysed interface, so the same result is available
     whether that interface came from source or a serialized .vbcm artifact.

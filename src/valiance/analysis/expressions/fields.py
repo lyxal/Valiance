@@ -225,18 +225,25 @@ class _FieldExpressions:
             )
 
         if isinstance(receiver_type, T.NominalType):
-            enum = self.env.lookup_enum(receiver_type.name)
-            if enum is not None:
-                if write:
+            variant = self.env.lookup_variant(receiver_type.name)
+            if variant is not None:
+                if write or not variant.members:
                     return None, None
-                if name == Symbol("name"):
-                    return T.String, None
-                if name == Symbol("value") and enum.value_type is not None:
-                    return enum.value_type, None
+                properties = tuple(
+                    self._field_type(T.N(member, *receiver_type.args), name, branch)[0]
+                    for member in variant.members
+                )
+                if all(item is not None for item in properties):
+                    return T.U(*properties), None
                 return None, None
             definition = self.env.lookup_object(receiver_type.name)
             attribute = None if definition is None else definition.attribute(name)
             if attribute is None:
+                if (
+                    not write and name == Symbol("name")
+                    and receiver_type.name in self.env.context.variant_members
+                ):
+                    return T.String, None
                 return None, None
             if not self._can_access_attribute(
                 receiver_type.name,

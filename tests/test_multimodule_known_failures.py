@@ -44,7 +44,7 @@ class KnownMultiModuleFailures(unittest.TestCase):
                          "public object Item => public $value:Int end\n"
                          "object Item as Named => end\n"),
                 ("logic", "import {core.[Named,Item]}\n"
-                          "public enum[Int] Code => GOOD = 20 end\n"
+                          "public variant Code => GOOD = 20 end\n"
                           "public define show(x:Item)->String=>$x as[Named] | label end\n"
                           "public define show(x:Code)->Int=>$x.value+1 end\n"),
                 ("gateway", "public import {core.[Named,Item],logic.[Code,show]}\n"),

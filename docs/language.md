@@ -2393,6 +2393,26 @@ end
 - `extend` declarations specify methods that every member must provide, either by its own implementation or by a variant-level default.
 - Variant-level `define` methods provide shared default implementations. A default may call `extend` methods through `$self`, and individual members may override the default with a compatible signature.
 - Member definitions follow, each providing their own fields and any additional implementations or overrides.
+- A member without a body is an empty object case: `RED` is shorthand for
+  `RED => end`. Inline declarations may list several bare cases, for example
+  `variant Colour => RED GREEN BLUE end`.
+- `NUMBER = "Number"` declares an object case with a fixed, read-only `value`
+  field. The backing value must be a single number or string literal; its type
+  is inferred. An optional body may add fields and methods:
+  `NUMBER = "Number" => define label => $self.value end`.
+  The backing field is not a constructor argument and cannot be redeclared in
+  the body. Other fields remain ordinary constructor arguments.
+- Every form is an object case, with the same support for friendly elements,
+  trait implementations, generic parameters, and exhaustive matching.
+- Cases with no constructor arguments also expose a qualified niladic spelling,
+  such as `Colour.\RED` or `TokenType.\NUMBER.value`. Explicitly
+  backslash-prefixed case names keep their existing spelling.
+- Structural equality (`===`) compares case identity, generic arguments, and
+  stored fields. Cases with equal backing values remain distinct. Cases can be
+  dictionary keys when their stored fields are hashable; this includes empty
+  cases and cases containing number, string, or hashable object payloads.
+- A backing value is ordinary nominal object data, not an implicit conversion
+  to a number or a positional list index.
 - Example:
 
 ```
@@ -2444,57 +2464,37 @@ end
 - Generics example:
 
 ```
-variant Option[T] =>
+variant[T] Option =>
   Some => $value: T
   None => end
 end
 ```
 
-# 15. Enums
+# 15. Compact variant values
 
-- Sometimes, you may want a variant-esque structure without the ceremony of creating objects and traits
-- The `enum` keyword is basically a lightweight `variant`
-- Syntax:
+```valiance
+variant Colour => RED GREEN BLUE end
 
-```
-enum[<generics>] <name> =>
-  <memberName> = <memberValue>
-}
-```
-
-- Note that generics is optional and contains only generic names. If no generic is provided, the enum is considered to just be names. Note that if no generics are provided, then members cannot have corresponding values. Note that if a generic is provided, all members must have a corresponding value 
-
-- For example:
-
-```
-enum Colour =>
-  RED
-  GREEN
-  BLUE
-end
-
-enum[String] TokenType =>
+variant TokenType =>
   NUMBER = "Number"
   STRING = "String"
   L_PAREN = "("
-  R_PAREN = ")
 end
-```
 
-- Every enum member generates a qualified niladic element, spelled `enumName.\member`.
-  Like other `\`-prefixed elements, it terminates the current chain without
-  requiring name resolution to determine chain boundaries.
-- The stored value of a valued member can be read with ordinary field access,
-  `enumName.\member.value`. Members also expose their unprefixed `name` field.
-- Example:
-
-```
 Colour.\RED
 TokenType.\NUMBER.value
+TokenType.\NUMBER.name
 ```
 
-- The enum name can be used as a type, just like a trait or a variant.
-- Enums are closed world, meaning that, like variants, you can have exhaustive checking.
+All cases are objects, including bare cases and cases with literal backing
+values. A case's read-only `name` property gives its unprefixed member name
+unless it declares its own `name` field. `typeInfo[T].members` lists case names
+in declaration order, while `cases[T]` exposes the corresponding case types.
+These properties describe cases; payload-bearing cases can have arbitrarily
+many instances.
+
+Use `variant[T] Name` for generic parameters. Literal backing types are inferred
+from the stored values. The former `enum` declaration syntax is rejected.
 
 # 16. Generics
 - Type substitution mechanism.
@@ -3617,7 +3617,6 @@ The following structures can be imported:
 * `object`s
 * `trait`s
 * `variant`s
-* `enum`s
 * tags
 
 A structure must be marked `public` to be importable. Tags are always importable and do not require `public`.

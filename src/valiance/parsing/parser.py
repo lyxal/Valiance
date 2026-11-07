@@ -24,7 +24,6 @@ from valiance.asts import (
     ElementExtension,
     ElementNode,
     ElementTagDeclarationNode,
-    EnumMemberNode,
     ExpressionPatternNode,
     ExtensionPatternRule,
     ExtractPatternNode,
@@ -330,7 +329,7 @@ class Parser:
         if self._match_ident("public", "private"):
             visibility = Symbol(self._previous.value)
         if overloads and (
-            self._check_ident("import", "tag", "object", "trait", "variant", "enum")
+            self._check_ident("import", "tag", "object", "trait", "variant")
             or (self._check(TokenKind.OP) and self._current.value.startswith("#"))
         ):
             self._error("overload must be followed by define or fn")
@@ -366,7 +365,9 @@ class Parser:
             )
         if eager:
             self._error("eager must be followed by define")
-        if self._match_ident("object", "trait", "variant", "enum"):
+        if self._check_ident("enum"):
+            self._error("enum declarations have been removed; use variant")
+        if self._match_ident("object", "trait", "variant"):
             return (
                 self._object_like(
                     self._previous,
@@ -933,21 +934,6 @@ class Parser:
         if kind == "trait" and target is None and any(generic_constraints):
             self._error("trait declarations allow only generic names; put constraints on typed uses")
         self._expect(TokenKind.FAT_ARROW)
-        if kind == "enum":
-            enum_members = self._enum_body()
-            return ObjectNode(
-                Symbol(kind),
-                name,
-                generics,
-                target,
-                enum_members=enum_members,
-                target_location=target_location,
-                annotations=annotations,
-                generic_variances=generic_variances,
-                generic_constraints=generic_constraints,
-                visibility=visibility,
-                location=_loc(start),
-            )
         fields, definitions, requirements, variants = self._object_body(kind, name)
         return ObjectNode(
             Symbol(kind),
@@ -958,7 +944,6 @@ class Parser:
             definitions,
             requirements,
             variants,
-            (),
             annotations,
             target_location=target_location,
             generic_variances=generic_variances,
@@ -1023,8 +1008,9 @@ class Parser:
             if self._check_ident("end"):
                 self._consume_optional_end()
                 return (), (), (), ()
-            if kind == "variant" and self._check(TokenKind.IDENT, TokenKind.OP):
-                variants.append(self._variant_member())
+            if kind == "variant" and self._is_variant_member():
+                while self._is_variant_member():
+                    variants.append(self._variant_member())
             else:
                 item = self._object_body_item(owner)
                 _append_object_body_item(item, fields, definitions, requirements)
@@ -1038,11 +1024,7 @@ class Parser:
 
         self._skip_newlines()
         while not self._check(TokenKind.EOF) and not self._check_ident("end"):
-            if (
-                kind == "variant"
-                and self._check(TokenKind.IDENT, TokenKind.OP)
-                and self._peek(1).kind == TokenKind.FAT_ARROW
-            ):
+            if kind == "variant" and self._is_variant_member():
                 variants.append(self._variant_member())
             else:
                 item = self._object_body_item(owner)
@@ -1121,34 +1103,42 @@ class Parser:
             self._error(f"field '{owner}.{name}' needs a type or default value")
         return ObjectFieldNode(name, typ, default, access, location=_loc(start))
 
+    def _is_variant_member(self) -> bool:
+        """Distinguish case names from declarations and the enclosing block end."""
+        return (
+            self._check(TokenKind.IDENT, TokenKind.OP)
+            and self._current.value not in {
+                "define", "extend", "public", "private", "overload", "end",
+            }
+        )
+
     def _variant_member(self) -> VariantMemberNode:
         """Parse variant member from the current token stream."""
         start = self._current
         name = self._symbol("expected variant member name")
-        self._expect(TokenKind.FAT_ARROW)
+        fixed_value = self._match(TokenKind.ASSIGN)
+        backing_fields: tuple[ObjectFieldNode, ...] = ()
+        if fixed_value:
+            value = self._chain_until(_LINE_TERMINATORS | {TokenKind.FAT_ARROW})
+            if len(value) != 1 or not isinstance(
+                value[0], (NumberLiteralNode, StringLiteralNode),
+            ):
+                self._error("variant member value must be a single number or string literal")
+            backing_fields = (
+                ObjectFieldNode(Symbol("value"), default=value, location=_loc(start)),
+            )
+        if not self._match(TokenKind.FAT_ARROW):
+            return VariantMemberNode(
+                name, backing_fields, fixed_value=fixed_value, location=_loc(start),
+            )
         fields, definitions, requirements, variants = self._object_body("object", name)
         if requirements or variants:
             self._error("variant members may contain fields and definitions only")
-        return VariantMemberNode(name, fields, definitions, location=_loc(start))
-
-    def _enum_body(self) -> tuple[EnumMemberNode, ...]:
-        """Parse enum body from the current token stream."""
-        members: list[EnumMemberNode] = []
-        single_line = not self._check(TokenKind.NEWLINE)
-        if single_line and self._check_ident("end"):
-            self._consume_optional_end()
-            return ()
-        self._skip_newlines()
-        while not self._check(TokenKind.EOF) and not self._check_ident("end"):
-            start = self._current
-            name = self._symbol("expected enum member name")
-            value: tuple[ASTNode, ...] = ()
-            if self._match(TokenKind.ASSIGN):
-                value = self._chain_until(_LINE_TERMINATORS)
-            members.append(EnumMemberNode(name, value, location=_loc(start)))
-            self._skip_separators()
-        self._consume_optional_end()
-        return tuple(members)
+        if fixed_value and any(field.name == Symbol("value") for field in fields):
+            self._error("variant member already declares its backing value")
+        return VariantMemberNode(
+            name, backing_fields + fields, definitions, fixed_value, location=_loc(start),
+        )
 
     def _function(
         self,

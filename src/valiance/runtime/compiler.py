@@ -1479,6 +1479,9 @@ class _Compiler:
                         f"{_symbol_runtime_name(node.name)}."
                         f"{_symbol_runtime_name(member.name)}"
                     )
+                    fixed_fields = (
+                        frozenset({"value"}) if member.fixed_value else frozenset()
+                    )
                     self.object_runtime_metadata[runtime_name] = self._runtime_metadata(
                         runtime_name,
                         _object_runtime_metadata(
@@ -1494,7 +1497,17 @@ class _Compiler:
                         runtime_name,
                         member.fields,
                         alias=member.name.text,
+                        fixed_fields=fixed_fields,
                     )
+                    if (
+                        all(field.name.text in fixed_fields for field in member.fields)
+                        and not member.name.text.startswith("\\")
+                    ):
+                        self.emit(OpCode.LOAD_ELEMENT, runtime_name)
+                        self.emit(
+                            OpCode.STORE_VAR,
+                            f"{_symbol_runtime_name(node.name)}.\\{member.name.text}",
+                        )
                     for definition in member.definitions:
                         records = dict((method_ids or {}).get(definition.name.text, ()))
                         alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
@@ -1514,20 +1527,6 @@ class _Compiler:
                         if definition.name.namespace:
                             self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(definition.name))
                             self.emit(OpCode.STORE_VAR, definition.name.text)
-            case "enum":
-                enum_name = _symbol_runtime_name(node.name)
-                for member in node.enum_members:
-                    member_name = _symbol_runtime_name(member.name)
-                    runtime_name = f"{enum_name}.\\{member_name}"
-                    value = None
-                    if member.value:
-                        value = _literal_expression_value(member.value)
-                    self.emit(
-                        OpCode.MAKE_ENUM_MEMBER,
-                        (enum_name, member_name, value),
-                    )
-                    self.emit(OpCode.STORE_VAR, runtime_name)
-
     def object_constructor(
         self,
         name: str,
@@ -1536,6 +1535,7 @@ class _Compiler:
         store_name: str | None = None,
         alias: str | None = None,
         initializers: tuple[DefineNode, ...] = (),
+        fixed_fields: frozenset[str] = frozenset(),
     ) -> None:
         """Build constructor bytecode and lifecycle metadata for an object."""
         field_names: list[str] = []
@@ -1547,10 +1547,11 @@ class _Compiler:
                     (field.name.text, _literal_expression_value(field.default))
                 )
         # Synthesized constructors receive every member value after analysis has
-        # inserted omitted defaults and ordered named ECS arguments. Explicit
-        # constructors retain their declared initializer arity below.
+        # inserted omitted defaults and ordered named ECS arguments. Fixed
+        # backing fields come from stored defaults instead of call arguments.
+        # Explicit constructors retain their declared initializer arity below.
         required = (
-            tuple(field_names)
+            tuple(field_name for field_name in field_names if field_name not in fixed_fields)
             if not initializers
             else tuple(
                 field_name
@@ -3678,7 +3679,7 @@ def _index_spec(
 def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
     """Compute literal expression value during typed-AST bytecode lowering."""
     if len(nodes) != 1:
-        raise CompileError("object and enum default values must be literal values")
+        raise CompileError("object default values must be literal values")
     node = nodes[0]
     match node:
         case NumberLiteralNode(value):
@@ -3686,9 +3687,9 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
         case StringLiteralNode(value):
             return value
         case StringInterpolationNode():
-            raise CompileError("object and enum default values must be literal values")
+            raise CompileError("object default values must be literal values")
         case _:
-            raise CompileError("object and enum default values must be literal values")
+            raise CompileError("object default values must be literal values")
 
 
 def _number(value: str, node: ASTNode) -> RuntimeNumber:

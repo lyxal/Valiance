@@ -482,7 +482,7 @@ closed compiled universe, not runtime type-definition discovery.
 
 Category metadata regression coverage includes generic evidence, union and variant
 children, record declaration order and reconstruction, optional payloads, list
-ranks, dictionary keys/values, callable signatures/effects, task outputs, enum
+ranks, dictionary keys/values, callable signatures/effects, task outputs, variant case
 names, tag facts and resource annotations. Recipes, complete record shapes and
 checked operations survive analysed-interface and optimized/unoptimized bytecode
 round trips. Malformed recipes and layouts are rejected before execution.

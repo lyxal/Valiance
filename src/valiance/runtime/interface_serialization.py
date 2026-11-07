@@ -11,8 +11,8 @@ from typing import Any
 
 from valiance.runtime.serialization import BytecodeFormatError
 
-MAGIC = b"VLNI\x0d"
-SCHEMA_VERSION = 14
+MAGIC = b"VLNI\x0e"
+SCHEMA_VERSION = 15
 MAX_DEPTH = 256
 MAX_ITEMS = 1_000_000
 

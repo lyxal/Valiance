@@ -2726,37 +2726,36 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Int")))
 
-    def test_enum_declaration_registers_niladic_members(self):
+    def test_compact_variant_declaration_registers_niladic_members(self):
         env = Environment()
         analyser = Analyser(env)
 
-        typed = analyser.analyse(parse("enum Colour => RED GREEN end\nColour.\\RED"))
+        typed = analyser.analyse(parse("variant Colour => RED GREEN end\nColour.\\RED"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Colour")))
         self.assertTrue(env.overloads_for(Symbol("\\RED", ("Colour",))))
 
-    def test_enum_members_require_niladic_prefix(self):
+    def test_empty_variant_cases_expose_constructor_and_niladic_names(self):
         env = Environment()
         analyser = Analyser(env)
-        analyser.analyse(parse("enum Colour => RED end\nColour.RED"))
-        self.assertTrue(any("unknown element 'Colour.RED'" in message
-                            for message in analyser.diagnostics))
-        self.assertFalse(env.overloads_for(Symbol("RED", ("Colour",))))
+        analyser.analyse(parse("variant Colour => RED end\nColour.RED"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(env.overloads_for(Symbol("RED", ("Colour",))))
         self.assertTrue(env.overloads_for(Symbol("\\RED", ("Colour",))))
 
-    def test_enum_fields_require_declared_backing_value(self):
+    def test_compact_variant_fields_require_declared_backing_value(self):
         analyser = Analyser()
-        analyser.analyse(parse(r"enum Colour => RED end" + "\n" +
+        analyser.analyse(parse(r"variant Colour => RED end" + "\n" +
                                r"Colour.\RED.value"))
         self.assertTrue(any("no known field 'value'" in message
                             for message in analyser.diagnostics))
 
-    def test_match_on_enum_requires_all_members_without_default(self):
+    def test_match_on_compact_variant_requires_all_members_without_default(self):
         analyser = Analyser(Environment())
 
         analyser.analyse(parse(r"""
-enum Colour => RED GREEN BLUE end
+variant Colour => RED GREEN BLUE end
 Colour.\RED
 match =>
   as :RED => "red"
@@ -6980,7 +6979,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["2:1: match without `_` requires enum or variant value"],
+            ["2:1: match without `_` requires variant value"],
         )
         self.assertEqual(analyser.lints, [])
 
@@ -7002,7 +7001,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["2:1: match without `_` requires enum or variant value"],
+            ["2:1: match without `_` requires variant value"],
         )
         self.assertEqual(analyser.lints, [])
 
@@ -7272,7 +7271,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["2:1: match without `_` requires one enum or variant value"],
+            ["2:1: match without `_` requires one variant value"],
         )
 
     def test_repeated_destructure_binding_does_not_cover_a_variant_member(self):

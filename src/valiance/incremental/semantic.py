@@ -20,7 +20,6 @@ class DeclarationKind(StrEnum):
     OBJECT = "object"
     TRAIT = "trait"
     VARIANT = "variant"
-    ENUM = "enum"
     TAG = "tag"
     OVERLAY = "overlay"
     IMPORT = "import"

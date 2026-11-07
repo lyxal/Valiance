@@ -349,7 +349,6 @@ class LanguageServer(SourceQueries):
                     (env.objects, "object"),
                     (env.traits, "trait"),
                     (env.variants, "variant"),
-                    (env.enums, "enum"),
                 ):
                     for name in collection:
                         items.setdefault(name.dotted(), (kind, 7))

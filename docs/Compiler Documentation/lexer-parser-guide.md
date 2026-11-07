@@ -348,7 +348,7 @@ The final segment of a qualified niladic element retains its leading backslash,
 for example `Colour.\RED`. `_qualified_symbol` stops at that segment so an
 adjacent `.value` or `.name` is lowered to ordinary `FieldAccessNode` operations
 on the nilad's result. Consequently, `println Colour.\RED.value` has a
-syntactically determined chain boundary before `println`; no enum name lookup
+syntactically determined chain boundary before `println`; no declaration lookup
 is needed during parsing.
 
 Keep `_term()` focused on choosing a syntactic form. Put nested parsing in
@@ -653,6 +653,14 @@ Variant member names use the same symbol syntax as element declarations,
 including backslash-prefixed niladic names such as `\RED => end`. Both inline
 and multiline variant bodies accept these names.
 
+Variant bodies also accept bare case names, which produce the same
+`VariantMemberNode` as an empty explicit body. Several bare cases may appear in
+an inline declaration. `Case = literal` synthesizes a readable `value` field
+and marks the member's backing field as fixed; an optional `=>` body may add
+ordinary fields and definitions. Only single number or string literals are
+accepted as backing values. Object-body declaration keywords remain distinct
+from bare case names.
+
 ## Generic Parameter Lists
 
 Object-like declarations and function definitions parse generic parameter lists
@@ -664,7 +672,6 @@ define[T] keep(value: Vehicle[T]) -> T => ...
 object[T] Box => ...
 trait[T] Readable => ...
 variant[E] Result => ...
-enum[T] Option => ...
 fn[T] (value: T) -> T => $value
 ```
 

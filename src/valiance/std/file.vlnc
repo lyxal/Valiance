@@ -11,7 +11,7 @@ public tag #byte as unit
 public define #byte(:Int) => inRange(0, 256)
 
 
-public enum Encoding =>
+public variant Encoding =>
   UTF8
   UTF16LE
   UTF16BE

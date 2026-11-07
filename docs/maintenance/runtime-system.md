@@ -101,6 +101,14 @@ like object methods. This includes implementations of `extend` requirements:
 lowering their raw syntax would lose nested call plans, including vectorisation
 and trait dispatch through recursive collection fields.
 
+Compact variant cases use these same object constructors. A literal-backed
+case stores its fixed `value` in constructor defaults and omits that field
+from the required argument names. Zero-parameter cases expose an additional
+qualified niladic binding to the same constructor. All case forms use the same constructor opcode.
+Managed object hashing follows structural equality: nominal name, concrete
+generic arguments, and stored fields participate; lifecycle state does not.
+Objects whose stored fields are hashable can therefore serve as dictionary keys.
+
 At runtime, the VM repeatedly performs one simple step:
 
 ```text
@@ -917,7 +925,6 @@ every entry.
 - `BUILD_RECORD`
 - `BUILD_DICT`
 - `MAKE_OBJECT_CONSTRUCTOR`
-- `MAKE_ENUM_MEMBER`
 
 Collection builders pop a known count and construct one value. `BUILD_LIST` may
 also attach an analysed exact runtime rank.
