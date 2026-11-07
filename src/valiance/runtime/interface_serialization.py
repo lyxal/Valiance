@@ -113,6 +113,8 @@ def _encode(value: Any, *, depth: int = 0, include_locations: bool = True) -> An
                     ),
                 ]
                 for field in dataclasses.fields(value)
+                if not field.metadata.get("interface_optional")
+                or getattr(value, field.name) != field.default
             ],
         }
     raise BytecodeFormatError(
@@ -179,8 +181,11 @@ def _decode(value: Any, *, depth: int = 0) -> Any:
         cls = registry.get(value.get("type"))
         if cls is None or not dataclasses.is_dataclass(cls):
             raise BytecodeFormatError("unknown interface record tag")
-        expected = [field.name for field in dataclasses.fields(cls)]
         names = [pair[0] for pair in value["fields"] if isinstance(pair, list) and len(pair) == 2]
+        expected = [
+            field.name for field in dataclasses.fields(cls)
+            if not field.metadata.get("interface_optional") or field.name in names
+        ]
         if names != expected or len(names) != len(value["fields"]):
             raise BytecodeFormatError("invalid interface record fields")
         fields = {

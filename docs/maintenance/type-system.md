@@ -384,6 +384,9 @@ possible member's callbacks must check. Type-based `fields[Variant]` remains
 empty. The ownership authorization query follows all member storage, tracking
 recursive parent/member paths. Declaration analysis and compiled imports share
 `_define_variant_shape` to restore storage and variant membership consistently.
+Nested case trait implementations retain the enclosing variant through parsing.
+Analysis resolves short case type names within those blocks to their qualified
+nominal types before checking trait evidence and method signatures.
 
 Value enumeration in a nonrecursive helper with an open nominal or anonymous
 trait parameter triggers the same call-site body specialization. Ordinary

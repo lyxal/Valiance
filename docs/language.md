@@ -2451,8 +2451,10 @@ end
 `Circle as Drawable` implements the trait for `Shape.Circle`. `Shape` and
 `Shape.Empty` do not acquire that implementation. The block can use the
 variant's generic parameters and can rely on compatible methods already
-defined on the case. Importing a public variant carries its case implementations
-of public traits.
+defined on the case. Inside the implementation block, a case type can use its
+short name, including in trait arguments and method annotations. For example,
+`Circle as Equal[Circle]` refers to `Shape.Circle` in that trait argument.
+Importing a public variant carries its case implementations of public traits.
 - The benefit of variants over traits is in pattern matching:
 
 ```

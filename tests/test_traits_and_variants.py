@@ -294,6 +294,36 @@ trait Drawable => extend draw -> Int end
 variant Shape => Circle Circle as Drawable => end end
 ''', 'does not satisfy required element')
 
+    def test_nested_case_trait_implementation_resolves_short_case_types(self):
+        self.assert_executes('''
+trait[T] Combine => extend combine(other: T) -> Int end
+variant First =>
+  Item => $value: Int end
+  Item as Combine[Item] =>
+    define combine(other: Item) => $self.value + $other.value
+  end
+end
+variant Second =>
+  Item => $value: Int end
+  Item as Combine[Item] =>
+    define combine(other: Item) => $self.value * $other.value
+  end
+end
+define[T] combined(item: Combine[T], other: T) -> Int => $other $item | combine end
+combined(First.Item(3), First.Item(4))
+combined(Second.Item(3), Second.Item(4))
+''', [7, 12])
+
+    def test_nested_case_type_alias_does_not_escape_implementation(self):
+        self.assert_rejected('''
+trait Measurable => extend measure -> Int end
+variant Shape =>
+  Circle => $radius: Int end
+  Circle as Measurable => define measure => $self.radius end
+end
+define outside(circle: Circle) -> Int => 0
+''', "undefined type 'Circle'")
+
     def test_bare_and_explicit_empty_cases_have_the_same_value_behavior(self):
         self.assert_executes(r'''
 variant Colour =>

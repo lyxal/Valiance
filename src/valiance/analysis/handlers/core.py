@@ -1665,6 +1665,8 @@ def _object_node(
     node = annotation_hooks.DEFAULT_REGISTRY.transform_object(node)
     kind = node.kind.text
     if kind == "object":
+        if node.enclosing_variant is not None:
+            return self._variant_case_trait_implementation(branch, node, node.enclosing_variant)
         return self._object_definition(branch, node)
     if kind == "trait":
         return self._trait_definition(branch, node)

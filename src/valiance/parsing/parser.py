@@ -1132,6 +1132,7 @@ class Parser:
             return ObjectNode(
                 Symbol("object"), subject, target=target, fields=fields,
                 definitions=definitions, target_location=target_location, location=_loc(start),
+                enclosing_variant=owner,
             )
         fixed_value = self._match(TokenKind.ASSIGN)
         backing_fields: tuple[ObjectFieldNode, ...] = ()

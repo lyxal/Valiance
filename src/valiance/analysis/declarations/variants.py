@@ -21,6 +21,44 @@ class Analyser:
 class _VariantDeclarations:
     """Own variants declaration operations."""
 
+    def _variant_case_trait_implementation(
+        self, branch: AnalysisBranch, node: ObjectNode, owner: Symbol,
+    ) -> BranchSet:
+        """Expose the enclosing variant's case names while checking the implementation."""
+        variant = self.env.lookup_variant(owner)
+        if variant is None:
+            return self._object_definition(branch, node)
+
+        aliases = {}
+        for name in variant.members:
+            case = self.env.lookup_object(name)
+            if case is not None:
+                aliases[Symbol(name.text)] = case
+        objects = self.env.objects
+        runtime_names = self.env.runtime_nominal_names
+        previous_objects = {name: objects.get(name) for name in aliases}
+        previous_runtime_names = {name: runtime_names.get(name) for name in aliases}
+        objects.update(aliases)
+        runtime_names.update({name: case.name for name, case in aliases.items()})
+        try:
+            target = T.normalize(node.target)
+            if isinstance(target, T.NominalType):
+                bound_names = frozenset(node.generics)
+                target = T.rebuild_nominal(target, *(
+                    _functions._resolve_imported_type_names(arg, self.env, bound_names)
+                    for arg in target.args
+                ))
+            return self._object_definition(branch, replace(node, target=target))
+        finally:
+            for registry, previous in (
+                (objects, previous_objects), (runtime_names, previous_runtime_names),
+            ):
+                for name, value in previous.items():
+                    if value is None:
+                        registry.pop(name, None)
+                    else:
+                        registry[name] = value
+
     def _define_variant_shape(
         self, node: ObjectNode, *, member_aliases: bool = False,
     ) -> tuple[Symbol, ...] | None:

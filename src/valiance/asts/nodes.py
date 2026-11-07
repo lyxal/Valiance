@@ -1142,3 +1142,6 @@ class ObjectNode(ASTNode):
     target_location: SourceLocation | None = field(
         default=None, compare=False, kw_only=True,
     )
+    enclosing_variant: Symbol | None = field(
+        default=None, kw_only=True, metadata={"interface_optional": True},
+    )
