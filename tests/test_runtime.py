@@ -8301,6 +8301,30 @@ Person("Ada", 36)
         self.assertIsInstance(person, ObjectValue)
         self.assertEqual(person.fields, {"name": "Ada", "age": RuntimeNumber("36")})
 
+    def test_vectorised_initializer_broadcasts_whole_list_argument(self):
+        [nested, lazy] = execute("""
+object Packet =>
+  $value: Number
+  $labels: String+
+  define Packet(value: Number, labels: String+) =>
+    $self.value = $value
+    $self.labels = $labels
+  end
+end
+Packet([[1, 2], [3, 4]], ["label"])
+Packet(1 2 range, ["lazy"])
+""")
+        self.assertEqual(
+            [[packet.fields for packet in row] for row in nested],
+            [[{"value": value, "labels": ["label"]} for value in row]
+             for row in ((1, 2), (3, 4))],
+        )
+        self.assertIsInstance(lazy, LazyList)
+        self.assertEqual(
+            [packet.fields for packet in lazy],
+            [{"value": value, "labels": ["lazy"]} for value in (1, 2)],
+        )
+
     def test_self_methods_rebind_augmented_field_assignments(self):
         output = io.StringIO()
         source = """

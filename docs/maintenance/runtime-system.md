@@ -1061,6 +1061,9 @@ Automatic vectorisation begins in analysis. `AppliedOverload` records whether
 mapping is needed and how each argument participates. Codegen copies that plan
 to `ResolvedElementReference`.
 
+Resolved constructors use the same plan. Each scalar call creates one object
+with its own field occurrences and the selected initializer and generic arguments.
+
 The VM then performs traversal, because only runtime knows the concrete list
 objects and lengths.
 

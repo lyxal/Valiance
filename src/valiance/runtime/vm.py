@@ -5038,13 +5038,7 @@ class VirtualMachine:
         if isinstance(value, OverloadedFunctionValue):
             return self._call_resolved_overloaded_function(value, frame, reference)
         if isinstance(value, ObjectConstructorValue):
-            _call_object_constructor(
-                value,
-                frame,
-                self,
-                reference.type_args,
-                reference.implementation_id,
-            )
+            _call_object_constructor(value, frame, self, reference)
             return None
         if isinstance(value, ObjectValue):
             frame.stack.append(_duplicate_occurrence(value))
@@ -8218,17 +8212,15 @@ def _call_object_constructor(
     callee: ObjectConstructorValue,
     frame: _Frame,
     vm: VirtualMachine,
-    type_args: tuple[str, ...] = (),
-    implementation_id: str | None = None,
+    reference: ResolvedElementReference | None = None,
 ) -> None:
-    """Invoke object constructor during VM execution."""
-    if callee.initializer is None:
-        arity = len(callee.required)
-    else:
-        initializer = _object_constructor_initializer(
-            callee, implementation_id
+    """Source constructor arguments and apply the checked call shape."""
+    initializer = (
+        None if callee.initializer is None else _object_constructor_initializer(
+            callee, reference.implementation_id if reference is not None else None,
         )
-        arity = len(initializer.code.params) - 1
+    )
+    arity = len(callee.required) if initializer is None else len(initializer.code.params) - 1
     try:
         (
             args,
@@ -8249,7 +8241,71 @@ def _call_object_constructor(
     frame.cycle_index = next_cycle_index
     frame.cycle_stack_remaining = next_cycle_stack_remaining
 
-    if callee.initializer is None:
+    if reference is not None and reference.vectorised:
+        cycle_count = arity - stack_count
+        args = tuple(_readonly_access(_borrow_named_access(arg)) for arg in args[:cycle_count]) + args[cycle_count:]
+        frame.stack.extend(_vectorize_object_constructor(callee, initializer, args, frame, vm, reference))
+    else:
+        type_args = () if reference is None else reference.type_args
+        frame.stack.append(_construct_object(callee, initializer, args, vm, type_args))
+
+
+def _vectorize_object_constructor(
+    callee: ObjectConstructorValue,
+    initializer: FunctionValue | None,
+    args: tuple[Any, ...],
+    frame: _Frame,
+    vm: VirtualMachine,
+    reference: ResolvedElementReference,
+) -> tuple[Any, ...]:
+    """Construct an owning object for each scalar row of a checked vector call."""
+    context = RuntimeContext(vm.output, vm.call_value, vm.format_value, vm.call_value_overload)
+    extension = None
+    result = ()
+    error = None
+    try:
+        extension = _materialize_vector_extension(vm, reference.extension, frame)
+        depths = _resolve_vectorisation_depths(
+            args, reference.vectorised_depths, reference.vectorised_target_ranks,
+        )
+
+        def scalar(item_args: tuple[Any, ...], _context: RuntimeContext) -> tuple[Any, ...]:
+            """Acquire an owning argument row without consuming the vector inputs."""
+            owned = []
+            try:
+                for item, depth in zip(item_args, depths, strict=True):
+                    if depth == 0 or _borrowed_payload(item) is not None:
+                        owned.append(_duplicate_occurrence(item))
+                    else:
+                        owned.append(_retain_runtime_reference(item))
+            except BaseException as failure:
+                raise _release_runtime_occurrences(owned, vm, failure)
+            return (_construct_object(callee, initializer, tuple(owned), vm, reference.type_args),)
+
+        result = _vectorize_resolved_depths(
+            scalar, args, context, depths, extension, stop_at_zero=True, owns_results=True,
+        )
+        result = _bind_lazy_result_owners((*args, *_extension_owned_values(extension)), result)
+        result = _apply_runtime_collection_ranks(result, reference.return_collection_ranks)
+    except _CannotVectorize:
+        error = RuntimeError(f"constructor '{callee.type_name}' received an invalid vector argument")
+    except BaseException as failure:
+        error = failure
+    error = _release_runtime_occurrences((*args, *_extension_owned_values(extension)), vm, error)
+    if error is not None:
+        raise _release_runtime_occurrences(result, vm, error)
+    return result
+
+
+def _construct_object(
+    callee: ObjectConstructorValue,
+    initializer: FunctionValue | None,
+    args: tuple[Any, ...],
+    vm: VirtualMachine,
+    type_args: tuple[str, ...],
+) -> ObjectValue:
+    """Build a single object from arguments whose ownership has been transferred."""
+    if initializer is None:
         fields = dict(callee.defaults)
         fields.update(dict(zip(callee.required, args, strict=True)))
         value = ObjectValue(
@@ -8296,7 +8352,7 @@ def _call_object_constructor(
         )
         error.add_call_detail(f"constructor '{callee.type_name}'", args)
         raise error
-    frame.stack.append(value)
+    return value
 
 
 def _object_constructor_initializer(

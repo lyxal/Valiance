@@ -256,6 +256,26 @@ end
 
 
 class VariantSemanticTests(SemanticTestCase):
+    def test_vectorised_case_constructor_preserves_trait_dispatch(self):
+        self.assert_executes('''
+trait Stringable => extend toString -> String end
+variant Entry =>
+  Shortcut =>
+    $name: String
+    $target: String
+  end
+  Shortcut as Stringable =>
+    define toString => "${$self.name} -> ${$self.target}"
+  end
+end
+define display(:Stringable) -> String => toString end
+["s1", "s2"]
+Shortcut(_, "file.txt")
+display
+Shortcut(["s3", "s4"], "file.txt")
+display
+''', [['s1 -> file.txt', 's2 -> file.txt'], ['s3 -> file.txt', 's4 -> file.txt']])
+
     def test_short_case_type_preserves_identity_through_list_updates(self):
         self.assert_executes('''
 trait Stringable => extend toString -> String end
