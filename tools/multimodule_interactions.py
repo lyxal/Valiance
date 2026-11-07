@@ -236,7 +236,7 @@ def interaction_case(family: str, graph: str, seed: int) -> ProjectCase:
     receive_values = {
         "@RECEIVE_BOX@": Receive.Value(ObjectValue("Box", {"value": number}, ("Int",))),
         "@RECEIVE_ITEM@": Receive.Value(ObjectValue("Item", {"value": number})),
-        "@RECEIVE_CODE@": Receive.Value(ObjectValue("Code", {"name": "GOOD", "value": number})),
+        "@RECEIVE_CODE@": Receive.Value(ObjectValue("Code.GOOD", {"value": number})),
         "@RECEIVE_CHOICE@": Receive.Value(ObjectValue("Choice.Present", {"value": number})),
         "@RECEIVE_NUMBER@": Receive.Value(number),
     }

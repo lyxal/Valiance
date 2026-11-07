@@ -104,8 +104,10 @@ in exhaustive-match metadata. Backing values are readable object fields, and
 case `name` is an observational property unless explicitly stored by the case.
 
 Imported constructors retain a private provider scope for omitted argument
-defaults. Sibling variant types and nested variant expressions are qualified before
-rebuilding the constructor; their runtime declarations travel in the import
+defaults. Locally declared sibling variant types and nested variant expressions
+are qualified before rebuilding the constructor. Re-exported storage and defaults
+retain their original provider's names, including when the facade also declares
+objects using an imported variant. Their runtime declarations travel in the import
 prelude without exposing those names to the caller. Explicit argument expressions
 still use the caller's environment. `Environment.default_argument_scope` restores
 the provider environment only while analysing an omitted default, so selected

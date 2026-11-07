@@ -17,7 +17,7 @@ from unittest.mock import patch
 from tools.multimodule_additional_contracts import ADDITIONAL_CONTRACTS
 from tools.multimodule_composition_contracts import COMPOSITION_CONTRACTS
 from tools.multimodule_matrix_slices import run_slice
-from tools.multimodule_fuzzing import write_project
+from tools.multimodule_fuzzing import ProjectCase, write_project
 from tools.multimodule_interactions import (
     GRAPHS,
     INVALID_INTERACTIONS,
@@ -35,11 +35,33 @@ from valiance.analysis import Analyser
 from valiance.elements.builtins import _call_call_site
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
-from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+from valiance.runtime.interface_serialization import MAGIC, dumps_interface, loads_interface
 from valiance.runtime.serialization import BytecodeFormatError
 
 
 class ExtendedMultiModuleContracts(unittest.TestCase):
+    def test_facade_object_fields_keep_the_variant_providers_identity(self):
+        case = ProjectCase(
+            'variant_field_provider_identity', 'facade', 709,
+            (
+                ('core', 'public variant Choice =>\n'
+                         ' Present => $value: Int end\n Empty\nend\n'),
+                ('logic', 'import {core.Choice}\n'
+                          'public object Holder => public $choice: Choice end\n'),
+                ('gateway', 'public import {core.Choice, logic.Holder}\n'
+                            'public object LocalHolder => public $choice: Choice end\n'),
+            ),
+            'import {gateway.[Choice, Holder, LocalHolder]}\n'
+            '$first = Holder(Choice.Present(7))\n'
+            '$second = LocalHolder(Choice.Present(11))\n'
+            '$first.choice match =>\n as :Present(value) => $value\n as :Empty => 0\nend\n'
+            '$second.choice match =>\n as :Present(value) => $value\n as :Empty => 0\nend\n',
+            (7, 11), ('core', 'logic', 'gateway'),
+        )
+        for layout in ('source', 'compiled'):
+            with self.subTest(layout=layout):
+                self.assertEqual(execute_interaction(case, layout), 4)
+
     def test_new_families_are_connected_and_explicitly_exported(self):
         for name in ADDITIONAL_CONTRACTS:
             case = interaction_case(name, "direct", 409)
@@ -162,9 +184,9 @@ class ExtendedMultiModuleContracts(unittest.TestCase):
         self.assertNotIn(b"pickle", encoded)
         with self.assertRaisesRegex(BytecodeFormatError, "unsupported compiler callback"):
             dumps_interface((lambda: None,))
-        document = json.loads(encoded[len(b"VLNI\r") :])
+        document = json.loads(encoded[len(MAGIC) :])
         document["value"]["items"][0]["id"] = "os.system"
-        tampered = b"VLNI\r" + json.dumps(document, sort_keys=True).encode()
+        tampered = MAGIC + json.dumps(document, sort_keys=True).encode()
         with self.assertRaisesRegex(BytecodeFormatError, "unknown compiler callback"):
             loads_interface(tampered)
 

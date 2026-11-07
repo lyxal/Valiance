@@ -690,6 +690,7 @@ def import_objects(
         obj.name.text for obj in exports.objects
         if isinstance(obj.typed.node, ObjectNode)
         and obj.typed.node.kind == Symbol("variant")
+        and obj.origin is None
     )
     provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
     native_module = exports.module_name.startswith("std.")
@@ -1241,6 +1242,10 @@ def _renamed_object(
     node = obj.typed.node
     if not isinstance(node, ObjectNode):
         return obj
+    # Re-exported storage and defaults already belong to their original
+    # provider. A facade's sibling declarations must not requalify them.
+    if obj.origin is not None:
+        variant_names = frozenset()
     owner = nominal_name or name
     explicit_constructors = constructor_definitions(
         node.name,

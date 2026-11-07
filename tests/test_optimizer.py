@@ -116,7 +116,7 @@ class OptimizerTests(unittest.TestCase):
         """New binaries signal their format, but previous bytecode remains readable."""
         from valiance.runtime.serialization import BYTECODE_VERSION
 
-        self.assertEqual(BYTECODE_VERSION, 0x47)
+        self.assertEqual(BYTECODE_VERSION, 0x48)
         old_style = Program(FunctionCode((
             Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
             Instruction(OpCode.RETURN),
@@ -124,9 +124,9 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(loads(dumps(old_style)), old_style)
         from valiance.runtime.serialization import MAGIC_PREFIX, _Writer
 
-        for version in (0x43, 0x44, 0x45, 0x46):
-            # Previous formats predate the bounded-dispatch field; simply
-            # changing a new format's header would misalign the payload.
+        for version in (0x43, 0x44, 0x45, 0x46, 0x47):
+            # Write each payload using its own version; changing a current
+            # header can misalign fields introduced by later formats.
             writer = _Writer(version=version)
             writer.bytes(MAGIC_PREFIX + bytes((version,)))
             writer.function(old_style.main)
