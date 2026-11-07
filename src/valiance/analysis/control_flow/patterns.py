@@ -575,6 +575,8 @@ def _closed_match_members(
     variant = env.lookup_variant(name)
     if variant is not None:
         return variant.members
+    if name in env.context.variant_members:
+        return (name,)
     return None
 
 
@@ -594,6 +596,28 @@ def _resolve_closed_member(
         if name == member or name.text == member.text.rsplit(".", 1)[-1]:
             return member
     return None
+
+
+def _pattern_excludes_known_case(
+    pattern: MatchPatternNode, subject: T.Type, env: T.Environment,
+) -> bool:
+    """Recognize a sibling pattern that cannot match a known variant case."""
+    if isinstance(pattern, (BindingPatternNode, ExtractPatternNode)):
+        return _pattern_excludes_known_case(pattern.pattern, subject, env)
+    if isinstance(pattern, OrPatternNode):
+        return all(_pattern_excludes_known_case(option, subject, env) for option in pattern.options)
+    if not isinstance(pattern, TypePatternNode) or pattern.typ is None:
+        return False
+    name = _nominal_name(subject)
+    parent = env.context.variant_members.get(name)
+    variant = None if parent is None else env.lookup_variant(parent)
+    if variant is None:
+        return False
+    matched = _resolve_closed_member(variant.members, pattern.typ)
+    pattern_name = _nominal_name(pattern.typ)
+    if pattern_name is not None and pattern_name.namespace and pattern_name != matched:
+        return False
+    return matched is not None and matched != name
 
 
 def _lookup_object_by_suffix(
@@ -628,7 +652,10 @@ def _pattern_object_definition(
     pattern_name = None if pattern_type is None else _nominal_name(pattern_type)
     subject_name = _nominal_name(subject_type)
     if pattern_name is not None and subject_name is not None:
-        members = _closed_match_members(env, subject_name)
+        # A sibling pattern still refers to that sibling's storage even if the
+        # subject's concrete case makes the arm unreachable.
+        parent = env.context.variant_members.get(subject_name, subject_name)
+        members = _closed_match_members(env, parent)
         if members is not None:
             resolved = _resolve_closed_member(members, pattern_type)
             if resolved is not None:
@@ -903,7 +930,9 @@ def _join_match_output(
 ) -> _core.AnalysisBranch | None:
     """Join match output during static analysis."""
     if joined is None:
-        return candidate
+        return candidate.with_variables(candidate.variables.merge_against(
+            candidate.variables, baseline.variables, ctx,
+        ))
     if joined.inputs != candidate.inputs:
         merged_inputs = _utils._merge_branch_inputs(
             joined.inputs,
@@ -1207,6 +1236,11 @@ def _specialized_pattern_type(
         return subject_type
     pattern_type = T.normalize(pattern_type)
     subject_type = T.normalize(subject_type)
+    if isinstance(pattern_type, T.NoneTypeNode) and isinstance(subject_type, T.NominalType):
+        members = _closed_match_members(env, subject_type.name)
+        member = None if members is None else _resolve_closed_member(members, pattern_type)
+        if member is not None:
+            return T.N(member, *subject_type.args)
     if not isinstance(pattern_type, T.NominalType) or pattern_type.args:
         return pattern_type
     subjects = subject_type.items if isinstance(subject_type, T.UnionType) else (subject_type,)

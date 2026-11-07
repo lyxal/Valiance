@@ -289,8 +289,14 @@ class _Compiler:
                 declarations.setdefault(name, _runtime_generic_variances(node))
                 for member in node.variants:
                     member_name = f"{name}.{_symbol_runtime_name(member.name)}"
-                    declarations[member_name] = _runtime_generic_variances(node)
+                    declarations[member_name] = _runtime_generic_variances(replace(
+                        node, kind=Symbol("object"), fields=member.fields, requirements=(),
+                    ))
                     implementations.setdefault(member_name, set()).add(name)
+                    if node.generics:
+                        projections.setdefault(member_name, []).append((
+                            name, tuple(f"${index}" for index in range(len(node.generics))), (),
+                        ))
 
         names = set(declarations) | set(implementations)
         for targets in implementations.values():
@@ -3185,6 +3191,11 @@ def _runtime_generic_variances(node: ObjectNode) -> tuple[str, ...]:
         _record_runtime_variance_use(field.typ, +1, usage)
         if field.access.text == "public":
             _record_runtime_variance_use(field.typ, -1, usage)
+    if node.kind.text == "variant":
+        for member in node.variants:
+            for field in member.fields:
+                if field.typ is not None:
+                    _record_runtime_variance_use(field.typ, +1, usage)
     for requirement in node.requirements:
         for param in requirement.params or ():
             if param.typ is not None:

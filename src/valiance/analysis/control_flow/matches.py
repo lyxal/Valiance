@@ -221,9 +221,16 @@ class _MatchAnalysis:
         )
         previous_patterns: list[tuple[MatchPatternNode, ...]] = []
         runtime_cases = []
+        reachable_cases = []
         for case_index, case in enumerate(node.cases):
             pattern_arities = case_pattern_arities[case_index]
             simple_coordinates = all_simple_coordinates and all(count == 1 for count in pattern_arities)
+            if simple_coordinates and any(
+                _patterns._pattern_excludes_known_case(pattern, subject, self.env)
+                for pattern, subject in zip(case.patterns, subject_types, strict=True)
+            ):
+                continue
+            reachable_cases.append(case_index)
             case_variables = (
                 _patterns._match_case_variables(
                     body_input.variables, case.patterns, subject_types, self.env
@@ -280,10 +287,11 @@ class _MatchAnalysis:
         return BranchSet((joined.emit(TypedMatchNode(
             replace(node, cases=tuple(runtime_cases)), _calls._returns_result_type(joined.stack.items),
             case_bodies=tuple(typed_case_bodies),
-            case_guards=tuple(analysed_guards),
-            case_pattern_arities=tuple(case_pattern_arities),
+            case_guards=tuple(analysed_guards[index] for index in reachable_cases),
+            case_pattern_arities=tuple(case_pattern_arities[index] for index in reachable_cases),
             case_guard_arities=tuple(
-                tuple(len(inputs) for inputs in guards) for guards in case_guard_inputs
+                tuple(len(inputs) for inputs in case_guard_inputs[index])
+                for index in reachable_cases
             ),
             runtime_nominal_names=self.env.runtime_nominal_spellings(),
         )),))

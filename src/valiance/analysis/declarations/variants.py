@@ -42,7 +42,7 @@ class _VariantDeclarations:
             if object_attributes is None:
                 return None
             member_payloads.extend(object_attributes)
-            variant_type = _utils._declared_nominal(node.name, node.generics)
+            member_type = _utils._declared_nominal(member_name, node.generics)
             defaults = frozenset(field.name for field in member.fields if field.default)
             constructor_fields = tuple(
                 field for field in member.fields
@@ -57,14 +57,13 @@ class _VariantDeclarations:
                 member_name,
                 replace(node, fields=member.fields),
                 object_attributes,
-                result_type=variant_type,
                 generic_constraints=generic_constraints,
                 defaults=defaults,
                 synthesize_constructor=False,
             )
             overload = T.Overload(
                 params=tuple(attribute.typ for attribute in constructor_attributes),
-                returns=(variant_type,),
+                returns=(member_type,),
                 generic_constraints=generic_constraints,
                 param_names=parameter_names,
                 param_defaults=tuple(field.default or None for field in constructor_fields),
@@ -81,7 +80,7 @@ class _VariantDeclarations:
                 )
                 self.env.define_overload(
                     niladic_name,
-                    T.Overload((), (variant_type,), generic_constraints=generic_constraints),
+                    T.Overload((), (member_type,), generic_constraints=generic_constraints),
                 )
         self.env.define_variant(
             node.name,

@@ -120,7 +120,7 @@ variant Value =>
   Numeric => public $number: Int end
   Textual => public $text: String end
 end
-$owner = Textual("hello")
+$owner: Value = Textual("hello")
 $owner fields foreach(field) => $owner[$field] | length end
 '''))
         self.assertTrue(any('length' in message for message in analyser.diagnostics))
@@ -134,7 +134,7 @@ variant Value =>
   Protected => public $resource: Resource end
   Empty => end
 end
-$owner = Empty
+$owner: Value = Empty
 $owner fields
 '''))
         self.assertTrue(any('lexical unsafe' in message for message in analyser.diagnostics))

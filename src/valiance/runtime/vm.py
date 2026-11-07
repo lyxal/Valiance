@@ -7641,7 +7641,9 @@ def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
             )
         )
     actual = _runtime_value_pattern(value)
-    return actual is not None and _runtime_pattern_subtype(actual, pattern)
+    facts = (unwrapped.runtime_type.type_facts
+             if isinstance(unwrapped, ObjectValue) and unwrapped.runtime_type is not None else ())
+    return actual is not None and _runtime_pattern_subtype(actual, pattern, facts)
 
 
 def _runtime_collection_pattern_matches(
@@ -7701,10 +7703,11 @@ def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
 def _runtime_pattern_subtype(
     actual: RuntimeTypePattern,
     target: RuntimeTypePattern,
+    type_facts: tuple[tuple[object, ...], ...] = (),
 ) -> bool:
     """Return the Boolean result of runtime pattern subtype during virtual-machine execution."""
     if target.kind == "union":
-        return any(_runtime_pattern_subtype(actual, item) for item in target.children)
+        return any(_runtime_pattern_subtype(actual, item, type_facts) for item in target.children)
     if actual.kind != target.kind:
         return False
     if target.kind != "nominal":
@@ -7715,7 +7718,9 @@ def _runtime_pattern_subtype(
     ):
         return False
     if actual.name != target.name:
-        return not target.children
+        return not target.children or _structural_declared_subtype(
+            actual, target, type_facts=type_facts,
+        )
     if not target.children:
         return True
     if len(actual.children) != len(target.children):
@@ -7728,10 +7733,10 @@ def _runtime_pattern_subtype(
         strict=True,
     ):
         if variance is Variance.COVARIANT:
-            if not _runtime_pattern_subtype(actual_arg, target_arg):
+            if not _runtime_pattern_subtype(actual_arg, target_arg, type_facts):
                 return False
         elif variance is Variance.CONTRAVARIANT:
-            if not _runtime_pattern_subtype(target_arg, actual_arg):
+            if not _runtime_pattern_subtype(target_arg, actual_arg, type_facts):
                 return False
         elif not _runtime_patterns_same_type(actual_arg, target_arg):
             return False
@@ -9726,7 +9731,7 @@ def _matches_cast_type(
         if unwrapped.type_name == name:
             actual_pattern = _runtime_value_pattern(unwrapped)
             return actual_pattern is not None and _runtime_pattern_subtype(
-                actual_pattern, target_pattern
+                actual_pattern, target_pattern, type_facts,
             )
         projection = _runtime_generic_supertype(unwrapped, name)
         if projection is None:
@@ -9736,7 +9741,7 @@ def _matches_cast_type(
                 f"{name}[{', '.join(projection)}]",
                 type_facts,
             ),
-            target_pattern,
+            target_pattern, type_facts,
         )
     if kind == "tagged":
         if len(spec) != 3 or not isinstance(spec[2], tuple):

@@ -15,6 +15,54 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_variant_case_trait_implementations_survive_imports(self):
+        from valiance.incremental import CompilationCoordinator
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / 'shapes.vlnc'
+            library.write_text('''
+public trait[T] Drawable => extend draw -> T end
+public variant[T] Shape =>
+  Circle => $radius: T end
+  Circle as Drawable[T] => define draw => $self.radius end
+  Square =>
+    $side: T
+    define draw => $self.side
+  end
+  Square as Drawable[T] => end
+  Empty
+end
+''', encoding='utf-8')
+            for layout in ('source', 'compiled'):
+                if layout == 'compiled':
+                    CompilationCoordinator(root).build_module(
+                        library, library.with_suffix('.vbcm'), module_name='shapes',
+                    )
+                    library.unlink()
+                for spec, shape, trait in (
+                    ('shapes.[Shape, Drawable]', 'Shape', 'Drawable'),
+                    ('shapes.[Shape as Figure, Drawable as Paint]', 'Figure', 'Paint'),
+                    ('shapes', 'shapes.Shape', 'shapes.Drawable'),
+                    ('shapes as figures', 'figures.Shape', 'figures.Drawable'),
+                ):
+                    with self.subTest(layout=layout, spec=spec):
+                        source = f'''
+import {{{spec}}}
+define render(value: {trait}[Int]) -> Int => $value draw end
+render({shape}.Circle(8))
+{shape}.Square(12) match =>
+  as :{shape}.Circle => render
+  as :{shape}.Square => render
+  as :{shape}.Empty => 0
+end
+'''
+                        analyser = Analyser(source_file=root / 'main.vlnc')
+                        typed = analyser.analyse(parse(source))
+                        self.assertEqual(analyser.diagnostics, [])
+                        self.assertEqual(run(loads(dumps(compile_program(typed)))), [8, 12])
+
     def test_compact_variant_cases_survive_source_free_alias_imports(self):
         from valiance.incremental import CompilationCoordinator
         from valiance.runtime import compile_program, dumps, loads, run

@@ -197,18 +197,21 @@ class _ObjectDeclarations:
             for requirement in requirements:
                 if requirement.name in supplied_names:
                     continue
-                candidates = self.env.overloads_for(requirement.name)
-                matching = tuple(
-                    overload
-                    for overload in candidates
-                    if overload.params
-                    and T.assignable(base_type, overload.params[0], self.env.context)
+                # Specialize an existing method against the implementation's
+                # receiver and arguments before comparing generic results.
+                matching = (
+                    T.try_apply_overload(
+                        overload, (base_type, *requirement.overload.params), self.env.context,
+                    ).applied
+                    for overload in self.env.overloads_for(requirement.name)
                 )
                 if not any(
-                    self._trait_requirement_implementation_compatible(
-                        overload, requirement.overload
+                    applied is not None and not applied.vectorised
+                    and self._trait_requirement_implementation_compatible(
+                        replace(applied.overload, params=applied.params, returns=applied.returns),
+                        requirement.overload,
                     )
-                    for overload in matching
+                    for applied in matching
                 ):
                     self._diagnose(
                         f"trait implementation for '{node.name}' does not satisfy "

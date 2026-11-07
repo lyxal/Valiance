@@ -368,13 +368,8 @@ class Parser:
         if self._check_ident("enum"):
             self._error("enum declarations have been removed; use variant")
         if self._match_ident("object", "trait", "variant"):
-            return (
-                self._object_like(
-                    self._previous,
-                    self._previous.value,
-                    annotations,
-                    visibility,
-                ),
+            return self._object_like(
+                self._previous, self._previous.value, annotations, visibility,
             )
         if self._match_ident("fn"):
             return (self._function(self._previous, annotations, overloads=overloads),)
@@ -908,8 +903,8 @@ class Parser:
         kind: str,
         annotations: tuple[ASTNode, ...],
         visibility: Symbol | None = None,
-    ) -> ObjectNode:
-        """Parse object like from the current token stream."""
+    ) -> tuple[ObjectNode, ...]:
+        """Parse a declaration and lower case implementations to object blocks."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
         name_token = self._current
         name = self._symbol("expected object name")
@@ -934,8 +929,17 @@ class Parser:
         if kind == "trait" and target is None and any(generic_constraints):
             self._error("trait declarations allow only generic names; put constraints on typed uses")
         self._expect(TokenKind.FAT_ARROW)
-        fields, definitions, requirements, variants = self._object_body(kind, name)
-        return ObjectNode(
+        fields, definitions, requirements, entries = self._object_body(kind, name)
+        variants = tuple(entry for entry in entries if isinstance(entry, VariantMemberNode))
+        implementations = tuple(
+            replace(entry, generics=generics, generic_constraints=generic_constraints)
+            for entry in entries if isinstance(entry, ObjectNode)
+        )
+        case_names = {member.name.text for member in variants}
+        for implementation in implementations:
+            if implementation.name.text not in case_names:
+                self._error(f"unknown variant member '{implementation.name.text}' in '{name}'")
+        declaration = ObjectNode(
             Symbol(kind),
             name,
             generics,
@@ -951,6 +955,7 @@ class Parser:
             visibility=visibility,
             location=_loc(start),
         )
+        return (declaration, *implementations)
 
     def _generic_names(self) -> tuple[Symbol, ...]:
         """Parse generic names from the current token stream."""
@@ -995,14 +1000,14 @@ class Parser:
         tuple[ObjectFieldNode, ...],
         tuple[DefineNode, ...],
         tuple[TraitRequirementNode, ...],
-        tuple[VariantMemberNode, ...],
+        tuple[VariantMemberNode | ObjectNode, ...],
     ]:
         """Parse object body from the current token stream."""
         single_line = not self._check(TokenKind.NEWLINE)
         fields: list[ObjectFieldNode] = []
         definitions: list[DefineNode] = []
         requirements: list[TraitRequirementNode] = []
-        variants: list[VariantMemberNode] = []
+        variants: list[VariantMemberNode | ObjectNode] = []
 
         if single_line:
             if self._check_ident("end"):
@@ -1010,7 +1015,7 @@ class Parser:
                 return (), (), (), ()
             if kind == "variant" and self._is_variant_member():
                 while self._is_variant_member():
-                    variants.append(self._variant_member())
+                    variants.append(self._variant_member(owner))
             else:
                 item = self._object_body_item(owner)
                 _append_object_body_item(item, fields, definitions, requirements)
@@ -1025,7 +1030,7 @@ class Parser:
         self._skip_newlines()
         while not self._check(TokenKind.EOF) and not self._check_ident("end"):
             if kind == "variant" and self._is_variant_member():
-                variants.append(self._variant_member())
+                variants.append(self._variant_member(owner))
             else:
                 item = self._object_body_item(owner)
                 _append_object_body_item(item, fields, definitions, requirements)
@@ -1112,10 +1117,22 @@ class Parser:
             }
         )
 
-    def _variant_member(self) -> VariantMemberNode:
-        """Parse variant member from the current token stream."""
+    def _variant_member(self, owner: Symbol) -> VariantMemberNode | ObjectNode:
+        """Parse a case or an implementation on that case."""
         start = self._current
         name = self._symbol("expected variant member name")
+        if self._match_ident("as"):
+            target_location = _loc(self._current)
+            target = self.parse_type_expression()
+            self._expect(TokenKind.FAT_ARROW)
+            subject = Symbol(name.text, (*owner.namespace, owner.text, *name.namespace))
+            fields, definitions, requirements, _ = self._object_body("object", subject)
+            if requirements:
+                self._error("trait implementation blocks cannot declare requirements")
+            return ObjectNode(
+                Symbol("object"), subject, target=target, fields=fields,
+                definitions=definitions, target_location=target_location, location=_loc(start),
+            )
         fixed_value = self._match(TokenKind.ASSIGN)
         backing_fields: tuple[ObjectFieldNode, ...] = ()
         if fixed_value:

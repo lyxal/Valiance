@@ -2445,7 +2445,7 @@ Some
 """))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Int))
+        self.assertEqual(typed[-1].typ, N(Symbol("Some", ("Maybe",)), Int))
 
     def test_object_generic_variance_is_inferred_from_readable_fields(self):
         env = Environment()
@@ -2733,7 +2733,7 @@ end
         typed = analyser.analyse(parse("variant Colour => RED GREEN end\nColour.\\RED"))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Colour")))
+        self.assertEqual(typed[-1].typ, N(Symbol("RED", ("Colour",))))
         self.assertTrue(env.overloads_for(Symbol("\\RED", ("Colour",))))
 
     def test_empty_variant_cases_expose_constructor_and_niladic_names(self):
@@ -2756,16 +2756,17 @@ end
 
         analyser.analyse(parse(r"""
 variant Colour => RED GREEN BLUE end
-Colour.\RED
-match =>
-  as :RED => "red"
-  as :GREEN => "green"
+define describe(value: Colour) -> String =>
+  $value match =>
+    as :RED => "red"
+    as :GREEN => "green"
+  end
 end
 """))
 
         self.assertEqual(
             analyser.diagnostics,
-            ["4:1: non-exhaustive match for Colour; missing cases: Colour.BLUE"],
+            ["4:10: non-exhaustive match for Colour; missing cases: Colour.BLUE"],
         )
 
     def test_match_on_variant_is_exhaustive_by_member_cases(self):
@@ -7022,7 +7023,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["7:1: non-exhaustive match for Maybe; missing cases: Maybe.Some"],
+            ["7:1: non-exhaustive match for Maybe.Some; missing cases: Maybe.Some"],
         )
 
     def test_restrictive_variant_destructure_does_not_make_match_exhaustive(self):
@@ -7042,7 +7043,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["7:1: non-exhaustive match for Maybe; missing cases: Maybe.Some"],
+            ["7:1: non-exhaustive match for Maybe.Some; missing cases: Maybe.Some"],
         )
 
     def test_type_pattern_destructuring_arity_is_checked(self):
@@ -7291,7 +7292,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["8:1: non-exhaustive match for Pairish; missing cases: " "Pairish.Pair"],
+            ["8:1: non-exhaustive match for Pairish.Pair; missing cases: Pairish.Pair"],
         )
 
     def test_repeated_binding_does_not_hide_a_fallback_case(self):

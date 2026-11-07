@@ -124,7 +124,8 @@ CASES = [
       modules={'shapes.vlnc':
                'public define name(x:Int|String)->String=>"imported" end'}),
     C('D03', 'variant[T] Either=>\n Some=>$value:T end\n Empty=>end\nend\n'
-      'Some(3) match=>\n as :Some(value)=>$value\nend',
+      'define unwrap(value:Either[Int])->Int=>\n'
+      ' $value match=>\n as :Some(item)=>$item\nend\nend',
       reject=('exhaustive',)),
     C('S03', 'define invoke(f:Function)=>$f call end\n'
       '1 fn(x:Int)->Int=>$x+1 end invoke\n'
@@ -229,7 +230,8 @@ CASES = [
     C('DR02', 'type Self=Self+'),  # No recursive type alias feature: explicit N/A.
     C('DR03', 'type Left=Right\ntype Right=Left'),  # No type-level equations.
     C('DR04', 'variant[T] Option=>\n Some=>$value:T end\n None=>end\nend\n'
-      'Some(3) match=>as :Some(v)=>$v end', reject=('non-exhaustive',)),
+      'define[T] unwrap(value:Option[T])->T=>\n'
+      ' $value match=>as :Some(v)=>$v end\nend', reject=('non-exhaustive',)),
 
 ]
 

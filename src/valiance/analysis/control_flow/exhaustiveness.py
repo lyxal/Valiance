@@ -85,6 +85,13 @@ class _ExhaustivenessAnalysis:
         if expected is None:
             self._diagnose("match without `_` requires variant value", node)
             return False
+        if closed_name in self.env.context.variant_members:
+            if any(len(case.patterns) == 1 and _patterns._pattern_is_irrefutable(
+                case.patterns[0], subject_type, self.env,
+            ) for case in node.cases):
+                return True
+            self._diagnose(f"non-exhaustive match for {closed_name}; missing cases: {closed_name}", node)
+            return False
         covered = {
             member
             for case in node.cases

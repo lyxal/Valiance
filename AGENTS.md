@@ -61,6 +61,11 @@ Validate changes proportionately to their impact. Avoid both insufficient testin
 - Cover successful behaviour, relevant edge cases, and expected failures.
 - Prefer tests that establish language semantics rather than tests coupled unnecessarily to implementation details.
 - Run focused tests during development when practical.
+- For cross-cutting changes that span subsystems or alter shared contracts,
+  run the full test suite after the final substantive change and before reporting
+  completion. Focused suites can miss regressions in consumers of a shared
+  contract, such as imports, serialization, or runtime dispatch. Follow the
+  Windows FFI exclusion in §9 and report any coverage that could not be run.
 - For changes affecting fundamental language behaviour, run `tests/test_programs.py` and ensure it passes.
 - Do not add to or modify `tests/test_programs.py` unless explicitly requested.
 - For changes expected to affect existing tests, rerun the relevant tests after implementation and ensure they pass.

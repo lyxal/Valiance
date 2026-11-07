@@ -1462,6 +1462,10 @@ end
                     VariantMemberNode(Symbol(name)) for name in ('RED', 'GREEN', 'BLUE')
                 ))
 
+    def test_variant_case_implementation_must_name_a_member(self):
+        with self.assertRaisesRegex(ParseError, "unknown variant member 'Missing'"):
+            parse('variant Shape => Circle Missing as Drawable => end end')
+
     def test_variant_backing_value_lowers_to_a_readable_field(self):
         [token] = parse('variant Token => NUMBER = "number" end')
         self.assertEqual(token.variants, (

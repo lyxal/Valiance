@@ -342,6 +342,16 @@ class _ImportDeclarations:
                         )
             finally:
                 self.env = caller
+            # Defaults can produce private case types, including under a
+            # provider-local alias. Share relation facts without exposing names.
+            for member, parent in dependency_env.context.variant_members.items():
+                if parent.namespace:
+                    caller.context.variant_members.setdefault(member, parent)
+                    for name in (member, parent):
+                        if name in dependency_env.context.generic_variance:
+                            caller.context.generic_variance.setdefault(
+                                name, dependency_env.context.generic_variance[name],
+                            )
             previous_parent = caller.parent
             caller.parent = dependency_env
             try:
@@ -355,10 +365,13 @@ class _ImportDeclarations:
                 caller.parent = previous_parent
             return
 
-        self.env.bind_runtime_name(obj.name, runtime_name)
         node = obj.typed.node
         if not isinstance(node, ObjectNode):
             return
+        if node.target is not None and obj.name in self.env.context.variant_members:
+            # A case implementation supplies methods, not a constructor binding.
+            return
+        self.env.bind_runtime_name(obj.name, runtime_name)
         if obj.name != node.name:
             self.env.runtime_nominal_names[obj.name] = node.name
             # The provider's qualified declaration spelling can still appear

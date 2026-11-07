@@ -70,9 +70,10 @@ class ParallelTestSuiteTests(unittest.TestCase):
         self.assertEqual({batch.estimated_weight for batch in batches}, {2.0})
 
     def test_timing_report_is_saved_by_real_workers(self):
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
             root = Path(directory)
             case = root / "test_timing_probe.py"
+            key = f"{root.name}/test_timing_probe.py"
             case.write_text(
                 "import unittest\n"
                 "class TimingProbe(unittest.TestCase):\n"
@@ -88,15 +89,16 @@ class ParallelTestSuiteTests(unittest.TestCase):
             data = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(status, 0)
         self.assertEqual(data["version"], 2)
-        self.assertIn("test_timing_probe.py", data["modules"])
+        self.assertIn(key, data["modules"])
         self.assertEqual(len(data["tests"]), 1)
-        self.assertIn("test_timing_probe.py::TimingProbe.test_ok", data["tests"])
+        self.assertIn(f"{key}::TimingProbe.test_ok", data["tests"])
         self.assertIn("TimingProbe.test_ok", output.getvalue())
 
     def test_parallel_safe_methods_execute_exactly_once_across_workers(self):
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
             root = Path(directory)
             case = root / "test_sharded.py"
+            key = f"{root.name}/test_sharded.py"
             case.write_text(
                 "import unittest\n"
                 "PARALLEL_SAFE_METHODS = ('Example.test_slow_a', 'Example.test_slow_b')\n"
@@ -125,9 +127,9 @@ class ParallelTestSuiteTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(len(data["tests"]), 3)
         self.assertEqual(set(data["tests"]), {
-            "test_sharded.py::Example.test_slow_a",
-            "test_sharded.py::Example.test_slow_b",
-            "test_sharded.py::Example.test_remainder",
+            f"{key}::Example.test_slow_a",
+            f"{key}::Example.test_slow_b",
+            f"{key}::Example.test_remainder",
         })
         self.assertEqual(len(data["modules"]), 1)
 

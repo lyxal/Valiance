@@ -1549,12 +1549,12 @@ $updated[$field]
 $owner[$field]
 $owner[$field] = "direct"
 $owner[$field]
-$numeric = Numeric(7)
+$numeric: Value = Numeric(7)
 $numbers = $numeric fields
 $number = $numbers["number"]
 write?($numeric, $number, "wrong")
 read?($numeric, $field)
-$secret = Secret(3)
+$secret: Value = Secret(3)
 $secrets = $secret fields
 $hidden = $secrets["hidden"]
 read?($secret, $hidden)

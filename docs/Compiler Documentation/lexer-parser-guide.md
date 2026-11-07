@@ -661,6 +661,11 @@ ordinary fields and definitions. Only single number or string literals are
 accepted as backing values. Object-body declaration keywords remain distinct
 from bare case names.
 
+`Case as Trait => ... end` lowers to an ordinary object implementation for
+the qualified case name. The parser emits implementation blocks after the
+variant declaration and carries the variant's generic parameters and constraints
+into each block. The case list contains only actual case declarations.
+
 ## Generic Parameter Lists
 
 Object-like declarations and function definitions parse generic parameter lists

@@ -1538,6 +1538,8 @@ def _solve(
                 return False
             if isinstance(p, FFINamedType) and p.name != a.name:
                 return False
+            if ctx.variant_members.get(a.name) == p.name:
+                return rec(p, rebuild_nominal(p, *a.args))
             if (allow_implementation
                     and ctx.nominal_origin(p.name) != ctx.nominal_origin(a.name)
                     and _contains_type_var(p)):
@@ -3210,7 +3212,8 @@ def _match_specificity(
         if (
             _same_nominal_family(argument, parameter)
             and not isinstance(argument, FFINamedType)
-            and ctx.implements(argument.name, parameter.name)
+            and (ctx.implements(argument.name, parameter.name)
+                 or ctx.variant_members.get(argument.name) == parameter.name)
         ):
             return Specificity.TRAIT
     if (

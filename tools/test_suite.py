@@ -24,6 +24,8 @@ from pathlib import Path
 from statistics import median
 from tempfile import TemporaryDirectory
 
+from tools.test_worker import timing_module_key
+
 
 @dataclass(frozen=True)
 class TestTarget:
@@ -127,15 +129,14 @@ def partition_test_files(
     if not files:
         return ()
     estimates = {path: _test_weight(path) for path in files}
-    observed = {
-        path: timings[path.as_posix()]
-        for path in files
-        if timings is not None
-        and path.as_posix() in timings
-        and type(timings[path.as_posix()]) in (int, float)
-        and math.isfinite(timings[path.as_posix()])
-        and timings[path.as_posix()] > 0
-    }
+    module_keys = {path: timing_module_key(path) for path in files}
+    # Older reports may use absolute paths or Windows path separators.
+    module_timings = {Path(key).as_posix(): value for key, value in (timings or {}).items()}
+    observed = {}
+    for path, key in module_keys.items():
+        seconds = module_timings.get(path.as_posix(), module_timings.get(key))
+        if type(seconds) in (int, float) and math.isfinite(seconds) and seconds > 0:
+            observed[path] = seconds
     scale = (
         median(observed[path] / estimates[path] for path in observed)
         if observed
@@ -153,8 +154,9 @@ def partition_test_files(
         # v2 timing report. Earlier reports still supply useful module totals.
         measured: dict[str, float] = {}
         for name in selected:
-            key = f"{path.as_posix()}::{name}"
-            value = test_timings.get(key) if test_timings is not None else None
+            value = None if test_timings is None else test_timings.get(
+                f"{path.as_posix()}::{name}", test_timings.get(f"{module_keys[path]}::{name}"),
+            )
             if type(value) in (int, float) and math.isfinite(value) and value > 0:
                 measured[name] = value
         missing_slots = len(selected) + 1 - len(measured)

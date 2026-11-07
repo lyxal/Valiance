@@ -1575,6 +1575,8 @@ def _import_node(
         for implementation in trait_implementations:
             origin = implementation.provider or provider
             self.env.context.trait_provider_aliases.setdefault(provider, set()).add(origin)
+            if not resolved_spec.components and resolved_spec.alias is not None:
+                self.env.context.trait_provider_aliases.setdefault(resolved_spec.alias, set()).add(origin)
             self.env.add_trait_impl(
                 implementation.object_name,
                 implementation.trait_name,

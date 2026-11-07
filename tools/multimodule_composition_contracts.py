@@ -64,7 +64,7 @@ COMPOSITION_CONTRACTS = {
     "variant_in_dictionary_mutation": (
         ("variant", "dictionary", "ownership", "match", "construction", "element"),
         'public variant Choice =>\n Present => public $value:Int end\n Empty => end\nend\n', ("Choice",),
-        'import {core.Choice}\npublic define update(value:Choice)->Choice=>\n $xs=dict{"x"=>Choice.Present(0)}\n $xs["x"]=$value\n $xs["x"]\nend\n', ("update",),
+        'import {core.Choice}\npublic define update(value:Choice)->Choice=>\n $xs=dict{"x"=>Choice.Present(0) as[Choice]}\n $xs["x"]=$value\n $xs["x"]\nend\n', ("update",),
         'update(Choice.Present(@N@)) match =>\n as :Present(v) => $v\n as :Empty => -1\nend\n', ("@N@",)),
     "trait_default_via_bounded_generic": (
         ("trait", "trait_default", "generic", "generic_bounds", "object", "dispatch", "method"),

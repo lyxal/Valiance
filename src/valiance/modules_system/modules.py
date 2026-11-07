@@ -941,6 +941,15 @@ def _module_trait_implementations(
         and node.kind == Symbol("trait")
     }
 
+    # A locally declared variant owns its case types and their implementations.
+    for checked in typed:
+        node = checked.node
+        if (isinstance(node, ObjectNode) and node.kind == Symbol("variant")
+                and not isinstance(checked, TypedImportedObjectNode)):
+            for member in node.variants:
+                name = _namespaced_symbol(member.name, node.name)
+                local_objects[name] = replace(node, name=name, definitions=member.definitions)
+
     result = []
     for typed_node in typed:
         node = typed_node.node
@@ -1131,6 +1140,66 @@ def import_behaviour_set_objects(
             ):
                 implementation_surface(implementation, qualified=False)
 
+    for implementation in _import_variant_case_implementations(exports, spec, runtime=True):
+        selected.append(_variant_case_implementation_object(implementation))
+    return tuple(selected)
+
+
+def _variant_case_implementation_object(implementation: ModuleTraitImplementation) -> ModuleObject:
+    """Link checked case methods and trait evidence without rebuilding storage."""
+    node = ObjectNode(
+        Symbol("object"), implementation.object_name, implementation.generics,
+        implementation.trait_pattern, definitions=implementation.definitions,
+        generic_constraints=implementation.generic_constraints,
+    )
+    return ModuleObject(implementation.object_name, TypedObjectNode(
+        node, None, implementation.method_results, implementation.method_ids,
+        method_bodies=implementation.method_bodies,
+    ))
+
+
+def _import_variant_case_implementations(
+    exports: ModuleExports, spec: ImportSpec, *, runtime: bool = False,
+) -> tuple[ModuleTraitImplementation, ...]:
+    """Import owned case implementations with the enclosing variant's spelling."""
+    public = exports.public_objects()
+    if spec.components:
+        names = {component.name: component.alias or component.name
+                 for component in spec.components if component.kind is None}
+        namespace = None
+    else:
+        namespace = spec.alias or Symbol(exports.module_name.rsplit(".", 1)[-1])
+        names = {obj.name: _namespaced_symbol(obj.name, namespace) for obj in public}
+    cases = {
+        _namespaced_symbol(member.name, obj.name): (obj.name, member)
+        for obj in public if obj.name in names
+        and isinstance(obj.typed.node, ObjectNode) and obj.typed.node.kind == Symbol("variant")
+        for member in obj.typed.node.variants
+    }
+    case_names = {name: _namespaced_symbol(member.name, names[parent])
+                  for name, (parent, member) in cases.items()}
+    # Namespaced trait evidence uses the original trait name and provider.
+    # Bytecode projections use the qualified runtime trait spelling.
+    renames = {**case_names, **(names if runtime or namespace is None else {})}
+    selected = []
+    for item in exports.trait_implementations:
+        if not (item.owned and item.public and item.object_name in cases):
+            continue
+        if runtime:
+            # The variant already emits inherited case methods. Only the
+            # explicit implementation body needs a separate runtime block.
+            _, member = cases[item.object_name]
+            inherited = {(definition.name.text, definition.location)
+                         for definition in member.definitions}
+            item = replace(item, definitions=tuple(
+                definition for definition in item.definitions
+                if (definition.name.text, definition.location) not in inherited
+            ))
+        selected.append(replace(
+            _rename_imported_types(item, renames),
+            object_name=case_names[item.object_name],
+            trait_name=renames.get(item.trait_name, item.trait_name),
+        ))
     return tuple(selected)
 
 
@@ -1154,7 +1223,7 @@ def import_owned_trait_implementations(
     return _deduplicate(tuple(replace(_rename_imported_types(item, renames),
                                     object_name=renames.get(item.object_name, item.object_name),
                                     trait_name=renames.get(item.trait_name, item.trait_name))
-                              for item in selected))
+                              for item in selected) + _import_variant_case_implementations(exports, spec))
 
 
 def import_trait_implementations(

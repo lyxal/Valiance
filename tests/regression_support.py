@@ -71,5 +71,5 @@ def assert_fixture_cases(testcase, cases: dict[str, tuple[str, str | None]]):
 
 def assert_fixture_inventory(testcase, folder: str, cases):
     """Catch accidentally omitted or orphaned Valiance source fixtures."""
-    actual = {str(path.relative_to(FIXTURES)) for path in (FIXTURES / folder).glob('*.vlnc')}
+    actual = {path.relative_to(FIXTURES).as_posix() for path in (FIXTURES / folder).glob('*.vlnc')}
     testcase.assertEqual(actual, set(cases))

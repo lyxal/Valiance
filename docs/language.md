@@ -2432,6 +2432,27 @@ end
 ```
 
 - A compile error is raised if a member is missing an `extend` implementation and the variant does not provide a default for it. Overrides must satisfy the declared method signature.
+
+A case can implement a trait in the variant body. Use a separate `Case as
+Trait` block alongside its case declaration.
+
+```valiance
+trait Drawable => extend draw -> String end
+
+variant Shape =>
+  Circle => $radius: Number end
+  Circle as Drawable =>
+    define draw => "circle"
+  end
+  Empty
+end
+```
+
+`Circle as Drawable` implements the trait for `Shape.Circle`. `Shape` and
+`Shape.Empty` do not acquire that implementation. The block can use the
+variant's generic parameters and can rely on compatible methods already
+defined on the case. Importing a public variant carries its case implementations
+of public traits.
 - The benefit of variants over traits is in pattern matching:
 
 ```
@@ -2460,7 +2481,10 @@ define typeOf(:Shape) =>
 end
 ```
 
-- Variant members are only accessible as their variant type from outside the file. They cannot be used independently of the variant outside of the file they are defined in.
+- A case constructor returns its concrete type, such as `Colour.RED` or
+  `Option.Some[Int]`. It can be passed directly to an element requiring a trait
+  implemented by that case, and it widens to the parent variant wherever the
+  parent is expected. A match on a known case only needs to cover that case.
 - Generics example:
 
 ```

@@ -12,6 +12,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
+def timing_module_key(source: Path) -> str:
+    """Name a timed module relative to the project when possible."""
+    try:
+        return source.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return source.name
+
+
 class TimedTestResult(unittest.TextTestResult):
     """Optionally collect per-test timings without changing unittest outcomes."""
 
@@ -29,10 +37,7 @@ class TimedTestResult(unittest.TextTestResult):
         module = sys.modules.get(type(test).__module__)
         source = Path(module.__file__) if module and hasattr(module, "__file__") else None
         if source is not None:
-            try:
-                filename = source.resolve().relative_to(Path.cwd().resolve()).as_posix()
-            except ValueError:
-                filename = source.name
+            filename = timing_module_key(source)
             name = f"{source.stem}.{type(test).__qualname__}.{test._testMethodName}"
             self.timings.append((filename, name, elapsed))
         super().stopTest(test)

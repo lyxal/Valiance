@@ -1851,6 +1851,11 @@ defaults, including when restoring imported shapes. Zero-parameter cases also
 register a qualified backslash-prefixed constructor alias, preserving the
 parser's explicit niladic chain boundary.
 
+Constructors return the instantiated case type. Generic solving projects its
+arguments to the parent when a parameter expects the parent variant. Match
+exhaustiveness uses the single reachable member for a known case, and the
+runtime uses the same generic projection when checking nested type arguments.
+
 A variant parent exposes a readable field only when every member exposes it;
 the resulting type is the union of the instantiated member field types. This
 does not authorize writes or expose a field absent from another case.

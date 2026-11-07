@@ -256,6 +256,44 @@ end
 
 
 class VariantSemanticTests(SemanticTestCase):
+    def test_case_constructors_pass_directly_to_trait_parameters(self):
+        self.assert_executes(r'''
+trait Drawable => extend draw -> String end
+variant Colour =>
+  RED
+  RED as Drawable => define draw => "red" end
+  BLUE
+end
+variant Shape =>
+  Circle => $radius: Int end
+  Circle as Drawable => define draw => "circle" end
+end
+define render(value: Drawable) -> String => $value draw end
+render(Colour.\RED)
+render(Shape.Circle(8))
+''', ['red', 'circle'])
+
+    def test_nested_case_trait_implementation_inherits_variant_generics(self):
+        self.assert_executes('''
+trait[T] Drawable => extend draw -> T end
+variant[T] Shape =>
+  Circle => $radius: T end
+  Circle as Drawable[T] => define draw => $self.radius end
+  Empty
+end
+define render(value: Drawable[Int]) -> Int => $value draw end
+Shape.Circle(8) match =>
+  as :Circle => render
+  as :Empty => 0
+end
+''', [8])
+
+    def test_nested_case_trait_implementation_checks_requirements(self):
+        self.assert_rejected('''
+trait Drawable => extend draw -> Int end
+variant Shape => Circle Circle as Drawable => end end
+''', 'does not satisfy required element')
+
     def test_bare_and_explicit_empty_cases_have_the_same_value_behavior(self):
         self.assert_executes(r'''
 variant Colour =>
@@ -456,16 +494,16 @@ Second(1) accept
                                      [('Int',), ('String',)])
 
     def test_constructor_inference_keeps_independent_arguments(self):
-        for expression, expected in (('Some(1)', 'Maybe[Int]'),
-                                     ('Some("text")', 'Maybe[String]'),
-                                     ('Some([1, 2])', 'Maybe[Int+]')):
+        for expression, expected in (('Some(1)', 'Maybe.Some[Int]'),
+                                     ('Some("text")', 'Maybe.Some[String]'),
+                                     ('Some([1, 2])', 'Maybe.Some[Int+]')):
             with self.subTest(expression=expression):
                 typed = self.analyse(MAYBE + expression)
                 self.assertEqual(T.show(typed[-1].typ), expected)
 
     def test_qualified_and_short_constructors_agree(self):
         typed = self.analyse(MAYBE + 'Some(4)\nMaybe.Some(9)')
-        self.assertEqual(T.show(typed[-1].typ), 'Maybe[Int]')
+        self.assertEqual(T.show(typed[-1].typ), 'Maybe.Some[Int]')
         values = run(loads(dumps(compile_program(typed))))
         self.assertEqual([value.fields['value'] for value in values], [4, 9])
         self.assertEqual([value.type_args for value in values], [('Int',), ('Int',)])
@@ -756,7 +794,9 @@ Some("three") unwrap
 
     def test_match_requires_every_member(self):
         self.assert_rejected(MAYBE + '''
-Some(1) match => as :Some(value) => $value end
+define unpack(value: Maybe[Int]) -> Int =>
+  $value match => as :Some(value) => $value end
+end
 ''', 'missing cases: Maybe.Empty')
 
     def test_guard_and_literal_pattern_do_not_prove_exhaustiveness(self):
