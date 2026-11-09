@@ -797,6 +797,44 @@ end
             (FunctionNode(body=(ElementNode(Symbol("double")),)),),
         )
 
+    def test_colon_modifier_nested_chain_allows_mixed_line_breaks(self):
+        inline = parse("foo: bar: baz: bax")
+        for source in (
+            "foo:\nbar:\nbaz:\nbax",
+            "foo: bar:\nbaz:\nbax",
+            "foo:\nbar:\nbaz: bax",
+            "foo:\nbar: baz:\nbax",
+            "foo: bar: baz:\nbax",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(parse(source), inline)
+
+        [foo] = inline
+        for expected in ("foo", "bar", "baz"):
+            self.assertEqual(foo.name, Symbol(expected))
+            self.assertEqual(len(foo.modifier_args), 1)
+            [foo] = foo.modifier_args[0].body
+        self.assertEqual(foo.name, Symbol("bax"))
+        self.assertEqual(foo.modifier_args, ())
+
+    def test_colon_modifier_parenthesized_functions_allow_next_line(self):
+        inline = parse("fork: (sum, length) /")
+        for source in (
+            "fork:\n(sum, length) /",
+            "fork:\n\n(sum, length) /",
+            "fork:\n(\n sum,\n length\n) /",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(parse(source), inline)
+
+    def test_colon_modifier_next_line_explicit_function_and_empty_body(self):
+        self.assertEqual(
+            parse("map([1, 2, 3]):\nfn => * 2 end"),
+            parse("map([1, 2, 3]): fn => * 2 end"),
+        )
+        with self.assertRaises(ParseError):
+            parse("foo:\n")
+
     def test_parses_explicit_function_modifier_after_ecs_arguments(self):
         [node] = parse("map([1, 2, 3]): fn => * 2 end")
 

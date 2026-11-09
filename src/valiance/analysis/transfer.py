@@ -114,3 +114,72 @@ def validate_task_transfer_type(
         return None
 
     return visit(typ, path)
+
+
+def shared_value_duplication_violation(
+    typ: T.Type, env: Environment, *, path: str
+) -> str | None:
+    """Find a statically known transitive ``@nodup`` shared-snapshot hazard.
+
+    Unlike an ordinary shallow object copy, sharing an immutable snapshot must
+    not make a managed owner containing a nonduplicable child independently
+    accessible from multiple tasks.  Unknown generic/captured values are
+    validated at runtime.  Shared identity-bearing handles terminate traversal.
+    """
+    from valiance.vtypes.reflection import fields_for_type
+
+    active: set[tuple[str, str]] = set()
+
+    def visit(item: T.Type, item_path: str) -> str | None:
+        """Locate the first disallowed nested owner along the type path."""
+        item = T.normalize(item)
+        if isinstance(item, (T.TaggedType, T.NoVecType, T.ExactType)):
+            return visit(item.inner, item_path)
+        if isinstance(item, T.TaskType):
+            return None
+        if isinstance(item, T.NominalType):
+            if item.name in (Symbol('Channel'), Symbol('State')):
+                return None
+            definition = env.lookup_object(item.name)
+            if definition is not None and definition.duplication_error is not None:
+                return f"{item_path} contains {T.show(item)}: {definition.duplication_error}"
+            for index, arg in enumerate(item.args):
+                violation = visit(arg, f"{item_path}.type[{index}]")
+                if violation is not None:
+                    return violation
+            if definition is None:
+                return None
+            key = (str(item.name), T.show(item))
+            if key in active:
+                return None
+            active.add(key)
+            try:
+                for field in fields_for_type(item, env).fields:
+                    violation = visit(field.type.typ, f"{item_path}.{field.name}")
+                    if violation is not None:
+                        return violation
+            finally:
+                active.remove(key)
+            return None
+        if isinstance(item, T.CollectionType):
+            return visit(item.base, f"{item_path}[]")
+        if isinstance(item, T.TupleType):
+            children = tuple((f"[{index}]", child) for index, child in enumerate(item.params))
+        elif isinstance(item, T.VariadicTupleType):
+            children = tuple((f"[{index}]", child.typ) for index, child in enumerate(item.items))
+        elif isinstance(item, T.RowType):
+            children = (
+                (() if isinstance(item, T.RecordType) else ((".base", item.base),))
+                + tuple((f".{field.name}", field.typ) for field in item.fields)
+            )
+        elif isinstance(item, (T.UnionType, T.IntersectionType)):
+            children = tuple(("", child) for child in sorted(item.items, key=T.show))
+        else:
+            return None
+        for suffix, child in children:
+            violation = visit(child, item_path + suffix)
+            if violation is not None:
+                return violation
+        return None
+
+    return visit(typ, path)

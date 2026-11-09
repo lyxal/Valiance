@@ -5798,6 +5798,59 @@
     },
     {
       "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "3",
+          "source": "import {std.concurrency}\n$s = concurrency.State(3)\nget $s"
+        }
+      ],
+      "module": null,
+      "name": "get",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "3",
+              "source": "import {std.concurrency}\n$s = concurrency.State(3)\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared process-local State handle.",
+              "name": "state"
+            }
+          ],
+          "returns": "An owned snapshot of T.",
+          "see_also": [],
+          "summary": "Read the latest committed immutable snapshot from a State[T]."
+        }
+      ],
+      "overloads": [
+        "get(state: State[T]) -> T"
+      ],
+      "parameters": [
+        {
+          "description": "Shared process-local State handle.",
+          "name": "state"
+        }
+      ],
+      "qualified_name": "get",
+      "returns": "An owned snapshot of T.",
+      "scope": "built-in",
+      "see_also": [],
+      "source_path": "src/valiance/elements/builtins.py",
+      "summary": "Read the latest committed immutable snapshot from a State[T]."
+    },
+    {
+      "aliases": [],
       "category": "Collections",
       "description": [],
       "examples": [],
@@ -7223,6 +7276,128 @@
       ],
       "source_path": "src/valiance/elements/builtins.py",
       "summary": "Read the message stored by an error or fault."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "2",
+          "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s modify: (1 +)\nget $s"
+        }
+      ],
+      "module": null,
+      "name": "modify",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "2",
+              "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s modify: (1 +)\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared State handle.",
+              "name": "state"
+            },
+            {
+              "description": "Function taking latest T and returning new T.",
+              "name": "transformation"
+            }
+          ],
+          "returns": "No stack outputs.",
+          "see_also": [],
+          "summary": "Apply a resumable, atomic, non-waiting transformation to State[T]."
+        }
+      ],
+      "overloads": [
+        "modify(state: State[T], transformation: Function[T -> T]) -> ()"
+      ],
+      "parameters": [
+        {
+          "description": "Shared State handle.",
+          "name": "state"
+        },
+        {
+          "description": "Function taking latest T and returning new T.",
+          "name": "transformation"
+        }
+      ],
+      "qualified_name": "modify",
+      "returns": "No stack outputs.",
+      "scope": "built-in",
+      "see_also": [],
+      "source_path": "src/valiance/elements/builtins.py",
+      "summary": "Apply a resumable, atomic, non-waiting transformation to State[T]."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "1",
+          "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s modifyWith: fn(x:Int)->Int,Int =>\n  $x 1 +\n  $x\nend"
+        }
+      ],
+      "module": null,
+      "name": "modifyWith",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "1",
+              "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s modifyWith: fn(x:Int)->Int,Int =>\n  $x 1 +\n  $x\nend"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared State handle.",
+              "name": "state"
+            },
+            {
+              "description": "Function returning two stack values: T and R.",
+              "name": "transformation"
+            }
+          ],
+          "returns": "The callback's second output R.",
+          "see_also": [],
+          "summary": "Atomically publish a State[T] replacement and return a separate R."
+        }
+      ],
+      "overloads": [
+        "modifyWith(state: State[T], transformation: Function[T -> T, R]) -> R"
+      ],
+      "parameters": [
+        {
+          "description": "Shared State handle.",
+          "name": "state"
+        },
+        {
+          "description": "Function returning two stack values: T and R.",
+          "name": "transformation"
+        }
+      ],
+      "qualified_name": "modifyWith",
+      "returns": "The callback's second output R.",
+      "scope": "built-in",
+      "see_also": [],
+      "source_path": "src/valiance/elements/builtins.py",
+      "summary": "Atomically publish a State[T] replacement and return a separate R."
     },
     {
       "aliases": [],
@@ -9421,6 +9596,67 @@
       "see_also": [],
       "source_path": "src/valiance/elements/builtins.py",
       "summary": "Apply two callables to two distinct consecutive groups of stack values."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "10",
+          "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s set: 10\nget $s"
+        }
+      ],
+      "module": null,
+      "name": "set",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "10",
+              "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s set: 10\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared State handle.",
+              "name": "state"
+            },
+            {
+              "description": "A zero-input expression producing a safe T.",
+              "name": "replacement"
+            }
+          ],
+          "returns": "No stack outputs.",
+          "see_also": [],
+          "summary": "Evaluate a replacement normally, then atomically publish it to State[T]."
+        }
+      ],
+      "overloads": [
+        "set(state: State[T], replacement: Function[ -> T]) -> ()"
+      ],
+      "parameters": [
+        {
+          "description": "Shared State handle.",
+          "name": "state"
+        },
+        {
+          "description": "A zero-input expression producing a safe T.",
+          "name": "replacement"
+        }
+      ],
+      "qualified_name": "set",
+      "returns": "No stack outputs.",
+      "scope": "built-in",
+      "see_also": [],
+      "source_path": "src/valiance/elements/builtins.py",
+      "summary": "Evaluate a replacement normally, then atomically publish it to State[T]."
     },
     {
       "aliases": [],
@@ -13265,6 +13501,295 @@
       "see_also": [],
       "source_path": "src/valiance/std/cmdline.py",
       "summary": "Return the arguments passed to the Valiance program."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "3",
+          "source": "import {std.concurrency}\n$s = concurrency.State(3)\nconcurrency.get($s)"
+        }
+      ],
+      "module": "std.concurrency",
+      "name": "get",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "3",
+              "source": "import {std.concurrency}\n$s = concurrency.State(3)\nconcurrency.get($s)"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared cell handle.",
+              "name": "state"
+            }
+          ],
+          "returns": "Snapshot T.",
+          "see_also": [],
+          "summary": "Read an immutable logical snapshot of the committed State[T]."
+        }
+      ],
+      "overloads": [
+        "std.concurrency.get(state: State[T]) -> T"
+      ],
+      "parameters": [
+        {
+          "description": "Shared cell handle.",
+          "name": "state"
+        }
+      ],
+      "qualified_name": "std.concurrency.get",
+      "returns": "Snapshot T.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/concurrency.py",
+      "summary": "Read an immutable logical snapshot of the committed State[T]."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "3",
+          "source": "import {std.concurrency}\n$s = concurrency.State(2)\nconcurrency.modify($s, fn(x:Int)->Int => $x 1 + end)\nget $s"
+        }
+      ],
+      "module": "std.concurrency",
+      "name": "modify",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "3",
+              "source": "import {std.concurrency}\n$s = concurrency.State(2)\nconcurrency.modify($s, fn(x:Int)->Int => $x 1 + end)\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared cell handle.",
+              "name": "state"
+            },
+            {
+              "description": "Function from T to replacement T.",
+              "name": "transformation"
+            }
+          ],
+          "returns": "No values.",
+          "see_also": [],
+          "summary": "Atomically modify State[T] using a non-waiting resumable callback."
+        }
+      ],
+      "overloads": [
+        "std.concurrency.modify(state: State[T], transformation: Function[T -> T]) -> ()"
+      ],
+      "parameters": [
+        {
+          "description": "Shared cell handle.",
+          "name": "state"
+        },
+        {
+          "description": "Function from T to replacement T.",
+          "name": "transformation"
+        }
+      ],
+      "qualified_name": "std.concurrency.modify",
+      "returns": "No values.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/concurrency.py",
+      "summary": "Atomically modify State[T] using a non-waiting resumable callback."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "4 5",
+          "source": "import {std.concurrency}\n$s = concurrency.State(4)\nconcurrency.modifyWith($s, fn(x:Int)->Int,Int => ($x 1 +) $x end)\nget $s"
+        }
+      ],
+      "module": "std.concurrency",
+      "name": "modifyWith",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "4 5",
+              "source": "import {std.concurrency}\n$s = concurrency.State(4)\nconcurrency.modifyWith($s, fn(x:Int)->Int,Int => ($x 1 +) $x end)\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared cell handle.",
+              "name": "state"
+            },
+            {
+              "description": "Function from T to two stack outputs: T, R.",
+              "name": "transformation"
+            }
+          ],
+          "returns": "The callback result R.",
+          "see_also": [],
+          "summary": "Atomically commit a replacement T and return a separate result R."
+        }
+      ],
+      "overloads": [
+        "std.concurrency.modifyWith(state: State[T], transformation: Function[T -> T, R]) -> R"
+      ],
+      "parameters": [
+        {
+          "description": "Shared cell handle.",
+          "name": "state"
+        },
+        {
+          "description": "Function from T to two stack outputs: T, R.",
+          "name": "transformation"
+        }
+      ],
+      "qualified_name": "std.concurrency.modifyWith",
+      "returns": "The callback result R.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/concurrency.py",
+      "summary": "Atomically commit a replacement T and return a separate result R."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "9",
+          "source": "import {std.concurrency}\n$s = concurrency.State(2)\nconcurrency.set($s, 9)\nget $s"
+        }
+      ],
+      "module": "std.concurrency",
+      "name": "set",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "9",
+              "source": "import {std.concurrency}\n$s = concurrency.State(2)\nconcurrency.set($s, 9)\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Shared cell handle.",
+              "name": "state"
+            },
+            {
+              "description": "New committed T.",
+              "name": "replacement"
+            }
+          ],
+          "returns": "No values.",
+          "see_also": [],
+          "summary": "Atomically publish a precomputed replacement for State[T]."
+        }
+      ],
+      "overloads": [
+        "std.concurrency.set(state: State[T], replacement: T) -> ()"
+      ],
+      "parameters": [
+        {
+          "description": "Shared cell handle.",
+          "name": "state"
+        },
+        {
+          "description": "New committed T.",
+          "name": "replacement"
+        }
+      ],
+      "qualified_name": "std.concurrency.set",
+      "returns": "No values.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/concurrency.py",
+      "summary": "Atomically publish a precomputed replacement for State[T]."
+    },
+    {
+      "aliases": [],
+      "category": "Concurrency",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": "3",
+          "source": "import {std.concurrency}\n$s = concurrency.State(3)\nget $s"
+        }
+      ],
+      "module": "std.concurrency",
+      "name": "State",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Concurrency",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "3",
+              "source": "import {std.concurrency}\n$s = concurrency.State(3)\nget $s"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Initial owned, duplicable, transferable T.",
+              "name": "initial"
+            }
+          ],
+          "returns": "A shared State[T] handle.",
+          "see_also": [],
+          "summary": "Create a shareable process-local State[T] without a background task."
+        }
+      ],
+      "overloads": [
+        "std.concurrency.State(initial: T) -> State[T]"
+      ],
+      "parameters": [
+        {
+          "description": "Initial owned, duplicable, transferable T.",
+          "name": "initial"
+        }
+      ],
+      "qualified_name": "std.concurrency.State",
+      "returns": "A shared State[T] handle.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/concurrency.py",
+      "summary": "Create a shareable process-local State[T] without a background task."
     },
     {
       "aliases": [],

@@ -397,3 +397,60 @@ runtime lowering. Do not fix this by accepting all matching short names in the
 VM: independent providers can define indistinguishable-looking `Item` types.
 Run `tests.test_std_file_integration` and the alias identity module tests after
 changes to import scopes, pattern lowering or nominal overload matching.
+
+# Woken scheduler tasks and protected lease cancellation
+
+A resumable task's blocked-wait cancellation callback is valid only until the
+runner resumes from that wait. In `TaskControlBlock.run`, clear `blocked_cancel`
+before `next(self.runner)` when continuing: a task can receive a FIFO exclusive
+gate lease, resume its protected callback and then yield for fairness. Keeping
+the old granted-waiter cancellation callback during those later yields allows
+cancellation to release a lease still held by active code. Do not clear the
+callback merely on `Scheduler.schedule`, since cancellation after wake but
+before resumption still needs the pending wait cleaned up by the generator.
+The deterministic regression is in `test_std_concurrency_state.py`.
+
+# Callback effect tags during contextual modifier specialisation
+
+`FunctionType.element_tags` and `Overload.generic_constraints` occupy different
+fields. When using a function type as a temporary overload during contextual
+modifier matching (`analysis/calls/candidates.py`), pass `element_tags=` by
+keyword; a positional third argument incorrectly treats effect tags as generic
+constraints, breaking callbacks that contain `try/handle` or panic effects.
+
+- The protected-callback guard must inspect effect tags on *unqualified*
+  built-ins as well as namespace-native calls. `println` and `input` have the
+  `IO` element tag but no `std` namespace. Check **before** the vectorised
+  dispatch branch so both paths reject effects before side effects.
+- Runtime shared-value validation must traverse copied native aggregate
+  fields; do not silently accept lazily evaluated collections or opaque native
+  handles as immutable State snapshots.
+
+# Protected native hooks and object-friendly intrinsic collisions
+
+A protected callback's ban on waits cannot rely solely on `CALL_NATIVE` or
+`@IO`: host-installed `BuiltinElement` wrappers can call arbitrary Python
+without a VM suspension opcode. The VM records its core built-in overload
+identities at initialization and rejects all other resolved native overloads
+inside a protected scope, even untagged host extensions. Native reflection
+factories and encoders need separate guards on their direct Python callback
+paths (`construct_reflected` and `_runtime_represent_native`).
+
+Adding a globally named intrinsic such as State's `get` can change which
+object-friendly declarations are runtime-aliased under `Owner::get`. The
+binding in `analysis/calls/selection.py` must agree with the selected
+implementation identity, not only with its source-level signature. If a
+local `get(:Foo)` overrides an imported `Foo::get`, keep the local call linked
+to `get` while preserving the qualified `Foo::get`. The State and runtime
+regressions exercise this distinction in both compiled execution modes.
+
+# Resumable State modifier set evaluation
+
+The modifier `state set: expression` compiles a zero-argument callback, not a
+precomputed value. Its VM request must evaluate through ordinary resumable
+activation *before* acquiring the exclusive gate, then turn the completed
+replacement into the same internal `set` request as `concurrency.set(state,
+value)`. When changing activation unwinding or cancellation, preserve the
+precommit request until the child finishes, and preserve the computed value
+when acquisition blocks. In contrast, `modify` and `modifyWith` retain the
+protected no-wait policy throughout their callbacks.

@@ -70,6 +70,16 @@ def _children(value: Any) -> Iterable[tuple[str, Any]]:
         for index, item in enumerate(value):
             yield f"[{index}]", item
         return
+    # Copied native aggregates are immutable but can contain owned runtime
+    # values.  Their immutable field containers are not represented as dicts.
+    if type(value).__name__ == "FFIBufferValue":
+        for index, item in enumerate(value.values):
+            yield f"[{index}]", item
+        return
+    if type(value).__name__ == "FFIStructValue":
+        for name, item in value.fields:
+            yield f".{name}", item
+        return
     inner = getattr(value, "value", None)
     if type(value).__name__ == "TaggedValue":
         yield ".value", inner
@@ -138,3 +148,44 @@ def require_task_transfer(value: Any, *, path: str = "value", unique: bool = Fal
     violations = validate_task_transfer(value, path=path, unique=unique)
     if violations:
         raise ValueError(violations[0].render())
+
+
+def require_shared_value(value: Any, *, path: str = "shared value") -> None:
+    """Validate transitive duplication and transfer safety for shared snapshots.
+
+    A managed outer object can be reference-counted even while it owns an
+    independently nonduplicable child.  Shared snapshots must not use that
+    shallow duplication to hide an isolated or ``@nodup`` resource.  Shared
+    handles are identity-bearing boundaries and do not expose their storage.
+    """
+    require_task_transfer(value, path=path)
+    pending: list[tuple[str, Any]] = [(path, value)]
+    seen: set[int] = set()
+    while pending:
+        item_path, item = pending.pop()
+        identity = id(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if classify_task_value(item) is TransferClass.SHARED_HANDLE:
+            continue
+        # A lazy iterator cannot be validated without executing potentially
+        # effectful computations after the snapshot has been shared.  An opaque
+        # native pointer also has independent lifetime and aliasing rules.
+        # Reject these representations until an explicit share-safe contract
+        # exists rather than silently treating them as ordinary values.
+        if type(item).__name__ in {"LazyList", "PlannedLazyList", "FFIHandleValue"}:
+            raise ValueError(
+                f"cannot share {item_path}: {type(item).__name__} is not a "
+                "validated immutable shareable value"
+            )
+        runtime_type = getattr(item, "runtime_type", None)
+        duplication_error = getattr(runtime_type, "dup_error", None)
+        if duplication_error is not None:
+            raise ValueError(
+                f"cannot share {item_path}: stored value contains a "
+                f"nonduplicable resource: {duplication_error}"
+            )
+        pending.extend(
+            (item_path + suffix, child) for suffix, child in _children(item)
+        )

@@ -175,6 +175,37 @@ class _ElementCalls:
 
         results: list[AnalysisBranch] = list(terminal)
         for candidate in winners:
+            # Native State retains the initial value independently for immutable
+            # snapshots and future callback execution.  Reject concrete types
+            # that cannot be duplicated or moved between tasks at the call site;
+            # unresolved generic inputs remain subject to the runtime checks.
+            if (candidate.implementation_id or "").startswith(
+                "native:std.concurrency.State:"
+            ):
+                from ..transfer import (
+                    shared_value_duplication_violation,
+                    validate_task_transfer_type,
+                )
+
+                initial_type = candidate.applied.params[0]
+                duplication = shared_value_duplication_violation(
+                    initial_type, self.env, path="State initial value"
+                )
+                if duplication is not None:
+                    self._diagnose(
+                        "State initial value must be duplicable: " + duplication,
+                        node,
+                    )
+                    continue
+                violation = validate_task_transfer_type(
+                    initial_type, self.env, path="State initial value"
+                )
+                if violation is not None:
+                    self._diagnose(
+                        "State initial value must be task-transferable: "
+                        + violation.render(), node,
+                    )
+                    continue
             if optional_conversion:
                 candidate = replace(candidate, applied=replace(
                     candidate.applied,

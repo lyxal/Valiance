@@ -695,6 +695,17 @@ class _CallSelection:
         overload_runtime_name = self.env.overload_runtime_name_for(
             node.name, overload
         )
+        # An object-friendly declaration may shadow an imported method with
+        # the same signature.  Never resolve a checked implementation through
+        # the imported qualified binding when it still points to the older
+        # method: the external definition has its own global runtime name.
+        if overload_runtime_name is not None and overload_runtime_name != node.name:
+            target_overloads = self.env.overloads_for(overload_runtime_name)
+            if target_overloads and not any(
+                item.implementation_id == candidate.implementation_id
+                for item in target_overloads
+            ):
+                overload_runtime_name = node.name
         behaviour_matches = tuple(
             (behaviour.provider, definition)
             for behaviour in self.env.context.trait_impl_behaviours

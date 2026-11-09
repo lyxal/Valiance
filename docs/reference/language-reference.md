@@ -3679,6 +3679,185 @@ Result:
 0
 ```
 
+## Built-ins — Concurrency
+
+### `get`
+
+Read the latest committed immutable snapshot from a State[T].
+
+**Overloads**
+
+- `get(state: State[T]) -> T`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(3)
+get $s
+  ```
+  Result:
+
+  ```text
+  3
+  ```
+
+
+**Parameters**
+
+- `state` — Shared process-local State handle.
+
+**Returns:** An owned snapshot of T.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(3)
+get $s
+```
+Result:
+
+```text
+3
+```
+
+### `modify`
+
+Apply a resumable, atomic, non-waiting transformation to State[T].
+
+**Overloads**
+
+- `modify(state: State[T], transformation: Function[T -> T]) -> ()`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(1)
+$s modify: (1 +)
+get $s
+  ```
+  Result:
+
+  ```text
+  2
+  ```
+
+
+**Parameters**
+
+- `state` — Shared State handle.
+- `transformation` — Function taking latest T and returning new T.
+
+**Returns:** No stack outputs.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(1)
+$s modify: (1 +)
+get $s
+```
+Result:
+
+```text
+2
+```
+
+### `modifyWith`
+
+Atomically publish a State[T] replacement and return a separate R.
+
+**Overloads**
+
+- `modifyWith(state: State[T], transformation: Function[T -> T, R]) -> R`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(1)
+$s modifyWith: fn(x:Int)->Int,Int =>
+  $x 1 +
+  $x
+end
+  ```
+  Result:
+
+  ```text
+  1
+  ```
+
+
+**Parameters**
+
+- `state` — Shared State handle.
+- `transformation` — Function returning two stack values: T and R.
+
+**Returns:** The callback's second output R.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(1)
+$s modifyWith: fn(x:Int)->Int,Int =>
+  $x 1 +
+  $x
+end
+```
+Result:
+
+```text
+1
+```
+
+### `set`
+
+Evaluate a replacement normally, then atomically publish it to State[T].
+
+**Overloads**
+
+- `set(state: State[T], replacement: Function[ -> T]) -> ()`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(1)
+$s set: 10
+get $s
+  ```
+  Result:
+
+  ```text
+  10
+  ```
+
+
+**Parameters**
+
+- `state` — Shared State handle.
+- `replacement` — A zero-input expression producing a safe T.
+
+**Returns:** No stack outputs.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(1)
+$s set: 10
+get $s
+```
+Result:
+
+```text
+10
+```
+
 ## Built-ins — Conversions
 
 ### `to`
@@ -9079,6 +9258,222 @@ Return the arguments passed to the Valiance program.
 import { std.cmdline } cmdline.\argv
 ```
 Returns the arguments supplied by the caller.
+
+## std.concurrency
+
+### `std.concurrency.get`
+
+Read an immutable logical snapshot of the committed State[T].
+
+**Overloads**
+
+- `std.concurrency.get(state: State[T]) -> T`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(3)
+concurrency.get($s)
+  ```
+  Result:
+
+  ```text
+  3
+  ```
+
+
+**Parameters**
+
+- `state` — Shared cell handle.
+
+**Returns:** Snapshot T.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(3)
+concurrency.get($s)
+```
+Result:
+
+```text
+3
+```
+
+### `std.concurrency.modify`
+
+Atomically modify State[T] using a non-waiting resumable callback.
+
+**Overloads**
+
+- `std.concurrency.modify(state: State[T], transformation: Function[T -> T]) -> ()`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(2)
+concurrency.modify($s, fn(x:Int)->Int => $x 1 + end)
+get $s
+  ```
+  Result:
+
+  ```text
+  3
+  ```
+
+
+**Parameters**
+
+- `state` — Shared cell handle.
+- `transformation` — Function from T to replacement T.
+
+**Returns:** No values.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(2)
+concurrency.modify($s, fn(x:Int)->Int => $x 1 + end)
+get $s
+```
+Result:
+
+```text
+3
+```
+
+### `std.concurrency.modifyWith`
+
+Atomically commit a replacement T and return a separate result R.
+
+**Overloads**
+
+- `std.concurrency.modifyWith(state: State[T], transformation: Function[T -> T, R]) -> R`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(4)
+concurrency.modifyWith($s, fn(x:Int)->Int,Int => ($x 1 +) $x end)
+get $s
+  ```
+  Result:
+
+  ```text
+  4 5
+  ```
+
+
+**Parameters**
+
+- `state` — Shared cell handle.
+- `transformation` — Function from T to two stack outputs: T, R.
+
+**Returns:** The callback result R.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(4)
+concurrency.modifyWith($s, fn(x:Int)->Int,Int => ($x 1 +) $x end)
+get $s
+```
+Result:
+
+```text
+4 5
+```
+
+### `std.concurrency.set`
+
+Atomically publish a precomputed replacement for State[T].
+
+**Overloads**
+
+- `std.concurrency.set(state: State[T], replacement: T) -> ()`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(2)
+concurrency.set($s, 9)
+get $s
+  ```
+  Result:
+
+  ```text
+  9
+  ```
+
+
+**Parameters**
+
+- `state` — Shared cell handle.
+- `replacement` — New committed T.
+
+**Returns:** No values.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(2)
+concurrency.set($s, 9)
+get $s
+```
+Result:
+
+```text
+9
+```
+
+### `std.concurrency.State`
+
+Create a shareable process-local State[T] without a background task.
+
+**Overloads**
+
+- `std.concurrency.State(initial: T) -> State[T]`
+
+  **Example**
+
+  ```vlnc
+  import {std.concurrency}
+$s = concurrency.State(3)
+get $s
+  ```
+  Result:
+
+  ```text
+  3
+  ```
+
+
+**Parameters**
+
+- `initial` — Initial owned, duplicable, transferable T.
+
+**Returns:** A shared State[T] handle.
+
+**Example**
+
+```vlnc
+import {std.concurrency}
+$s = concurrency.State(3)
+get $s
+```
+Result:
+
+```text
+3
+```
 
 ## std.file
 

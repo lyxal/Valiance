@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import deque
 import heapq
 from queue import Empty, SimpleQueue
-from threading import Condition
+from threading import Condition, Lock, RLock
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Generic, Iterator, TypeVar
@@ -296,6 +296,11 @@ class TaskControlBlock:
                 return
         if self.runner is None:
             return
+        # A prior blocked registration is no longer the task's active wait
+        # once its activation resumes.  In particular, a granted exclusive
+        # lease must not be surrendered by a stale cancellation callback while
+        # its protected callback is executing across fairness yields.
+        self.blocked_cancel = None
         try:
             yielded = next(self.runner)
             if not isinstance(yielded, (TaskYield, TaskBlocked)):
@@ -1095,3 +1100,92 @@ class Channel(Generic[T]):
             if receiver.wake is not None:
                 receiver.wake()
         self._reclaim_if_unowned()
+
+
+@dataclass(slots=True, eq=False)
+class ExclusiveWaiter:
+    """Cancellable FIFO registration for an internal exclusive resource."""
+
+    owner: object
+    wake: Callable[[], None]
+    granted: bool = False
+    cancelled: bool = False
+
+
+class ExclusiveGate:
+    """Scheduler-neutral, FIFO exclusive access with cancellable hand-off.
+
+    Ownership is transferred to the next waiter *before* it is woken.  A
+    cancellation in that interval releases the grant to the following waiter.
+    All state transitions are protected against future multi-worker schedulers;
+    wake callbacks are always invoked outside the internal lock.
+    """
+
+    _next_id = 1
+    _id_lock = Lock()
+
+    def __init__(self) -> None:
+        """Create one unowned gate with a globally unique diagnostic ID."""
+        with ExclusiveGate._id_lock:
+            self.id = ExclusiveGate._next_id
+            ExclusiveGate._next_id += 1
+        self._lock = RLock()
+        self._owner: object | None = None
+        self._waiters: deque[ExclusiveWaiter] = deque()
+
+    @property
+    def owner(self) -> object | None:
+        """Report the current exclusive owner under the gate lock."""
+        with self._lock:
+            return self._owner
+
+    def acquire(self, owner: object, wake: Callable[[], None]) -> ExclusiveWaiter | None:
+        """Acquire immediately or register one FIFO suspension."""
+        with self._lock:
+            if self._owner is owner:
+                raise ConcurrencyFault("recursive exclusive acquisition is forbidden")
+            if self._owner is None:
+                self._owner = owner
+                return None
+            registration = ExclusiveWaiter(owner, wake)
+            self._waiters.append(registration)
+            return registration
+
+    def release(self, owner: object) -> None:
+        """Release exactly once and transfer ownership to one live waiter."""
+        wake = None
+        with self._lock:
+            if self._owner is not owner:
+                raise RuntimeError("exclusive resource release without ownership")
+            self._owner = None
+            while self._waiters:
+                waiter = self._waiters.popleft()
+                if waiter.cancelled:
+                    continue
+                self._owner = waiter.owner
+                waiter.granted = True
+                wake = waiter.wake
+                break
+        if wake is not None:
+            wake()
+
+    def cancel(self, registration: ExclusiveWaiter) -> None:
+        """Cancel a queued waiter, or surrender a granted-but-unused lease."""
+        with self._lock:
+            if registration.cancelled:
+                return
+            registration.cancelled = True
+            granted = registration.granted
+            if not granted:
+                try:
+                    self._waiters.remove(registration)
+                except ValueError:
+                    pass
+        if granted:
+            self.release(registration.owner)
+
+    @property
+    def waiter_count(self) -> int:
+        """Count queued exclusive-wait registrations."""
+        with self._lock:
+            return len(self._waiters)

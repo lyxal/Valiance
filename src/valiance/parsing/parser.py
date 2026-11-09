@@ -3073,6 +3073,7 @@ class Parser:
 
     def _modifier_arguments(self, start: Token) -> tuple[FunctionNode, ...]:
         """Parse modifier arguments from the current token stream."""
+        self._skip_newlines()
         if self._match(TokenKind.LPAREN):
             return tuple(
                 self._modifier_function(start, body)

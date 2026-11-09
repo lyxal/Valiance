@@ -49,9 +49,10 @@ from valiance.runtime.bytecode import (
 from valiance.runtime.concurrency import (
     CancelledFault, Channel, ChannelReceiver, ChannelSender, ClosedFault,
     DeadlockFault, Receive, Scheduler, TaskHandle, TaskScope, TaskBlocked, TaskState,
-    TaskYield, WaitDependency,
+    TaskYield, WaitDependency, ExclusiveWaiter,
 )
-from valiance.runtime.transfer import require_task_transfer
+from valiance.runtime.protected import GuardedValue, ProtectedOperation
+from valiance.runtime.transfer import require_shared_value, require_task_transfer
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     BorrowedValue as _BorrowedValue,
@@ -489,6 +490,8 @@ class _FunctionCallRequest:
     isolate_captures: bool = True
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
     return_tag_specs: tuple[object, ...] = ()
+    protected_scope: _ProtectedScope | None = None
+    precommit_operation: ProtectedOperation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,6 +640,79 @@ class _ActivationScopeClose:
     primary_fault: BaseException | None = None
 
 
+@dataclass(slots=True)
+class _ProtectedScope:
+    """Reusable activation-lifetime lease for protected callback execution."""
+
+    operation: ProtectedOperation
+    owner: object
+    vm: VirtualMachine
+    active: bool = False
+    finished: bool = False
+
+    def activate(self) -> None:
+        """Install the lease policy on the owner before callback execution."""
+        if self.finished:
+            raise RuntimeError("cannot activate a released protected scope")
+        if self.vm._protected_scopes.get(id(self.owner)) is not None:
+            raise RuntimeError("nested protected state operations are forbidden")
+        self.vm._protected_scopes[id(self.owner)] = self
+        self.active = True
+
+    def close(self) -> None:
+        """Idempotently remove the no-wait policy and release exclusive access."""
+        if self.finished:
+            return
+        self.finished = True
+        try:
+            if self.active:
+                if self.vm._protected_scopes.get(id(self.owner)) is self:
+                    del self.vm._protected_scopes[id(self.owner)]
+                self.active = False
+                self.operation.cell.gate.release(self.owner)
+        finally:
+            self.operation.close(lambda value: _release_value(value, self.vm))
+
+    def complete(self, outputs: list[Any]) -> list[Any]:
+        """Validate then publish once; release the lease on every exit path."""
+        try:
+            kind = self.operation.kind
+            if kind not in ('update', 'updateWith'):
+                raise RuntimeError("only protected callbacks can complete a transaction")
+            expected = 2 if kind == 'updateWith' else 1
+            if len(outputs) != expected:
+                raise RuntimeError(f"protected callback must return {expected} value(s)")
+            replacement = outputs[0]
+            old = self.operation.cell.commit(self.owner, replacement)
+            outputs.pop(0)  # replacement ownership moves to cell at commit
+            try:
+                self.close()
+            finally:
+                _release_value(old, self.vm)
+            return outputs if kind == 'updateWith' else []
+        except BaseException:
+            # These return values belong to the abandoned callback, not to the
+            # caller frame.  Drop every uncommitted occurrence during abort.
+            failure = _release_runtime_occurrences(outputs, self.vm)
+            try:
+                self.close()
+            except BaseException as cleanup_fault:
+                if failure is None:
+                    failure = cleanup_fault
+            if failure is not None:
+                raise failure
+            raise
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationProtectedWait:
+    """A gate operation suspended until its FIFO registration is granted."""
+
+    scope: _ProtectedScope
+    registration: ExclusiveWaiter
+    location: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class _ActivationChannelSend:
     channel: Channel[Any]
@@ -705,6 +781,8 @@ class VirtualMachine:
             OptimizationStats() if collect_optimization_stats else None
         )
         self.scheduler = Scheduler()
+        self._protected_scopes: dict[int, _ProtectedScope] = {}
+        self._root_protected_owner = object()
         self._native_executor = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="valiance-native"
         )
@@ -751,9 +829,19 @@ class VirtualMachine:
             runtime_reflection=self._runtime_reflection_action,
             program_args=self.program_args,
         )
+        core_elements = runtime_elements()
+        # Only the VM's own immutable core intrinsics are eligible to run
+        # inside a protected callback.  A host-installed BuiltinElement may
+        # invoke arbitrary Python, including blocking I/O, without emitting
+        # a VM suspension opcode or advertising an @IO tag.
+        self._protected_core_overloads = frozenset(
+            id(overload)
+            for element in core_elements.values()
+            for overload in element.definitions
+        )
         self.globals = {
             name: BuiltinValue(element, runtime_context)
-            for name, element in (runtime_elements() | runtime_stdlib_elements()).items()
+            for name, element in (core_elements | runtime_stdlib_elements()).items()
         }
 
     @property
@@ -814,6 +902,9 @@ class VirtualMachine:
 
         parsed = parse_type(target_type)
         if isinstance(parsed, T.FFINamedType):
+            # A registered factory is arbitrary host Python; it can block
+            # without using the VM's cooperative suspension machinery.
+            self._assert_unprotected_wait('invoke a host native constructor')
             if unsafe:
                 raise ValueError("unsafe cannot bypass native factory validation")
             factory = self._reflection_native_factories.get(target_type)
@@ -1109,6 +1200,7 @@ class VirtualMachine:
 
     def _runtime_represent_native(self, value: Any) -> Any:
         """Return a host-authorized native representation, never a raw pointer."""
+        self._assert_unprotected_wait('invoke a host native encoder')
         adapter = self._reflection_native_encoders.get(value.ffi_type)
         if adapter is None:
             raise ValueError(f"no registered native representation for {value.ffi_type}")
@@ -2543,6 +2635,7 @@ class VirtualMachine:
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         """Invoke a callable through its statically established interface policy."""
+        self._assert_unprotected_wait('invoke a synchronous native callback')
         value = _accessed_value(value)
         if isinstance(value, FunctionValue):
             ranks = value.code.param_collection_ranks
@@ -2674,6 +2767,107 @@ class VirtualMachine:
             )
         )
 
+    def _current_protected_scope(self) -> _ProtectedScope | None:
+        """Return the current task's protected callback lease, if any."""
+        owner = self.scheduler.current_task or self._root_protected_owner
+        return self._protected_scopes.get(id(owner))
+
+    def _assert_unprotected_wait(self, operation: str) -> None:
+        """Forbid blocking or unsafe native work while a lease is active."""
+        if self._current_protected_scope() is not None:
+            raise RuntimeError(
+                f"protected callback cannot {operation}; only instruction-budget "
+                "fairness yields are allowed"
+            )
+
+    def _start_protected_operation(
+        self, activation: _Activation, scope: _ProtectedScope,
+    ) -> _FunctionCallRequest | None:
+        """Enter the general protected policy and execute a State operation."""
+        scope.activate()
+        operation = scope.operation
+        cell = operation.cell
+        try:
+            if operation.kind == 'get':
+                snapshot = _duplicate_occurrence(cell.value)
+                try:
+                    scope.close()
+                except BaseException:
+                    _release_value(snapshot, self)
+                    raise
+                activation.frame.stack.append(snapshot)
+                return None
+            if operation.kind == 'set':
+                assert operation.payload is not None
+                old = cell.commit(scope.owner, operation.payload)
+                operation.payload = None  # transferred to the cell
+                try:
+                    scope.close()
+                finally:
+                    _release_value(old, self)
+                return None
+            callback = operation.payload
+            if not isinstance(callback, (FunctionValue, OverloadedFunctionValue)):
+                raise RuntimeError('State update requires a Valiance function')
+            selected = _selected_function_implementation(callback, None)
+            if len(selected.code.params) != 1:
+                raise RuntimeError('protected callback requires one value parameter')
+            callback_args = (_duplicate_occurrence(cell.value),)
+            return _FunctionCallRequest(
+                selected, callback_args, 'protected callback',
+                protected_scope=scope,
+            )
+        except BaseException:
+            scope.close()
+            raise
+
+    def _begin_protected_operation(
+        self, activation: _Activation, operation: ProtectedOperation,
+    ) -> _FunctionCallRequest | _ActivationProtectedWait | None:
+        """Evaluate computed replacements first, or acquire the exclusive gate."""
+        if operation.kind == 'setComputed':
+            # This is an ordinary resumable call: no gate and no protected
+            # callback policy exists until its replacement has been computed.
+            try:
+                if self._current_protected_scope() is not None:
+                    raise RuntimeError('nested protected state operations are forbidden')
+                callback = operation.payload
+                if not isinstance(callback, (FunctionValue, OverloadedFunctionValue)):
+                    raise RuntimeError('State set requires a Valiance function')
+                selected = _selected_function_implementation(callback, None)
+                if selected.code.params:
+                    raise RuntimeError('State set expression requires no value parameters')
+                return _FunctionCallRequest(
+                    selected, (), 'State replacement expression',
+                    precommit_operation=operation,
+                )
+            except BaseException:
+                operation.close(lambda value: _release_value(value, self))
+                raise
+        owner = self.scheduler.current_task or self._root_protected_owner
+        if self._current_protected_scope() is not None:
+            operation.close(lambda value: _release_value(value, self))
+            raise RuntimeError('nested protected state operations are forbidden')
+        scope = _ProtectedScope(operation, owner, self)
+        task = self.scheduler.current_task
+        wake = (lambda task=task: self.scheduler.schedule(task)) if task else lambda: None
+        try:
+            waiter = operation.cell.gate.acquire(owner, wake)
+        except BaseException:
+            operation.close(lambda value: _release_value(value, self))
+            raise
+        if waiter is None:
+            return self._start_protected_operation(activation, scope)
+        if task is None:
+            try:
+                self.scheduler.run_until(lambda: waiter.granted)
+                return self._start_protected_operation(activation, scope)
+            except BaseException:
+                operation.cell.gate.cancel(waiter)
+                operation.close(lambda value: _release_value(value, self))
+                raise
+        return _ActivationProtectedWait(scope, waiter)
+
     def _drive_frames(self, root: _Activation) -> list[Any]:
         """Drive bytecode activations without nesting Python function calls."""
         frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [(root, None)]
@@ -2795,6 +2989,16 @@ class VirtualMachine:
                         ),
                     )
                     continue
+                if isinstance(event, _ActivationProtectedWait):
+                    yield TaskBlocked(
+                        "exclusive gate",
+                        lambda event=event: (
+                            event.scope.operation.cell.gate.cancel(event.registration),
+                            event.scope.operation.close(lambda value: _release_value(value, self)),
+                        ),
+                        (WaitDependency("gate", event.scope.operation.cell.gate.id, "acquire"),),
+                    )
+                    continue
                 if isinstance(event, _ActivationChannelSend):
                     yield TaskBlocked(
                         "channel send",
@@ -2845,6 +3049,25 @@ class VirtualMachine:
                 activation, _request = frames.pop()
                 pending_call = activation.pending_call
                 activation.pending_call = None
+                if pending_call is not None and pending_call.protected_scope is not None:
+                    try:
+                        pending_call.protected_scope.close()
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                if pending_call is not None and pending_call.precommit_operation is not None:
+                    try:
+                        pending_call.precommit_operation.close(
+                            lambda value: _release_value(value, self)
+                        )
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                if isinstance(activation.pending_concurrency, _ActivationProtectedWait):
+                    waiting = activation.pending_concurrency
+                    try:
+                        waiting.scope.operation.cell.gate.cancel(waiting.registration)
+                        waiting.scope.operation.close(lambda value: _release_value(value, self))
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
                 if pending_call is not None and pending_call.release_after is not None:
                     try:
                         _release_value(pending_call.release_after, self)
@@ -3144,6 +3367,44 @@ class VirtualMachine:
         )
         return list(call_site_contracted)
 
+    def _commit_computed_replacement(
+        self, activation: _Activation, operation: ProtectedOperation,
+        outputs: list[Any],
+    ) -> None:
+        """Publish one ordinarily evaluated set expression using the normal gate.
+
+        The function has already completed (and may have yielded, waited, or
+        performed I/O). Its result is retained independently while the normal
+        cancellable exclusive acquisition and atomic commit take place.
+        """
+        try:
+            if len(outputs) != 1:
+                raise RuntimeError('State set expression must return one value')
+            require_shared_value(outputs[0], path='State replacement')
+            callback = operation.payload
+            operation.payload = outputs.pop(0)  # move replacement to request
+            # The pre-evaluation callback is no longer needed; it must not be
+            # mistaken for the replacement owned by the pending set request.
+            _release_value(callback, self)
+            operation.kind = 'set'
+            self._raise_pending_cancellation()
+            event = self._begin_protected_operation(activation, operation)
+            if isinstance(event, _ActivationProtectedWait):
+                activation.pending_concurrency = event
+                return  # retry the same resolved-call IP after a FIFO grant
+            if event is not None:
+                raise RuntimeError(
+                    'computed State replacement cannot invoke another callback'
+                )
+            activation.ip += 1
+        except BaseException as exc:
+            failure = _release_runtime_occurrences(outputs, self, exc)
+            try:
+                operation.close(lambda value: _release_value(value, self))
+            except BaseException as cleanup_fault:
+                _attach_secondary_faults(failure or exc, (cleanup_fault,))
+            raise failure or exc
+
     def _resume_call_success(
         self,
         activation: _Activation,
@@ -3155,9 +3416,17 @@ class VirtualMachine:
             raise RuntimeError("completed function has no suspended caller")
         activation.pending_call = None
         try:
+            if request.precommit_operation is not None:
+                self._commit_computed_replacement(
+                    activation, request.precommit_operation, result,
+                )
+                return
             if request.release_after is not None:
                 _release_value(request.release_after, self)
-            _mark_mustcall_method(request.args, result, request.callee)
+            if request.protected_scope is not None:
+                result = request.protected_scope.complete(result)
+            else:
+                _mark_mustcall_method(request.args, result, request.callee)
             activation.frame.stack.extend(result)
         except Exception as exc:
             self._raise_activation_error(activation, exc)
@@ -3174,6 +3443,18 @@ class VirtualMachine:
             self._raise_activation_error(activation, error)
             return
         activation.pending_call = None
+        if request.protected_scope is not None:
+            try:
+                request.protected_scope.close()
+            except BaseException as cleanup_error:
+                _attach_secondary_faults(error, (cleanup_error,))
+        if request.precommit_operation is not None:
+            try:
+                request.precommit_operation.close(
+                    lambda value: _release_value(value, self)
+                )
+            except BaseException as cleanup_error:
+                _attach_secondary_faults(error, (cleanup_error,))
         if isinstance(error, _py_builtins.RuntimeError):
             error = _with_call_detail(error, request.target, request.args)
         if request.release_after is not None:
@@ -3303,6 +3584,19 @@ class VirtualMachine:
                         scope.finalize_close()
                     raise primary
         pending = activation.pending_concurrency
+        if isinstance(pending, _ActivationProtectedWait):
+            if pending.registration.cancelled:
+                raise CancelledFault('protected operation was cancelled')
+            if not pending.registration.granted:
+                return pending
+            activation.pending_concurrency = None
+            request = self._start_protected_operation(activation, pending.scope)
+            if request is not None:
+                activation.pending_call = request
+                activation.ip = ip
+                return request
+            ip += 1
+            activation.ip = ip
         if isinstance(pending, _ActivationNativeCall):
             if not pending.state.completed:
                 return pending
@@ -3407,6 +3701,12 @@ class VirtualMachine:
                     activation.ip = ip
                     return _ActivationQuantumYield()
                 instruction = instructions[ip]
+                if self._current_protected_scope() is not None and instruction.op in {
+                    OpCode.CALL_NATIVE, OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
+                    OpCode.WAIT_TASKS_VECTORISED, OpCode.CHANNEL_SEND,
+                    OpCode.CHANNEL_RECEIVE, OpCode.SCOPE_BEGIN, OpCode.SCOPE_END,
+                }:
+                    self._assert_unprotected_wait(instruction.op.value)
                 executed += 1
                 try:
                     match instruction.op:
@@ -3666,6 +3966,17 @@ class VirtualMachine:
                                     activation.pending_call = request
                                     activation.ip = ip
                                     return request
+                                if frame.stack and isinstance(frame.stack[-1], ProtectedOperation):
+                                    operation = frame.stack.pop()
+                                    protected_event = self._begin_protected_operation(activation, operation)
+                                    if isinstance(protected_event, _FunctionCallRequest):
+                                        activation.pending_call = protected_event
+                                        activation.ip = ip
+                                        return protected_event
+                                    if isinstance(protected_event, _ActivationProtectedWait):
+                                        activation.pending_concurrency = protected_event
+                                        activation.ip = ip
+                                        return protected_event
                                 self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
@@ -5594,6 +5905,9 @@ class VirtualMachine:
                     ):
                         direct_leaf = False
                         break
+                    if reference.name.startswith('std.concurrency.') or reference.name in {'get', 'set', 'modify', 'modifyWith'}:
+                        direct_leaf = False
+                        break
                     value = function.globals.get(reference.name)
                     if not isinstance(value, BuiltinValue):
                         direct_leaf = False
@@ -6666,7 +6980,7 @@ def _needs_release(value: Any) -> bool:
         value = value.value
         if isinstance(value, _SCALAR_RUNTIME_TYPES):
             return False
-    if isinstance(value, (ListValue, DictValue, TaskHandle, Channel)):
+    if isinstance(value, (ListValue, DictValue, TaskHandle, Channel, GuardedValue)):
         return True
     if isinstance(value, Receive):
         return not value.closed and _needs_release(value.value)
@@ -6823,7 +7137,7 @@ def _retain_runtime_reference(value: Any) -> Any:
     if isinstance(value, TaskHandle):
         value.control.retain_handle()
         return value
-    if isinstance(value, Channel):
+    if isinstance(value, (Channel, GuardedValue)):
         value.retain_handle()
         return value
     if isinstance(value, Receive):
@@ -6911,7 +7225,7 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             lambda outputs, fault: _release_task_terminal(outputs, fault, vm)
         )
         return
-    if isinstance(value, Channel):
+    if isinstance(value, (Channel, GuardedValue)):
         value.release_handle(lambda item: _release_value(item, vm))
         return
     if isinstance(value, Receive):
@@ -8060,6 +8374,8 @@ def _runtime_type_name(value: Any) -> str | None:
         if not value.type_args:
             return value.type_name
         return f"{value.type_name}[{', '.join(value.type_args)}]"
+    if isinstance(value, GuardedValue):
+        return "State"
     if isinstance(value, RuntimeNumber):
         if value == value.to_integral_value():
             return "Int"
@@ -8632,6 +8948,28 @@ def _call_resolved_builtin(
             call_overload=adapted_call_overload if base_context.call_overload is not None else None,
             test_predicate=adapted_predicate if base_context.test_predicate is not None else None,
         )
+    if vm._current_protected_scope() is not None:
+        # Protect the *entire* resolved-call path, including vectorised calls.
+        # Unqualified built-ins such as input/println are native I/O despite
+        # not living under the std namespace.  They must be rejected before
+        # executing any native side effect, not merely before task waits.
+        has_io_effect = any(
+            tag.name.text == "IO" and not tag.name.namespace
+            for tag in overload.signature.element_tags
+            if not tag.absent
+        )
+        # Reject every externally supplied implementation, not just those
+        # registered under std.*.  Third-party native elements can block or
+        # mutate host state without entering any VM waiting instruction.
+        untrusted_implementation = id(overload) not in vm._protected_core_overloads
+        # A reflected native constructor catches Python errors and returns a
+        # Result.  Reject its *effect* here rather than allowing the wrapper
+        # to turn the protected-policy fault into an ordinary value.
+        native_reflection = overload.signature.reflection_operation == "dynamic:native"
+        if has_io_effect or untrusted_implementation or native_reflection:
+            vm._assert_unprotected_wait(
+                f"invoke I/O or native element {callee.element.name}"
+            )
     if vectorised:
         extension = _materialize_vector_extension(vm, extension_reference, frame)
         try:
@@ -9758,6 +10096,9 @@ def _matches_cast_type(
                     _parse_runtime_type_pattern(expected_args[0], type_facts),
                 )
             )
+
+        if name == "State":
+            return isinstance(unwrapped, GuardedValue)
 
         if name == "Dict":
             if not isinstance(unwrapped, DictValue):
@@ -11273,6 +11614,11 @@ def _fields_from_value(frame: _Frame, choices: tuple, vm: VirtualMachine) -> Ref
 def _construct_managed(frame: _Frame, config: tuple, vm: VirtualMachine) -> Any:
     """Allocate partial storage or consume it without invoking owner initialization."""
     operation, layout, runtime_name, owner_spec = config
+    if owner_spec[0] == "ffi" and operation not in ("uninit", "finished?"):
+        # Finalization consumes the builder *before* calling the host factory.
+        # Reject forbidden native work before either action; the factory's
+        # exception handler must not turn a protection fault into a Result.
+        vm._assert_unprotected_wait('invoke a host native constructor')
     if operation == "uninit":
         constructor = _load_name(runtime_name, frame.locals, frame.globals) if runtime_name is not None else None
         return UninitValue(
@@ -12168,6 +12514,8 @@ def _runtime_type_name(value: Any) -> str:
     value = unwrap_runtime_value(value)
     if isinstance(value, (FFIScalarValue, FFIBufferValue, FFIStructValue, FFIHandleValue)):
         return value.ffi_type
+    if isinstance(value, GuardedValue):
+        return "State"
     if isinstance(value, RuntimeNumber):
         return "Int" if value == value.to_integral_value() else "Real"
     if isinstance(value, str):

@@ -1196,6 +1196,22 @@ extend: <selector>
 #? No need for `fn => +` or E.C.S or postfix application
 ```
 
+- The function supplied after `:` can start on the next line. This also works for nested modifiers, and each `:` may independently be followed by a line break:
+
+```valiance
+foo: bar: baz: bax
+
+foo:
+bar:
+baz:
+bax
+
+foo: bar:
+baz: bax
+```
+
+  These forms have the same meaning. Once a modifier body is complete, a newline still ends the statement as usual.
+- Parenthesized function-argument lists can also start on the next line, such as `fork:` followed by `(sum, length)`.
 - If an element takes multiple function arguments, chains must be wrapped in `()` and separated by `,`.
 	- This ensure that the language grammar is not context-sensitive
 

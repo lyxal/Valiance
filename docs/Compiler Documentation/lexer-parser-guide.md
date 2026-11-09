@@ -518,6 +518,12 @@ ListLiteral(...)
 ElementNode(name=map, modifier_args=(FunctionNode(body=(ElementNode(double),)),))
 ```
 
+A modifier's function body may begin on the next line, including within a
+nested modifier chain. Thus `foo: bar: baz: bax`, `foo: bar:\nbaz:\nbax`,
+and `foo:\nbar:\nbaz: bax` parse equivalently (where `\n` denotes a
+line break). Ordinary newlines after a completed modifier body still end the
+statement.
+
 Multiple function arguments use parenthesized comma-separated chains:
 
 ```text

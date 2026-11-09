@@ -900,7 +900,7 @@ def _modifier_variants_for_expected(
         if not _function_overload_matches_type(overload, concrete_expected, ctx):
             continue
         application = T.apply_overload(
-            T.Overload(typ.params, typ.returns, typ.element_tags),
+            T.Overload(typ.params, typ.returns, element_tags=typ.element_tags),
             concrete_expected.params,
             ctx,
         )

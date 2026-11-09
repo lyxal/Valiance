@@ -61,6 +61,10 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   managed-object and checked compositional
   [Valiance encoders and typed decoders](../../src/valiance/std/json.vlnc), backed by
   [JSON parsing and runtime reconstruction](../../src/valiance/std/json.py).
+- [State runtime and protected callbacks](state-runtime.md) documents the private
+  FIFO gate, resumable activation cleanup, and no-new-bytecode integration.
+- [Shared State user guide](../concurrency-state.md) explains the public
+  `std.concurrency.State[T]` API, stack effects, and callback restrictions.
 - [Understanding the runtime and code generator](runtime-system.md) follows
   typed nodes through bytecode, frames, calls, vectorisation, ownership, panics,
   serialization, and VM debugging.

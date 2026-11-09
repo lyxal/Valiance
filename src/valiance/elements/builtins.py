@@ -4747,6 +4747,79 @@ for _error in REFLECTION_ERROR_TYPES:
         ),
     )(_construct_reflection_error)
 
+# Convenience global operations supply the `get $state` / `$state modify:`
+# modifier syntax without extending the parser or the bytecode format.  The
+# native std.concurrency module retains equivalent explicitly-called forms.
+_STATE_GENERIC = T.N(Symbol("State"), T.V("T"))
+
+
+@builtin(
+    "get", (_STATE_GENERIC,), (T.V("T"),),
+    param_names=("state",), vectorisable=False,
+    documentation=element_documentation(
+        "Read the latest committed immutable snapshot from a State[T].",
+        parameters=(("state", "Shared process-local State handle."),),
+        returns="An owned snapshot of T.", category="Concurrency",
+        examples=(("import {std.concurrency}\n$s = concurrency.State(3)\nget $s", "3"),),
+    ),
+)
+def _global_state_get(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Forward modifier-form State reads to the namespaced implementation."""
+    from valiance.std.concurrency import _get
+    return _get(args, ctx)
+
+
+@builtin(
+    "set", (_STATE_GENERIC, T.Fn((), (T.V("T"),))), (),
+    param_names=("state", "replacement"), vectorisable=False,
+    documentation=element_documentation(
+        "Evaluate a replacement normally, then atomically publish it to State[T].",
+        parameters=(("state", "Shared State handle."),
+                    ("replacement", "A zero-input expression producing a safe T.")),
+        returns="No stack outputs.", category="Concurrency",
+        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s set: 10\nget $s", "10"),),
+    ),
+)
+def _global_state_set(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Request ordinary pre-gate evaluation followed by an atomic State commit."""
+    from valiance.std.concurrency import _request
+    return _request("setComputed", args, ctx)
+
+
+@builtin(
+    "modify", (_STATE_GENERIC, T.Fn((T.V("T"),), (T.V("T"),))), (),
+    param_names=("state", "transformation"), vectorisable=False,
+    documentation=element_documentation(
+        "Apply a resumable, atomic, non-waiting transformation to State[T].",
+        parameters=(("state", "Shared State handle."),
+                    ("transformation", "Function taking latest T and returning new T.")),
+        returns="No stack outputs.", category="Concurrency",
+        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s modify: (1 +)\nget $s", "2"),),
+    ),
+)
+def _global_state_update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Forward a modifier-form transformation to protected VM execution."""
+    from valiance.std.concurrency import _update
+    return _update(args, ctx)
+
+
+@builtin(
+    "modifyWith", (_STATE_GENERIC, T.Fn((T.V("T"),), (T.V("T"), T.V("R")))),
+    (T.V("R"),), param_names=("state", "transformation"), vectorisable=False,
+    documentation=element_documentation(
+        "Atomically publish a State[T] replacement and return a separate R.",
+        parameters=(("state", "Shared State handle."),
+                    ("transformation", "Function returning two stack values: T and R.")),
+        returns="The callback's second output R.", category="Concurrency",
+        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s modifyWith: fn(x:Int)->Int,Int =>\n  $x 1 +\n  $x\nend", "1"),),
+    ),
+)
+def _global_state_update_with(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Forward a transformation returning replacement state and a result."""
+    from valiance.std.concurrency import _update_with
+    return _update_with(args, ctx)
+
+
 BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
 
 
