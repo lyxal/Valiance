@@ -9605,7 +9605,7 @@
         {
           "description": null,
           "result": "10",
-          "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s set: 10\nget $s"
+          "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s set 10\nget $s"
         }
       ],
       "module": null,
@@ -9619,7 +9619,7 @@
             {
               "description": null,
               "result": "10",
-              "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s set: 10\nget $s"
+              "source": "import {std.concurrency}\n$s = concurrency.State(1)\n$s set 10\nget $s"
             }
           ],
           "notes": [],
@@ -9629,17 +9629,17 @@
               "name": "state"
             },
             {
-              "description": "A zero-input expression producing a safe T.",
+              "description": "A duplicable, task-safe T evaluated before the call.",
               "name": "replacement"
             }
           ],
           "returns": "No stack outputs.",
           "see_also": [],
-          "summary": "Evaluate a replacement normally, then atomically publish it to State[T]."
+          "summary": "Atomically replace State[T] with an already-evaluated value."
         }
       ],
       "overloads": [
-        "set(state: State[T], replacement: Function[ -> T]) -> ()"
+        "set(state: State[T], replacement: T) -> ()"
       ],
       "parameters": [
         {
@@ -9647,7 +9647,7 @@
           "name": "state"
         },
         {
-          "description": "A zero-input expression producing a safe T.",
+          "description": "A duplicable, task-safe T evaluated before the call.",
           "name": "replacement"
         }
       ],
@@ -9656,7 +9656,7 @@
       "scope": "built-in",
       "see_also": [],
       "source_path": "src/valiance/elements/builtins.py",
-      "summary": "Evaluate a replacement normally, then atomically publish it to State[T]."
+      "summary": "Atomically replace State[T] with an already-evaluated value."
     },
     {
       "aliases": [],

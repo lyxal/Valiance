@@ -134,6 +134,38 @@ concurrency.get($s)"""
                         program = loads(dumps(program))
                     self.assertEqual(run(program), [15, 10, 3])
 
+    def test_set_does_not_hijack_imported_object_methods(self):
+        """The new direct-value overload does not override a local declaration."""
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "foo.vlnc").write_text(
+                "public object Foo =>\n"
+                "  $x: Number\n"
+                "  public define set(value: Int) => $self.x + $value\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            source = '''import {foo.Foo}
+import {std.concurrency}
+define set(foo: Foo, value: Int) => $foo.x + $value + 5
+Foo(10) 2 set
+Foo(10) 2 Foo::set
+$s = concurrency.State(3)
+concurrency.set($s, 9)
+concurrency.get($s)'''
+            for optimized in (False, True):
+                with self.subTest(optimized=optimized):
+                    analyser = Analyser(source_file=root / "main.vlnc")
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    program = compile_program(typed, optimize=optimized)
+                    if optimized:
+                        program = loads(dumps(program))
+                    self.assertEqual(run(program), [17, 12, 9])
+
     def test_modify_names_do_not_hijack_imported_object_methods(self):
         """A State intrinsic and a source declaration retain distinct identity."""
         from pathlib import Path
@@ -198,7 +230,7 @@ get $s''', 'result'),
         source = '''import {std.concurrency}
 $s = concurrency.State(0)
 get $s
-$s set: 10
+$s set 10
 get $s
 $s modify: (1 +)
 get $s
@@ -207,6 +239,62 @@ concurrency.get($s)'''
         for optimized in (False, True):
             with self.subTest(optimized=optimized):
                 self.assertEqual(execute(source, optimize=optimized), [0, 10, 11, 16])
+
+    def test_set_stores_function_valued_state_without_calling_it(self):
+        """A function may be T; set stores it without treating it as a callback."""
+        source = '''import {std.concurrency}
+$first = fn(x:Int)->Int => $x 1 + end
+$second = fn(x:Int)->Int => $x 2 + end
+$s = concurrency.State($first)
+$s set $second
+$stored = get $s
+$stored(10)'''
+        for optimized in (False, True):
+            self.assertEqual(execute(source, optimize=optimized), [12])
+
+    def test_set_can_read_same_state_before_acquiring_gate(self):
+        """Inline replacement calculations use normal caller semantics."""
+        source = '''import {std.concurrency}
+$s = concurrency.State(3)
+$s set (get $s)
+get $s'''
+        for optimized in (False, True):
+            self.assertEqual(execute(source, optimize=optimized), [3])
+
+    def test_set_expression_returns_no_values(self):
+        """A direct replacement consumes the state and value stack operands."""
+        source = '''import {std.concurrency}
+$s = concurrency.State(0)
+$s set 10
+concurrency.set($s, 11)
+get $s'''
+        for optimized in (False, True):
+            self.assertEqual(execute(source, optimize=optimized), [11])
+
+    def test_set_takes_a_value_not_a_callback(self):
+        """Reject the old colon modifier and function-valued replacement."""
+        source = 'import {std.concurrency}\n$s = concurrency.State(0)\n$s set: 10'
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(any('expects 0' in item for item in analyser.diagnostics))
+
+        source = '''import {std.concurrency}
+$s = concurrency.State(0)
+$s set (fn -> Int => 10 end)'''
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_set_replacement_type_is_checked_before_runtime(self):
+        """A State[Int] replacement must be Int in both spelling styles."""
+        for source in (
+            'import {std.concurrency}\n$s = concurrency.State(0)\n$s set "wrong"',
+            'import {std.concurrency}\n$s = concurrency.State(0)\nconcurrency.set($s, "wrong")',
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
 
     def test_modify_with_distinguishes_state_from_result(self):
         source = '''import {std.concurrency}
@@ -246,10 +334,11 @@ get $s'''
 
         source = '''import {std.concurrency}
 $s = concurrency.State(3)
-$s set: fn -> Int =>
+$replacement = fn -> Int =>
   "SET_EVALUATED" println
   get $s
 end
+$s set $replacement()
 get $s'''
         for optimized in (False, True):
             with self.subTest(optimized=optimized):
@@ -258,16 +347,14 @@ get $s'''
                     self.assertEqual(execute(source, optimize=optimized), [3])
                 self.assertEqual(output.getvalue().strip(), 'SET_EVALUATED')
 
-    def test_set_expression_may_suspend_before_exclusive_commit(self):
+    def test_set_after_suspension_commits_atomically(self):
         """A competing modifier can commit while the setter waits on I/O."""
         source = '''import {std.concurrency}
 $s = concurrency.State(0)
 $c = Channel[Int]
 $setter = fn -> =>
-  $s set: fn -> Int =>
-    $c receive | pop
-    42
-  end
+  $c receive | pop
+  $s set 42
 end
 $modifier = fn -> =>
   $s modify: (1 +)
@@ -281,11 +368,12 @@ get $s'''
         for optimized in (False, True):
             self.assertEqual(execute(source, optimize=optimized), [42])
 
-    def test_failed_set_expression_preserves_committed_state(self):
+    def test_failed_replacement_calculation_preserves_committed_state(self):
         source = '''import {std.concurrency}
 $s = concurrency.State(7)
+$replacement = fn -> Int => RuntimeFault("failed before gate") panic end
 try =>
-  $s set: fn -> Int => RuntimeFault("failed before gate") panic end
+  $s set $replacement()
 handle RuntimeFault =>
   0 pop
 end
@@ -297,17 +385,15 @@ $s'''
                 self.assertIsNone(cell.gate.owner)
                 self.assertEqual(cell.gate.waiter_count, 0)
 
-    def test_cancellation_during_set_calculation_does_not_acquire_gate(self):
-        """Discarding an unfinished normal callback closes the owned request."""
+    def test_cancellation_before_set_call_does_not_acquire_gate(self):
+        """Cancellation before reaching set never acquires a State lease."""
         from valiance.runtime.vm import VirtualMachine, FunctionValue, _release_value
         from valiance.runtime.concurrency import TaskState
 
         source = ('''import {std.concurrency}
 $s = concurrency.State(5)
 $worker = fn -> =>
-  $s set: fn -> Int =>
-''' + '    1 pop\n' * 240 + '''    9
-  end
+''' + '    1 pop\n' * 240 + '''$s set 9
 end
 $t = $worker spawn
 $s''')
@@ -333,8 +419,8 @@ $s''')
             finally:
                 _release_value(cell, vm)
 
-    def test_cancellation_while_set_expression_waits_on_channel(self):
-        """A blocked pre-gate callback can be cancelled without a State lease."""
+    def test_cancellation_while_prior_work_waits_on_channel(self):
+        """Ordinary VM suspension before set holds no State lease."""
         from valiance.runtime.vm import VirtualMachine, FunctionValue, _release_value
         from valiance.runtime.concurrency import TaskState
 
@@ -342,10 +428,8 @@ $s''')
 $s = concurrency.State(5)
 $c = Channel[Int]
 $worker = fn -> =>
-  $s set: fn -> Int =>
-    $c receive | pop
-    9
-  end
+  $c receive | pop
+  $s set 9
 end
 $t = $worker spawn
 $s'''
@@ -370,8 +454,8 @@ $s'''
             finally:
                 _release_value(cell, vm)
 
-    def test_cancellation_of_precomputed_set_waiter_keeps_prior_commit(self):
-        """A computed replacement remains owned until acquisition or abort."""
+    def test_cancellation_of_set_waiter_keeps_prior_commit(self):
+        """A direct-value replacement remains owned until acquisition or abort."""
         from valiance.runtime.vm import VirtualMachine, FunctionValue, _release_value
         from valiance.runtime.concurrency import TaskState
 
@@ -382,7 +466,7 @@ $holder = fn -> =>
 ''' + '    1 pop\n' * 220 + '''    $x 1 +
   end
 end
-$setter = fn -> => $s set: 99 end
+$setter = fn -> => $s set 99 end
 $a = $holder spawn
 $b = $setter spawn
 $s''')

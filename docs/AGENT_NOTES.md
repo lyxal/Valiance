@@ -444,13 +444,12 @@ local `get(:Foo)` overrides an imported `Foo::get`, keep the local call linked
 to `get` while preserving the qualified `Foo::get`. The State and runtime
 regressions exercise this distinction in both compiled execution modes.
 
-# Resumable State modifier set evaluation
+# State value replacement and protected modification
 
-The modifier `state set: expression` compiles a zero-argument callback, not a
-precomputed value. Its VM request must evaluate through ordinary resumable
-activation *before* acquiring the exclusive gate, then turn the completed
-replacement into the same internal `set` request as `concurrency.set(state,
-value)`. When changing activation unwinding or cancellation, preserve the
-precommit request until the child finishes, and preserve the computed value
-when acquisition blocks. In contrast, `modify` and `modifyWith` retain the
-protected no-wait policy throughout their callbacks.
+Both `$state set value` and `concurrency.set(state, value)` require a direct
+`T` (`State[T], T -> ()`); the expression executes under ordinary VM rules before
+the resolved element call, without acquiring the gate. The returned internal
+`set` request owns a separately retained replacement while acquisition waits;
+cancellation releases that occurrence. Do not reintroduce a callback or
+`setComputed` operation for `set`. In contrast, `modify` and `modifyWith` take
+callbacks that execute under the protected no-wait policy.

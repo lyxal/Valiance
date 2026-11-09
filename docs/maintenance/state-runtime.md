@@ -21,15 +21,14 @@ Normal completion commits before gate release; any callback fault or frame/task
 unwind closes the scope idempotently and leaves an uncommitted value unchanged.
 Fairness yields are allowed, waits are rejected *before* registration.
 
-The modifier-form `set:` retains a zero-input expression callback in a
-`setComputed` request, but starts it through an *ordinary*, unprotected
-`_FunctionCallRequest`. Its completed output is validated and transferred into
-an internal `set` request, which uses the same cancellable FIFO acquisition and
-atomic commit path as qualified `concurrency.set(state, value)`. The parent
-activation retains the pending request until the callback returns or fails,
-and retains the replacement through gate contention. Cancellation and unwind
-close either the still-computing operation or the pending gate registration.
-No gate or no-wait policy is held while the replacement expression runs.
+Both `$state set value` and `concurrency.set(state, value)` take an already-
+evaluated `T` (stack effect `State[T], T -> ()`). Ordinary Valiance evaluation
+computes that `T` before invoking either operation, with no State gate held.
+The native wrapper validates and retains the replacement, then creates the
+same internal `set` request for both spellings. The VM acquires its cancellable
+FIFO lease, atomically commits the replacement, and releases the old occurrence.
+Cancellation while waiting drops the retained replacement without a commit.
+`modify` / `modifyWith` callbacks alone require protected resumable execution.
 
 **No bytecode instructions were added.** Existing activation execution, scheduler
 quanta, task cleanup and resolved-element calls provide the extension points.

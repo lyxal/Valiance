@@ -9,13 +9,13 @@ import {std.concurrency}
 
 $counter = concurrency.State(0)
 const $before = get $counter
-$counter set: 10
+$counter set 10
 $counter modify: (1 +)
 const $after = get $counter
 ```
 
-The module also exports explicitly called operations, useful when passing an
-already-computed replacement or a named callback:
+The module also exports explicitly called operations, useful when passing a
+named callback or spelling a call unambiguously:
 
 ```valiance
 import {std.concurrency}
@@ -50,8 +50,7 @@ end
 | --- | --- | --- | --- |
 | `concurrency.State` | `T` | `State[T]` | Create one cell with an owned committed value |
 | `get` / `concurrency.get` | `State[T]` | `T` | Retain an immutable logical snapshot |
-| `concurrency.set` | `State[T], T` | — | Commit an already-computed replacement |
-| `set:` | `State[T], Function[->T]` | — | Evaluate once in ordinary caller execution, then commit under the gate |
+| `set` / `concurrency.set` | `State[T], T` | — | Commit an already-evaluated replacement atomically |
 | `modify:` / `concurrency.modify` | `State[T], Function[T->T]` | — | Transform the latest value atomically |
 | `modifyWith:` / `concurrency.modifyWith` | `State[T], Function[T->T,R]` | `R` | Commit the first callback output, return the second |
 
@@ -72,13 +71,14 @@ order. Reads wait for an in-progress transformation. The value stored in the
 cell is never taken out during a transaction; a successful validated replacement
 is published at one commit point. A callback panic or cancellation before that
 point retains the old value. Cancellation after commit does not undo it.
-The `set:` expression is evaluated **before** the gate is acquired. It may
-perform normal caller-side I/O or suspend without blocking other State operations.
-Failure or cancellation during that evaluation does not acquire the gate or
-change the State. Both `set:` and `concurrency.set` then use the same atomic,
-cooperatively acquired replacement path; when multiple replacements race, the
-last committed replacement wins. Separate `get` and `set` calls do *not*
-implement an atomic read-modify-write; use `modify` for that operation.
+`set` takes a value directly, **not a callback**. Its replacement expression is
+evaluated by ordinary Valiance execution before the `set` operation starts. That
+calculation may perform I/O or suspend, without holding the State gate; if it
+fails or is cancelled, the State remains unchanged. Both `$state set value`
+and `concurrency.set(state, value)` then use the same atomic, cooperatively
+acquired replacement path. When replacements race, the last committed value
+wins. Separate `get` and `set` calls do *not* implement an atomic
+read-modify-write; use `modify` for that operation.
 
 `modify` and `modifyWith` callbacks run as ordinary **resumable VM
 activations** and yield to other tasks after their instruction quantum while

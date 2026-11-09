@@ -52,7 +52,7 @@ from valiance.runtime.concurrency import (
     TaskYield, WaitDependency, ExclusiveWaiter,
 )
 from valiance.runtime.protected import GuardedValue, ProtectedOperation
-from valiance.runtime.transfer import require_shared_value, require_task_transfer
+from valiance.runtime.transfer import require_task_transfer
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     BorrowedValue as _BorrowedValue,
@@ -491,7 +491,6 @@ class _FunctionCallRequest:
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
     return_tag_specs: tuple[object, ...] = ()
     protected_scope: _ProtectedScope | None = None
-    precommit_operation: ProtectedOperation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2824,26 +2823,7 @@ class VirtualMachine:
     def _begin_protected_operation(
         self, activation: _Activation, operation: ProtectedOperation,
     ) -> _FunctionCallRequest | _ActivationProtectedWait | None:
-        """Evaluate computed replacements first, or acquire the exclusive gate."""
-        if operation.kind == 'setComputed':
-            # This is an ordinary resumable call: no gate and no protected
-            # callback policy exists until its replacement has been computed.
-            try:
-                if self._current_protected_scope() is not None:
-                    raise RuntimeError('nested protected state operations are forbidden')
-                callback = operation.payload
-                if not isinstance(callback, (FunctionValue, OverloadedFunctionValue)):
-                    raise RuntimeError('State set requires a Valiance function')
-                selected = _selected_function_implementation(callback, None)
-                if selected.code.params:
-                    raise RuntimeError('State set expression requires no value parameters')
-                return _FunctionCallRequest(
-                    selected, (), 'State replacement expression',
-                    precommit_operation=operation,
-                )
-            except BaseException:
-                operation.close(lambda value: _release_value(value, self))
-                raise
+        """Acquire the exclusive gate for a requested State operation."""
         owner = self.scheduler.current_task or self._root_protected_owner
         if self._current_protected_scope() is not None:
             operation.close(lambda value: _release_value(value, self))
@@ -3052,13 +3032,6 @@ class VirtualMachine:
                 if pending_call is not None and pending_call.protected_scope is not None:
                     try:
                         pending_call.protected_scope.close()
-                    except BaseException as exc:
-                        cleanup_errors.append(exc)
-                if pending_call is not None and pending_call.precommit_operation is not None:
-                    try:
-                        pending_call.precommit_operation.close(
-                            lambda value: _release_value(value, self)
-                        )
                     except BaseException as exc:
                         cleanup_errors.append(exc)
                 if isinstance(activation.pending_concurrency, _ActivationProtectedWait):
@@ -3367,44 +3340,6 @@ class VirtualMachine:
         )
         return list(call_site_contracted)
 
-    def _commit_computed_replacement(
-        self, activation: _Activation, operation: ProtectedOperation,
-        outputs: list[Any],
-    ) -> None:
-        """Publish one ordinarily evaluated set expression using the normal gate.
-
-        The function has already completed (and may have yielded, waited, or
-        performed I/O). Its result is retained independently while the normal
-        cancellable exclusive acquisition and atomic commit take place.
-        """
-        try:
-            if len(outputs) != 1:
-                raise RuntimeError('State set expression must return one value')
-            require_shared_value(outputs[0], path='State replacement')
-            callback = operation.payload
-            operation.payload = outputs.pop(0)  # move replacement to request
-            # The pre-evaluation callback is no longer needed; it must not be
-            # mistaken for the replacement owned by the pending set request.
-            _release_value(callback, self)
-            operation.kind = 'set'
-            self._raise_pending_cancellation()
-            event = self._begin_protected_operation(activation, operation)
-            if isinstance(event, _ActivationProtectedWait):
-                activation.pending_concurrency = event
-                return  # retry the same resolved-call IP after a FIFO grant
-            if event is not None:
-                raise RuntimeError(
-                    'computed State replacement cannot invoke another callback'
-                )
-            activation.ip += 1
-        except BaseException as exc:
-            failure = _release_runtime_occurrences(outputs, self, exc)
-            try:
-                operation.close(lambda value: _release_value(value, self))
-            except BaseException as cleanup_fault:
-                _attach_secondary_faults(failure or exc, (cleanup_fault,))
-            raise failure or exc
-
     def _resume_call_success(
         self,
         activation: _Activation,
@@ -3416,11 +3351,6 @@ class VirtualMachine:
             raise RuntimeError("completed function has no suspended caller")
         activation.pending_call = None
         try:
-            if request.precommit_operation is not None:
-                self._commit_computed_replacement(
-                    activation, request.precommit_operation, result,
-                )
-                return
             if request.release_after is not None:
                 _release_value(request.release_after, self)
             if request.protected_scope is not None:
@@ -3446,13 +3376,6 @@ class VirtualMachine:
         if request.protected_scope is not None:
             try:
                 request.protected_scope.close()
-            except BaseException as cleanup_error:
-                _attach_secondary_faults(error, (cleanup_error,))
-        if request.precommit_operation is not None:
-            try:
-                request.precommit_operation.close(
-                    lambda value: _release_value(value, self)
-                )
             except BaseException as cleanup_error:
                 _attach_secondary_faults(error, (cleanup_error,))
         if isinstance(error, _py_builtins.RuntimeError):

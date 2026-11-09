@@ -4747,9 +4747,9 @@ for _error in REFLECTION_ERROR_TYPES:
         ),
     )(_construct_reflection_error)
 
-# Convenience global operations supply the `get $state` / `$state modify:`
-# modifier syntax without extending the parser or the bytecode format.  The
-# native std.concurrency module retains equivalent explicitly-called forms.
+# Global State operations supply `get $state`, `$state set value`, and
+# `$state modify: callback` without extending the parser or the bytecode format.
+# The native std.concurrency module retains equivalent explicitly-called forms.
 _STATE_GENERIC = T.N(Symbol("State"), T.V("T"))
 
 
@@ -4770,20 +4770,20 @@ def _global_state_get(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
 
 
 @builtin(
-    "set", (_STATE_GENERIC, T.Fn((), (T.V("T"),))), (),
+    "set", (_STATE_GENERIC, T.V("T")), (),
     param_names=("state", "replacement"), vectorisable=False,
     documentation=element_documentation(
-        "Evaluate a replacement normally, then atomically publish it to State[T].",
+        "Atomically replace State[T] with an already-evaluated value.",
         parameters=(("state", "Shared State handle."),
-                    ("replacement", "A zero-input expression producing a safe T.")),
+                    ("replacement", "A duplicable, task-safe T evaluated before the call.")),
         returns="No stack outputs.", category="Concurrency",
-        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s set: 10\nget $s", "10"),),
+        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s set 10\nget $s", "10"),),
     ),
 )
 def _global_state_set(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Request ordinary pre-gate evaluation followed by an atomic State commit."""
-    from valiance.std.concurrency import _request
-    return _request("setComputed", args, ctx)
+    """Forward the precomputed replacement through the common atomic commit path."""
+    from valiance.std.concurrency import _set
+    return _set(args, ctx)
 
 
 @builtin(

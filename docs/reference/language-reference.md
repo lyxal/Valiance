@@ -3816,18 +3816,18 @@ Result:
 
 ### `set`
 
-Evaluate a replacement normally, then atomically publish it to State[T].
+Atomically replace State[T] with an already-evaluated value.
 
 **Overloads**
 
-- `set(state: State[T], replacement: Function[ -> T]) -> ()`
+- `set(state: State[T], replacement: T) -> ()`
 
   **Example**
 
   ```vlnc
   import {std.concurrency}
 $s = concurrency.State(1)
-$s set: 10
+$s set 10
 get $s
   ```
   Result:
@@ -3840,7 +3840,7 @@ get $s
 **Parameters**
 
 - `state` — Shared State handle.
-- `replacement` — A zero-input expression producing a safe T.
+- `replacement` — A duplicable, task-safe T evaluated before the call.
 
 **Returns:** No stack outputs.
 
@@ -3849,7 +3849,7 @@ get $s
 ```vlnc
 import {std.concurrency}
 $s = concurrency.State(1)
-$s set: 10
+$s set 10
 get $s
 ```
 Result:
