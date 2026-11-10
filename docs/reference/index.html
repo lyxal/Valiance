@@ -2543,7 +2543,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>2.5</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: String) -&gt; Number</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2556,8 +2556,35 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>2.5</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
+    <li><code>to(value: Number) -&gt; Number</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Real) -&gt; Number</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Real) -&gt; Real</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Int) -&gt; Number</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Int) -&gt; Real</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Int) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Number) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Real) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
+    <li><code>to(value: Number) -&gt; Real</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
+  <pre><code>&quot;42&quot; to[Int]</code></pre>
+  <p><strong>Result:</strong> <code>42</code></p></li>
     <li><code>to(value: T) -&gt; String</code><p>Convert a value to the requested target type.</p>  <h4>Example</h4>
   <pre><code>&quot;42&quot; to[Int]</code></pre>
   <p><strong>Result:</strong> <code>42</code></p></li>
@@ -2572,7 +2599,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;short</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2585,7 +2612,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2598,7 +2625,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;long</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2611,7 +2638,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;longlong</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2624,7 +2651,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;unsignedchar</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2637,7 +2664,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;unsignedshort</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2650,7 +2677,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;unsignedint</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2663,7 +2690,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;unsignedlong</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2676,7 +2703,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int) -&gt; &amp;unsignedlonglong</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2689,7 +2716,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Real) -&gt; &amp;float</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2702,7 +2729,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Real) -&gt; &amp;double</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2715,7 +2742,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: String) -&gt; &amp;CString</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2728,7 +2755,7 @@ get $s</code></pre>
   <p>Create a checked native scalar of the selected C type.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;char) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2741,7 +2768,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;short) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2754,7 +2781,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;int) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2767,7 +2794,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;long) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2780,7 +2807,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;longlong) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2793,7 +2820,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedchar) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2806,7 +2833,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedshort) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2819,7 +2846,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedint) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2832,7 +2859,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedlong) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2845,7 +2872,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedlonglong) -&gt; Int</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2858,7 +2885,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;float) -&gt; Real</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2871,7 +2898,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;double) -&gt; Real</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2884,7 +2911,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>3</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;char+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2897,7 +2924,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;char+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2910,7 +2937,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;short+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2923,7 +2950,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;short+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2936,7 +2963,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2949,7 +2976,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;int+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2962,7 +2989,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;long+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2975,7 +3002,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;long+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -2988,7 +3015,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;longlong+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3001,7 +3028,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;longlong+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3014,7 +3041,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;unsignedchar+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3027,7 +3054,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedchar+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3040,7 +3067,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;unsignedshort+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3053,7 +3080,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedshort+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3066,7 +3093,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;unsignedint+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3079,7 +3106,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedint+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3092,7 +3119,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;unsignedlong+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3105,7 +3132,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedlong+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3118,7 +3145,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Int+) -&gt; &amp;unsignedlonglong+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3131,7 +3158,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;unsignedlonglong+) -&gt; Int+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3144,7 +3171,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Real+) -&gt; &amp;float+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3157,7 +3184,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;float+) -&gt; Real+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3170,7 +3197,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: Real+) -&gt; &amp;double+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3183,7 +3210,7 @@ get $s</code></pre>
   <p>Copy a finite numeric list into a contiguous native buffer.</p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;double+) -&gt; Real+</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3196,7 +3223,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>[1, 2, 3]</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
     <li><code>to(value: &amp;CString) -&gt; String</code><p>Convert a value to the requested target type.</p>  <h4>Parameters</h4>
   <dl>
@@ -3209,7 +3236,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>hello</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul></li>
   </ul>
   <h4>Parameters</h4>
@@ -3223,7 +3250,7 @@ get $s</code></pre>
   <p><strong>Result:</strong> <code>42</code></p>
   <h4>Notes</h4>
   <ul>
-    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
+    <li>Target-directed conversion selects an overload using <code>to[Type]</code>; available conversions depend on the source and target types. <code>to[String]</code> formats any value using Valiance runtime display syntax. For Strings, <code>to[Int]</code> parses a base-ten integer and panics with <code>ConversionFault</code> when parsing fails. <code>to[Real]</code> parses a real number and <code>to[Number]</code> also accepts complex numeric notation; both panic with <code>ConversionFault</code> for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with <code>ConversionFault</code> if the value cannot fit exactly. Conversions terminate implicit element chains. <code>to?[Type]</code> invokes the same registered conversion and returns <code>None</code> if it panics.</li>
   </ul>
   <p class="source">Source: <code>src/valiance/elements/builtins.py</code></p>
 </article>
