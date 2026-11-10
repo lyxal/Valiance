@@ -2093,6 +2093,36 @@ class FFIDestroyLinkParserTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+class ConversionChainParserTests(unittest.TestCase):
+    """Postfix conversions terminate, rather than join, implicit chains."""
+
+    def test_conversion_is_last_even_after_reversed_element_chain(self):
+        for spelling in ("to[Int]", "to?[Int]"):
+            with self.subTest(spelling=spelling):
+                nodes = parse(f"square negate {spelling} double")
+                self.assertEqual(
+                    [node.name.text for node in nodes],
+                    ["negate", "square", spelling.split("[")[0], "double"],
+                )
+
+    def test_conversion_does_not_start_or_continue_a_reversed_chain(self):
+        self.assertEqual(
+            [node.name.text for node in parse("to[String] square negate")],
+            ["to", "negate", "square"],
+        )
+        self.assertEqual(
+            [node.name.text for node in parse("square to[String] negate double")],
+            ["square", "to", "double", "negate"],
+        )
+
+    def test_shaped_ffi_conversion_ends_element_chain(self):
+        nodes = parse("square to[&int{2}] negate double")
+        self.assertEqual(nodes[0].name, Symbol("square"))
+        self.assertIsInstance(nodes[1], TupleLiteralNode)
+        self.assertEqual(nodes[2].name, Symbol("cArr"))
+        self.assertEqual([node.name.text for node in nodes[3:]], ["double", "negate"])
+
+
 class ConvertAnnotationParserTests(unittest.TestCase):
     """Cover target-directed conversion declaration syntax."""
 

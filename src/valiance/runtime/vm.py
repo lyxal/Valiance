@@ -2848,6 +2848,29 @@ class VirtualMachine:
                 raise
         return _ActivationProtectedWait(scope, waiter)
 
+    def _suspend_protected_result(
+        self, activation: _Activation, ip: int,
+    ) -> _FunctionCallRequest | _ActivationProtectedWait | None:
+        """Complete or suspend a protected result from either VM call opcode.
+
+        An unresolved CALL can invoke a State intrinsic (notably inside
+        interpolation), just as CALL_RESOLVED_ELEMENT can.  Both must turn the
+        private operation request into its language-level result before the
+        next bytecode instruction consumes the stack.
+        """
+        stack = activation.frame.stack
+        if not stack or not isinstance(stack[-1], ProtectedOperation):
+            return None
+        operation = stack.pop()
+        event = self._begin_protected_operation(activation, operation)
+        if isinstance(event, _FunctionCallRequest):
+            activation.pending_call = event
+        elif isinstance(event, _ActivationProtectedWait):
+            activation.pending_concurrency = event
+        if event is not None:
+            activation.ip = ip
+        return event
+
     def _drive_frames(self, root: _Activation) -> list[Any]:
         """Drive bytecode activations without nesting Python function calls."""
         frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [(root, None)]
@@ -3820,6 +3843,9 @@ class VirtualMachine:
                                     activation.pending_call = request
                                     activation.ip = ip
                                     return request
+                                protected_event = self._suspend_protected_result(activation, ip)
+                                if protected_event is not None:
+                                    return protected_event
                                 self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
@@ -3889,17 +3915,9 @@ class VirtualMachine:
                                     activation.pending_call = request
                                     activation.ip = ip
                                     return request
-                                if frame.stack and isinstance(frame.stack[-1], ProtectedOperation):
-                                    operation = frame.stack.pop()
-                                    protected_event = self._begin_protected_operation(activation, operation)
-                                    if isinstance(protected_event, _FunctionCallRequest):
-                                        activation.pending_call = protected_event
-                                        activation.ip = ip
-                                        return protected_event
-                                    if isinstance(protected_event, _ActivationProtectedWait):
-                                        activation.pending_concurrency = protected_event
-                                        activation.ip = ip
-                                        return protected_event
+                                protected_event = self._suspend_protected_result(activation, ip)
+                                if protected_event is not None:
+                                    return protected_event
                                 self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)

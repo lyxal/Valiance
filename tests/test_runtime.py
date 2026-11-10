@@ -12908,6 +12908,62 @@ Label | to[String]
                     with self.assertRaisesRegex(RuntimeError, "ConversionFault"):
                         execute(f'"{text}" to[{target}]')
 
+    def test_numeric_conversions_are_lossless_and_round_trip(self) -> None:
+        cases = (
+            ("3 to[Int]", 3),
+            ("3 to[Real]", 3),
+            ("3 to[Number]", 3),
+            ("3.0 to[Int]", 3),
+            ("-3.0 to[Int]", -3),
+            ("3.0 to[Real]", 3),
+            ("3.0 to[Number]", 3),
+            ("3i0 to[Int]", 3),
+            ("3i0 to[Real]", 3),
+            ("3i2 to[Number]", RuntimeNumber("3i2")),
+            ("3.0 to?[Int]", 3),
+            ("[1.0, 2.0] to[Int]", [RuntimeNumber(1), RuntimeNumber(2)]),
+            ("3 squared to[String]", "9"),
+        )
+        for source, expected in cases:
+            for optimize in (False, True):
+                with self.subTest(source=source, optimize=optimize):
+                    analyser = Analyser()
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    output = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                    self.assertEqual(output, [expected])
+
+    def test_numeric_narrowing_rejects_fractional_or_complex_numbers(self) -> None:
+        for text, target in (("3.5", "Int"), ("-3.5", "Int"),
+                             ("1i2", "Int"), ("1i2", "Real")):
+            with self.subTest(text=text, target=target):
+                self.assertEqual(execute(f"{text} to?[{target}]"),
+                                 [ObjectValue("None", {})])
+                with self.assertRaisesRegex(RuntimeError, "ConversionFault"):
+                    execute(f"{text} to[{target}]")
+        self.assertEqual(execute('77 [1.0, 2.5] to?[Int]'),
+                         [RuntimeNumber(77), ObjectValue("None", {})])
+
+    def test_numeric_conversion_effects_match_possible_narrowing(self) -> None:
+        from valiance.vtypes.symbols import Symbol
+
+        numeric = ("Int", "Real", "Number")
+        for source in numeric:
+            for target in numeric:
+                with self.subTest(source=source, target=target):
+                    analyser = Analyser()
+                    analyser.analyse(parse(
+                        f"define convert(value: {source}) -> {target} => "
+                        f"$value to[{target}] end"
+                    ))
+                    self.assertEqual(analyser.diagnostics, [])
+                    overload = analyser.env.overloads_for(Symbol("convert"))[0]
+                    panic = {tag.name.text for tag in overload.element_tags}
+                    needs_check = (source, target) in {
+                        ("Real", "Int"), ("Number", "Int"), ("Number", "Real")
+                    }
+                    self.assertEqual("Panic" in panic, needs_check)
+
     def test_numeric_runtime_rejects_nonfinite_decimals(self) -> None:
         from decimal import Decimal
         for text in ("NaN", "sNaN", "Infinity", "-Infinity"):
@@ -12960,7 +13016,7 @@ end
                                   for tag in overload.element_tags}, effects)
 
     def test_optional_conversion_requires_declared_target(self) -> None:
-        for source in ('1 to?[Int]', '"1" to?', '"1" to?[Int, String]'):
+        for source in ('"1" to?', '"1" to?[Int, String]'):
             with self.subTest(source=source):
                 analyser = Analyser()
                 analyser.analyse(parse(source))

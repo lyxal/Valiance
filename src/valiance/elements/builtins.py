@@ -661,7 +661,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             "For Strings, `to[Int]` parses a base-ten integer and panics with "
             "`ConversionFault` when parsing fails. `to[Real]` parses a real "
             "number and `to[Number]` also accepts complex numeric notation; "
-            "both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the "
+            "both panic with `ConversionFault` for invalid text. Numeric types "
+            "convert to Int, Real, and Number without losing precision; narrowing "
+            "fails with `ConversionFault` if the value cannot fit exactly. "
+            "Conversions terminate implicit element chains. `to?[Type]` invokes the "
             "same registered conversion and returns `None` if it panics."
         ),
         examples=(('"42" to[Int]', "42"),),
@@ -3136,6 +3139,52 @@ def _string_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
 def _string_to_number(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a real or complex number, raising ConversionFault for invalid text."""
     return (_parse_string_number(args[0]),)
+
+
+# Numeric conversions preserve the runtime's exact decimal components. Widening
+# and identity conversions are total; narrowing conversions reject values that
+# cannot be represented by the requested numeric type without losing data.
+@builtin("to", (T.Int,), (T.Int,), conversion_target=T.Int)
+@builtin("to", (T.Int,), (T.Real,), conversion_target=T.Real)
+@builtin("to", (T.Int,), (T.Number,), conversion_target=T.Number)
+@builtin("to", (T.Real,), (T.Real,), conversion_target=T.Real)
+@builtin("to", (T.Real,), (T.Number,), conversion_target=T.Number)
+@builtin("to", (T.Number,), (T.Number,), conversion_target=T.Number)
+def _numeric_to_wider(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Retain exact numeric value when the target admits every source value."""
+    return args
+
+
+@builtin(
+    "to", (T.Real,), (T.Int,), conversion_target=T.Int,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+@builtin(
+    "to", (T.Number,), (T.Int,), conversion_target=T.Int,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _numeric_to_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Convert only mathematically integral real or complex numeric values."""
+    number = args[0]
+    if not number.is_integer():
+        raise PanicSignal(ObjectValue(
+            "ConversionFault", {"message": "cannot convert non-integral Number to Int"}
+        ))
+    return (number,)
+
+
+@builtin(
+    "to", (T.Number,), (T.Real,), conversion_target=T.Real,
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.N(Symbol("ConversionFault")),)),),
+)
+def _numeric_to_real(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Reject nonzero imaginary parts when narrowing Number to Real."""
+    number = args[0]
+    if number.is_complex():
+        raise PanicSignal(ObjectValue(
+            "ConversionFault", {"message": "cannot convert complex Number to Real"}
+        ))
+    return (number,)
 
 
 def _rectangular_shape_fault(message: str) -> PanicSignal:

@@ -188,6 +188,7 @@ class _ChainPiece:
     nodes: tuple[ASTNode, ...]
     breaks_chain: bool = False
     is_element: bool = False
+    ends_chain: bool = False
 
 
 def parse(source: str) -> list[ASTNode]:
@@ -2156,7 +2157,11 @@ class Parser:
         extension = self._element_extension()
         if extension is not None:
             node = replace(node, extension=extension)
-        return _ChainPiece((node,), breaks_chain=breaks_chain, is_element=True)
+        ends_chain = node.name.text in {"to", "to?"}
+        return _ChainPiece(
+            (node,), breaks_chain=breaks_chain or ends_chain,
+            is_element=True, ends_chain=ends_chain,
+        )
 
     def _element_extension(self) -> ElementExtension | None:
         """Parse element extension from the current token stream."""
@@ -3028,7 +3033,7 @@ class Parser:
             Symbol("cArr"), generic_args=(target.base,), annotations=annotations,
             location=location,
         )
-        return _ChainPiece((dims, convert), is_element=True)
+        return _ChainPiece((dims, convert), breaks_chain=True, ends_chain=True)
 
     def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
         """Parse positional overload hints in adjacent curly braces."""
@@ -4112,6 +4117,14 @@ def _lower_chain_segment(
     """Parse lower chain segment from the current token stream."""
     if not segment:
         return ()
+
+    if segment[-1].ends_chain and all(piece.is_element for piece in segment[:-1]):
+        # Conversion is postfix: reverse the preceding element chain, then
+        # apply the conversion to its result (even if it is itself an element).
+        preceding = segment[:-1]
+        pieces = reversed(preceding) if reverse_elements else preceding
+        return (*tuple(node for piece in pieces for node in piece.nodes),
+                *segment[-1].nodes)
 
     if all(piece.is_element for piece in segment):
         pieces = reversed(segment) if reverse_elements else segment

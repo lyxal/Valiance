@@ -13,9 +13,11 @@
    committed occurrence, with a single ownership-transferring commit point.
 
 The native standard-library wrappers do **not** synchronously execute user
-functions. They return a private `ProtectedOperation` request to the VM. Existing
-`CALL_RESOLVED_ELEMENT` handling recognizes that request, acquires the gate,
-and launches a `_FunctionCallRequest` through the ordinary activation runner.
+functions. They return a private `ProtectedOperation` request to the VM. Both
+`CALL_RESOLVED_ELEMENT` and unresolved `CALL` recognize that request, acquire
+the gate, and launch a `_FunctionCallRequest` through the ordinary activation
+runner. Interpolated expressions can use unresolved `CALL`, so the shared
+result handler must complete a `get` request before `BUILD_STRING` consumes it.
 The request's protected scope is retained in the suspended caller activation.
 Normal completion commits before gate release; any callback fault or frame/task
 unwind closes the scope idempotently and leaves an uncommitted value unchanged.

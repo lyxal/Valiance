@@ -14,6 +14,9 @@ $counter modify: (1 +)
 const $after = get $counter
 ```
 
+A snapshot can be interpolated directly: `println "State = ${get $counter}"`
+formats the committed value, not the State handle.
+
 The module also exports explicitly called operations, useful when passing a
 named callback or spelling a call unambiguously:
 

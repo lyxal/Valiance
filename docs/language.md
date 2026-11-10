@@ -5595,6 +5595,12 @@ define to(i: Int) -> &int =>
 end
 ```
 
+- `to[Type]` and `to?[Type]` are **postfix chain terminators**. A preceding
+  unpiped run of elements is evaluated first, then the conversion consumes its
+  result: `3 squared to[String]` yields `"9"`. A conversion does not enter
+  the reversed element ordering of the preceding run, and subsequent elements
+  form a fresh chain. A bare conversion can still serve as a callback such as
+  `map: to[String]`, or consume a value already on the stack.
 - `to[Type]` converts a value to `Type` by whatever construction process
   is registered for that specific (source, target) pair. It is not sugar
   for calling `Type`'s ordinary constructor — a conversion may do
@@ -5627,6 +5633,16 @@ end
   nonzero imaginary components. Leading and trailing whitespace is ignored.
   Invalid text and non-finite values such as `NaN` and `Infinity` panic
   with `ConversionFault`; `to?[Real]` and `to?[Number]` return `None` instead.
+- Numeric conversions are defined between `Int`, `Real`, and `Number`,
+  including identity conversions. Widening (`Int` to `Real`/`Number`, `Real`
+  to `Number`) is exact and cannot panic. Narrowing is **checked rather than
+  truncating**: `3.0 to[Int]` succeeds, but `3.5 to[Int]` panics with
+  `ConversionFault`; `1i2 to[Real]` also panics because its imaginary
+  component is nonzero. `Number` to `Int` requires both a zero imaginary
+  component and an integral real component. The `to?` forms return `None`
+  instead of propagating these conversion faults, including during vectorisation.
+- Failed conversion overload resolution lists only the implementations for
+  the requested target type, rather than every available `to` implementation.
 - Each FFI primitive type has a corresponding raw, unchecked constructor
   (`FFI.&int(...)` above) that a `to` implementation is expected to bottom
   out on. This primitive performs no validation of its own; it exists

@@ -342,7 +342,7 @@ $findFold([4, 7, 9], 5)
         result = execute("""
         range(1, 100) map fn (n) =>
             % [3, 5] == 0 * ["Fizz", "Buzz"]
-            join "" or to[String] $n
+            join "" or ($n to[String])
         end
         """)
         self.assertEqual(result, [FIZZBUZZ_TO_100])
@@ -546,7 +546,7 @@ define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
           "/" => fn => /
         reduce($stack[-1, -2])
         $stack := drop(2) | append
-      if numeric? => $stack := append (to?[Int] $token ?!)
+      if numeric? => $stack := append ($token to?[Int] ?!)
       _ => return ValueError("Unexpected Token")
     end
   end

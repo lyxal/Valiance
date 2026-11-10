@@ -226,6 +226,56 @@ get $s''', 'result'),
                         self.assertEqual(result.type_name, 'OK')
                         self.assertEqual(result.fields['value'], 3)
 
+    def test_get_in_interpolation_completes_before_formatting(self):
+        """Unresolved CALL must materialize a snapshot, not print its request."""
+        cases = (
+            '''import {std.concurrency.State}
+$s = State(123)
+"State = ${get $s}"
+$s set 7
+"State = ${get $s}"''',
+            '''import {std.concurrency}
+$s = concurrency.State(123)
+"State = ${get $s}"
+$s set 7
+"State = ${get $s}"''',
+        )
+        for source in cases:
+            for optimized in (False, True):
+                with self.subTest(optimized=optimized, source=source):
+                    self.assertEqual(
+                        execute(source, optimize=optimized),
+                        ['State = 123', 'State = 7'],
+                    )
+
+    def test_interpolated_get_prints_snapshot_not_python_request(self):
+        """Formatting a State read may not expose a private runtime request."""
+        import io
+        from contextlib import redirect_stdout
+
+        source = '''import {std.concurrency.State}
+$s = State(42)
+println "State = ${get $s}"'''
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(execute(source, optimize=optimized), [])
+                self.assertEqual(output.getvalue(), 'State = 42\n')
+
+    def test_interpolated_get_inside_modify_rejects_nested_access(self):
+        """Dynamic CALL must still enforce the protected non-reentrancy rule."""
+        source = '''import {std.concurrency.State}
+$s = State(7)
+$s modify: fn(x:Int)->Int =>
+  "State = ${get $s}" pop
+  $x 1 +
+end'''
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                with self.assertRaisesRegex(Exception, 'nested protected state'):
+                    execute(source, optimize=optimized)
+
     def test_constructor_get_set_modify_and_qualified_forms(self):
         source = '''import {std.concurrency}
 $s = concurrency.State(0)

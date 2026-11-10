@@ -54,6 +54,21 @@ class CallPlanningBoundaryTests(unittest.TestCase):
                     }
                     self.assertEqual(signatures, expected)
 
+    def test_conversion_mismatch_only_lists_requested_target(self):
+        for source in ('"bad" to[&int]', '"bad" to?[&int]'):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                message = "\n".join(str(item) for item in analyser.diagnostics)
+                self.assertIn("to(Int) -> &int", message)
+                self.assertNotIn("to(String)", message)
+                self.assertNotIn("to(Real)", message)
+        analyser = Analyser()
+        analyser.analyse(parse('1 to[UnknownType]'))
+        message = "\n".join(str(item) for item in analyser.diagnostics)
+        self.assertIn("no registered conversion to UnknownType", message)
+        self.assertNotIn("available overloads:", message)
+
     def test_sum_preserves_the_declared_numeric_element_type(self):
         """Numeric specializations remain precise without narrowing Number inputs."""
         for element in (T.Int, T.Real, T.Number):

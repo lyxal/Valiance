@@ -127,7 +127,30 @@ class _ElementCalls:
             modifier_mismatch = self._modifier_generic_mismatch_message(
                 node, stack_before, overloads, modifier_args
             )
-            overload_list = _utils._show_overload_list(node.name, overloads)
+            if node.name.text == "to":
+                # Every conversion shares the name `to`, but only providers for
+                # the requested target can participate in this call. Do not
+                # print the entire conversion registry on a source mismatch.
+                target = (node.generic_args[0] if len(node.generic_args) == 1
+                          and isinstance(node.generic_args[0], T.Type) else None)
+                if target is None:
+                    overload_list = (
+                        "help: conversions require one target type, for example `to[Int]`"
+                    )
+                else:
+                    matching = tuple(overload for overload in overloads
+                                     if overload.conversion_target is not None
+                                     and T.same(overload.conversion_target, target))
+                    if not matching:
+                        overload_list = f"no registered conversion to {T.show(target)}"
+                    else:
+                        overload_list = _utils._show_overload_list(
+                            node.name, matching[:8]
+                        )
+                        if len(matching) > 8:
+                            overload_list += f"\n  ... and {len(matching) - 8} more for this target"
+            else:
+                overload_list = _utils._show_overload_list(node.name, overloads)
             if body_failures:
                 overload_list += "\nrejected function bodies:\n" + "\n".join(body_failures)
             if node.call_args:
