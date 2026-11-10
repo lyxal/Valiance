@@ -4819,23 +4819,6 @@ def _global_state_get(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
 
 
 @builtin(
-    "set", (_STATE_GENERIC, T.V("T")), (),
-    param_names=("state", "replacement"), vectorisable=False,
-    documentation=element_documentation(
-        "Atomically replace State[T] with an already-evaluated value.",
-        parameters=(("state", "Shared State handle."),
-                    ("replacement", "A duplicable, task-safe T evaluated before the call.")),
-        returns="No stack outputs.", category="Concurrency",
-        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s set 10\nget $s", "10"),),
-    ),
-)
-def _global_state_set(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Forward the precomputed replacement through the common atomic commit path."""
-    from valiance.std.concurrency import _set
-    return _set(args, ctx)
-
-
-@builtin(
     "modify", (_STATE_GENERIC, T.Fn((T.V("T"),), (T.V("T"),))), (),
     param_names=("state", "transformation"), vectorisable=False,
     documentation=element_documentation(
@@ -4867,6 +4850,23 @@ def _global_state_update_with(args: tuple[Any, ...], ctx: RuntimeContext) -> tup
     """Forward a transformation returning replacement state and a result."""
     from valiance.std.concurrency import _update_with
     return _update_with(args, ctx)
+
+
+@builtin(
+    "set", (_STATE_GENERIC, T.V("T")), (),
+    param_names=("state", "replacement"), vectorisable=False,
+    documentation=element_documentation(
+        "Atomically replace State[T] with an already-evaluated value.",
+        parameters=(("state", "Shared State handle."),
+                    ("replacement", "A duplicable, task-safe T evaluated before the call.")),
+        returns="No stack outputs.", category="Concurrency",
+        examples=(("import {std.concurrency}\n$s = concurrency.State(1)\n$s set 10\nget $s", "10"),),
+    ),
+)
+def _global_state_set(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Forward the precomputed replacement through the common atomic commit path."""
+    from valiance.std.concurrency import _set
+    return _set(args, ctx)
 
 
 BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
