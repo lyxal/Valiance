@@ -59,6 +59,7 @@ from valiance.asts import (
     SetVariablesNode,
     StackShuffleNode,
     StringInterpolationNode,
+    TypedStringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
     TagDeclarationNode,
@@ -538,6 +539,9 @@ class _Compiler:
         """Lower one typed AST node into bytecode instructions."""
         source_node = node
         typed_node = node if isinstance(node, TypedNode) else None
+        if isinstance(typed_node, TypedStringInterpolationNode):
+            self.string_interpolation(typed_node.parts)
+            return
         if isinstance(typed_node, TypedDescriptorConversionNode):
             if typed_node.implicit_source:
                 self.emit(OpCode.SOURCE_ARGS_BORROW, 1)
@@ -1364,9 +1368,9 @@ class _Compiler:
 
     def string_interpolation(
         self,
-        parts: tuple[str | tuple[ASTNode, ...], ...],
+        parts: tuple[str | tuple[ASTNode | TypedNode, ...], ...],
     ) -> None:
-        """Compile interpolation parts and concatenate their runtime strings."""
+        """Compile checked interpolation parts and concatenate runtime strings."""
         template: list[str | None] = []
         for part in parts:
             if isinstance(part, str):
@@ -2072,7 +2076,6 @@ class _Compiler:
         success_jump = self.emit(OpCode.JUMP, None)
 
         handlers: list[tuple[str | None, int]] = []
-        end_jumps: list[int] = []
         for index, handler in enumerate(node.handlers):
             if handler.typ is not None and not isinstance(handler.typ, NominalType):
                 raise CompileError(
@@ -2090,12 +2093,14 @@ class _Compiler:
             if index < len(handler_bodies):
                 handler_body = handler_bodies[index]
             self.expression(handler_body)
-            end_jumps.append(self.emit(OpCode.JUMP, None))
+            # A source-language handler completes the enclosing lexical
+            # function.  The low-level TRY_BEGIN instruction remains a
+            # catch-and-continue primitive (used by optional conversions).
+            self.emit(
+                OpCode.RETURN_SIGNAL if self.return_as_signal else OpCode.RETURN
+            )
 
-        end = len(self.instructions)
-        self.patch(success_jump, end)
-        for jump in end_jumps:
-            self.patch(jump, end)
+        self.patch(success_jump, len(self.instructions))
         self.instructions[begin] = Instruction(OpCode.TRY_BEGIN, tuple(handlers))
 
     def while_node(self, node: WhileNode, typed_node: TypedNode | None) -> None:
@@ -2113,13 +2118,13 @@ class _Compiler:
             params = tuple(
                 f"_while_input_{index}" for index in range(typed_node.input_count)
             )
-            condition_code = _Compiler().compile_function(
+            condition_code = _Compiler(return_as_signal=True).compile_function(
                 condition,
                 params=params,
                 name="while.condition",
                 cycle_params=True,
             )
-            body_code = _Compiler(break_as_signal=True).compile_function(
+            body_code = _Compiler(break_as_signal=True, return_as_signal=True).compile_function(
                 body,
                 params=params,
                 name="while.body",
@@ -2136,13 +2141,13 @@ class _Compiler:
                 for index, param in enumerate(node.params)
             )
             if isinstance(typed_node, TypedWhileNode):
-                condition_code = _Compiler().compile_function(
+                condition_code = _Compiler(return_as_signal=True).compile_function(
                     condition,
                     params=params,
                     name="while.condition",
                     cycle_params=True,
                 )
-                body_code = _Compiler(break_as_signal=True).compile_function(
+                body_code = _Compiler(break_as_signal=True, return_as_signal=True).compile_function(
                     body,
                     params=params,
                     name="while.body",

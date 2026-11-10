@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 
 import valiance.vtypes as T
 from valiance.asts import ASTNode, TryNode, TypedNode, TypedTryNode
@@ -31,7 +32,17 @@ class _ExceptionAnalysis:
             len(branch.typed_body),
             node.body,
         )
-        outputs: list[AnalysisBranch] = list(body_outputs.branches)
+        # Only the successful try paths can reach the next statement.
+        # A handled fault returns from the lexically enclosing function.
+        continuing = [output for output in body_outputs if not output.terminal]
+        # A Never result from the protected body represents a raised fault,
+        # not a function return.  Handlers consume those faults at runtime;
+        # unmatched faults still propagate normally via the panic mechanism.
+        terminal = [
+            output for output in body_outputs
+            if output.return_stack is not None or output.break_type is not None
+        ]
+        handler_returns: list[AnalysisBranch] = []
         typed_handler_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
         for handler in node.handlers:
             if handler.typ is not None:
@@ -70,34 +81,68 @@ class _ExceptionAnalysis:
                 if output.inputs != branch.inputs:
                     self._diagnose("try handlers inferred different inputs", handler)
                     continue
-                outputs.append(_patterns._try_handler_output(output, branch, handler))
+                # An explicit return/panic in the handler is already a
+                # terminal path.  Only normally completed handlers acquire
+                # an implicit function return (ordinary values, no wrapper).
+                handler_returns.append(
+                    output if output.terminal
+                    else output.with_return(output.stack, exact=False)
+                )
 
-        if not outputs:
-            return BranchSet()
+        def uncaught_effects(output: AnalysisBranch) -> AnalysisBranch:
+            """Keep prior effects and any panic types this try cannot catch."""
+            def caught(tag: T.ElementTag) -> bool:
+                """Whether a reachable handler discharges one panic effect."""
+                if tag.name != Symbol("Panic") or len(tag.args) != 1:
+                    return False
+                fault = T.normalize(tag.args[0])
+                # Ownership-integrity faults bypass even catch-all handlers.
+                if isinstance(fault, T.NominalType) and fault.name.text == "DuplicationFault":
+                    return False
+                return any(
+                    handler.typ is None
+                    or T.same(fault, T.normalize(handler.typ))
+                    for handler in node.handlers
+                )
 
-        joined: AnalysisBranch | None = None
-        for output in outputs:
-            joined = _patterns._join_try_output(
-                branch,
-                joined,
+            return replace(
                 output,
-                self.env.context,
+                element_tags=frozenset(
+                    tag for tag in output.element_tags
+                    if tag in branch.element_tags or not caught(tag)
+                ),
+            )
+
+        continuing = [uncaught_effects(output) for output in continuing]
+        terminal = [uncaught_effects(output) for output in terminal]
+        joined: AnalysisBranch | None = None
+        for output in continuing:
+            joined = _patterns._join_try_output(
+                branch, joined, output, self.env.context,
             )
             if joined is None:
                 self._diagnose("try branches inferred different inputs", node)
                 return BranchSet()
-        if joined is None:
+
+        if joined is None and not terminal and not handler_returns:
             return BranchSet()
-        return BranchSet(
-            (
-                joined.emit(
-                    TypedTryNode(
-                        node,
-                        _calls._returns_result_type(joined.stack.items),
-                        body=typed_body,
-                        handler_bodies=tuple(typed_handler_bodies),
-                    )
-                ),
-            )
+
+        typed = TypedTryNode(
+            node,
+            _calls._returns_result_type(joined.stack.items)
+            if joined is not None else None,
+            body=typed_body,
+            handler_bodies=tuple(typed_handler_bodies),
         )
+        # Each branch must retain the same checked TryNode so function code
+        # generation does not drop a handler based on which exit it analysed.
+        exits = (*terminal, *handler_returns)
+        outcomes = [
+            replace(joined, typed_body=branch.typed_body).emit(typed)
+        ] if joined is not None else []
+        outcomes.extend(
+            replace(output, typed_body=branch.typed_body).emit(typed)
+            for output in exits
+        )
+        return BranchSet.collect(outcomes)
 

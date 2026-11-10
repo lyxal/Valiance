@@ -196,8 +196,10 @@ Important helpers are grouped by responsibility:
   environment-mutating orchestration methods.
 
 - `control_flow/patterns.py`: `_match_case_output(...)`,
-  `_join_match_output(...)`, `_try_handler_output(...)`, and
-  `_join_try_output(...)` keep control-flow normalization out of handlers.
+  `_join_match_output(...)` and `_join_try_output(...)` keep control-flow
+  normalization out of handlers. Exception analysis treats a completed
+  source-language handler as a terminal return of ordinary values, not a
+  continuing `PanicError`-wrapped stack value.
 
 - `support/analysis_utils.py`: `_trait_requirements(...)` and
   `_literal_branch_results(...)` provide shared declaration and literal/branch

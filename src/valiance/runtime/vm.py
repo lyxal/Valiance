@@ -4917,7 +4917,7 @@ class VirtualMachine:
             frame.stack = []
             return self._finalize_frame(frame, result, code.return_count)
         except _FunctionReturn as signal:
-            if code.name == "foreach.body":
+            if code.name in {"foreach.body", "while.body", "while.condition"}:
                 self._discard_frame(frame)
                 raise
             return self._finalize_frame(frame, list(signal.values), code.return_count)

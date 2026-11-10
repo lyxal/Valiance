@@ -1762,12 +1762,20 @@ object A => define ~A => RuntimeFault("cleanup") panic end end
 object B => end
 define pick(flag: Int) -> A | B => if $flag == 1 => A else => B end end
 define concrete(flag: Int) -> A => pick($flag) as![A] end
-try =>
-  pick(1) fields | length
-handle RuntimeFault => "union cleanup" end
-try =>
-  concrete(1) fields | length
-handle RuntimeFault => "concrete cleanup" end
+define unionRecovery(flag: Int) -> String =>
+  try =>
+    pick($flag) fields | length
+  handle RuntimeFault => "union cleanup" end
+  "no error"
+end
+define concreteRecovery(flag: Int) -> String =>
+  try =>
+    concrete($flag) fields | length
+  handle RuntimeFault => "concrete cleanup" end
+  "no error"
+end
+unionRecovery(1)
+concreteRecovery(1)
 '''
         for stack in self.execute_variants(source):
             self.assertEqual(stack, ['union cleanup', 'concrete cleanup'])
@@ -2360,9 +2368,13 @@ object Temporary => define ~Temporary => RuntimeFault("cleanup") panic end end
 object Owner => public $value: Int end
 define replacement(seed: Int) -> Int | Temporary => Temporary end
 $owner = Owner(7)
-try =>
-  write?($owner, fields[Owner]["value"], replacement(0))
-handle RuntimeFault => "cleanup panic" end
+$attempt = fn -> String =>
+  try =>
+    write?($owner, fields[Owner]["value"], replacement(0))
+  handle RuntimeFault => "cleanup panic" end
+  "unreachable"
+end
+$attempt()
 $owner.value
 '''
         for stack in self.execute_variants(source):
@@ -3635,6 +3647,42 @@ $record.x = 9
             {"x": RuntimeNumber("1"), "y": RuntimeNumber("2")},
         )
         self.assertIsNot(vm.globals["record"], vm.globals["record_alias"])
+
+    def test_try_handler_returns_from_enclosing_function(self):
+        """A caught fault exits its lexical function, not the next block."""
+        source = """
+define demo(n: Int) -> String =>
+  try =>
+    if ($n < 0) => panic ValueFault("negative")
+  handle ValueFault =>
+    "recovered"
+  end
+  "normal continuation"
+end
+[demo(-1), demo(1)]
+"""
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                program = loads(dumps(compile_program(typed, optimize=optimize)))
+                self.assertEqual(list(run(program)[-1]), ["recovered", "normal continuation"])
+
+    def test_try_handler_exits_top_level_without_continuation(self):
+        """A caught top-level fault terminates only the Valiance program."""
+        self.assertEqual(execute("""
+try =>
+  panic ValueFault("boom")
+handle ValueFault =>
+  42
+end
+999
+"""), [RuntimeNumber("42")])
+
+    def test_optional_conversion_still_catches_and_continues(self):
+        """Compiler-generated ``to?`` recovery does not return early."""
+        self.assertEqual(execute("\"not a number\" to?[Int]\n42"), [ObjectValue("None", {}), RuntimeNumber("42")])
 
     def test_deep_recursion_uses_iterative_vm_frames(self):
         """Run recursive Valiance calls beyond Python's recursion limit."""
@@ -7521,6 +7569,41 @@ $name = "Valiance"
 "Hello, $name: ${1 + 2}"
 """
         self.assertEqual(execute(source), ["Hello, Valiance: 3"])
+
+    def test_string_interpolation_retains_qualified_import_call(self):
+        """Interpolation lowers checked module calls, not raw dotted names."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Int) -> Int => $n 1 +\n",
+                encoding="utf-8",
+            )
+            for optimized in (False, True):
+                with self.subTest(optimized=optimized):
+                    source = 'import {helper}\n"Values ${helper.bump(5)}, ${helper.bump(6)}"'
+                    analyser = Analyser(source_file=root / "main.vlnc")
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [])
+                    program = compile_program(typed, optimize=optimized)
+                    if optimized:
+                        program = loads(dumps(program))
+                    self.assertEqual(run(program), ["Values 6, 7"])
+
+    def test_qualified_call_in_nested_interpolation_and_condition(self):
+        """Checked calls survive nested formatting and conditional expressions."""
+        source = '''import {std.concurrency}
+$s = concurrency.State(2)
+"Outer ${"inner ${concurrency.get($s)}"}"
+"Choice ${if true => concurrency.get($s) else => 0 end}"'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                program = compile_program(typed, optimize=optimized)
+                if optimized:
+                    program = loads(dumps(program))
+                self.assertEqual(run(program), ["Outer inner 2", "Choice 2"])
 
     def test_string_interpolation_formats_values(self):
         self.assertEqual(
@@ -12743,7 +12826,8 @@ public define perimeter(c: Circle) => 2 * 3.14 * $c.radius
         source = "import {shapes}\nshapes.perimeter [shapes.Rectangle(10, 20), shapes.Circle(10)]\n"
         main.write_text(source, encoding="utf-8")
         result = execute(source, main)
-    assert list(result[-1]) == [60, 62.8]
+    # Decimal literals retain their exact values, unlike binary Python floats.
+    assert list(result[-1]) == [RuntimeNumber("60"), RuntimeNumber("62.8")]
 
 
 def test_imported_object_exposes_only_public_friendly_elements_at_runtime():

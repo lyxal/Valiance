@@ -812,22 +812,6 @@ def _pattern_is_irrefutable(
     )
 
 
-def _try_handler_output(
-    output: _core.AnalysisBranch,
-    branch: _core.AnalysisBranch,
-    handler: TryHandlerNode,
-) -> _core.AnalysisBranch:
-    """Compute try handler output during static analysis."""
-    handler_result = _calls._returns_result_type(output.stack.items)
-    if handler_result is None:
-        handler_result = T.NoneType()
-    return (
-        _calls._refine_branch_like(branch, output)
-        .with_stack(branch.stack.push(T.N(Symbol("PanicError"), handler_result)))
-        .emit(TypedNode(handler, handler_result))
-    )
-
-
 def _join_try_output(
     branch: _core.AnalysisBranch,
     joined: _core.AnalysisBranch | None,

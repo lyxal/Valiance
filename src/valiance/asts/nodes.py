@@ -46,6 +46,13 @@ class TypedNode:
 
 
 @dataclass(frozen=True, slots=True)
+class TypedStringInterpolationNode(TypedNode):
+    """String parts with checked embedded expressions and call identities."""
+
+    parts: tuple[str | tuple[TypedNode, ...], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedLiteralNode(TypedNode):
     """A literal retaining typed expressions and their forked input/output arities."""
 

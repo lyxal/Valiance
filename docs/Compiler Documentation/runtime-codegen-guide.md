@@ -99,9 +99,14 @@ The runtime implementation is small, but several files must evolve together.
 - `TagApplicationNode` is a compile-time no-op unless analysis resolved a
   tag validator. Validated applications emit `VALIDATE_TAG`, which calls the
   resolved validator overload and leaves the tagged value on the stack.
-- `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
-  panics are carried by `PanicSignal` and caught by the nearest active handler
-  whose nominal type name matches, or by a catch-all handler.
+- `TryNode` compiles to `TRY_BEGIN` / `TRY_END` and typed handler targets.
+  A successful protected body jumps past the handlers and continues normally.
+  A completed source-language handler emits ordinary `RETURN` (or
+  `RETURN_SIGNAL` in a generated lexical loop helper) to return its values
+  from the enclosing function. Runtime `PanicSignal` selects the nearest
+  matching handler (concrete fault type or catch-all). Internal catches such as
+  `to?` still use low-level `TRY_BEGIN` with catch-and-continue semantics;
+  never turn all caught panics into VM-level returns.
 - `DuplicationFault` is an unrecoverable ownership-integrity failure. Its
   `PanicSignal` bypasses all language handlers and `testing.assertPanics`,
   including when wrapped in runtime tag evidence or attached as a secondary

@@ -418,7 +418,17 @@ class Analyser:
         """Analyse a top-level sequence into typed nodes."""
         final = self.analyse_program_branches(program)
         if len(final) != 1:
-            return [TypedNode(node, None) for node in program]
+            # Non-local returns leave several terminal analysis worlds alongside
+            # the normal continuation.  Their checked bodies must be prefixes
+            # of the most complete continuing body; selecting that body keeps
+            # the exact resolved calls instead of falling back to raw AST.
+            bodies = tuple(branch.typed_body for branch in final)
+            if not bodies:
+                return [TypedNode(node, None) for node in program]
+            complete = max(bodies, key=len)
+            if not all(body == complete[:len(body)] for body in bodies):
+                return [TypedNode(node, None) for node in program]
+            return [*self._prelude.nodes, *complete]
         return [*self._prelude.nodes, *next(iter(final)).typed_body]
 
     def analyse_program_branches(self, program: list[ASTNode]) -> BranchSet:

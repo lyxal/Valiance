@@ -352,14 +352,17 @@ def _while_node(
     if not body_outputs:
         return _core.BranchSet()
 
+    # A lexical return in a loop body does not feed the next iteration.
+    # Keep it terminal rather than merging its result into cycle state.
+    body_returns, body_continuing = _utils._split_terminal_branches(body_outputs)
     if node.params is None and input_count and any(
-        len(output.stack) != len(loop_input.stack) for output in body_outputs
+        len(output.stack) != len(loop_input.stack) for output in body_continuing
     ):
         self._diagnose("while body must return its loop inputs", node)
         return _core.BranchSet()
 
     joined: _core.AnalysisBranch | None = None
-    for output in body_outputs:
+    for output in body_continuing:
         if joined is None:
             joined = output
             continue
@@ -379,7 +382,10 @@ def _while_node(
         joined = joined.with_data_element_uses(output.data_element_uses)
 
     if joined is None:
-        return _core.BranchSet()
+        # The condition may be false before the body ever executes. Even when
+        # every body path returns, preserve that zero-iteration continuation
+        # and emit the checked loop for the terminal body paths.
+        joined = loop_input
 
     variables = (
         joined.variables
@@ -402,20 +408,19 @@ def _while_node(
         else len(loop_input.typed_body)
     )
     body = _patterns._typed_block(body_outputs, body_start, node.body)
-    return _core.BranchSet.collect(
-        (
-            *terminal.branches,
-            result.emit(
-                TypedWhileNode(
-                    node,
-                    _calls._returns_result_type(result.stack.items),
-                    condition=condition_body,
-                    body=body,
-                    input_count=input_count,
-                )
-            ),
-        )
+    typed_while = TypedWhileNode(
+        node,
+        _calls._returns_result_type(result.stack.items),
+        condition=condition_body,
+        body=body,
+        input_count=input_count,
     )
+    return _core.BranchSet.collect((
+        *terminal.branches,
+        result.emit(typed_while),
+        *(replace(output, typed_body=branch.typed_body).emit(typed_while)
+          for output in body_returns),
+    ))
 
 @_core.register(ReturnNode)
 def _return_node(

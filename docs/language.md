@@ -3517,9 +3517,24 @@ handle IndexFault =>
   println "Caught IndexFault"
 end
 ```
-- After the handle block is finished, the function that contains the try block is immediately returned from.
-- The result of the handler will be wrapped in a `PanicError` type (a built-in type implementing `Err`) 
-- If at top level, the program will exit after the handler is finished
+- If the `try` body succeeds, its handlers are skipped and execution continues after `end`.
+- If a matching handler runs to completion, its stack outputs become the **ordinary return values of the lexically enclosing function**. Statements after the `try/handle` in that function do not execute on this path. There is **no implicit `PanicError` or `Err` wrapper**. A handler may explicitly return an error value, but it is not automatically converted into one.
+- Typed handlers are considered in source order, with `handle =>` matching otherwise eligible panics. An unmatched panic continues propagating; nonrecoverable ownership faults are not caught.
+- At top level, a completed handler exits the Valiance program body (not the host process or an unrelated calling task).
+- Nested `try/handle` blocks follow the same lexical-function return rule. Operations compiled internally to catch and continue, such as `to?`, do **not** acquire this source-language early-return behaviour.
+
+For example, `fallback(-1)` returns `"recovered"`, and `fallback(1)` returns `"normal"`:
+
+```valiance
+define fallback(n: Int) -> String =>
+  try =>
+    if ($n < 0) => panic ValueFault("negative")
+  handle ValueFault =>
+    "recovered"
+  end
+  "normal"
+end
+```
 
 ## 21.4. Optional and Result Helpers
 ## 21.4.1. `&`

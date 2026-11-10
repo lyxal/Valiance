@@ -62,6 +62,12 @@ time; a runtime tag operation with no validator implementation ID is not a
 substitute for validation.
 
 # Typed AST transformations
+String interpolation has its own typed node holding checked nested expression
+bodies. Both qualified imports and generically specialized calls must lower
+from that checked form, not their original raw text; otherwise runtime may
+lookup a non-existent dotted name even though analysis resolved the call.
+Refinement must traverse these nested bodies too.
+
 
 When adding a typed node that owns checked expressions or operation plans, update
 `analysis/state/transformations.py::_refine_typed_node` alongside analysis,

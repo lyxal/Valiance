@@ -842,6 +842,25 @@ class _CallableValues:
                 return len(node.returns)
             return min(len(branch.return_stack), 1)
 
+        # A reached source-language handler returns from this function. Do
+        # not silently drop its branch merely because it produces too few
+        # values for the declared result contract: codegen would still emit
+        # the handler's RETURN and runtime could then return an incomplete row.
+        if node.returns is not None:
+            required = len(node.returns)
+            for branch in branches:
+                if (
+                    not branch.failed
+                    and branch.return_stack is not None
+                    and len(branch.return_stack) < required
+                ):
+                    self._diagnose(
+                        "function return branch provides fewer values than its "
+                        f"declared result count ({len(branch.return_stack)} < {required})",
+                        node,
+                    )
+                    return {}
+
         explicit_counts = {
             count
             for branch in branches
@@ -918,6 +937,37 @@ class _CallableValues:
                 for signature, body in signatures.items()
                 if not _utils._has_never_return(signature)
             }
+        # Multiple control-flow exits with the same input contract describe
+        # one callable, not competing overloads distinguished only by their
+        # result types.  A caught panic is one such exit: its handler returns
+        # directly, while the successful try path can finish later in the
+        # function.  Preserve the longest checked body (which includes the
+        # continuing code) and join the corresponding result positions.
+        by_input: dict[T.Overload, list[tuple[T.Overload, tuple[TypedNode, ...]]]] = {}
+        for signature, body in signatures.items():
+            by_input.setdefault(replace(signature, returns=()), []).append(
+                (signature, body)
+            )
+        if any(len(group) > 1 for group in by_input.values()):
+            merged: dict[T.Overload, tuple[TypedNode, ...]] = {}
+            for group in by_input.values():
+                arities = {len(signature.returns) for signature, _ in group}
+                if len(arities) != 1:
+                    counts = ", ".join(str(count) for count in sorted(arities))
+                    self._diagnose(
+                        "function return branches must return the same number "
+                        f"of values; got {counts}", node,
+                    )
+                    return {}
+                signature = replace(
+                    group[0][0],
+                    returns=tuple(
+                        T.U(*(option.returns[index] for option, _ in group))
+                        for index in range(len(group[0][0].returns))
+                    ),
+                )
+                merged[signature] = max(group, key=lambda item: len(item[1]))[1]
+            signatures = merged
         if self.trace is not None:
             self.trace.finish_function(
                 node,

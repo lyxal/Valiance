@@ -40,6 +40,7 @@ from valiance.asts import (
     TypedSetVariableNode,
     TypedObjectNode,
     TypedLiteralNode,
+    TypedStringInterpolationNode,
     TypedMatchNode,
     TypedNode,
     TypedSpawnNode,
@@ -169,6 +170,15 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
     typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
     if type(typed_node) is TypedNode and typ is typed_node.typ:
         return typed_node
+    if isinstance(typed_node, TypedStringInterpolationNode):
+        return TypedStringInterpolationNode(
+            typed_node.node,
+            typ,
+            tuple(
+                part if isinstance(part, str) else _refine_typed_body(part, old, new)
+                for part in typed_node.parts
+            ),
+        )
     if isinstance(typed_node, TypedDescriptorConversionNode):
         return replace(typed_node, typ=typ,
                        target_body=_refine_typed_body(typed_node.target_body, old, new),

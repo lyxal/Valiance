@@ -248,6 +248,49 @@ $s set 7
                         ['State = 123', 'State = 7'],
                     )
 
+    def test_module_qualified_get_in_interpolation_uses_checked_binding(self):
+        """Qualified State calls retain their checked import alias in strings."""
+        source = '''import {std.concurrency}
+$s = concurrency.State(123)
+"Qualified = ${concurrency.get($s)}"
+$s set 7
+"Both ${get $s}, ${concurrency.get($s)}"
+'''
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                self.assertEqual(
+                    execute(source, optimize=optimized),
+                    ['Qualified = 123', 'Both 7, 7'],
+                )
+
+    def test_qualified_interpolated_get_prints_snapshot(self):
+        """Qualified interpolation must print the committed value, not a VM request."""
+        import io
+        from contextlib import redirect_stdout
+
+        source = '''import {std.concurrency}
+$s = concurrency.State(42)
+println "State = ${concurrency.get($s)}"'''
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(execute(source, optimize=optimized), [])
+                self.assertEqual(output.getvalue(), 'State = 42\n')
+
+    def test_qualified_interpolated_get_inside_modify_rejects_nested_access(self):
+        """Checked qualified calls still respect protected-scope policies."""
+        source = '''import {std.concurrency}
+$s = concurrency.State(7)
+$s modify: fn(x:Int)->Int =>
+  "State = ${concurrency.get($s)}" pop
+  $x 1 +
+end'''
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                with self.assertRaisesRegex(Exception, 'protected callback cannot invoke'):
+                    execute(source, optimize=optimized)
+
     def test_interpolated_get_prints_snapshot_not_python_request(self):
         """Formatting a State read may not expose a private runtime request."""
         import io
@@ -422,11 +465,15 @@ get $s'''
         source = '''import {std.concurrency}
 $s = concurrency.State(7)
 $replacement = fn -> Int => RuntimeFault("failed before gate") panic end
-try =>
-  $s set $replacement()
-handle RuntimeFault =>
-  0 pop
+$attempt = fn -> =>
+  try =>
+    $s set $replacement()
+  handle RuntimeFault =>
+    0 pop
+  end
 end
+end
+$attempt()
 $s'''
         for optimized in (False, True):
             with self.subTest(optimized=optimized):
@@ -577,11 +624,15 @@ get $s'''
     def test_panic_aborts_without_commit(self):
         source = '''import {std.concurrency}
 $s = concurrency.State(7)
-try =>
-  concurrency.modify($s, fn(x:Int)->Int => RuntimeFault("boom") panic end)
-handle RuntimeFault =>
-  0
+$attempt = fn -> Int =>
+  try =>
+    concurrency.modify($s, fn(x:Int)->Int => RuntimeFault("boom") panic end)
+  handle RuntimeFault =>
+    0
+  end
+  999
 end
+$attempt() pop
 get $s'''
         for optimized in (False, True):
             self.assertEqual(execute(source, optimize=optimized)[-1], 7)
@@ -744,11 +795,15 @@ $s = concurrency.State(7)
 define die(x: Int) -> Int =>
   RuntimeFault("nested panic") panic
 end
-try =>
-  concurrency.modify($s, fn(x:Int)->Int => die($x) end)
-handle RuntimeFault =>
-  0 pop
+$attempt = fn -> =>
+  try =>
+    concurrency.modify($s, fn(x:Int)->Int => die($x) end)
+  handle RuntimeFault =>
+    0 pop
+  end
 end
+end
+$attempt()
 $s modify: (1 +)
 get $s'''
         for optimized in (False, True):
@@ -890,7 +945,7 @@ $s''')
                 vm.scheduler.root_scope.close()
                 _release_value(cell, vm)
 
-    def test_handled_panic_in_protected_callback_commits(self):
+    def test_handled_panic_in_protected_callback_returns_and_commits(self):
         source = '''import {std.concurrency}
 $s = concurrency.State(7)
 $s
@@ -905,7 +960,7 @@ end'''
         for optimized in (False, True):
             with self.subTest(optimized=optimized):
                 result, = execute(source, optimize=optimized)
-                self.assertEqual(result.value, 9)
+                self.assertEqual(result.value, 0)
                 self.assertIsNone(result.gate.owner)
 
     def test_nonduplicable_state_initial_value_is_rejected_statically(self):

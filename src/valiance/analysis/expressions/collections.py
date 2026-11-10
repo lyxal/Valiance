@@ -13,6 +13,7 @@ from valiance.asts import (
     ListLiteralNode,
     RecordLiteralNode,
     StringInterpolationNode,
+    TypedStringInterpolationNode,
     TupleLiteralNode,
     TypedNode,
 )
@@ -31,41 +32,50 @@ def _string_interpolation_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `StringInterpolationNode` node and return the surviving branches."""
-    current = _core.BranchSet((branch,))
+    # Keep the checked expression body for each interpolation part. Re-lowering
+    # raw expressions loses resolved import aliases and implementation identities.
+    paths: list[tuple[_core.AnalysisBranch, tuple[str | tuple[TypedNode, ...], ...]]] = [
+        (branch, ())
+    ]
     expression_count = 0
     for part in node.parts:
         if isinstance(part, str):
+            paths = [(state, (*parts, part)) for state, parts in paths]
             continue
 
         expression_count += 1
-        current = self.analyse_scoped_block(current, part)
-        if not current:
-            return _core.BranchSet()
-        if any(not output.stack for output in current):
-            self._diagnose(
-                "string interpolation expression must leave a value",
-                node,
-            )
+        expanded = []
+        for state, parts in paths:
+            if state.terminal:
+                expanded.append((state, parts))
+                continue
+            checked = self.analyse_scoped_block(_core.BranchSet((state,)), part)
+            for output in checked:
+                if not output.stack:
+                    self._diagnose(
+                        "string interpolation expression must leave a value",
+                        node,
+                    )
+                    return _core.BranchSet()
+                checked_body = output.typed_body[len(state.typed_body):]
+                expanded.append((output, (*parts, checked_body)))
+        paths = expanded
+        if not paths:
             return _core.BranchSet()
 
-    terminal, current = _utils._split_terminal_branches(current)
-    return _core.BranchSet.collect(
-        (
-            *terminal.branches,
-            *(
+    results = []
+    for output, parts in paths:
+        if output.terminal:
+            results.append(output)
+        elif len(output.stack) >= expression_count:
+            results.append(
                 replace(
                     output,
-                    stack=_utils._pop_stack(
-                        output.stack,
-                        expression_count,
-                    ).push(T.String),
+                    stack=_utils._pop_stack(output.stack, expression_count).push(T.String),
                     typed_body=branch.typed_body,
-                ).emit(TypedNode(node, T.String))
-                for output in current
-                if len(output.stack) >= expression_count
-            ),
-        )
-    )
+                ).emit(TypedStringInterpolationNode(node, T.String, parts))
+            )
+    return _core.BranchSet.collect(results)
 
 def _direct_variable_expressions(value: object) -> Iterable[GetVariableNode]:
     """Yield direct variable expressions without recursing through nested ASTs."""

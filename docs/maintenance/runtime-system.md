@@ -520,6 +520,13 @@ stream and fills in integer instruction pointers.
 
 ### Typed metadata changes lowering
 
+String interpolation retains each embedded expression's analysed typed body
+in `TypedStringInterpolationNode`. Lower the checked nodes through the usual
+compiler path before `BUILD_STRING`: recompiling raw interpolation expressions
+loses qualified import aliases, overload identities, and inferred
+specializations (for example `${concurrency.get($state)}`). The same rule
+applies to ordinary imported function calls and nested interpolations.
+
 The raw AST says that an element was written. The typed wrapper says what that
 call means.
 
@@ -1050,6 +1057,15 @@ panic reaches `_handle_panic(...)`, the VM:
 
 If no handler matches, the signal leaves the frame. `VirtualMachine.run(...)`
 converts an uncaught signal into a user-facing `RuntimeError`.
+
+For source-language `TryNode`, successful completion of a **matched handler**
+compiles to the existing `RETURN` (or `RETURN_SIGNAL` inside a generated
+lexical loop helper); this exits the containing Valiance function with the
+handler's ordinary outputs. A successful protected body still falls through
+via `TRY_END`. Low-level internal `TRY_BEGIN` uses, including `to?`, deliberately
+retain catch-and-continue semantics. `_handle_panic` must not itself force a
+return, because it serves both categories. Return-value selection and RAII
+cleanup remain handled by the existing frame-finalisation path.
 
 A panic is intentionally separate from a VM implementation error. A language
 program may catch a panic value; it should not catch corrupt bytecode or an
