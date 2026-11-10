@@ -2495,11 +2495,17 @@ object Owner =>
 end
 @convert(String -> Int)
 define to(value: String) -> Int => print "converted" 42 end
-$owner = Owner(7, "old")
-try =>
-  $owner[fields[Owner]["value"]] = "wrong"
-handle ReflectionTypeFault => 99
+define rejectWrite(owner: Owner) -> Int =>
+  $current = $owner
+  try =>
+    $current[fields[Owner]["value"]] = "wrong"
+  handle ReflectionTypeFault => 99
+  end
+  print "unexpected continuation"
+  0
 end
+$owner = Owner(7, "old")
+rejectWrite $owner
 $owner.value
 '''
         output = io.StringIO()
@@ -2527,9 +2533,10 @@ object Owner => private $value: Int end
 $owner = Owner(7)
 try =>
   $owner[fields[Owner]["value"]] = 8
-handle ReflectionFieldFault => 99
+handle ReflectionFieldFault =>
+  99
+  unsafe => $owner[fields[Owner]["value"]] end
 end
-unsafe => $owner[fields[Owner]["value"]] end
 '''
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
@@ -2600,17 +2607,23 @@ object Owner =>
   {visibility} $secret: Int
   public $text: String
 end
-$owner = Owner(7, "old")
-try =>
-  $owner[fields[Owner]["secret"]] = "wrong"
-handle ReflectionAccessFault => 99
+define rejectWrite(owner: Owner) -> Int =>
+  $current = $owner
+  try =>
+    $current[fields[Owner]["secret"]] = "wrong"
+  handle ReflectionAccessFault => 99
+  end
+  0
 end
+$owner = Owner(7, "old")
+rejectWrite $owner
+unsafe => $owner[fields[Owner]["secret"]] end
 unsafe => $owner[fields[Owner]["secret"]] = 8 end
 unsafe => $owner[fields[Owner]["secret"]] end
 '''
             with self.subTest(visibility=visibility):
                 for stack in self.execute_variants(source):
-                    self.assertEqual(stack, [RuntimeNumber(99), RuntimeNumber(8)])
+                    self.assertEqual(stack, [RuntimeNumber(99), RuntimeNumber(7), RuntimeNumber(8)])
 
     def test_rejected_replacement_is_released_and_original_binding_survives(self):
         source = '''
@@ -2620,11 +2633,16 @@ object Temporary =>
 end
 object Owner => public $value: Int end
 define replacement(seed: Int) -> Int | Temporary => Temporary("discarded") end
-$owner = Owner(7)
-try =>
-  $owner[fields[Owner]["value"]] = replacement(0)
-handle ReflectionTypeFault => 99
+define rejectWrite(owner: Owner) -> Int =>
+  $current = $owner
+  try =>
+    $current[fields[Owner]["value"]] = replacement(0)
+  handle ReflectionTypeFault => 99
+  end
+  0
 end
+$owner = Owner(7)
+rejectWrite $owner
 $owner.value
 '''
         output = io.StringIO()
