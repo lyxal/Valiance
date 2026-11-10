@@ -1939,11 +1939,18 @@ object Pair =>
   private $number: Int
   public $label: String
 end
+define rejectWrite(builder: Uninit[Pair]) -> String =>
+  unsafe =>
+    $current = $builder
+    try =>
+      $current[fields[Pair]["number"]] = "wrong"
+      "unexpected"
+    handle ReflectionTypeFault => "rejected" end
+  end
+end
 unsafe =>
   $builder = uninit[Pair]
-  try =>
-    $builder[fields[Pair]["number"]] = "wrong"
-  handle ReflectionTypeFault => "rejected" end
+  rejectWrite($builder)
   finished? $builder
   $builder[fields[Pair]["number"]] = 7
   $builder[fields[Pair]["label"]] = "ready"
@@ -4371,6 +4378,24 @@ end
             vm.optimization_stats.snapshot()["prepared.strategy.match-dispatch"],
             1,
         )
+
+    def test_prepared_match_keeps_interpolation_text_around_top(self):
+        source = r'''
+fn (n: Int) -> String =>
+  match =>
+    if % 2 == 0 => "even"
+    _ => "number=${top}"
+  end
+end
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+        self.assertEqual(prepared.invoke1(RuntimeNumber(7)), ("number=7",))
+        self.assertEqual(prepared.invoke1(RuntimeNumber(8)), ("even",))
 
     def test_guard_bytecode_retains_statically_selected_overloads(self):
         """Do not discard analysed element slots while lowering match guards."""

@@ -2136,8 +2136,35 @@ class VirtualMachine:
             and instruction.arg == "top"
             and instructions[target + 1].op is OpCode.CALL
             and instructions[target + 2].op is OpCode.BUILD_STRING
+            and instructions[target + 2].arg == (None,)
         ):
             return self.format_value
+        if (
+            target + 1 < len(instructions)
+            and instructions[target + 1].op is OpCode.BUILD_STRING
+            and instructions[target + 1].arg == (None,)
+        ):
+            if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
+                reference = instruction.arg
+                if (
+                    isinstance(reference, ResolvedElementReference)
+                    and reference.name == "top"
+                    and reference.dispatch_kind is DispatchKind.STATIC
+                    and not reference.vectorised
+                    and reference.extension is None
+                    and not reference.static_values
+                    and not reference.type_args
+                    and reference.arity_override is None
+                    and reference.consumed_override is None
+                ):
+                    builtin = globals_.get(reference.name)
+                    if isinstance(builtin, BuiltinValue):
+                        try:
+                            overload = _linked_builtin_overload(builtin, reference)
+                        except RuntimeError:
+                            return None
+                        if overload.implementation is not None:
+                            return self.format_value
         return None
 
     def _prepare_direct_leaf_call(

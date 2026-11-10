@@ -89,6 +89,16 @@ rebuilders. It represents the complete literal storage in declaration order;
 Rebuilding both as `T.Row(...)` silently discards the evidence needed to select a
 runtime schema. Record reconstruction must retain its reified type signature.
 
+A top-level `try/handle` can produce both continuing and terminal analysis
+branches. Their checked `TypedUnsafeNode` may have different result types,
+and the terminal branch may contain only a prefix of the continuing body.
+When choosing a representative body in `Analyser.analyse`, compare checked
+operations inside these unsafe prefixes rather than requiring identical outer
+node result types. Falling back to raw top-level AST loses reflection layouts
+and construction operations, causing compilation errors or unresolved runtime
+names even when analysis produced no diagnostics. The handler itself still
+returns from the lexical function; it must not resume at the following statement.
+
 # Runtime constructor metadata and provider-owned dependency closure
 
 Imported declarations carry provider-qualified runtime identities and a private

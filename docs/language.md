@@ -2429,6 +2429,10 @@ end
   cases and cases containing number, string, or hashable object payloads.
 - A backing value is ordinary nominal object data, not an implicit conversion
   to a number or a positional list index.
+- A field such as `value` is readable through the parent variant type only
+  when **every** case exposes that field. A collection of variant cases can
+  project the common field elementwise (for example, `$colours.value`);
+  a case missing the field makes that shared access invalid.
 - Example:
 
 ```

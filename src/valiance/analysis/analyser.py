@@ -69,6 +69,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
     TypedSpawnNode,
+    TypedUnsafeNode,
     TypedWaitNode,
     TypedTagApplicationNode,
     VariantMemberNode,
@@ -109,6 +110,31 @@ _INTERNAL_NODE_TYPES: tuple[type[ASTNode], ...] = (
     MatchCaseNode,
     MatchPatternNode,
 )
+
+
+def _compatible_typed_prefix(
+    candidate: tuple[TypedNode, ...], complete: tuple[TypedNode, ...],
+) -> bool:
+    """Accept terminal-path prefixes without discarding checked unsafe code.
+
+    A handler that returns from the enclosing function may leave a shorter
+    unsafe body, and its final result type can differ from the continuing
+    branch. The code in their common prefix must still agree exactly.
+    """
+    if len(candidate) > len(complete):
+        return False
+    for left, right in zip(candidate, complete):
+        if left == right:
+            continue
+        if (
+            isinstance(left, TypedUnsafeNode)
+            and isinstance(right, TypedUnsafeNode)
+            and left.node is right.node
+            and _compatible_typed_prefix(left.body, right.body)
+        ):
+            continue
+        return False
+    return True
 
 
 def register(node_type: type[ASTNode]) -> Callable[[NodeHandler], NodeHandler]:
@@ -425,8 +451,12 @@ class Analyser:
             bodies = tuple(branch.typed_body for branch in final)
             if not bodies:
                 return [TypedNode(node, None) for node in program]
-            complete = max(bodies, key=len)
-            if not all(body == complete[:len(body)] for body in bodies):
+            complete = next(
+                (candidate for candidate in bodies
+                 if all(_compatible_typed_prefix(body, candidate) for body in bodies)),
+                None,
+            )
+            if complete is None:
                 return [TypedNode(node, None) for node in program]
             return [*self._prelude.nodes, *complete]
         return [*self._prelude.nodes, *next(iter(final)).typed_body]

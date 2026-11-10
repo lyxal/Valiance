@@ -403,6 +403,47 @@ Token.\NUMBER Token.\DIGIT ===
 dict{Token.\NUMBER => 7, Token.\DIGIT => 9} $[Token.\DIGIT]
 ''', ['number', 0, 9])
 
+    def test_all_value_backed_variant_members_expose_projected_values(self):
+        self.assert_executes(r'''
+variant Colour =>
+  RED = "red"
+  BLUE = "blue"
+  GREEN = "green"
+end
+const $myCols = [Colour.\RED, Colour.\BLUE, Colour.\GREEN]
+$myCols.value
+define readColour(colour: Colour) -> String => $colour.value end
+Colour.\BLUE readColour
+''', [['red', 'blue', 'green'], 'blue'])
+
+    def test_partially_value_backed_variant_rejects_shared_value_access(self):
+        self.assert_rejected(r'''
+variant Colour =>
+  RED = "red"
+  BLUE
+  GREEN = "green"
+end
+const $myCols = [Colour.\RED, Colour.\BLUE, Colour.\GREEN]
+$myCols.value
+''', 'value')
+
+    def test_mixed_object_and_value_cases_reject_shared_value_access(self):
+        self.assert_rejected(r'''
+variant Choice =>
+  Literal = 1
+  Object => $name: String end
+end
+$choices = [Choice.\Literal, Choice.Object("named")]
+$choices.value
+''', 'value')
+
+    def test_variant_without_backing_values_rejects_value_access(self):
+        self.assert_rejected(r'''
+variant Colour => RED BLUE GREEN end
+$colours = [Colour.\RED, Colour.\BLUE, Colour.\GREEN]
+$colours.value
+''', 'value')
+
     def test_backing_value_cases_support_friendly_implementations(self):
         self.assert_executes(r'''
 variant Colour =>

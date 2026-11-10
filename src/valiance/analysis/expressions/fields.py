@@ -136,9 +136,19 @@ class _FieldExpressions:
     ) -> tuple[T.Type | None, T.Type | None]:
         """Determine the type of field during static analysis."""
         receiver_type = T.normalize(receiver_type)
-        if isinstance(receiver_type, T.UnionType) and field_type_evidence(receiver_type) is not None:
-            properties = tuple(self._field_type(item, name, branch, write=write)[0] for item in receiver_type.items)
-            return (T.U(*properties), None) if all(item is not None for item in properties) else (None, None)
+        if isinstance(receiver_type, T.UnionType):
+            # A union permits reads of fields shared by every alternative.
+            # The field's type may differ between alternatives, but a write
+            # cannot be safe against every possible concrete receiver.
+            if write:
+                return None, None
+            properties = tuple(
+                self._field_type(item, name, branch)[0]
+                for item in receiver_type.items
+            )
+            if all(item is not None for item in properties):
+                return T.U(*properties), None
+            return None, None
         metadata_base = receiver_type.base if isinstance(receiver_type, T.RowType) else receiver_type
         if isinstance(metadata_base, T.NominalType) and metadata_base.name == Symbol("TypeInfo"):
             if write or len(metadata_base.args) != 1:
