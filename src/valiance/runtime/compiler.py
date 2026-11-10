@@ -2075,20 +2075,25 @@ class _Compiler:
         self.emit(OpCode.TRY_END)
         success_jump = self.emit(OpCode.JUMP, None)
 
-        handlers: list[tuple[str | None, int]] = []
+        handlers: list[tuple[str | None, int] | tuple[str | None, int, str]] = []
         for index, handler in enumerate(node.handlers):
             if handler.typ is not None and not isinstance(handler.typ, NominalType):
                 raise CompileError(
                     f"cannot compile handler for non-nominal type {handler.typ}"
                 )
-            handlers.append(
-                (
-                    handler.typ.name.text
-                    if isinstance(handler.typ, NominalType)
-                    else None,
-                    len(self.instructions),
-                )
+            fault_type = (
+                handler.typ.name.text
+                if isinstance(handler.typ, NominalType) else None
             )
+            if handler.binding is None:
+                handlers.append((fault_type, len(self.instructions)))
+            else:
+                handlers.append((
+                    fault_type, len(self.instructions),
+                    _symbol_runtime_name(handler.binding),
+                ))
+                # The VM installs this lexical handler binding when a panic
+                # matches, preserving any shadowed local until the handler exits.
             handler_body: tuple[ASTNode | TypedNode, ...] = handler.body
             if index < len(handler_bodies):
                 handler_body = handler_bodies[index]

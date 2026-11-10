@@ -475,8 +475,9 @@ class ObjectConstructorValue:
 
 @dataclass(frozen=True, slots=True)
 class _PanicHandler:
-    handlers: tuple[tuple[str | None, int], ...]
+    handlers: tuple[tuple[str | None, int] | tuple[str | None, int, str], ...]
     stack_depth: int
+    binding_depth: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -516,6 +517,8 @@ class _Frame:
     retained_locals: frozenset[str] = frozenset()
     is_global_scope: bool = False
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
+    # (source name, existing local, previous value), innermost first on unwind.
+    named_panic_bindings: list[tuple[str, bool, Any]] = field(default_factory=list)
     cycle_scopes: list[tuple[tuple[Any, ...], int, int, bool]] = field(default_factory=list)
     isolated_stacks: list[list[Any]] = field(default_factory=list)
     match_branch_stacks: list[list[Any]] = field(default_factory=list)
@@ -1267,6 +1270,18 @@ class VirtualMachine:
 
     def _discard_frame_during(self, frame: _Frame, error: BaseException) -> None:
         """Discard a failed frame while exposing any active panic to destructors."""
+        # A panic payload can still be an owned stack occurrence when a native
+        # `panic` builtin raises.  Move that occurrence into the propagating
+        # signal before discarding the frame, otherwise a caller's named
+        # handler would receive an already-destroyed object.
+        if isinstance(error, PanicSignal) and self._transfer_fault_stack_occurrence(
+            frame, error, 0,
+        ):
+            # A native panic may leave its input on the operand stack. The
+            # signal now transports that owner across discarded call frames.
+            error._transferred_occurrences = (
+                getattr(error, "_transferred_occurrences", 0) + 1
+            )
         try:
             with self._unwinding(error):
                 self._discard_frame(frame)
@@ -1328,9 +1343,21 @@ class VirtualMachine:
                 body_error = close_error
         if body_error is not None:
             if isinstance(body_error, PanicSignal):
-                raise _concurrency_runtime_error(
+                failure = _concurrency_runtime_error(
                     f"uncaught panic: {_format_value(body_error.value)}", body_error
-                ) from body_error
+                )
+                # An unwound call frame may have handed its raised object to
+                # the panic signal. Uncaught faults have no handler to claim
+                # that owner; release it at the program boundary after
+                # formatting the diagnostic.
+                transferred = getattr(body_error, "_transferred_occurrences", 0)
+                body_error._transferred_occurrences = 0
+                for _ in range(transferred):
+                    try:
+                        _release_value(body_error.value, self)
+                    except BaseException as cleanup_error:
+                        _attach_secondary_faults(body_error, (cleanup_error,))
+                raise failure from body_error
             if isinstance(body_error, RuntimeError):
                 raise body_error
             if isinstance(body_error, ClosedFault):
@@ -4483,10 +4510,19 @@ class VirtualMachine:
                             )
                         case OpCode.TRY_BEGIN:
                             handlers = tuple(instruction.arg)
-                            for _, target in handlers:
-                                _validated_jump_target(target, len(instructions))
+                            for entry in handlers:
+                                if (
+                                    not isinstance(entry, tuple)
+                                    or len(entry) not in (2, 3)
+                                    or (len(entry) == 3 and not isinstance(entry[2], str))
+                                ):
+                                    raise RuntimeError("invalid panic handler entry")
+                                _validated_jump_target(entry[1], len(instructions))
                             frame.panic_handlers.append(
-                                _PanicHandler(handlers, len(frame.stack))
+                                _PanicHandler(
+                                    handlers, len(frame.stack),
+                                    len(frame.named_panic_bindings),
+                                )
                             )
                         case OpCode.TRY_END:
                             if frame.panic_handlers:
@@ -4987,14 +5023,52 @@ class VirtualMachine:
         self._release_frame_locals(frame)
 
     def _release_frame_locals(self, frame: _Frame) -> None:
-        """Release each frame local at most once, even when cleanup itself fails."""
+        """Release each frame local at most once, including shadowed bindings."""
         locals_ = tuple(frame.locals.items())
         frame.locals.clear()
+        # A completed handler exits its enclosing function, so any shadowed
+        # locals saved while binding its fault must be released with the frame.
+        for name, present, previous in reversed(frame.named_panic_bindings):
+            if present:
+                locals_ += ((name, previous),)
+        frame.named_panic_bindings.clear()
         for name, value in locals_:
             if (
                 name in frame.retained_locals or frame.globals.get(name) is not value
             ) and _needs_release(value):
                 _release_value(value, self)
+
+    def _restore_finished_panic_bindings(
+        self, frame: _Frame, binding_depth: int,
+    ) -> None:
+        """Restore names from handler scopes abandoned by a new panic."""
+        while len(frame.named_panic_bindings) > binding_depth:
+            name, present, previous = frame.named_panic_bindings.pop()
+            value = frame.locals.pop(name, None)
+            if value is not None and _needs_release(value):
+                _release_value(value, self)
+            if present:
+                frame.locals[name] = previous
+
+    @staticmethod
+    def _transfer_fault_stack_occurrence(
+        frame: _Frame, panic: PanicSignal, start: int,
+    ) -> bool:
+        """Move an owned raised-fault occurrence out of an unwinding stack tail.
+
+        The fault's ownership then travels with the panic signal until a
+        handler receives it.  Do not treat borrowed accesses as owners.
+        """
+        value = unwrap_runtime_value(panic.value)
+        for index in range(len(frame.stack) - 1, start - 1, -1):
+            occurrence = frame.stack[index]
+            if (
+                _borrowed_payload(occurrence) is None
+                and unwrap_runtime_value(occurrence) is value
+            ):
+                del frame.stack[index]
+                return True
+        return False
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
         """Handle panic during VM execution."""
@@ -5002,13 +5076,51 @@ class VirtualMachine:
             return None
         while frame.panic_handlers:
             handler = frame.panic_handlers.pop()
-            for type_name, target in handler.handlers:
+            for entry in handler.handlers:
+                type_name, target = entry[:2]
                 if type_name is None or _panic_matches(panic.value, type_name):
+                    bound = len(entry) == 3
+                    moved = (
+                        self._transfer_fault_stack_occurrence(
+                            frame, panic, handler.stack_depth,
+                        ) if bound else False
+                    )
                     _release_stack_tail(
                         frame.stack,
                         len(frame.stack) - handler.stack_depth,
                         self,
                     )
+                    transferred = getattr(panic, "_transferred_occurrences", 0)
+                    # Rethrowing a bound fault can pass a borrowed access to
+                    # `panic`. If that handler is about to unwind, retain an
+                    # occurrence before restoring its shadowed local.
+                    if bound and not (moved or transferred) and any(
+                        index >= handler.binding_depth
+                        and unwrap_runtime_value(frame.locals.get(name))
+                        is unwrap_runtime_value(panic.value)
+                        for index, (name, _present, _previous)
+                        in enumerate(frame.named_panic_bindings)
+                    ):
+                        _retain_runtime_reference(panic.value)
+                        transferred += 1
+                    # One owner is handed to a named handler. All other owners
+                    # carried through discarded activations must be released,
+                    # including when an unnamed handler ignores the fault.
+                    retained = 1 if bound and (moved or transferred) else 0
+                    for _ in range(max(0, transferred + int(moved) - retained)):
+                        _release_value(panic.value, self)
+                    panic._transferred_occurrences = 0
+                    self._restore_finished_panic_bindings(
+                        frame, handler.binding_depth,
+                    )
+                    if bound:
+                        name = entry[2]
+                        present = name in frame.locals
+                        previous = frame.locals.pop(name, None)
+                        frame.named_panic_bindings.append((
+                            name, present, previous,
+                        ))
+                        frame.locals[name] = panic.value
                     return target
         return None
 

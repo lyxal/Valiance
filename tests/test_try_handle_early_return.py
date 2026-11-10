@@ -428,6 +428,275 @@ $s modify: (1 +)
 get $s
 ''', [RuntimeNumber(5), RuntimeNumber(6)])
 
+    def test_named_typed_fault_exposes_concrete_fields(self):
+        """A typed named handler reads the caught object, not a wrapper."""
+        self.check('''
+define recover(n: Int) -> String =>
+  try =>
+    panic ValueFault("details")
+  handle as problem: ValueFault =>
+    $problem.message
+  end
+  "wrong"
+end
+recover 1
+''', ["details"])
+
+    def test_named_catch_all_binds_concrete_fault(self):
+        """An untyped named handler observes the actual raised fault value."""
+        source = '''
+define recover(n: Int) -> Fault =>
+  try =>
+    panic ValueFault("any")
+  handle as problem =>
+    $problem
+  end
+  panic ValueFault("wrong")
+end
+recover 1
+'''
+        for code in self.variants(source):
+            [fault] = run(code)
+            self.assertIsInstance(fault, ObjectValue)
+            self.assertEqual(fault.type_name, "ValueFault")
+            self.assertEqual(fault.fields["message"], "any")
+
+    def test_named_fault_from_callee_crosses_activation_frames(self):
+        """Panic ownership survives unwinding a called function's frame."""
+        source = '''
+define throws(n: Int) -> Int =>
+  panic ValueFault("inner")
+end
+define recover(n: Int) -> String =>
+  try =>
+    throws $n
+  handle as problem: ValueFault =>
+    $problem.message
+  end
+  "wrong"
+end
+recover 1
+'''
+        self.check(source, ["inner"])
+
+    def test_named_handler_keeps_first_match_and_other_forms(self):
+        """Named and unnamed handlers share type matching and source order."""
+        self.check('''
+define recover(n: Int) -> String =>
+  try =>
+    panic ValueFault("value")
+  handle as ignored: KeyFault =>
+    "wrong"
+  handle as actual: ValueFault =>
+    $actual.message
+  handle =>
+    "wrong catch-all"
+  end
+  "wrong fallthrough"
+end
+recover 1
+''', ["value"])
+        self.check('''
+define recover(n: Int) -> String =>
+  try =>
+    panic ValueFault("value")
+  handle KeyFault =>
+    "wrong"
+  handle as actual =>
+    $actual to[String]
+  end
+  "wrong"
+end
+recover 1
+''', ["ValueFault{message: 'value'}"])
+
+    def test_named_handler_preserves_early_return_and_success_path(self):
+        """A handled panic returns; successful try still falls through."""
+        self.check('''
+define recover(n: Int) -> String =>
+  try =>
+    if ($n < 0) => panic ValueFault("negative")
+  handle as fault: ValueFault =>
+    $fault.message
+  end
+  "continued"
+end
+[recover(-1), recover(1)]
+''', [["negative", "continued"]])
+
+    def test_named_handler_type_is_checked(self):
+        """A named typed handler must still declare a concrete Fault type."""
+        source = '''
+try =>
+  panic ValueFault("bad")
+handle as problem: String =>
+  1
+end
+'''
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(
+            any("does not implement Fault" in diagnostic for diagnostic in analyser.diagnostics),
+            analyser.diagnostics,
+        )
+
+    def test_owned_fault_released_once_in_named_and_unnamed_handlers(self):
+        """Matched faults retain one occurrence across unwound call frames."""
+        for handler in (
+            "handle as fault: MyFault =>",
+            "handle as fault =>",
+            "handle =>",
+        ):
+            source = '''
+@nodup("exclusive")
+object MyFault =>
+  define ~MyFault => println "released" end
+end
+object MyFault as Fault => end
+define throws(n: Int) -> Int =>
+  panic MyFault
+end
+define recover(n: Int) -> Int =>
+  try =>
+    throws $n
+  ''' + handler + '''
+    7
+  end
+  99
+end
+recover 1
+'''
+            for code in self.variants(source):
+                with self.subTest(handler=handler):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(run(code), [RuntimeNumber(7)])
+                    self.assertEqual(output.getvalue(), "released\n")
+
+    def test_nested_named_handlers_preserve_shadowed_parameter(self):
+        """Unwinding an inner handler restores its shadowed outer binding."""
+        self.check('''
+define recover(fault: String) -> String =>
+  try =>
+    try =>
+      panic ValueFault("first")
+    handle as fault: ValueFault =>
+      panic RuntimeFault("second")
+    end
+    end
+  handle RuntimeFault =>
+    $fault
+  end
+  "wrong"
+end
+recover("original")
+''', ["original"])
+
+    def test_named_handler_can_rethrow_the_same_fault(self):
+        """A borrowed caught value stays owned through a second panic."""
+        self.check('''
+define recover(n: Int) -> String =>
+  try =>
+    try =>
+      panic ValueFault("first")
+    handle as fault: ValueFault =>
+      panic $fault
+    end
+    end
+  handle as outer: ValueFault =>
+    $outer.message
+  end
+  "wrong"
+end
+recover(1)
+''', ["first"])
+
+    def test_named_handler_can_be_caught_within_another_named_handler(self):
+        """Inner recovery retains an enclosing handler's lexical binding."""
+        self.check('''
+define recover(n: Int) -> String =>
+  try =>
+    panic ValueFault("first")
+  handle as fault: ValueFault =>
+    try =>
+      panic RuntimeFault("second")
+    handle RuntimeFault =>
+      $fault.message
+    end
+    "wrong"
+  end
+  "wrong"
+end
+recover(1)
+''', ["first"])
+
+    def test_named_handler_shadows_global_without_replacing_it(self):
+        """A top-level local catch binding does not modify a global name."""
+        source = '''
+$fault = "global"
+try =>
+  panic ValueFault("caught")
+handle as fault: ValueFault =>
+  $fault.message
+end
+'''
+        for code in self.variants(source):
+            vm = VirtualMachine()
+            self.assertEqual(vm.run(code), ["caught"])
+            self.assertEqual(vm.globals["fault"], "global")
+
+    def test_unhandled_fault_from_nested_call_releases_transport(self):
+        """An uncaught fault does not strand the occurrence moved out of a callee."""
+        source = '''
+@nodup("exclusive")
+object MyFault =>
+  define ~MyFault => println "released" end
+end
+object MyFault as Fault => end
+define throws(n: Int) -> Int =>
+  panic MyFault
+end
+throws 1
+'''
+        for code in self.variants(source):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                with self.assertRaisesRegex(Exception, "uncaught panic: MyFault"):
+                    run(code)
+            self.assertEqual(output.getvalue(), "released\n")
+
+    def test_named_handler_preserves_multiple_result_stack_effect(self):
+        """The bound panic is a local, never an extra stack result."""
+        self.check('''
+define recover(n: Int) -> Int, String =>
+  try =>
+    panic ValueFault("two values")
+  handle as problem: ValueFault =>
+    9 $problem.message
+  end
+  0 "wrong"
+end
+recover 1
+''', [RuntimeNumber(9), "two values"])
+
+    def test_named_handler_inside_state_modification(self):
+        """Early return from a named handler releases protected State access."""
+        self.check('''
+import {std.concurrency.State}
+$state = State(0)
+$state modify: fn(current: Int) -> Int =>
+  try =>
+    panic ValueFault("caught")
+  handle as problem: ValueFault =>
+    5
+  end
+  999
+end
+get $state
+$state modify: (1 +)
+get $state
+''', [RuntimeNumber(5), RuntimeNumber(6)])
+
 
 if __name__ == "__main__":
     unittest.main()

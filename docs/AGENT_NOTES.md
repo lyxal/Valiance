@@ -459,3 +459,18 @@ the resolved element call, without acquiring the gate. The returned internal
 cancellation releases that occurrence. Do not reintroduce a callback or
 `setComputed` operation for `set`. In contrast, `modify` and `modifyWith` take
 callbacks that execute under the protected no-wait policy.
+
+### Named `try/handle` bindings and panic lifetime
+
+Source handlers can bind a caught fault (`handle as issue: ValueFault =>`,
+`handle as issue =>`). Their `TRY_BEGIN` entries carry an optional third
+binding-name field; bytecode optimisation must preserve this field while
+retargeting jumps. The VM must transfer an owned fault occurrence out of the
+stack tail before releasing that tail, otherwise `$issue` would refer to a
+destroyed object. The VM installs the binding in a frame-local scope and saves
+any previously visible local of the same name; use the lexical binding depth
+recorded at `TRY_BEGIN` to restore shadowed names when an outer handler catches
+a new panic. Panics that cross function frames can also carry an owned
+occurrence while the callee frame is unwound; ensure catch-all handlers that
+do not bind the object release that transported ownership. Low-level `to?`
+handlers continue to use two-field entries and catch-and-continue semantics.

@@ -3498,14 +3498,18 @@ try =>
   <code that panics>
 handle <fault type> =>
   <handler>
+handle as fault: <fault type> =>
+  <handler with $fault bound to the concrete type>
 handle =>
   <default handler>
+handle as fault =>
+  <handler with $fault bound as Fault>
 end
 ```
 
 - The code inside the try block will be executed first. Note that the code inside the try block must be able to panic. If it cannot, a compile error will be raised.
 - There has to be at least one handler. However, not all panic types need to be handled. Additionally, it's valid to only specify the catch-all handler.
-- A typed handler must name a type implementing `Fault`; the untyped `handle =>` form remains the catch-all handler.
+- A typed handler must name a concrete type implementing `Fault`; an untyped handler catches all recoverable faults. You can optionally bind the caught object with `handle as name: Type =>` or `handle as name =>`. The value is available as `$name` **inside that handler**, with type `Type` or `Fault`, respectively. The binding is the original fault object, not a string or `PanicError` wrapper. A named handler keeps the same first-match ordering and function-level early-return behaviour as an unnamed one.
 - If a panic is raised with a type that matches a handler, then control flow goes to that handle block.
 
 For example:
@@ -3522,6 +3526,21 @@ end
 - Typed handlers are considered in source order, with `handle =>` matching otherwise eligible panics. An unmatched panic continues propagating; nonrecoverable ownership faults are not caught.
 - At top level, a completed handler exits the Valiance program body (not the host process or an unrelated calling task).
 - Nested `try/handle` blocks follow the same lexical-function return rule. Operations compiled internally to catch and continue, such as `to?`, do **not** acquire this source-language early-return behaviour.
+
+For example, a typed named handler can read the raised fault's fields:
+
+```valiance
+define messageOfFailure(n: Int) -> String =>
+  try =>
+    panic ValueFault("bad input")
+  handle as fault: ValueFault =>
+    $fault.message
+  end
+  "normal"
+end
+```
+
+`messageOfFailure(0)` returns `"bad input"`. A catch-all named handler, `handle as fault =>`, can also inspect the fault through the `Fault` interface or convert it to a string.
 
 For example, `fallback(-1)` returns `"recovered"`, and `fallback(1)` returns `"normal"`:
 

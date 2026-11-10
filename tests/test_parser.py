@@ -220,6 +220,46 @@ class MinimumRankParserTests(unittest.TestCase):
         )
 
 
+class NamedPanicHandlerParserTests(unittest.TestCase):
+    """Parse typed and catch-all handlers with or without fault bindings."""
+
+    def test_all_handler_spelling_variants(self):
+        """The optional `as name` introduces one local fault binding."""
+        [node] = parse('''
+try =>
+  panic ValueFault("failure")
+handle ValueFault =>
+  1
+handle as issue: ValueFault =>
+  2
+handle =>
+  3
+handle as any_fault =>
+  4
+end
+''')
+        self.assertIsInstance(node, TryNode)
+        self.assertEqual(
+            [handler.binding for handler in node.handlers],
+            [None, Symbol("issue"), None, Symbol("any_fault")],
+        )
+        self.assertEqual(
+            [handler.typ for handler in node.handlers],
+            [T.N(Symbol("ValueFault")), T.N(Symbol("ValueFault")), None, None],
+        )
+
+    def test_missing_named_fault_identifier_is_rejected(self):
+        """A bare `as` cannot denote a valid binding."""
+        with self.assertRaises(ParseError):
+            parse('''
+try =>
+  panic ValueFault("failure")
+handle as =>
+  1
+end
+''')
+
+
 class ParserTests(unittest.TestCase):
     def test_duplicate_generic_parameters_are_diagnosed_at_parse_time(self):
         for source in (

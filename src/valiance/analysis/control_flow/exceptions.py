@@ -66,8 +66,20 @@ class _ExceptionAnalysis:
                         "implement Fault",
                         handler,
                     )
+            # A named fault belongs to this handler's lexical scope only.
+            # Typed handlers expose their concrete fault type; catch-all
+            # handlers expose the common Fault interface.
+            handler_input = branch
+            if handler.binding is not None:
+                handler_input = branch.with_variables(
+                    branch.variables.with_block_local(
+                        handler.binding,
+                        handler.typ if handler.typ is not None
+                        else T.N(Symbol("Fault")),
+                    )
+                )
             handler_outputs = self.analyse_scoped_block(
-                BranchSet((branch,)),
+                BranchSet((handler_input,)),
                 handler.body,
             )
             typed_handler_bodies.append(

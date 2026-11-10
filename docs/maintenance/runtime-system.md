@@ -1052,8 +1052,15 @@ panic reaches `_handle_panic(...)`, the VM:
 
 1. scans active handlers from innermost outward;
 2. checks the concrete panic value against each handler type;
-3. releases stack values produced after the protected depth; and
-4. jumps to the selected handler target.
+3. releases stack values produced after the protected depth, preserving the
+   fault occurrence if the handler declares `as name`; and
+4. jumps to the selected handler target. Named handlers install a lexical
+   handler-local binding in the frame, preserving a shadowed name until the
+   handler exits or an outer handler takes over. The active `TRY_BEGIN`
+   records its enclosing binding-depth so nested catches do not prematurely
+   discard a surrounding handler's fault binding. A propagated
+   panic may carry an owned occurrence through unwound nested frames; unused
+   transported occurrences are released when a handler catches the fault.
 
 If no handler matches, the signal leaves the frame. `VirtualMachine.run(...)`
 converts an uncaught signal into a user-facing `RuntimeError`.
@@ -1066,6 +1073,11 @@ via `TRY_END`. Low-level internal `TRY_BEGIN` uses, including `to?`, deliberatel
 retain catch-and-continue semantics. `_handle_panic` must not itself force a
 return, because it serves both categories. Return-value selection and RAII
 cleanup remain handled by the existing frame-finalisation path.
+
+Named handlers extend the existing `TRY_BEGIN` table with an optional binding
+name as a third entry field; original two-field entries remain valid (including
+those emitted for `to?`). No new instruction is needed. The optimiser preserves
+the optional binding when rewriting handler jump targets.
 
 A panic is intentionally separate from a VM implementation error. A language
 program may catch a panic value; it should not catch corrupt bytecode or an

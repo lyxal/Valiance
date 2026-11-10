@@ -1720,7 +1720,10 @@ def _retarget_instruction(
         handlers = _handler_entries(instruction.arg, instruction_count)
         return Instruction(
             instruction.op,
-            tuple((type_name, remap(target)) for type_name, target in handlers),
+            tuple(
+                (entry[0], remap(entry[1]), *entry[2:])
+                for entry in handlers
+            ),
         )
     return instruction
 
@@ -1750,20 +1753,21 @@ def _handler_entries(
     """Validate and return panic-handler entries from ``TRY_BEGIN``."""
     if not isinstance(value, tuple):
         raise OptimizationError(f"invalid try handler payload {value!r}")
-    entries: list[tuple[str | None, int]] = []
+    entries: list[tuple[str | None, int] | tuple[str | None, int, str]] = []
     for entry in value:
         if (
             not isinstance(entry, tuple)
-            or len(entry) != 2
+            or len(entry) not in (2, 3)
             or (entry[0] is not None and not isinstance(entry[0], str))
+            or (len(entry) == 3 and (not isinstance(entry[2], str) or not entry[2]))
         ):
             raise OptimizationError(f"invalid try handler entry {entry!r}")
-        entries.append((entry[0], _jump_target(entry[1], instruction_count)))
+        entries.append((entry[0], _jump_target(entry[1], instruction_count), *entry[2:]))
     return tuple(entries)
 
 
 def _handler_targets(value: object, instruction_count: int) -> tuple[int, ...]:
     """Return the absolute targets contained in a panic-handler payload."""
     return tuple(
-        target for _type_name, target in _handler_entries(value, instruction_count)
+        entry[1] for entry in _handler_entries(value, instruction_count)
     )

@@ -747,10 +747,11 @@ class UnfoldNode(ASTNode):
 
 @dataclass(frozen=True)
 class TryHandlerNode(ASTNode):
-    """One panic handler inside a try expression."""
+    """One panic handler, optionally binding the caught fault locally."""
 
     typ: Type | None = None
     body: tuple[ASTNode, ...] = ()
+    binding: Symbol | None = None
 
 
 @dataclass(frozen=True)

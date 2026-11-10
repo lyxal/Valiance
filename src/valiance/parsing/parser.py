@@ -1301,14 +1301,20 @@ class Parser:
         self._skip_newlines()
         while self._match_ident("handle"):
             handler_start = self._previous
+            binding = None
             typ = None
-            if not self._check(TokenKind.FAT_ARROW):
+            if self._match_ident("as"):
+                binding = self._symbol("expected handled fault binding name")
+                if self._match(TokenKind.COLON):
+                    typ = self.parse_type_expression()
+            elif not self._check(TokenKind.FAT_ARROW):
                 typ = self.parse_type_expression()
             self._expect(TokenKind.FAT_ARROW)
             handlers.append(
                 TryHandlerNode(
                     typ,
                     self._body({"handle", "end"}),
+                    binding=binding,
                     location=_loc(handler_start),
                 )
             )

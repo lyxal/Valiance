@@ -400,7 +400,10 @@ def _try_node(value: TryNode, level: int) -> str:
 
 def _try_handler_node(value: TryHandlerNode, level: int) -> str:
     """Compute try handler node for AST diagnostic output."""
-    lines = [f"TryHandlerNode(type={_type_label(value.typ)}, body=["]
+    lines = [
+        f"TryHandlerNode(type={_type_label(value.typ)}, "
+        f"binding={value.binding}, body=["
+    ]
     for node in value.body:
         lines.extend(_indent(_pretty(node, level + 1).splitlines()))
     lines.append("])")
