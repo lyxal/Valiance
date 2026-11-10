@@ -10540,7 +10540,7 @@
       "module": null,
       "name": "to",
       "notes": [
-        "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+        "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
       ],
       "overload_documentation": [
         {
@@ -10554,7 +10554,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10577,7 +10577,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10600,7 +10600,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10623,7 +10623,214 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+          ],
+          "parameters": [
+            {
+              "description": "The value to convert.",
+              "name": "value"
+            }
+          ],
+          "returns": "The value represented as the requested target type.",
+          "see_also": [],
+          "summary": "Convert a value to the requested target type."
+        },
+        {
+          "category": "Conversions",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": "42",
+              "source": "\"42\" to[Int]"
+            }
+          ],
+          "notes": [
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10646,7 +10853,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10669,7 +10876,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10692,7 +10899,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10715,7 +10922,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10738,7 +10945,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10761,7 +10968,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10784,7 +10991,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10807,7 +11014,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10830,7 +11037,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10853,7 +11060,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10876,7 +11083,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10899,7 +11106,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10922,7 +11129,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10945,7 +11152,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10968,7 +11175,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -10991,7 +11198,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11014,7 +11221,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11037,7 +11244,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11060,7 +11267,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11083,7 +11290,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11106,7 +11313,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11129,7 +11336,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11152,7 +11359,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11175,7 +11382,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11198,7 +11405,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11221,7 +11428,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11244,7 +11451,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11267,7 +11474,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11290,7 +11497,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11313,7 +11520,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11336,7 +11543,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11359,7 +11566,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11382,7 +11589,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11405,7 +11612,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11428,7 +11635,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11451,7 +11658,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11474,7 +11681,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11497,7 +11704,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11520,7 +11727,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11543,7 +11750,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11566,7 +11773,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11589,7 +11796,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11612,7 +11819,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11635,7 +11842,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11658,7 +11865,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11681,7 +11888,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11704,7 +11911,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11727,7 +11934,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11750,7 +11957,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11773,7 +11980,7 @@
             }
           ],
           "notes": [
-            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
+            "Target-directed conversion selects an overload using `to[Type]`; available conversions depend on the source and target types. `to[String]` formats any value using Valiance runtime display syntax. For Strings, `to[Int]` parses a base-ten integer and panics with `ConversionFault` when parsing fails. `to[Real]` parses a real number and `to[Number]` also accepts complex numeric notation; both panic with `ConversionFault` for invalid text. Numeric types convert to Int, Real, and Number without losing precision; narrowing fails with `ConversionFault` if the value cannot fit exactly. Conversions terminate implicit element chains. `to?[Type]` invokes the same registered conversion and returns `None` if it panics."
           ],
           "parameters": [
             {
@@ -11790,6 +11997,15 @@
         "to(value: String) -> Int",
         "to(value: String) -> Real",
         "to(value: String) -> Number",
+        "to(value: Number) -> Number",
+        "to(value: Real) -> Number",
+        "to(value: Real) -> Real",
+        "to(value: Int) -> Number",
+        "to(value: Int) -> Real",
+        "to(value: Int) -> Int",
+        "to(value: Number) -> Int",
+        "to(value: Real) -> Int",
+        "to(value: Number) -> Real",
         "to(value: T) -> String",
         "to(value: Int) -> &char",
         "to(value: Int) -> &short",
