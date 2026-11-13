@@ -3532,7 +3532,7 @@ class Parser:
             items: list[TupleTypeItem] = []
             has_repeated = False
             if self._match(TokenKind.RBRACE):
-                return N(Symbol("{}"))
+                return Tup()
             while True:
                 item = self.parse_type_expression()
                 repeated = self._match_ellipsis()

@@ -15,6 +15,35 @@ from valiance.parsing import parse
 class ExpressionBoundaryTests(unittest.TestCase):
     """Verify value expressions are owned outside the analyser façade."""
 
+    def test_empty_dictionary_uses_variable_annotation(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            '$myvar: Dict[String, String] = dict{}\n'
+            '$myvar["a"] = "x"\n'
+            '$myvar["b"] = "y"\n'
+            'println $myvar'
+        ))
+        self.assertFalse(analyser.diagnostics)
+
+    def test_existing_empty_dictionary_cannot_change_type_through_assignment(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            '$empty = dict{}\n$myvar: Dict[String, String] = $empty'
+        ))
+        self.assertTrue(analyser.diagnostics)
+
+    def test_empty_tuple_and_record_require_compatible_shapes(self):
+        for source, has_diagnostics in (
+            ('$value: {} = {}', False),
+            ('$value: {String} = {}', True),
+            ('$value: trait => end = record{}', False),
+            ('$value: trait => extend name -> String end = record{}', True),
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(bool(analyser.diagnostics), has_diagnostics)
+
     def test_erased_callbacks_check_shapes_created_after_the_first_invocation(self):
         source = '''
 trait View => end

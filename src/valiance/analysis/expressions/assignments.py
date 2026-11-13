@@ -9,8 +9,8 @@ from valiance.analysis.contracts.release_effects import (
     released_types_effects,
 )
 import valiance.vtypes as T
-from valiance.asts import TypedNode, TypedSetVariableNode
-from valiance.asts.nodes import GetVariableNode, SetVariableNode, SetVariablesNode
+from valiance.asts import TypedLiteralNode, TypedNode, TypedSetVariableNode
+from valiance.asts.nodes import DictLiteralNode, GetVariableNode, SetVariableNode, SetVariablesNode
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
@@ -198,6 +198,20 @@ def _set_variable(
     if declared_type is not None:
         from ..support.contextual_returns import specialize_last_call_result
         branch = specialize_last_call_result(branch, declared_type, self.env.context)
+        if (
+            isinstance(declared_type, T.NominalType)
+            and declared_type.name == Symbol("Dict")
+            and len(declared_type.args) == 2
+            and branch.typed_body
+            and isinstance(literal := branch.typed_body[-1], TypedLiteralNode)
+            and isinstance(literal.node, DictLiteralNode)
+            and not literal.node.entries
+        ):
+            branch = replace(
+                branch,
+                stack=branch.stack.pop().push(declared_type),
+                typed_body=(*branch.typed_body[:-1], replace(literal, typ=declared_type)),
+            )
         value_type = branch.stack[-1]
     variable_type = declared_type or value_type
 

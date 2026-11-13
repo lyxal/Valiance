@@ -1373,6 +1373,10 @@ applied overload.
 
 List, tuple, record, and dictionary literals analyse their item expressions from the same incoming branch and act like an implicit fork. Every item, record field, dictionary key, and dictionary value sees the incoming stack independently; a dictionary key cannot contribute stack values to its value. The completed literal consumes the maximum stack arity consumed by any expression and pushes its constructed value. Expressions that consume no inputs preserve the incoming stack.
 
+A fresh empty dictionary assigned directly to a variable with a declared
+`Dict[K, V]` type takes its key and value types from that declaration.
+Without that context, `dict{}` infers `Dict[Never, Never]`.
+
 For list literals:
 
 - every item expression must leave a value
