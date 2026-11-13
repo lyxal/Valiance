@@ -2077,6 +2077,224 @@ class OverloadResolutionMatrixTests(unittest.TestCase):
                 self.assertFalse(T.compatible(T.Overloads(*order), expected))
 
 
+    def test_specificity_ladder_covers_tags_types_collections_and_unions(self):
+        paintable = Symbol("Paintable")
+        ctx = T.Context(trait_impls={CIRCLE: {SHAPE, paintable}})
+        cases = (
+            ("exact", T.Int, T.Int, T.Specificity.EXACT),
+            ("exact_tag", T.Tagged(T.Int, "mark"), T.Tagged(T.Int, "mark"), T.Specificity.EXACT),
+            ("present_tag_subset", T.Tagged(T.Int, "mark", "extra"), T.Tagged(T.Int, "mark"), T.Specificity.TAGGED_PRESENT),
+            ("present_tag_widening", T.Tagged(T.Int, "mark"), T.Tagged(T.Number, "mark"), T.Specificity.EXACT_GENERIC),
+            ("erased_tag", T.Tagged(T.Int, "mark"), T.Int, T.Specificity.EXACT_GENERIC),
+            ("negative_tag", T.Tagged(T.Int, "extra"), T.WithoutTag(T.Int, "mark"), T.Specificity.TAGGED),
+            ("optional", T.Int, T.optional(T.Int), T.Specificity.OPTIONAL),
+            (
+                "intersection", T.N(CIRCLE), T.I(T.N(SHAPE), T.N(paintable)),
+                T.Specificity.INTERSECTION,
+            ),
+            ("trait", T.N(CIRCLE), T.N(SHAPE), T.Specificity.TRAIT),
+            ("rank", T.ExactList(T.Int, 2), T.AtLeastList(T.Number), T.Specificity.RANK),
+            ("rank_adapted", T.AtLeastList(T.Int), T.ExactList(T.Int), T.Specificity.RANK_ADAPTED),
+            ("union", T.Int, T.U(T.Int, T.String), T.Specificity.UNION),
+            ("vectorised", T.ExactList(T.Int, 2), T.Int, T.Specificity.VECTORISED),
+        )
+        for label, actual, expected_type, score in cases:
+            with self.subTest(category=label):
+                selected = T.apply_overload(T.Overload((expected_type,), (T.String,)), (actual,), ctx)
+                self.assertIsNotNone(selected)
+                self.assertEqual(selected.scores, (score,))
+
+    def test_positive_tag_dispatch_matrix_is_independent_of_candidate_order(self):
+        # All six shapes × four tag-evidence states × both candidate orders.
+        # An untagged (or differently tagged) value is never a valid argument
+        # to the positive-tag overload, even when the plain overload exists.
+        shapes = (
+            T.Int, T.Real, T.String,
+            T.ExactList(T.Int), T.AtLeastList(T.Real), T.ExactList(T.Int, 2),
+        )
+        for base in shapes:
+            tagged = T.Overload((T.Tagged(base, "mark"),), (T.String,))
+            plain = T.Overload((base,), (T.Int,))
+            actuals = (
+                (base, plain),
+                (T.Tagged(base, "other"), plain),
+                (T.Tagged(base, "mark"), tagged),
+                (T.Tagged(base, "mark", "other"), tagged),
+            )
+            for argument, expected in actuals:
+                for candidates in ((plain, tagged), (tagged, plain)):
+                    with self.subTest(base=base, argument=argument, order=candidates):
+                        matching_tagged = T.try_apply_overload(tagged, (argument,)).applied
+                        self.assertEqual(matching_tagged is not None, expected is tagged)
+                        resolved = T.resolve_overload_result(candidates, (argument,))
+                        stacked = T.apply_overloads_to_stack(candidates, T.TypeStack((argument,)))
+                        self.assertIsNotNone(resolved)
+                        self.assertIsNotNone(stacked)
+                        self.assertIs(resolved.overload, expected)
+                        self.assertIs(stacked.overload, expected)
+
+    def test_tagged_numeric_widening_matrix_and_generic_inference(self):
+        types = (T.Int, T.Real, T.Number)
+        overloads = tuple(
+            T.Overload((T.Tagged(typ, "mark"),), (T.String,))
+            for typ in types
+        )
+        generic = T.Overload((T.Tagged(T.V("Item"), "mark"),), (T.V("Item"),))
+        for index, actual_type in enumerate(types):
+            for extra in (False, True):
+                actual = T.Tagged(actual_type, *(('mark', 'other') if extra else ('mark',)))
+                for order in permutations(overloads):
+                    with self.subTest(actual=actual, order=order):
+                        resolved = T.resolve_overload_result(order, (actual,))
+                        self.assertIsNotNone(resolved)
+                        self.assertIs(resolved.overload, overloads[index])
+                inferred = T.apply_overload(generic, (actual,))
+                self.assertIsNotNone(inferred)
+                self.assertEqual(inferred.returns, (actual_type,))
+                self.assertIsNone(T.apply_overload(generic, (actual_type,)))
+
+    def test_tag_presence_absence_exact_sets_and_wrong_tags(self):
+        mark = T.Tagged(T.Int, "mark")
+        other = T.Tagged(T.Int, "other")
+        both = T.Tagged(T.Int, "mark", "other")
+        cases = (
+            (T.Tagged(T.Int, "mark"), T.Int, False),
+            (T.Tagged(T.Int, "mark"), other, False),
+            (T.Tagged(T.Int, "mark"), mark, True),
+            (T.Tagged(T.Int, "mark"), both, True),
+            (T.WithoutTag(T.Int, "mark"), T.Int, True),
+            (T.WithoutTag(T.Int, "mark"), other, True),
+            (T.WithoutTag(T.Int, "mark"), mark, False),
+            (T.WithoutTag(T.Int, "mark"), both, False),
+            (T.ExactTags(T.Int, "mark"), mark, True),
+            (T.ExactTags(T.Int, "mark"), both, False),
+            (T.ExactTags(T.Int, "mark"), T.Int, False),
+            (T.ExactTags(T.Int), T.Int, True),
+            (T.ExactTags(T.Int), mark, False),
+        )
+        for parameter, argument, expected in cases:
+            with self.subTest(parameter=parameter, argument=argument):
+                overload = T.Overload((parameter,), (T.String,))
+                self.assertEqual(T.try_apply_overload(overload, (argument,)).applied is not None, expected)
+                self.assertEqual(T.resolve_overload_result((overload,), (argument,)) is not None, expected)
+
+    def test_multi_argument_tag_specificity_matrix_and_cross_ambiguity(self):
+        broad = T.Overload((T.Number, T.Number), (T.String,))
+        narrow = T.Overload((T.Int, T.Number), (T.Int,))
+        tagged = T.Overload((T.Tagged(T.Int, "mark"), T.Number), (T.Boolean,))
+        candidates = (broad, narrow, tagged)
+        first_arguments = (
+            (T.Int, narrow),
+            (T.Real, broad),
+            (T.Tagged(T.Int, "mark"), tagged),
+            (T.Tagged(T.Int, "mark", "other"), tagged),
+            (T.Tagged(T.Int, "other"), narrow),
+            (T.Tagged(T.Real, "mark"), broad),
+        )
+        for first, expected in first_arguments:
+            for second in (T.Int, T.Real, T.Tagged(T.Int, "other")):
+                for order in permutations(candidates):
+                    with self.subTest(first=first, second=second, order=order):
+                        result = T.resolve_overload_result(order, (first, second))
+                        self.assertIsNotNone(result)
+                        self.assertIs(result.overload, expected)
+        left = T.Overload((T.Tagged(T.Int, "mark"), T.Int), (T.Int,))
+        right = T.Overload((T.Int, T.Tagged(T.Int, "mark")), (T.String,))
+        for order in permutations((left, right)):
+            self.assertIsNone(T.resolve_overload_result(
+                order, (T.Tagged(T.Int, "mark"), T.Tagged(T.Int, "mark"))
+            ))
+
+    def test_union_inputs_and_vectorisation_do_not_invent_positive_tag_evidence(self):
+        tagged = T.Overload((T.Tagged(T.Int, "mark"),), (T.String,))
+        examples = (
+            T.Int,
+            T.Tagged(T.Int, "other"),
+            T.U(T.Int, T.Tagged(T.Int, "mark")),
+            T.ExactList(T.Int),
+            T.ExactList(T.Int, 2),
+            T.AtLeastList(T.Int),
+        )
+        for argument in examples:
+            with self.subTest(argument=argument):
+                self.assertIsNone(T.apply_overload(tagged, (argument,)))
+                self.assertIsNone(T.resolve_overload_result((tagged,), (argument,)))
+                self.assertIsNone(T.apply_overloads_to_stack((tagged,), T.TypeStack((argument,))))
+
+    def test_builtin_and_user_defined_overloads_share_one_specificity_order(self):
+        from valiance.elements.builtins import default_environment
+        from valiance.vtypes.symbols import Symbol
+
+        builtin = default_environment()
+        env = builtin.child_scope()
+        name = Symbol("length")
+        ordinary = builtin.overloads_for(name)
+        tagged = T.Overload((T.Tagged(T.ExactList(T.Int), "mark"),), (T.Number,))
+        env.define_overload(name, tagged)
+        available = env.overloads_for(name)
+        self.assertEqual(available, (*ordinary, tagged))
+        self.assertEqual(env.overloads_for(Symbol("*::length")), ordinary)
+        for argument, expected in (
+            (T.ExactList(T.Int), next(o for o in ordinary if T.apply_overload(o, (T.ExactList(T.Int),)))),
+            (T.Tagged(T.ExactList(T.Int), "mark"), tagged),
+            (T.String, next(o for o in ordinary if T.apply_overload(o, (T.String,)))),
+        ):
+            with self.subTest(argument=argument):
+                selected = T.resolve_overload_result(available, (argument,))
+                self.assertIsNotNone(selected)
+                self.assertEqual(selected.overload.params, expected.params)
+        # Regular nested lexical user scopes still shadow their user parent.
+        child = env.child_scope()
+        replacement = T.Overload((T.Real,), (T.String,))
+        child.define_overload(name, replacement)
+        self.assertEqual(child.overloads_for(name), tuple(child.overloads[name]))
+        # Untagged definitions keep the pre-existing lexical shadowing rule.
+        ordinary_shadow = builtin.child_scope()
+        ordinary_shadow.define_overload(name, T.Overload((T.Real,), (T.Int,)))
+        self.assertEqual(ordinary_shadow.overloads_for(name), tuple(ordinary_shadow.overloads[name]))
+
+    def test_different_arity_tagged_definition_shadows_builtin_without_merging(self):
+        from valiance.elements.builtins import default_environment
+        from valiance.vtypes.symbols import Symbol
+
+        builtin = default_environment()
+        env = builtin.child_scope()
+        name = Symbol("get")
+        builtin_get = builtin.overloads_for(name)
+        self.assertTrue(builtin_get)
+        self.assertEqual(len(builtin_get[0].params), 1)
+        tagged_get = T.Overload(
+            (T.ExactList(T.Int), T.Tagged(T.Int, "index")),
+            (T.Int,),
+        )
+        env.define_overload(name, tagged_get)
+        self.assertEqual(len(env.overloads_for(name)), 1)
+        self.assertEqual(env.overloads_for(name)[0].params, tagged_get.params)
+        self.assertIsNone(
+            T.resolve_overload_result(
+                env.overloads_for(name),
+                (T.ExactList(T.Int), T.Int),
+            )
+        )
+        self.assertIsNotNone(
+            T.resolve_overload_result(
+                env.overloads_for(name),
+                (T.ExactList(T.Int), T.Tagged(T.Int, "index")),
+            )
+        )
+        self.assertEqual(env.overloads_for(Symbol("*::get")), builtin_get)
+
+    def test_tagged_intrinsic_extensions_reject_incompatible_stack_effects(self):
+        from valiance.elements.builtins import default_environment
+        from valiance.vtypes.symbols import Symbol
+        env = default_environment().child_scope()
+        overload = T.Overload(
+            (T.Tagged(T.Int, "mark"),), (T.String, T.String)
+        )
+        with self.assertRaises(ValueError):
+            env.define_overload(Symbol("length"), overload)
+
+
 class InlineTraitElementTagConformanceTests(unittest.TestCase):
     def test_structural_trait_requires_exact_element_tag_set(self):
         name = Symbol("read")

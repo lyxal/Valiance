@@ -1,0 +1,38 @@
+#? A practical HTTP + WebSocket preview illustrating useful std.web features.
+#? Run from the repository root. Binds to loopback only; no authentication.
+import {std.web, std.json, std.web.App}
+
+$app = App
+$app := get("/health"): fn(req: web.GetRequest) => "ok" end
+$app := get("/greet"): fn(req: web.GetRequest) -> String | web.Error =>
+  web.requireParam(web.queryParams($req), "name") ?
+end
+$app := post("/number"): fn(req: web.PostRequest) -> web.Response | web.Error | ValueError =>
+  $text = web.bodyJsonText($req) ?
+  $value = json.decode[Int]($text) ?
+  web.jsonResponse(record{value => $value}) ?
+end
+$app := get("/cache"): fn(req: web.GetRequest) -> web.Response =>
+  web.cachePublic(web.withETag(web.Response(body = "cached"), "preview-v1"), 30)
+end
+$app := get("/redirect"): fn(req: web.GetRequest) -> web.Response | web.Error =>
+  web.redirect("/health") ?
+end
+$app := get("/cookie"): fn(req: web.GetRequest) -> web.Response | web.Error =>
+  web.withCookie(web.Response(body = "cookie"), "preview", "example") ?
+end
+$app := middleware web.cors(web.CorsPolicy(
+  allowedOrigins = ["https://preview.example"],
+  allowedMethods = [web.Method.GET, web.Method.POST],
+  allowedHeaders = ["Content-Type"]))
+$app := middleware web.compression(web.CompressionPolicy(minBytes = 8))
+$app := web.withErrorHandler: fn(ctx: web.ErrorContext) -> web.Response =>
+  web.withHeader(web.defaultErrorResponse($ctx), "X-Preview-Error", "handled")
+end
+$app := group("/assets", web.staticRouter("samples/web/public") ?)
+$app := websocket("/ws"): fn (socket: web.WebSocket) =>
+  $incoming = web.websocketReceive($socket) ?
+  web.websocketSendText($socket, "hello from Valiance") ?
+  web.websocketClose($socket) ?
+end
+web.run($app, web.ServerConfig(port = 8765))

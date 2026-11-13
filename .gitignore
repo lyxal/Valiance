@@ -23,7 +23,8 @@ venv.bak/
 
 # Environment files
 .env
-.env.*    # e.g. .env.local, .env.test
+# Ignore local environment files, e.g. .env.local or .env.test
+.env.*
 
 # Test artifacts
 .pytest_cache/
@@ -77,3 +78,12 @@ ast.dot
 
 # Valiance bytecode files (yes, really)
 *.vbc
+# Generated qualification and preview reports
+/.artifacts/
+/std-web-*evidence*.json
+
+# Crash dumps and local uv download caches
+/core
+/core.*
+*.core
+.uv-cache/

@@ -1,0 +1,8 @@
+#? Safe HTML fragments for ordinary Valiance web handlers.
+#? Construct nodes through the std.html builders; rendering rejects forged nodes.
+
+public object Node =>
+  private $markup: String
+  private $seal: String
+  private $tag: String
+end

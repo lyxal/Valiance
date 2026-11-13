@@ -1223,6 +1223,7 @@ values are better:
 
 ```text
 EXACT
+TAGGED_PRESENT
 EXACT_GENERIC
 TAGGED
 OPTIONAL
@@ -1236,7 +1237,20 @@ CALL_SITE_CHECKED
 NO_MATCH
 ```
 
-The first applicable category in `_match_specificity(...)` wins.
+A present-tag match with identical underlying types outranks an erased
+untagged match, even if the actual value carries additional tags. Absence-only
+tag matches rank below generic type matches. A missing positive tag makes the
+candidate inapplicable, regardless of its declaration order. The first
+applicable category in `_match_specificity(...)` wins.
+
+Positive-tag user definitions at a compatible input arity extend the built-in
+candidate set instead of hiding it. This lets an untagged value select the
+ordinary built-in while a tagged value selects the more specific extension
+(e.g. `length` vs `length(:#Vec2 Real+)`). Different-arity declarations still
+shadow built-ins, as overload sets retain a fixed input count; ordinary
+untagged user declarations also keep lexical shadowing. Typed calls retain
+their selected intrinsic implementation identity across runtime source-name
+rebinding, so dispatch does not change after the overload was resolved.
 
 ### Step 10: calculate automatic vectorisation
 

@@ -42,6 +42,7 @@ class NativeFunction:
     param_names: tuple[Symbol, ...] = ()
     documentation: ElementDocumentation | None = None
     owner: Symbol | None = None
+    import_with: tuple[Symbol, ...] = ()
     warning: str | None = None
     exported: bool = True
     element_tags: frozenset[T.ElementTag] = frozenset()
@@ -58,6 +59,7 @@ def native_function(
     param_names: tuple[str, ...] = (),
     documentation: ElementDocumentation | None = None,
     owner: str | None = None,
+    import_with: tuple[str, ...] = (),
     warning: str | None = None,
     exported: bool = True,
     element_tags: tuple[T.ElementTag, ...] = (),
@@ -73,6 +75,7 @@ def native_function(
         tuple(Symbol(item) for item in param_names),
         documentation,
         None if owner is None else Symbol(owner),
+        tuple(Symbol(name) for name in import_with),
         warning,
         exported,
         frozenset(element_tags),
@@ -89,6 +92,7 @@ def stdlib_element(
     param_names: tuple[str, ...] = (),
     documentation: ElementDocumentation | None = None,
     owner: str | None = None,
+    import_with: tuple[str, ...] = (),
     warning: str | None = None,
     exported: bool = True,
     element_tags: tuple[T.ElementTag, ...] = (),
@@ -107,6 +111,7 @@ def stdlib_element(
             param_names=param_names,
             documentation=documentation,
             owner=owner,
+            import_with=import_with,
             warning=warning,
             exported=exported,
             element_tags=element_tags,
@@ -263,7 +268,20 @@ def _runtime_stdlib_catalogue(
     for module_name, functions in exports:
         for function in functions:
             element = _runtime_element(module_name, function)
-            result[element.name.dotted()] = element
+            key = element.name.dotted()
+            previous = result.get(key)
+            if previous is None:
+                result[key] = element
+            else:
+                # Multiple @stdlib_element declarations with the same public
+                # name are normal Valiance overloads. The runtime must link
+                # every implementation identity published by the analyser,
+                # rather than silently overwriting all but the last one.
+                result[key] = BuiltinElement(
+                    element.name,
+                    (*previous.definitions, *element.definitions),
+                    previous.documentation or element.documentation,
+                )
     return tuple(result.items())
 
 

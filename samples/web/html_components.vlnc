@@ -1,0 +1,37 @@
+#? Complete, server-rendered HTML example. Start with `vln run --file samples/web/html_components.vlnc`.
+#? Bind to loopback; add authentication, CSRF verification, and session handling in real forms.
+import {std.web, std.web.App, std.html}
+
+$card = fn(label: String) -> html.Node =>
+  html.withClass(html.article(html.h2 $label), "card")
+end
+
+$app = App
+$app := get("/"): fn(req: web.GetRequest) =>
+  html.pageWithHead("Valiance HTML demo", html.children("main", [
+    html.h1 "Hello from std.html",
+    html.p "Ordinary dynamic text is <escaped>.",
+    html.withAria(html.withClass(html.nav(html.a "Contact"), "nav"), "label", "Site navigation"),
+    html.join([$card("Reusable first card"), $card("Reusable second card")], html.lineBreak),
+    html.postForm("/contact", html.fragment([
+      html.textField("name", "Your name"),
+      html.checkboxField("opt-in", "Contact me"),
+      html.submitButton "Send"
+    ]))
+  ]), [
+    html.metaDescription "A safe server-rendered Valiance page",
+    html.meta("viewport", "width=device-width, initial-scale=1"),
+    html.stylesheet "/assets/site.css",
+    html.scriptSrc "/assets/site.js"
+  ], "en")
+end
+$app := get("/contact"): fn(req: web.GetRequest) =>
+  html.page("Contact", html.p "Use the form on the home page.")
+end
+#? Demo-only acknowledgement: no user input is persisted; real POST handlers
+#? must validate the body, authentication and CSRF token before changing state.
+$app := post("/contact"): fn(req: web.PostRequest) =>
+  html.page("Contact", html.p "Demo submission received; nothing was saved.")
+end
+$app := group("/assets", web.staticRouter("samples/web/public") ?)
+web.run($app, web.ServerConfig(port = 8767))

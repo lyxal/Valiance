@@ -108,8 +108,17 @@ class _VariantDeclarations:
             )
             self.env.define_overload(member_name, overload)
             if member_aliases:
-                self.env.define_overload(member.name, overload)
-                self.env.variant_case_aliases.setdefault(member.name, set()).add(member_name)
+                # A case's qualified constructor is authoritative.  Two
+                # variants may legitimately contain the same case name with
+                # different argument counts (e.g. Error.BadRequest(message)
+                # and Status.BadRequest).  Such constructors cannot share an
+                # unqualified alias: ordinary Valiance overload sets have a
+                # fixed input arity. Preserve both qualified constructors and
+                # only install the convenience alias when arities agree.
+                existing = self.env.overloads_for(member.name)
+                if not existing or len(existing[0].params) == len(overload.params):
+                    self.env.define_overload(member.name, overload)
+                    self.env.variant_case_aliases.setdefault(member.name, set()).add(member_name)
             if not constructor_attributes and not member.name.text.startswith("\\"):
                 niladic_name = _utils._child_symbol(node.name, Symbol(f"\\{member.name.text}"))
                 self.env.define_constructor_metadata(

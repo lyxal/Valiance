@@ -1273,10 +1273,15 @@ class Parser:
         self._expect(TokenKind.FAT_ARROW)
         condition = self._body({"else", "end"})
         else_branch: tuple[ASTNode, ...] = ()
+        boundary = self.index
         self._skip_newlines()
         if self._match_ident("else"):
             self._expect(TokenKind.FAT_ARROW)
             else_branch = self._body({"end"})
+        else:
+            # An inline assert without an else must not consume the next
+            # statement's newline while looking for an optional branch.
+            self.index = boundary
         return AssertNode(condition, else_branch, location=_loc(start))
 
     def _unfold(self, start: Token) -> UnfoldNode:

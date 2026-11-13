@@ -820,6 +820,9 @@ class RuntimeContext:
     type_services: RuntimeTypeServices | None = None
     runtime_reflection: Callable[[str, tuple[Any, ...]], Any] | None = None
     program_args: tuple[str, ...] = ()
+    # Native protocols can invoke a Valiance callback in a task scope tied to
+    # the resource's lifetime. A plain `call` has no such boundary.
+    call_scoped: Callable[..., list[Any]] | None = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -4874,7 +4877,7 @@ BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
 
 def default_environment() -> T.Environment:
     """Build an environment populated with Valiance's built-in elements."""
-    env = T.Environment()
+    env = T.Environment(builtin_scope=True)
     for name in ("IO", "Random", "Panic", "Memoizable", "Unsafe"):
         env.add_property_element_tag(name)
     for name in ("Eager", "Memoized"):

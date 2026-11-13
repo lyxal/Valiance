@@ -13,16 +13,17 @@ class Specificity(IntEnum):
     """Ordered match categories used to compare overload candidates."""
 
     EXACT = 0
-    EXACT_GENERIC = 1
-    TAGGED = 2
-    OPTIONAL = 3
-    INTERSECTION = 4
-    TRAIT = 5
-    RANK = 6
-    RANK_ADAPTED = 7
-    UNION = 8
-    VECTORISED = 9
-    CALL_SITE_CHECKED = 10
+    TAGGED_PRESENT = 1
+    EXACT_GENERIC = 2
+    TAGGED = 3
+    OPTIONAL = 4
+    INTERSECTION = 5
+    TRAIT = 6
+    RANK = 7
+    RANK_ADAPTED = 8
+    UNION = 9
+    VECTORISED = 10
+    CALL_SITE_CHECKED = 11
     NO_MATCH = 10_000
 
 

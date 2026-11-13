@@ -256,6 +256,24 @@ end
 
 
 class VariantSemanticTests(SemanticTestCase):
+    def test_variant_case_names_can_overlap_with_incompatible_constructor_arities(self):
+        source = r'''variant Message =>
+  Conflict => $text: String end
+end
+variant Status =>
+  Conflict
+end
+Message.Conflict("details")
+Status.\Conflict'''
+        typed = self.analyse(source)
+        for optimized in (False, True):
+            for serialized in (False, True):
+                with self.subTest(optimized=optimized, serialized=serialized):
+                    program = compile_program(typed, optimize=optimized)
+                    result = run(loads(dumps(program)) if serialized else program)
+                    self.assertEqual([value.type_name for value in result],
+                                     ['Message.Conflict', 'Status.Conflict'])
+
     def test_vectorised_case_constructor_preserves_trait_dispatch(self):
         self.assert_executes('''
 trait Stringable => extend toString -> String end

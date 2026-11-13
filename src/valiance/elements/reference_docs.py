@@ -108,8 +108,6 @@ def collect_stdlib_references(*, strict: bool = True) -> tuple[ElementReference,
     """Collect Python-backed and Valiance-defined standard-library references."""
     references: list[ElementReference] = []
     missing: list[str] = []
-    conflicts: list[str] = []
-
     for module_name, functions in native_stdlib_functions().items():
         grouped_functions: dict[str, list[NativeFunction]] = {}
         for function in functions:
@@ -126,10 +124,11 @@ def collect_stdlib_references(*, strict: bool = True) -> tuple[ElementReference,
             if not documented:
                 missing.append(qualified_name)
                 continue
-            if len(documented) > 1:
-                conflicts.append(qualified_name)
-                continue
-            documentation = next(iter(documented))
+            # Distinct overloads may document their own parameter types,
+            # examples and semantics. Retain that documentation on each
+            # signature rather than rejecting a documented overload group.
+            documentation = next(function.documentation for function in overloads
+                                 if function.documentation is not None)
             if any(function.documentation is None for function in overloads):
                 missing.append(qualified_name)
                 continue
@@ -162,19 +161,10 @@ def collect_stdlib_references(*, strict: bool = True) -> tuple[ElementReference,
         for definitions in documented_by_name.values():
             references.append(_source_reference(module_name, definitions))
 
-    if strict and (missing or conflicts):
-        messages = []
-        if missing:
-            messages.append(
-                "missing standard-library documentation for: "
-                + ", ".join(sorted(missing))
-            )
-        if conflicts:
-            messages.append(
-                "conflicting standard-library documentation for overloads of: "
-                + ", ".join(sorted(conflicts))
-            )
-        raise DocumentationError("; ".join(messages))
+    if strict and missing:
+        raise DocumentationError(
+            "missing standard-library documentation for: " + ", ".join(sorted(missing))
+        )
     return tuple(sorted(references, key=_reference_sort_key))
 
 
@@ -471,7 +461,7 @@ def _native_reference(
                     candidate.returns,
                     param_names=candidate.param_names,
                 ),
-                documentation,
+                candidate.documentation or documentation,
             )
             for candidate in functions
         ),

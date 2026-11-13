@@ -671,11 +671,20 @@ def _element_call_argument_plan(
     if len(positional_args) > len(positional_slots):
         return None
     if positional_args:
-        positional_slots = (
-            positional_slots[-len(positional_args) :]
-            if align_positional_right
-            else positional_slots[: len(positional_args)]
-        )
+        if align_positional_right:
+            positional_slots = positional_slots[-len(positional_args):]
+        else:
+            # A defaulted suffix cannot take the path from a modifier call
+            # simply because another required input (the App) is on the ECS
+            # stack. Bind explicit positional values to the right edge of the
+            # required prefix, then to optional parameters if necessary.
+            required_slots = [i for i in positional_slots if param_defaults[i] is None]
+            optional_slots = [i for i in positional_slots if param_defaults[i] is not None]
+            if len(positional_args) <= len(required_slots):
+                positional_slots = required_slots[-len(positional_args):]
+            else:
+                positional_slots = required_slots + optional_slots[
+                    :len(positional_args) - len(required_slots)]
         for index, arg in zip(positional_slots, positional_args, strict=True):
             assignments[index] = arg
 

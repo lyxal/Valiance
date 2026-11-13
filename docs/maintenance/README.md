@@ -57,6 +57,19 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   shape discovery, and category metadata.
 - [Reflection implementation status](reflection-implementation.md) maps completed
   support and remaining work to the design specification's R0–R6 stages.
+- [Web implementation record](web.md) consolidates implementation history,
+  feature coverage, protocol completion gates, qualification evidence, and
+  remaining work for `std.web`.
+- [Practical `std.web` preview guide](../std-web-preview.md) provides the runnable
+  H1/H2 sample, supported-use envelope, deployment precautions, and the
+  functional smoke qualification (distinct from full RFC acceptance).
+- [Typed HTML generation](../std-html.md) documents `std.html` safe node builders, escaping, attributes and Web response integration, tested by `tests/test_std_html.py` and the optional real-browser
+  `tests/test_std_html_browser.py`.
+- [Web application core](web.md) tracks the currently incomplete `std.web`
+  runtime and language API, including the bounded WebSocket shutdown contract,
+  completion gates, acceptance matrix, and qualification evidence, with focused
+  regression tests in `tests/test_std_web.py`.
+  [WebSocket release qualification runner](../../tools/qualify_websocket_release.py) writes a fail-closed gate-to-command evidence report; it refuses to sign off missing Python 3.14, external interoperability, full-regression, stress or H3 prerequisites.
 - [JSON encoding and decoding](reflection-implementation.md#json-encoding) provides automatic
   managed-object and checked compositional
   [Valiance encoders and typed decoders](../../src/valiance/std/json.vlnc), backed by

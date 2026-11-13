@@ -1,3 +1,21 @@
+# Native standard-library overloads and object optional defaults
+
+For native functions with the same exported name, `stdlib_native.runtime_stdlib_elements` must retain *every* overload and implementation identity in the VM catalogue, not overwrite earlier entries. The analyser already accepts multiple native overloads but that alone does not guarantee runtime linking. Native overloaded signatures should keep the same consumed-input arity under Valiance's uniform-arity rule. A variant case's nominal `Symbol` has the case name as `text` and the enclosing variant in `namespace` (e.g., `Symbol('GetRequest', ('web', 'Request'))`), not a dotted case name in `text`.
+
+Object field defaults are stored in portable constructor references. The niladic `\None` default is represented as a `None` bytecode sentinel and turned into a new `ObjectValue('None', {})` each time the VM constructs an object, including initializer paths. Do not use a process-shared owned ObjectValue as a constructor default; it would violate the ownership and refcount model. Empty-list defaults still need a separately designed typed literal/ownership representation.
+
+# Associated native imports for standard-library objects
+
+`stdlib_native.NativeFunction.import_with` opts individual native overloads into
+companion imports when a public standard-library object is selected explicitly.
+`modules_system.modules.import_definitions` must filter by each overload's
+implementation ID: selecting `std.web.App` may select `get(App, ...)` but must
+not accidentally import the `get(Router, ...)` overload. A namespace-only
+`import {std.web}` does not select unqualified companions. Keep explicit aliases
+and serialized/optimized native-dispatch tests when extending this facility.
+This is an import-time association of existing ECS functions, not a synthesized
+object method or a new source-language grammar feature.
+
 # Canonical diamond imports and trait evidence
 
 A public diamond can re-export the *same* object declaration under the same

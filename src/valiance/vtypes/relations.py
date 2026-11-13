@@ -3200,7 +3200,14 @@ def _match_specificity(
         ) and same(
             argument.inner, parameter.inner
         ):
-            return Specificity.TAGGED
+            # A proven positive tag is more selective than erasing the tag to
+            # an ordinary generic match. A negative tag merely constrains
+            # absence and has a weaker score than concrete type evidence.
+            return (
+                Specificity.TAGGED_PRESENT
+                if any(not tag.absent for tag in parameter.tags)
+                else Specificity.TAGGED
+            )
     if _is_optional(parameter) and (
         isinstance(argument, NoneTypeNode)
         or compatible(argument, _optional_inner(parameter), ctx)

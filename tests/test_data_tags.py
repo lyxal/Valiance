@@ -257,6 +257,65 @@ define invalid(value: Result[#checked #-checked Number, String]) -> Number => 0 
 """)
         self.assertIn("cannot be both present and absent", diagnostics_text(analyser))
 
+    def test_constructed_tag_predicate_without_assert(self):
+        source = """
+tag #Vec2 as constructed
+define #Vec2(:Real+) => length | == 2
+#Vec2 [3.0, 4.0]
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#Vec2 Int+")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(value.value, [RuntimeNumber("3"), RuntimeNumber("4")])
+            self.assertEqual({tag.name for tag in value.tags}, {"Vec2"})
+
+        with self.assertRaisesRegex(RuntimeError, "tag validator #Vec2 failed"):
+            execute("""
+tag #Vec2 as constructed
+define #Vec2(:Real+) => length | == 2
+#Vec2 [3.0]
+""")
+
+    def test_constructed_tag_length_overload_uses_intrinsic_for_unvalidated_inputs(self):
+        source = """
+tag #Vec2 as constructed
+define #Vec2(:Real+) => length | == 2
+public define #Vec2 length(:#Vec2 Real+) => sqrt squared
+define squared(:#Vec2 Real+) => sum *
+$ship = #Vec2 [3.0, 4.0]
+$next = $ship + #Vec2 [1.0, -1.0]
+[10, 20, 30] length
+$ship length
+$next length
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(analyse_source(source)[0].diagnostics, [])
+        for output in outputs:
+            self.assertEqual(output, [RuntimeNumber(3), RuntimeNumber(5), RuntimeNumber(5)])
+
+    def test_untagged_list_cannot_call_tagged_only_element(self):
+        source = """
+tag #Vec2 as constructed
+define #Vec2(:Real+) => length | == 2
+define magnitude(:#Vec2 Real+) => 100
+[3.0, 4.0] magnitude
+"""
+        analyser, _ = analyse_source(source)
+        self.assertIn("no overloads for element 'magnitude' match", diagnostics_text(analyser))
+
+    def test_tagged_only_element_requires_tag_even_with_other_evidence(self):
+        source = """
+tag #Vec2 as constructed
+define #Vec2(:Real+) => length | == 2
+define magnitude(:#Vec2 Real+) => 100
+#Vec2 [3.0, 4.0] magnitude
+"""
+        _, outputs = execute_all_modes(source)
+        for output in outputs:
+            self.assertEqual(output, [RuntimeNumber(100)])
+
     def test_constructed_tag_automatically_flows_through_vector_arithmetic(self):
         source = """
 tag #infinite as constructed

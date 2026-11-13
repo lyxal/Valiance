@@ -791,6 +791,10 @@ class VirtualMachine:
         self._closed = False
         self._vm_thread_id: int | None = None
         self._scope_stack: list[TaskScope] = [self.scheduler.root_scope]
+        # A resource owner can asynchronously signal cancellation, but all
+        # scheduler mutations stay on the thread driving this VM. This stack
+        # is installed only around native resource callbacks.
+        self._resource_scope_cancellations: list[tuple[Event, TaskScope]] = []
         self.task_instruction_quantum = 64
         self._unwind_panics: list[PanicSignal] = []
         self._callback_faults: list[BaseException] = []
@@ -830,6 +834,7 @@ class VirtualMachine:
             type_services=self._type_services,
             runtime_reflection=self._runtime_reflection_action,
             program_args=self.program_args,
+            call_scoped=self.call_value_scoped,
         )
         core_elements = runtime_elements()
         # Only the VM's own immutable core intrinsics are eligible to run
@@ -844,6 +849,15 @@ class VirtualMachine:
         self.globals = {
             name: BuiltinValue(element, runtime_context)
             for name, element in (core_elements | runtime_stdlib_elements()).items()
+        }
+        # Keep the VM's intrinsic implementations independently of names that
+        # source declarations may later rebind. Typed calls select an immutable
+        # overload identity; name shadowing must not change that selection.
+        self._intrinsic_values = {
+            overload.signature.implementation_id: self.globals[name]
+            for name, element in core_elements.items()
+            for overload in element.definitions
+            if overload.signature.implementation_id is not None
         }
 
     @property
@@ -1379,6 +1393,70 @@ class VirtualMachine:
             raise body_error
         _enable_host_fault_boundary(result)
         return result
+
+    def call_value_scoped(
+        self, value: Any, args: list[Any], *, cancel_event: Event | None = None,
+    ) -> list[Any]:
+        """Call a native-hosted handler in its own structured task scope.
+
+        Child Valiance tasks are never allowed to outlive the resource callback,
+        including on application errors. Scope closure requests cancellation
+        first and joins *cooperative* tasks before the handler is released.
+        Native uncooperative code is outside the Valiance scheduler's power to
+        forcibly terminate.
+        """
+        stack = self._active_scope_stack()
+        scope = TaskScope(
+            self.scheduler, parent=stack[-1],
+            owner_task=self.scheduler.current_task,
+            creation_site='native resource callback',
+        )
+        stack.append(scope)
+        if cancel_event is not None:
+            self._resource_scope_cancellations.append((cancel_event, scope))
+        error: BaseException | None = None
+        try:
+            self._poll_resource_cancellations()
+            return self.call_value(value, args)
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            if cancel_event is not None:
+                # Unregister before draining children: a cancellation signal
+                # must not repeatedly interrupt scope cleanup itself.
+                registered_event, registered_scope = self._resource_scope_cancellations.pop()
+                if registered_event is not cancel_event or registered_scope is not scope:
+                    raise RuntimeError('native handler cancellation registration was not balanced')
+            if not stack or stack[-1] is not scope:
+                raise RuntimeError('native handler task scope was not balanced')
+            stack.pop()
+            # A WebSocket callback returning is an end-of-session boundary:
+            # it does not implicitly wait forever for spawned children.
+            for child in scope.children:
+                if not child.state.terminal:
+                    child.request_cancel()
+            try:
+                scope.close()
+            except BaseException:
+                if error is None:
+                    raise
+                # Preserve the callback's original error during cancellation.
+
+    def _poll_resource_cancellations(self) -> None:
+        """Deliver cross-thread resource cancellation at a VM-safe checkpoint.
+
+        A socket, heartbeat or HTTP/2 reset thread only sets the Event;
+        it never changes a TaskScope or scheduler queue off-thread. Children
+        of the terminated owner are cancelled transitively by their own
+        scheduler cleanup when the cancelled task runs.
+        """
+        for event, scope in reversed(self._resource_scope_cancellations):
+            if event.is_set():
+                for child in scope.children:
+                    if not child.state.terminal:
+                        child.request_cancel()
+                raise CancelledFault('resource callback owner was cancelled')
 
     def call(
         self,
@@ -3697,6 +3775,11 @@ class VirtualMachine:
             activation.ip = ip
         try:
             while ip < len(instructions):
+                # Covers long-running *bytecode* loops that never call a
+                # WebSocket primitive. Arbitrary blocking native/Python code
+                # remains outside this enforceable interruption boundary.
+                if self._resource_scope_cancellations and (executed & 63) == 0:
+                    self._poll_resource_cancellations()
                 if instruction_budget is not None and executed >= instruction_budget:
                     activation.ip = ip
                     return _ActivationQuantumYield()
@@ -5385,6 +5468,11 @@ class VirtualMachine:
                         current_function, frame, reference, validated_static=True
                     )
         value = _load_name(reference.name, frame.locals, frame.globals)
+        intrinsic = self._intrinsic_values.get(reference.implementation_id)
+        if intrinsic is not None and isinstance(
+            value, (FunctionValue, OverloadedFunctionValue)
+        ):
+            value = intrinsic
         if isinstance(value, BuiltinValue):
             overload = _linked_builtin_overload(value, reference)
             if reference.name not in frame.locals:
@@ -8702,7 +8790,10 @@ def _construct_object(
 ) -> ObjectValue:
     """Build a single object from arguments whose ownership has been transferred."""
     if initializer is None:
-        fields = dict(callee.defaults)
+        fields = {
+            name: ObjectValue("None", {}) if default is None else default
+            for name, default in callee.defaults.items()
+        }
         fields.update(dict(zip(callee.required, args, strict=True)))
         value = ObjectValue(
             callee.type_name,
@@ -8712,7 +8803,10 @@ def _construct_object(
         )
     else:
         fields = {name: _UNINITIALIZED_OBJECT_FIELD for name in callee.fields}
-        fields.update(callee.defaults)
+        fields.update({
+            name: ObjectValue("None", {}) if default is None else default
+            for name, default in callee.defaults.items()
+        })
         self_value = ObjectValue(
             callee.type_name,
             fields,

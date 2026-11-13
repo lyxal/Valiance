@@ -50,7 +50,7 @@ class _CallArguments:
         """Enumerate parameter-ordered argument sources for an overload."""
         constructor = self.env.lookup_constructor(node.name)
         if node.call_args or (
-            constructor is not None
+            (constructor is not None or node.modifier_args)
             and any(overload.param_defaults for overload in overloads)
         ):
             return self.explicit_element_arguments(
@@ -105,6 +105,11 @@ class _CallArguments:
         """Merge explicit call arguments with stack inputs in parameter order."""
         sources: list[ElementArguments] = []
         terminal: list[AnalysisBranch] = []
+        # Contextual modifiers are tied to this call site, not to an
+        # individual overload. Equivalent expected callback types must share
+        # analysis even when several overloads prepare separate argument
+        # branches; the cache is discarded after this invocation.
+        contextual_cache: ContextualModifierCache = {}
         for overload in overloads:
             prepared = _calls._prepare_element_call_branches(
                 branch,
@@ -122,9 +127,6 @@ class _CallArguments:
                 if preparation.branch.terminal:
                     terminal.append(preparation.branch)
                     continue
-                # Explicit argument expressions can introduce distinct scoped
-                # facts, so cache only within this prepared argument branch.
-                contextual_cache: ContextualModifierCache = {}
                 for args, popped, ordered_modifiers in _calls._source_element_arguments(
                     preparation.branch,
                     overload,

@@ -665,6 +665,38 @@ def import_definitions(
                         component.alias or component.name,
                     )
                 )
+        # An explicitly imported native object can bring in elements whose
+        # first parameter is that object. This is opt-in library metadata,
+        # not a wildcard import of every sibling element or a parser rule.
+        if exports.module_name.startswith('std.'):
+            from valiance.elements.stdlib_native import _native_functions
+            module_name = exports.module_name.split('.', 1)[1]
+            from valiance.elements.stdlib_native import _native_implementation_id
+            selected_owners = {
+                component.name for component in spec.components
+                if component.kind is None and component.name in public_objects
+            }
+            associated: dict[Symbol, set[str]] = {}
+            for native in (_native_functions(module_name) or ()):
+                if native.exported and selected_owners.intersection(native.import_with):
+                    associated.setdefault(native.name, set()).add(
+                        _native_implementation_id(module_name, native)
+                    )
+            # A companion is selected *per native overload*: importing App
+            # must not also expose overloads whose receiver is only Router.
+            already = {
+                overload.overload.implementation_id
+                for definition in selected for overload in definition.typed.overloads
+            }
+            for name, ids in sorted(associated.items(), key=lambda item: str(item[0])):
+                for definition in by_name.get(name, ()):
+                    implementation_ids = {
+                        overload.overload.implementation_id
+                        for overload in definition.typed.overloads
+                    }
+                    if implementation_ids.intersection(ids) - already:
+                        selected.append(_renamed_definition(definition, name))
+                        already.update(implementation_ids)
         return tuple(selected)
 
     namespace = spec.alias or Symbol(exports.module_name.rsplit(".", 1)[-1])

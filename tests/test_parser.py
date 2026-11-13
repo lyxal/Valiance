@@ -1441,6 +1441,50 @@ tag Eager disjoint #infinite
             ],
         )
 
+    def test_constructed_tag_predicate_with_tag_attached_definition(self):
+        tag, validator, length, squared = parse(
+            "tag #Vec2 as constructed\n"
+            "define #Vec2(:Real+) => length | == 2\n"
+            "public define #Vec2 length(:#Vec2 Real+) => sqrt squared\n"
+            "define squared(:#Vec2 Real+) => sum *\n"
+        )
+
+        self.assertIsInstance(tag, TagDeclarationNode)
+        self.assertEqual(validator.name, Symbol("#Vec2"))
+        self.assertEqual(
+            validator.function.body,
+            (
+                ElementNode(Symbol("length")),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("==")),
+            ),
+        )
+        self.assertEqual(length.name, Symbol("length"))
+        self.assertEqual(length.attached_tag, DataTag("Vec2"))
+        self.assertTrue(same(length.function.params[0].typ, parse_type("#Vec2 Real+")))
+        self.assertEqual(squared.name, Symbol("squared"))
+        self.assertTrue(same(squared.function.params[0].typ, parse_type("#Vec2 Real+")))
+
+    def test_inline_assert_without_else_keeps_following_definition_separate(self):
+        [definition, following] = parse(
+            "define check(:Number) => assert => != 0\n"
+            "define following(:Number) => 1\n"
+        )
+        self.assertIsInstance(definition.function.body[0], AssertNode)
+        self.assertEqual(following.name, Symbol("following"))
+
+    def test_inline_assert_with_next_line_else_still_parses(self):
+        [definition, next_definition] = parse(
+            "define check(:Number) => assert => != 0\n"
+            "else => \"zero\"\n"
+            "define following(:Number) => 1\n"
+        )
+
+        assertion = definition.function.body[0]
+        self.assertIsInstance(assertion, AssertNode)
+        self.assertEqual(assertion.else_branch, (StringLiteralNode("zero"),))
+        self.assertEqual(next_definition.name, Symbol("following"))
+
     def test_parses_tag_attached_definition(self):
         [tag, definition] = parse(
             "tag #sorted as computed\n"

@@ -1,0 +1,16 @@
+#? Local example: render escaped HTML values, never concatenated raw markup.
+import {std.web, std.web.App, std.html}
+
+$app = App
+$app := get("/"): fn(req: web.GetRequest) =>
+  html.document(html.html(html.fragment([
+    html.head(html.title "Valiance HTML"),
+    html.body(html.element("main", [
+      html.h1 "Valiance HTML",
+      html.p "Text such as <script> is escaped, not executed.",
+      html.withAttrs(html.a "Read the guide", dict{"href" => "/guide", "class" => "link"})
+    ], dict{"class" => "container"}))
+  ])))
+end
+$app := get("/guide"): fn(req: web.GetRequest) => html.p "Hello from std.html" end
+web.run($app, web.ServerConfig(port = 8766))

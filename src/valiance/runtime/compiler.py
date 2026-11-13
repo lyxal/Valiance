@@ -2653,7 +2653,16 @@ def _typed_call_borrows(
             # and escaping results still materialize through the ordinary path.
             stack.append(receiver)
         elif isinstance(ast, FieldAccessNode):
-            stack.extend(take(1))
+            # A projection is not another occurrence of its enclosing object.
+            # The root of a field-read chain is borrowed separately by
+            # _observational_access_roots. Propagating that root here makes
+            # calls such as `send(owner, owner.metadata.label)` look like two
+            # borrowed copies of `owner`, so the direct call argument is
+            # mistakenly materialised (and rejected for @nodup owners).
+            # Keep projected values distinct; owned field escapes remain
+            # guarded by the VM's normal materialisation checks.
+            take(1)
+            stack.append(None)
         elif (type(candidate) is TypedNode and isinstance(ast, IndexAccessNode)
               and not ast.spread):
             take(1 + sum(bool(selector.start) + bool(selector.stop) + bool(selector.step)
@@ -2809,15 +2818,14 @@ def _observational_access_roots(
         cursor = index + 1
         while cursor < len(body) and isinstance(_unwrap(body[cursor]), FieldAccessNode):
             cursor += 1
-        # Object-method $self projections are observational: consuming the
-        # receiver here would duplicate or prematurely destroy @nodup state.
-        # Other receivers retain existing ownership semantics; broadening this
-        # to arbitrary variables changes user-defined method behaviour.
-        if (
-            cursor > index + 1
-            and ast.name.text == "self"
-            and _unwrap(body[index + 1]).name.text == "handle"
-        ):
+        # Projecting fields from a named owner is always an observation of
+        # that owner, not an attempt to create an additional owner. Keep the
+        # projection borrowed until the eventual consumer: storing or
+        # returning an owned @nodup field must still pass the VM duplication
+        # check, while copyable metadata can be materialised independently.
+        # This is the general rule for nested `owner.metadata.field` reads,
+        # rather than a special case for object-method `$self.handle`.
+        if cursor > index + 1:
             observed.add(id(candidate))
             continue
         if cursor >= len(body):
@@ -3707,6 +3715,10 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
             return _number(value, node)
         case StringLiteralNode(value):
             return value
+        case ElementNode(name=name) if name.text == "\\None" and not name.namespace and not node.call_args and not node.modifier_args:
+            # A niladic optional literal is immutable in source.  Store a
+            # portable sentinel; the VM mints a fresh runtime None per object.
+            return None
         case StringInterpolationNode():
             raise CompileError("object default values must be literal values")
         case _:
@@ -3833,6 +3845,10 @@ def _literal_pattern_value(node: ASTNode) -> object:
             return _number(value, node)
         case StringLiteralNode(value):
             return value
+        case ElementNode(name=name) if name.text == "\\None" and not name.namespace and not node.call_args and not node.modifier_args:
+            # A niladic optional literal is immutable in source.  Store a
+            # portable sentinel; the VM mints a fresh runtime None per object.
+            return None
         case StringInterpolationNode():
             raise CompileError(f"cannot compile interpolated string pattern {node!r}")
         case _:

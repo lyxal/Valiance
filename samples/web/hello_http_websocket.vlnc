@@ -1,0 +1,13 @@
+#? Local std.web preview: a health endpoint and one WebSocket response.
+#? The default listener binds to 127.0.0.1. Do not expose this unauthenticated
+#? example to the public internet.
+import {std.web, std.web.App}
+
+$app = App
+$app := get("/health"): fn (req: web.GetRequest) => "ok" end
+$app := websocket("/ws"): fn (socket: web.WebSocket) =>
+  $incoming = web.websocketReceive($socket) ?
+  web.websocketSendText($socket, "hello from Valiance") ?
+  web.websocketClose($socket) ?
+end
+web.run($app, web.ServerConfig(port = 8765))

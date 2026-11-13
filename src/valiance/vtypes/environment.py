@@ -208,6 +208,7 @@ class Environment:
     context: Context = field(default_factory=Context)
     reflection_universe: ReflectionUniverse | None = field(default=None, compare=False, repr=False)
     parent: Environment | None = None
+    builtin_scope: bool = False
     overloads: dict[Symbol, list[Overload]] = field(
         default_factory=dict[Symbol, list[Overload]]
     )
@@ -637,13 +638,24 @@ class Environment:
         """Append one overload to a named overload set."""
         self.validate_protocol_provider(name, overload)
         candidates = self.overloads.setdefault(name, [])
-        if candidates:
+        inherited = (
+            self._inherited_builtin_overloads(name)
+            if any(_has_positive_data_tag(param) for param in overload.params)
+            else ()
+        )
+        # A differently shaped user declaration still shadows a built-in.
+        # Overload sets have one fixed input count, so such declarations
+        # cannot be part of the same candidate set.
+        if inherited and len(inherited[0].params) != len(overload.params):
+            inherited = ()
+        visible = (*inherited, *candidates)
+        if visible:
             fixed_candidates = tuple(
                 candidate
-                for candidate in candidates
+                for candidate in visible
                 if not _is_call_site_checked(candidate)
             )
-            expected_arity = len(candidates[0].params)
+            expected_arity = len(visible[0].params)
             if len(overload.params) != expected_arity:
                 raise ValueError(
                     f"overloads for '{name}' must all take {expected_arity} "
@@ -715,6 +727,15 @@ class Environment:
             current = current.parent
         return tuple(providers)
 
+    def _inherited_builtin_overloads(self, name: Symbol) -> tuple[Overload, ...]:
+        """Return immutable builtin candidates, excluding intervening user scopes."""
+        root = self.parent
+        while root is not None and root.parent is not None:
+            root = root.parent
+        if root is None or not root.builtin_scope:
+            return ()
+        return tuple(root.overloads.get(name, ()))
+
     def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""
         if name.text.startswith("*::"):
@@ -723,9 +744,20 @@ class Environment:
                 return tuple(self.overloads.get(builtin_name, ()))
             return self.parent.overloads_for(name)
         local = tuple(self.overloads.get(name, ()))
-        if local or self.parent is None:
-            return local
-        return self.parent.overloads_for(name)
+        if not local:
+            return self.parent.overloads_for(name) if self.parent is not None else ()
+        # Explicit positive-tag overloads extend the built-in overload set:
+        # their untagged inputs must still resolve to the built-in. Ordinary
+        # declarations retain lexical shadowing of built-ins and other users.
+        if any(
+            _has_positive_data_tag(param)
+            for overload in local
+            for param in overload.params
+        ):
+            inherited = self._inherited_builtin_overloads(name)
+            if inherited and len(inherited[0].params) == len(local[0].params):
+                return (*inherited, *local)
+        return local
 
     def visible_overload_names(self) -> tuple[Symbol, ...]:
         """Return callable names visible through lexical shadowing."""
@@ -1024,6 +1056,34 @@ class Environment:
                 actual_returns,
             )
         return AppliedElement(applied)
+
+
+
+def _has_positive_data_tag(typ: Type) -> bool:
+    """Whether an overload input requires positive data-tag evidence."""
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return (
+            any(not tag.absent for tag in typ.tags)
+            or _has_positive_data_tag(typ.inner)
+        )
+    if isinstance(typ, (NoVecType, ExactType)):
+        return _has_positive_data_tag(typ.inner)
+    if isinstance(typ, CollectionType):
+        return _has_positive_data_tag(typ.base)
+    if isinstance(typ, NominalType):
+        return any(_has_positive_data_tag(arg) for arg in typ.args)
+    if isinstance(typ, (UnionType, IntersectionType)):
+        return any(_has_positive_data_tag(item) for item in typ.items)
+    if isinstance(typ, TupleType):
+        return any(_has_positive_data_tag(item) for item in typ.params)
+    if isinstance(typ, VariadicTupleType):
+        return any(_has_positive_data_tag(item.typ) for item in typ.items)
+    if isinstance(typ, RowType):
+        return _has_positive_data_tag(typ.base) or any(
+            _has_positive_data_tag(field.typ) for field in typ.fields
+        )
+    return False
 
 
 def _failed_application_shape(

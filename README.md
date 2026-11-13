@@ -12,6 +12,11 @@ The defining features of Valiance are that it:
 
 Ultimately, Valiance acts to elevate array languages beyond rough sketches and algorithmatic prototypes. Valiance brings array languages to the software development table.
 
+For the current HTTP/1.1, TLS/HTTP/2 and WebSocket practical preview, see
+[the `std.web` getting-started guide](docs/std-web-preview.md). This is a
+limited developer preview, **not** an HTTP/3 or full-RFC production sign-off.
+The guide explains supported use, functional checks, and remaining release limitations.
+
 For more information, check out the [working language guide](docs/language.md).
 The [worked examples](docs/examples.md) index the currently exercised sample
 programs, including Conway's Game of Life, a Brainfuck interpreter, optional-safe
@@ -249,6 +254,11 @@ The JSON form is versioned for editor, website, and language-tool integrations.
 See [`docs/docstrings.md`](docs/docstrings.md) for the comment format, supported
 fields, output defaults, and language-reference generation.
 
+For ordinary server-rendered web pages, `std.html` provides escaped typed HTML
+nodes, reusable components, form and document helpers, and direct `std.web`
+response integration. See the [HTML guide](docs/std-html.md) and runnable
+[`html_components.vlnc`](samples/web/html_components.vlnc) example.
+
 Execute previously compiled bytecode without recompiling:
 
 ```powershell
@@ -294,4 +304,15 @@ Licensed under either of:
 - MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 
-at your option. 
+at your option.
+
+
+### `std.web` H1/H2 practical developer preview
+
+For a complete HTTP/WebSocket starter, see
+[`samples/web/feature_demo.vlnc`](samples/web/feature_demo.vlnc) and the
+[`std.web` practical preview guide](docs/std-web-preview.md).
+The [consolidated implementation record](docs/maintenance/web.md)
+distinguishes tested everyday features from partial contract parity and missing
+HTTP/3. This is a local/controlled-deployment preview rather than a final
+RFC/production sign-off. Python 3.14+ is required for supported installation.

@@ -1,0 +1,928 @@
+import {std.file.#byte, std.html}
+
+#? Web routing values, protocol-independent requests, and responses.
+#? A bounded HTTP/1.1 adapter is available; full v1.0 transport support is pending.
+
+#? HTTP errors are ordinary Valiance Err values, not thrown exceptions.
+#? Configuration failures do not become ordinary HTTP responses.
+@errType public variant ConfigError =>
+  InvalidRoute
+end
+
+@errType public variant Error =>
+  BadRequest
+  MissingParam
+  AmbiguousParam
+  InvalidHeader
+  AmbiguousHeader
+  InvalidCookie
+  AmbiguousCookie
+  InvalidForm
+  InvalidMultipart
+  InvalidJson
+  BadText
+  MalformedTarget
+  Unauthorized
+  Forbidden
+  NotFound
+  MethodNotAllowed
+  NotAcceptable
+  RequestTimeout
+  Conflict
+  Gone
+  PreconditionFailed
+  BodyTooLarge
+  TargetTooLong
+  UnsupportedMediaType
+  RangeNotSatisfiable
+  UnprocessableContent
+  TooEarly
+  PreconditionRequired
+  TooManyRequests
+  HeadersTooLarge
+  MissingContext
+  BodyUnavailable
+  WrongMode
+  InvalidResponse
+  InvalidLocation
+  InvalidETag
+  InvalidCachePolicy
+  Internal
+  NotImplemented
+  BadGateway
+  ServiceUnavailable
+  GatewayTimeout
+end
+
+public variant SameSite =>
+  Strict
+  Lax
+  None
+end
+
+#? Buffered is the default. Stream switches body admission before HTTP reads.
+public variant BodyMode =>
+  Buffered
+  Stream
+end
+
+public variant Method =>
+  GET
+  HEAD
+  POST
+  PUT
+  PATCH
+  DELETE
+  OPTIONS
+  QUERY
+end
+
+public variant Status =>
+  Continue
+  SwitchingProtocols
+  Processing
+  EarlyHints
+  OK
+  Created
+  Accepted
+  NonAuthoritativeInformation
+  NoContent
+  ResetContent
+  PartialContent
+  MultiStatus
+  AlreadyReported
+  IMUsed
+  MultipleChoices
+  MovedPermanently
+  Found
+  SeeOther
+  NotModified
+  UseProxy
+  TemporaryRedirect
+  PermanentRedirect
+  BadRequest
+  Unauthorized
+  PaymentRequired
+  Forbidden
+  NotFound
+  MethodNotAllowed
+  NotAcceptable
+  ProxyAuthenticationRequired
+  RequestTimeout
+  Conflict
+  Gone
+  LengthRequired
+  PreconditionFailed
+  ContentTooLarge
+  URITooLong
+  UnsupportedMediaType
+  RangeNotSatisfiable
+  ExpectationFailed
+  ImATeapot
+  MisdirectedRequest
+  UnprocessableContent
+  Locked
+  FailedDependency
+  TooEarly
+  UpgradeRequired
+  PreconditionRequired
+  TooManyRequests
+  RequestHeaderFieldsTooLarge
+  UnavailableForLegalReasons
+  InternalServerError
+  NotImplemented
+  BadGateway
+  ServiceUnavailable
+  GatewayTimeout
+  HTTPVersionNotSupported
+  VariantAlsoNegotiates
+  InsufficientStorage
+  LoopDetected
+  NotExtended
+  NetworkAuthenticationRequired
+  Custom =>
+    $code: Int
+  end
+end
+
+#? An opaque request-local key. Its private nonce is minted natively; callers
+#? cannot recover another key's value from the same payload type.
+public object[T] ContextKey =>
+  private $token: Int = 0
+  private $authenticator: Int = 0
+
+  define ContextKey =>
+    $nonce = std.web.nativeContextNonce
+    $self.token = $nonce
+    $self.authenticator = std.web.nativeContextAuthenticator($nonce)
+  end
+end
+
+public object Headers =>
+  private $names: String+? = \None
+  private $values: String+? = \None
+end
+
+public object Params =>
+  private $names: String+? = \None
+  private $values: String+? = \None
+end
+
+#? Cookie pairs preserve repeated names and their wire order, independently
+#? of query and form parameter encoding rules.
+public object CookiePairs =>
+  private $names: String+? = \None
+  private $values: String+? = \None
+end
+
+#? Bounded buffered multipart form data; file contents are kept as exact bytes.
+#? This is not yet a streaming or owned-upload resource interface.
+public object MultipartForm =>
+  $fields: Params
+  private $files: Upload+? = \None
+end
+
+public object Upload =>
+  $filename: String?
+  $contentType: String?
+  $size: Int
+  private $fieldName: String
+  private $data: #byte+ Int+
+end
+
+#? Ordered event from a streaming multipart request. For files, value is
+#? None and bytes must be read/discarded through the owning UploadStream.
+public object MultipartPart =>
+  $name: String
+  $filename: String?
+  $contentType: String?
+  $value: String?
+end
+
+#? One-pass multipart/form-data owner. Text fields are bounded and returned as
+#? events; file bytes are pulled separately without buffering entire uploads.
+@nodup("A web.UploadStream owns a multipart request and cannot be duplicated")
+public object UploadStream =>
+  private $token: Int
+
+  public define ~UploadStream =>
+    std.web.nativeCloseMultipartStream $self.token
+  end
+end
+
+#? Current representation state supplied explicitly by application code.
+#? Call preconditions before mutating state, under the application's lock or
+#? transaction; HTTP validation is not a substitute for synchronization.
+public object Validators =>
+  $etag: String? = \None
+  $lastModified: Int? = \None
+  $exists: Int = 1
+end
+
+#? An exclusive pull source. The read callback returns at most the requested
+#? byte count; None is EOF. close runs exactly once on completion or failure.
+@nodup("A web.ByteSource owns a read/close resource")
+public object ByteSource =>
+  $read: Function[Int -> #byte+ Int+ | None | Error]
+  $close: Function[-> None | Error]
+end
+
+#? One validated server-sent event. CR/LF/NUL are forbidden in event and ID
+#? labels; multiline data is emitted as individual `data:` lines.
+public object Event =>
+  $data: String
+  $event: String? = \None
+  $id: String? = \None
+  $retryMs: Int? = \None
+end
+
+#? An exclusive pull source for server-sent events. next returns None at EOF.
+@nodup("A web.EventSource owns event callbacks and cannot be duplicated")
+public object EventSource =>
+  $next: Function[-> web.Event | None | Error]
+  $close: Function[-> None | Error]
+end
+
+@nodup("A web.StreamBody owns its source and cannot be duplicated")
+public object StreamBody =>
+  private $token: Int
+
+  public define ~StreamBody =>
+    std.web.nativeCloseStream $self.token
+  end
+end
+
+#? Linear, bounded incoming body. The transport closes unread connections.
+@nodup("An incoming request stream can be owned by only one reader")
+public object RequestBodyStream =>
+  private $token: Int
+
+  public define ~RequestBodyStream =>
+    std.web.nativeCloseRequestStream $self.token
+  end
+end
+
+public object Response =>
+  $status: Int | Status = 200
+  $body: String | html.Node | #byte+ Int+ | StreamBody = ""
+  private $headers: Headers? = \None
+  private $earlyHints: String+? = \None
+  private $trailers: Headers? = \None
+end
+
+public variant Request =>
+  GetRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  HeadRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  PostRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  PutRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  PatchRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  DeleteRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  OptionsRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  QueryRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+  #? An upgrade handshake, not a GET or ordinary CONNECT route.
+  WebSocketRequest =>
+    $path: String
+    $rawTarget: String
+    $originalMethod: String
+    $routeParams: Dict[String, String]
+    $query: Params
+    $headers: Headers
+    $body: String
+    private $streamToken: Int = 0
+    private $multipartPolicy: Dict[String, Int]
+    $scheme: String
+    $authority: String
+    $protocol: String
+    $requestId: String
+    $peer: String
+    $clientAddress: String
+  end
+end
+
+#? Each handler receives a nominal method-specific view; middleware uses the
+#? closed Request variant so that original method identity remains explicit.
+
+public object GetRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object HeadRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object PostRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object PutRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object PatchRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object DeleteRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object OptionsRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+public object QueryRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+#? Handshake metadata is an immutable, validated WebSocket request view.
+public object WebSocketRequest =>
+  $path: String
+  $rawTarget: String
+  $originalMethod: String
+  $routeParams: Dict[String, String]
+  $query: Params
+  $headers: Headers
+  $body: String
+  private $streamToken: Int = 0
+  private $multipartPolicy: Dict[String, Int]
+  $scheme: String
+  $authority: String
+  $protocol: String
+  $requestId: String
+  $peer: String
+  $clientAddress: String
+end
+
+#? A single-owner WebSocket session, unavailable outside its handler's scope.
+@nodup("A web.WebSocket owns one upgraded transport connection")
+public object WebSocket =>
+  private $token: Int
+  $request: web.WebSocketRequest
+  $subprotocol: String?
+
+  public define ~WebSocket =>
+    std.web.nativeCloseWebSocket $self.token
+  end
+end
+
+public variant WebSocketMessage =>
+  Text =>
+    $value: String
+  end
+  Binary =>
+    $value: #byte+ Int+
+  end
+  Closed =>
+    $code: Int
+    $reason: String
+  end
+end
+
+#? Off by default for extensions, with explicit Origin and size limits.
+public object WebSocketPolicy =>
+  $allowedOrigins: String+? = \None
+  $subprotocols: String+? = \None
+  $requireSubprotocol: Int = 0
+  $maxFrameBytes: Int = 1048576
+  $maxMessageBytes: Int = 8388608
+  $idleTimeoutSeconds: Int = 60
+  $writeTimeoutSeconds: Int = 30
+  $heartbeatIntervalSeconds: Int = 30
+  $pongTimeoutSeconds: Int = 10
+  #? Disabled (default), or PermessageDeflate with no-context-takeover.
+  $extensionPolicy: String = "Disabled"
+end
+
+public variant Route =>
+  Websocket =>
+    $path: String
+    $policy: WebSocketPolicy
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[WebSocket -> None | Error]
+  end
+  Get =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[GetRequest -> String | Response | Error]
+  end
+  Head =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[HeadRequest -> String | Response | Error]
+  end
+  Post =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    private $maxBodyBytes: Int? = \None
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[PostRequest -> String | Response | Error]
+  end
+  Put =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    private $maxBodyBytes: Int? = \None
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[PutRequest -> String | Response | Error]
+  end
+  Patch =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    private $maxBodyBytes: Int? = \None
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[PatchRequest -> String | Response | Error]
+  end
+  Delete =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[DeleteRequest -> String | Response | Error]
+  end
+  Options =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[OptionsRequest -> String | Response | Error]
+  end
+  Query =>
+    $path: String
+    private $bodyMode: String = "Buffered"
+    private $maxBodyBytes: Int? = \None
+    $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+    $handler: Function[QueryRequest -> String | Response | Error]
+  end
+end
+
+#? Safe logical HTTP error context for application error pages. Transport
+#? framing errors that never produced a Request cannot invoke this hook.
+public object ErrorContext =>
+  $request: Request?
+  $requestId: String
+  $stage: String
+  $name: String
+  $status: Int
+  $allowedMethods: String+
+end
+
+#? Redacted completion observation. Only the *matched route template*, not
+#? raw URI, header fields, cookies, credentials, or body content is exposed.
+public object LogEvent =>
+  $requestId: String
+  $method: String
+  $routeTemplate: String?
+  $status: Int
+  $protocol: String
+  $elapsedMilliseconds: Real
+  $requestBytes: Int
+  $responseBytes: Int
+  $peer: String
+  $clientAddress: String
+  $errorStage: String? = \None
+end
+
+public object App =>
+  private $routes: Route+? = \None
+  private $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+  private $logger: (Function[LogEvent -> None] | Function[LogEvent -> Error] | Function[LogEvent -> None | Error])? = \None
+  private $errorHandler: (Function[ErrorContext -> Response] | Function[ErrorContext -> Response | Error])? = \None
+end
+
+public object Router =>
+  private $routes: Route+? = \None
+  private $middleware: (Function[Request -> Request] | Function[Request -> Response] | Function[Request -> Error])+? = \None
+end
+
+#? An opaque, validated App snapshot; does not start socket listeners.
+public object PreparedApp =>
+  private $app: App
+end
+
+#? Public inspection data never includes handler or middleware closures.
+public object RouteDescriptor =>
+  $method: Method
+  $template: String
+  $path: String
+  $automatic: #boolean Int
+  $source: String?
+  #? True for a distinct WebSocket upgrade route, not an ordinary GET.
+  $upgrade: #boolean Int
+end
+
+#? CORS policy values are validated when installed as middleware.
+public object CorsPolicy =>
+  $allowedOrigins: String+
+  $allowedMethods: Method+
+  $allowedHeaders: String+? = \None
+  $exposedHeaders: String+? = \None
+  $allowCredentials: Int = 0
+  $maxAge: Int? = \None
+  $allowPrivateNetwork: Int = 0
+end
+
+#? The native middleware adapter retains the immutable policy inside a Router
+#? or App. It uses the ordinary dispatch pipeline with route-aware preflight.
+public object CorsMiddleware =>
+  private $policy: CorsPolicy
+end
+
+#? Opt-in buffered representation compression with strict Accept-Encoding
+#? negotiation. gzip and Brotli are enabled by default, and Brotli availability
+#? is checked during application construction. No implicit compression.
+public object CompressionPolicy =>
+  $minBytes: Int = 1024
+  $gzipEnabled: Int = 1
+  $brotliEnabled: Int = 1
+  $maxBytes: Int = 16777216
+end
+
+#? Opaque middleware value; ordinary dispatcher after-callbacks apply policy.
+public object CompressionMiddleware =>
+  private $policy: CompressionPolicy
+end
+
+#? TLS 1.3 credentials; HTTPS defaults to HTTP/1.1 and HTTP/2 via ALPN.
+public object TLS =>
+  $certificateFile: String
+  $privateKeyFile: String
+end
+
+#? Finite HTTP/1.1 and HTTP/2 resource budgets. Millisecond timeouts are positive and
+#? enforced by the transport; the grace interval may be zero. Other protocol
+#? adapters must explicitly implement these budgets before claiming support.
+public object Limits =>
+  $maxRequestTargetBytes: Int = 8192
+  $maxHeaderBytes: Int = 32768
+  $maxHeaderFields: Int = 100
+  $maxDecodedHeaderBytes: Int = 65536
+  $maxCompressedHeaderBytes: Int = 32768
+  $maxHpackDynamicTableBytes: Int = 16384
+  $maxBufferedBodyBytes: Int = 16777216
+  $maxStreamingBodyBytes: Int = 1073741824
+  $maxFormFields: Int = 1000
+  $maxMultipartParts: Int = 128
+  $maxUploadFileBytes: Int = 268435456
+  $maxMultipartFieldBytes: Int = 1048576
+  $maxMultipartNameBytes: Int = 1024
+  $maxMultipartFilenameBytes: Int = 4096
+  $maxConnections: Int = 128
+  $maxConcurrentRequests: Int = 1024
+  $maxActiveWebSockets: Int = 1024
+  $maxWebSocketFrameBytes: Int = 1048576
+  $maxWebSocketMessagesBytes: Int = 8388608
+  $maxWebSocketQueuedSendBytes: Int = 4194304
+  $webSocketPingIntervalSeconds: Int = 30
+  $webSocketPongTimeoutSeconds: Int = 10
+  $maxTotalBufferedBytes: Int = 268435456
+  $maxBufferedBytesPerConnection: Int = 33554432
+  $maxConcurrentStreamsPerConnection: Int = 100
+  $headerTimeoutMilliseconds: Int = 10000
+  $bodyIdleTimeoutMilliseconds: Int = 30000
+  $connectionIdleTimeoutMilliseconds: Int = 60000
+  $writeIdleTimeoutMilliseconds: Int = 30000
+  $gracefulShutdownMilliseconds: Int = 30000
+end
+
+#? Only a directly trusted TCP peer may supply forwarding information;
+#? neither syntax silently trusts arbitrary X-Forwarded-* headers.
+public variant ProxyMode =>
+  Disabled
+  RFCForwarded
+  XForwarded
+end
+
+#? Listener protocol selection. HTTP3 is reserved and deliberately rejected
+#? until the QUIC transport exists; it is never silently downgraded.
+public variant Protocol =>
+  HTTP1
+  HTTP2
+  HTTP3
+  Test
+end
+
+public object ServerConfig =>
+  $host: String = "127.0.0.1"
+  $port: Int = 8080
+  $tls: TLS | None = \None
+  $limits: Limits | None = \None
+  $protocols: Protocol+? = \None
+  $publicOrigin: String? = \None
+  $allowedHosts: String+? = \None
+  $trustedProxies: String+? = \None
+  $proxyMode: ProxyMode? = \None
+end
+
+#? HTTP/1.1 and ALPN HTTP/2 server lifecycle. HTTP/3 and the complete stop
+#? report/lifecycle contract are not yet implemented.
+@errType public variant ServerError =>
+  Failed
+  Stopped
+end
+
+@nodup("A web.ServerHandle owns its listener and cannot be duplicated")
+public object ServerHandle =>
+  private $token: Int
+
+  public define ~ServerHandle =>
+    std.web.nativeCloseServer $self.token
+  end
+end
+
+public variant ServerStopReason =>
+  Requested
+  Signal
+  ParentCancelled
+  FatalTransportError
+end
+
+public object ServerStopReport =>
+  $reason: ServerStopReason
+  $accepted: Int
+  $completed: Int
+  $cancelled: Int
+  $gracefulSeconds: Real
+  $webSocketCancellationSignals: Int
+  $webSocketCallbacksTimedOut: Int
+  $webSocketOwnedTasksUnjoined: Int
+  $webSocketTransportSocketsOpen: Int
+  $webSocketTransportBytesRemaining: Int
+end
+
+public object BoundEndpoint =>
+  $address: String
+  $port: Int
+  $protocol: String
+  $tls: #boolean Int
+end
+
+#? Read-only listener observations; counts are snapshots, not cumulative
+#? allocations or a universal bound on native TLS/HPACK/VM heap memory.
+public object ServerStats =>
+  $accepted: Int
+  $completed: Int
+  $cancelled: Int
+  $activeRequests: Int
+  $activeWebSockets: Int
+  $activeConnections: Int
+  $activeHttp2Connections: Int
+  $activeTransportWorkers: Int
+  $bufferedHttp2Bytes: Int
+  $peakBufferedHttp2Bytes: Int
+  $tlsHandshakesActive: Int
+  $tlsHandshakesFailed: Int
+end
+
+
+import {std.json}
+#?? Decode bounded JSON content with the existing std.json codec.
+#?? Wrong media types return 415; malformed syntax and type mismatches return 400.
+#?? Method-capability checks currently occur at runtime.
+#?? @typeparam T Target JSON decoding type.
+#?? @typeparam R Request type, subject to body-capability checks.
+#?? @param request Body-capable request whose Content-Type is application/json.
+#?? @returns Parsed T or a typed web.Error.
+#?? @example import {std.web} web.bodyJson[Int](web.testRequest("POST", "/"))
+public define[T, R] bodyJson(request: R) -> Result[T, Error] =>
+  $text = std.web.bodyJsonRaw($request) ?
+  std.web.decodeBodyJson[T]($text, typeInfo[T].name) ?
+end
