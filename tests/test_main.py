@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from valiance.analysis.diagnostics import (
     Diagnostic,
@@ -12,7 +12,7 @@ from valiance.analysis.diagnostics import (
     from_message,
     render,
 )
-from valiance.main import _ReplSession, _format_stack, _repl_prompt, main
+from valiance.main import _ReplSession, _format_stack, _repl_prompt, _run_repl_session, main
 
 
 class SessionServiceTests(unittest.TestCase):
@@ -26,6 +26,49 @@ class SessionServiceTests(unittest.TestCase):
 
     def tearDown(self):
         self.session.close()
+
+    def test_scratchpad_dispatches_to_later_multimethod(self):
+        source = """
+trait Expression => end
+object Value => $n: Int
+object Value as Expression => end
+object Add =>
+  $left: Expression
+  $right: Expression
+end
+object Add as Expression => end
+define evaluate(:Expression) -> Int =>
+  match =>
+    as :Value => $.n
+    as add: Add => evaluate $add.left + evaluate $add.right
+    _ => panic ValueFault "Unknown operation"
+  end
+end
+println evaluate Add(Value 6, Value 7)
+object Multiply =>
+  $left: Expression
+  $right: Expression
+end
+object Multiply as Expression => end
+multi define evaluate(mul: Multiply) -> Int => evaluate $mul.left * evaluate $mul.right
+println evaluate Add(Multiply(Value 6, Value 7), Value 1)
+"""
+        for kind in ("scratch-run", "scratch-switch"):
+            with self.subTest(kind=kind):
+                frontend = Mock(fancy=True)
+                frontend.read.side_effect = [source, EOFError]
+                frontend.submission_kind.return_value = kind
+                output, error = io.StringIO(), io.StringIO()
+                session = _ReplSession()
+                self.addCleanup(session.close)
+                with (
+                    patch("valiance.main.create_repl_frontend", return_value=frontend),
+                    contextlib.redirect_stdout(output),
+                    contextlib.redirect_stderr(error),
+                ):
+                    self.assertEqual(_run_repl_session(session), 0)
+                self.assertEqual(error.getvalue(), "")
+                self.assertIn("13\n43\n", output.getvalue())
 
     def test_preparation_has_no_effect_and_execution_is_one_shot(self):
         from valiance.sessions.events import OutputEvent, ResultEvent

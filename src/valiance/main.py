@@ -1293,15 +1293,13 @@ def _run_repl_session(session: _ReplSession) -> int:
                 print(session.type_hint(expression) or "No type information available.")
             continue
         submission_kind = frontend.submission_kind()
-        if submission_kind.startswith("scratch-"):
-            # A scratch program is a complete program, not another incremental
-            # REPL entry. Start it from a clean compiler/runtime session so
-            # rerunning declarations cannot collide with their previous forms.
+        scratch = submission_kind.startswith("scratch-")
+        if scratch:
             session.reset()
             line_number = 1
             print("\033[2J\033[3J\033[H", end="", flush=True)
-        type_preview = session.type_hint(source)
-        succeeded = session.run(source)
+        type_preview = session.type_hint(source, fresh=scratch)
+        succeeded = session.run(source, fresh=scratch)
         if succeeded and type_preview and type_preview.startswith("Stack types:"):
             print(_repl_style(type_preview, _ANSI_CYAN, color))
         if submission_kind == "scratch-run":
@@ -1400,9 +1398,9 @@ class _ReplSession(SessionService):
         elif isinstance(event, ResultEvent) and event.implicit:
             print(_format_stack(self.runtime_stack, color=self.color))
 
-    def run(self, source: str) -> bool:
+    def run(self, source: str, *, fresh: bool = False) -> bool:
         """Preserve the existing bool-returning CLI API and display failures."""
-        result = self.prepare(source)
+        result = self.prepare(source, fresh=fresh)
         if result.prepared is None:
             for diagnostic in result.diagnostics:
                 self._present_event(DiagnosticEvent(diagnostic, source))

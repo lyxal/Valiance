@@ -109,6 +109,10 @@ _COMPLETION_PREFIX_RE = re.compile(r"(?:\*::|[$#:]|\\)?[A-Za-z_][A-Za-z0-9_:]*$"
 ReplCompletion = CompletionItem
 
 
+class TypeHintProvider(Protocol):
+    def __call__(self, source: str, *, fresh: bool = False) -> str | None: ...
+
+
 class ReplFrontend(Protocol):
     """Terminal-facing input interface used by ``valiance.main``."""
 
@@ -161,7 +165,7 @@ def create_repl_frontend(
     *,
     prompt: Callable[[int], str],
     completion_provider: Callable[[], Iterable[ReplCompletion]],
-    type_hint_provider: Callable[[str], str | None],
+    type_hint_provider: TypeHintProvider,
     documentation_provider: Callable[[str, str], str | None] | None = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
@@ -438,7 +442,7 @@ class _PromptToolkitFrontend:
         self,
         *,
         completion_provider: Callable[[], Iterable[ReplCompletion]],
-        type_hint_provider: Callable[[str], str | None],
+        type_hint_provider: TypeHintProvider,
         documentation_provider: Callable[[str, str], str | None] | None = None,
     ) -> None:
         """Initialize this prompt toolkit frontend."""
@@ -1156,7 +1160,7 @@ class _PromptToolkitFrontend:
         if not source.strip() or source.lstrip().startswith(":"):
             return {}
         try:
-            hint = self._type_hint_provider(source)
+            hint = self._type_hint_provider(source, fresh=self._mode == "scratch")
         except Exception:
             return {}
         if not hint or not hint.lower().startswith(
@@ -1187,7 +1191,7 @@ class _PromptToolkitFrontend:
         if not source.strip() or source.lstrip().startswith(":"):
             return ""
         try:
-            hint = self._type_hint_provider(source)
+            hint = self._type_hint_provider(source, fresh=self._mode == "scratch")
         except Exception:
             return ""
         if hint and hint.lower().startswith(("type error", "parse error", "lex error")):
@@ -1223,7 +1227,7 @@ class _PromptToolkitFrontend:
         status = "Stack types off" if not self._type_hints_enabled else "Ready"
         if self._type_hints_enabled and document.text.strip():
             try:
-                hint = self._type_hint_provider(document.text)
+                hint = self._type_hint_provider(document.text, fresh=True)
             except Exception:
                 hint = None
             if hint:

@@ -385,19 +385,20 @@ class SessionService:
                 sections.append("\n".join(lines))
         return ("\n\n" + "-" * 72 + "\n\n").join(dict.fromkeys(sections)) or None
 
-    def type_hint(self, source: str) -> str | None:
+    def type_hint(self, source: str, *, fresh: bool = False) -> str | None:
         """Preview the resulting type stack without mutating REPL state."""
         source = source.strip()
         if not source:
             return None
         cached = self._hint_cache
-        if cached is not None and cached[:2] == (self._state_version, source):
-            return cached[2]
-        result = self._type_hint_uncached(source)
-        self._hint_cache = (self._state_version, source, result)
+        key = (self._state_version, source, fresh)
+        if cached is not None and cached[:3] == key:
+            return cached[3]
+        result = self._type_hint_uncached(source, fresh=fresh)
+        self._hint_cache = (*key, result)
         return result
 
-    def _type_hint_uncached(self, source: str) -> str | None:
+    def _type_hint_uncached(self, source: str, *, fresh: bool) -> str | None:
         """Compute type hint uncached for CLI and REPL orchestration."""
         if self.analyser is None or self.branch is None:
             return None
@@ -407,13 +408,17 @@ class SessionService:
             return f"Lex error: {exc}"
         except ParseError as exc:
             return f"Parse error: {exc}"
-        analyser = copy.deepcopy(self.analyser)
-        analyser.diagnostics.clear()
-        analyser.warnings.clear()
-        analyser.clear_lints()
-        initial = replace(copy.deepcopy(self.branch), typed_body=())
         try:
-            final = analyser.analyse_block(BranchSet((initial,)), tuple(program))
+            if fresh:
+                analyser = Analyser()
+                final = analyser.analyse_program_branches(program)
+            else:
+                analyser = copy.deepcopy(self.analyser)
+                analyser.diagnostics.clear()
+                analyser.warnings.clear()
+                analyser.clear_lints()
+                initial = replace(copy.deepcopy(self.branch), typed_body=())
+                final = analyser.analyse_block(BranchSet((initial,)), tuple(program))
         except (OSError, RuntimeError, VMError) as exc:
             return f"Type error: {exc}"
         if analyser.diagnostics:

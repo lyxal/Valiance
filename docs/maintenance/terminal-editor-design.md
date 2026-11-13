@@ -795,7 +795,8 @@ Reviewed maintenance architecture, relevant type/runtime explanations, compiler
 guides, and the current REPL orchestration:
 
 - `src/valiance/main.py`: no-argument dispatch and `_ReplSession`; persistent
-  commands and execution. Current scratch submissions reset the session.
+  commands and execution. Scratch submissions reset the session and use
+  whole-program analysis, including signature prescanning.
 - `src/valiance/repl.py`: prompt-toolkit frontends, highlighting, completion,
   scratch editing, and live diagnostics. `pyproject.toml` already declares
   prompt-toolkit. The user selected Textual with a fresh frontend rather than
