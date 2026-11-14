@@ -10344,6 +10344,2400 @@ Result:
 [[[1, 2], [1, 2]]]
 ```
 
+## std.html
+
+### `std.html.a`
+
+Wrap text content in a `<a>` element.
+
+**Overloads**
+
+- `std.html.a(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.a("Hello")
+  ```
+
+- `std.html.a(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<a>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.a(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.a("Hello")
+```
+
+### `std.html.article`
+
+Wrap text content in a `<article>` element.
+
+**Overloads**
+
+- `std.html.article(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.article("Hello")
+  ```
+
+- `std.html.article(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<article>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.article(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.article("Hello")
+```
+
+### `std.html.aside`
+
+Wrap text content in a `<aside>` element.
+
+**Overloads**
+
+- `std.html.aside(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.aside("Hello")
+  ```
+
+- `std.html.aside(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<aside>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.aside(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.aside("Hello")
+```
+
+### `std.html.blockquote`
+
+Wrap text content in a `<blockquote>` element.
+
+**Overloads**
+
+- `std.html.blockquote(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.blockquote("Hello")
+  ```
+
+- `std.html.blockquote(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<blockquote>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.blockquote(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.blockquote("Hello")
+```
+
+### `std.html.body`
+
+Wrap text content in a `<body>` element.
+
+**Overloads**
+
+- `std.html.body(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.body("Hello")
+  ```
+
+- `std.html.body(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<body>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.body(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.body("Hello")
+```
+
+### `std.html.br`
+
+Create a `<br>` element with attributes.
+
+**Overloads**
+
+- `std.html.br(attributes: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.br(dict{"class" => "clear"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.br(dict{"class" => "clear"})
+```
+
+### `std.html.button`
+
+Wrap text content in a `<button>` element.
+
+**Overloads**
+
+- `std.html.button(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.button("Hello")
+  ```
+
+- `std.html.button(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<button>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.button(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.button("Hello")
+```
+
+### `std.html.checkboxField`
+
+Create a labelled checkbox input.
+
+**Overloads**
+
+- `std.html.checkboxField(name: String, label: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.checkboxField("notify", "Notify me")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.checkboxField("notify", "Notify me")
+```
+
+### `std.html.children`
+
+Wrap child nodes in a named element.
+
+**Overloads**
+
+- `std.html.children(name: String, children: html.Node+) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.children("main", [html.p("Hello")])
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.children("main", [html.p("Hello")])
+```
+
+### `std.html.choose`
+
+Select one of two nodes based on a condition.
+
+**Overloads**
+
+- `std.html.choose(condition: #boolean Int, yes: html.Node, no: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.choose(true, html.p("Yes"), html.p("No"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.choose(true, html.p("Yes"), html.p("No"))
+```
+
+### `std.html.code`
+
+Wrap text content in a `<code>` element.
+
+**Overloads**
+
+- `std.html.code(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.code("Hello")
+  ```
+
+- `std.html.code(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<code>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.code(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.code("Hello")
+```
+
+### `std.html.details`
+
+Wrap text content in a `<details>` element.
+
+**Overloads**
+
+- `std.html.details(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.details("Hello")
+  ```
+
+- `std.html.details(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<details>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.details(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.details("Hello")
+```
+
+### `std.html.div`
+
+Wrap text content in a `<div>` element.
+
+**Overloads**
+
+- `std.html.div(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.div("Hello")
+  ```
+
+- `std.html.div(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<div>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.div(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.div("Hello")
+```
+
+### `std.html.document`
+
+Add a standards-mode doctype to an HTML root node.
+
+**Overloads**
+
+- `std.html.document(root: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.document(html.html(html.body("Hello")))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.document(html.html(html.body("Hello")))
+```
+
+### `std.html.element`
+
+Create a named element with child nodes and attributes.
+
+**Overloads**
+
+- `std.html.element(name: String, children: html.Node+, attributes: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.element("main", [html.p("Hello")], dict{"id" => "intro"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.element("main", [html.p("Hello")], dict{"id" => "intro"})
+```
+
+### `std.html.em`
+
+Wrap text content in a `<em>` element.
+
+**Overloads**
+
+- `std.html.em(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.em("Hello")
+  ```
+
+- `std.html.em(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<em>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.em(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.em("Hello")
+```
+
+### `std.html.empty`
+
+Create a fragment with no markup.
+
+**Overloads**
+
+- `std.html.empty() -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.empty
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.empty
+```
+
+### `std.html.figcaption`
+
+Wrap text content in a `<figcaption>` element.
+
+**Overloads**
+
+- `std.html.figcaption(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.figcaption("Hello")
+  ```
+
+- `std.html.figcaption(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<figcaption>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.figcaption(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.figcaption("Hello")
+```
+
+### `std.html.figure`
+
+Wrap text content in a `<figure>` element.
+
+**Overloads**
+
+- `std.html.figure(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.figure("Hello")
+  ```
+
+- `std.html.figure(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<figure>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.figure(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.figure("Hello")
+```
+
+### `std.html.footer`
+
+Wrap text content in a `<footer>` element.
+
+**Overloads**
+
+- `std.html.footer(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.footer("Hello")
+  ```
+
+- `std.html.footer(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<footer>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.footer(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.footer("Hello")
+```
+
+### `std.html.form`
+
+Wrap text content in a `<form>` element.
+
+**Overloads**
+
+- `std.html.form(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.form("Hello")
+  ```
+
+- `std.html.form(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<form>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.form(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.form("Hello")
+```
+
+### `std.html.formFor`
+
+Create a GET or POST form with the given fields.
+
+**Overloads**
+
+- `std.html.formFor(method: String, action: String, fields: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.formFor("get", "/search", html.textField("q", "Search"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.formFor("get", "/search", html.textField("q", "Search"))
+```
+
+### `std.html.fragment`
+
+Combine child nodes without a wrapper element.
+
+**Overloads**
+
+- `std.html.fragment(children: html.Node+) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.fragment([html.p("One"), html.p("Two")])
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.fragment([html.p("One"), html.p("Two")])
+```
+
+### `std.html.h1`
+
+Wrap text content in a `<h1>` element.
+
+**Overloads**
+
+- `std.html.h1(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h1("Hello")
+  ```
+
+- `std.html.h1(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<h1>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h1(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.h1("Hello")
+```
+
+### `std.html.h2`
+
+Wrap text content in a `<h2>` element.
+
+**Overloads**
+
+- `std.html.h2(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h2("Hello")
+  ```
+
+- `std.html.h2(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<h2>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h2(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.h2("Hello")
+```
+
+### `std.html.h3`
+
+Wrap text content in a `<h3>` element.
+
+**Overloads**
+
+- `std.html.h3(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h3("Hello")
+  ```
+
+- `std.html.h3(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<h3>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h3(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.h3("Hello")
+```
+
+### `std.html.h4`
+
+Wrap text content in a `<h4>` element.
+
+**Overloads**
+
+- `std.html.h4(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h4("Hello")
+  ```
+
+- `std.html.h4(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<h4>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h4(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.h4("Hello")
+```
+
+### `std.html.h5`
+
+Wrap text content in a `<h5>` element.
+
+**Overloads**
+
+- `std.html.h5(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h5("Hello")
+  ```
+
+- `std.html.h5(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<h5>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h5(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.h5("Hello")
+```
+
+### `std.html.h6`
+
+Wrap text content in a `<h6>` element.
+
+**Overloads**
+
+- `std.html.h6(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h6("Hello")
+  ```
+
+- `std.html.h6(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<h6>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.h6(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.h6("Hello")
+```
+
+### `std.html.head`
+
+Wrap text content in a `<head>` element.
+
+**Overloads**
+
+- `std.html.head(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.head("Hello")
+  ```
+
+- `std.html.head(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<head>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.head(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.head("Hello")
+```
+
+### `std.html.header`
+
+Wrap text content in a `<header>` element.
+
+**Overloads**
+
+- `std.html.header(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.header("Hello")
+  ```
+
+- `std.html.header(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<header>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.header(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.header("Hello")
+```
+
+### `std.html.hiddenField`
+
+Create a hidden input with a name and value.
+
+**Overloads**
+
+- `std.html.hiddenField(name: String, value: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.hiddenField("mode", "edit")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.hiddenField("mode", "edit")
+```
+
+### `std.html.horizontalRule`
+
+Create a thematic break element.
+
+**Overloads**
+
+- `std.html.horizontalRule() -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.horizontalRule
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.horizontalRule
+```
+
+### `std.html.hr`
+
+Create a `<hr>` element with attributes.
+
+**Overloads**
+
+- `std.html.hr(attributes: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.hr(dict{"class" => "divider"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.hr(dict{"class" => "divider"})
+```
+
+### `std.html.html`
+
+Wrap text content in a `<html>` element.
+
+**Overloads**
+
+- `std.html.html(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.html("Hello")
+  ```
+
+- `std.html.html(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<html>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.html(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.html("Hello")
+```
+
+### `std.html.img`
+
+Create a `<img>` element with attributes.
+
+**Overloads**
+
+- `std.html.img(attributes: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.img(dict{"src" => "/logo.png", "alt" => "Logo"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.img(dict{"src" => "/logo.png", "alt" => "Logo"})
+```
+
+### `std.html.input`
+
+Create a `<input>` element with attributes.
+
+**Overloads**
+
+- `std.html.input(attributes: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.input(dict{"type" => "text", "name" => "query"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.input(dict{"type" => "text", "name" => "query"})
+```
+
+### `std.html.join`
+
+Join child nodes with a separator node.
+
+**Overloads**
+
+- `std.html.join(children: html.Node+, separator: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.join([html.span("A"), html.span("B")], html.text(", "))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.join([html.span("A"), html.span("B")], html.text(", "))
+```
+
+### `std.html.label`
+
+Wrap text content in a `<label>` element.
+
+**Overloads**
+
+- `std.html.label(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.label("Hello")
+  ```
+
+- `std.html.label(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<label>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.label(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.label("Hello")
+```
+
+### `std.html.li`
+
+Wrap text content in a `<li>` element.
+
+**Overloads**
+
+- `std.html.li(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.li("Hello")
+  ```
+
+- `std.html.li(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<li>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.li(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.li("Hello")
+```
+
+### `std.html.lineBreak`
+
+Create a line break element.
+
+**Overloads**
+
+- `std.html.lineBreak() -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.lineBreak
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.lineBreak
+```
+
+### `std.html.link`
+
+Create a link to a related resource.
+
+**Overloads**
+
+- `std.html.link(rel: String, href: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.link("canonical", "/intro")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.link("canonical", "/intro")
+```
+
+### `std.html.main`
+
+Wrap text content in a `<main>` element.
+
+**Overloads**
+
+- `std.html.main(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.main("Hello")
+  ```
+
+- `std.html.main(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<main>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.main(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.main("Hello")
+```
+
+### `std.html.meta`
+
+Create a named metadata element.
+
+**Overloads**
+
+- `std.html.meta(name: String, content: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.meta("author", "Ada")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.meta("author", "Ada")
+```
+
+### `std.html.metaDescription`
+
+Create a page description metadata element.
+
+**Overloads**
+
+- `std.html.metaDescription(description: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.metaDescription("Introduction")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.metaDescription("Introduction")
+```
+
+### `std.html.nav`
+
+Wrap text content in a `<nav>` element.
+
+**Overloads**
+
+- `std.html.nav(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.nav("Hello")
+  ```
+
+- `std.html.nav(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<nav>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.nav(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.nav("Hello")
+```
+
+### `std.html.ol`
+
+Wrap text content in a `<ol>` element.
+
+**Overloads**
+
+- `std.html.ol(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.ol("Hello")
+  ```
+
+- `std.html.ol(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<ol>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.ol(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.ol("Hello")
+```
+
+### `std.html.option`
+
+Wrap text content in a `<option>` element.
+
+**Overloads**
+
+- `std.html.option(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.option("Hello")
+  ```
+
+- `std.html.option(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<option>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.option(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.option("Hello")
+```
+
+### `std.html.p`
+
+Wrap text content in a `<p>` element.
+
+**Overloads**
+
+- `std.html.p(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.p("Hello")
+  ```
+
+- `std.html.p(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<p>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.p(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.p("Hello")
+```
+
+### `std.html.page`
+
+Create an HTML document with a title and body.
+
+**Overloads**
+
+- `std.html.page(title: String, body: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.page("Introduction", html.p("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.page("Introduction", html.p("Hello"))
+```
+
+### `std.html.pageWithHead`
+
+Create an HTML document with additional head nodes and a language.
+
+**Overloads**
+
+- `std.html.pageWithHead(title: String, body: html.Node, head: html.Node+, lang: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.pageWithHead("Introduction", html.p("Hello"), [html.metaDescription("Example")], "en")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.pageWithHead("Introduction", html.p("Hello"), [html.metaDescription("Example")], "en")
+```
+
+### `std.html.postForm`
+
+Create a POST form with the given fields.
+
+**Overloads**
+
+- `std.html.postForm(action: String, fields: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.postForm("/save", html.submitButton("Save"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.postForm("/save", html.submitButton("Save"))
+```
+
+### `std.html.pre`
+
+Wrap text content in a `<pre>` element.
+
+**Overloads**
+
+- `std.html.pre(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.pre("Hello")
+  ```
+
+- `std.html.pre(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<pre>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.pre(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.pre("Hello")
+```
+
+### `std.html.render`
+
+Render a verified node as an HTML string.
+
+**Overloads**
+
+- `std.html.render(node: html.Node) -> String`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.render(html.p("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.render(html.p("Hello"))
+```
+
+### `std.html.scriptSrc`
+
+Reference an external script.
+
+**Overloads**
+
+- `std.html.scriptSrc(src: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.scriptSrc("/site.js")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.scriptSrc("/site.js")
+```
+
+### `std.html.section`
+
+Wrap text content in a `<section>` element.
+
+**Overloads**
+
+- `std.html.section(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.section("Hello")
+  ```
+
+- `std.html.section(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<section>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.section(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.section("Hello")
+```
+
+### `std.html.select`
+
+Wrap text content in a `<select>` element.
+
+**Overloads**
+
+- `std.html.select(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.select("Hello")
+  ```
+
+- `std.html.select(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<select>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.select(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.select("Hello")
+```
+
+### `std.html.small`
+
+Wrap text content in a `<small>` element.
+
+**Overloads**
+
+- `std.html.small(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.small("Hello")
+  ```
+
+- `std.html.small(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<small>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.small(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.small("Hello")
+```
+
+### `std.html.span`
+
+Wrap text content in a `<span>` element.
+
+**Overloads**
+
+- `std.html.span(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.span("Hello")
+  ```
+
+- `std.html.span(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<span>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.span(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.span("Hello")
+```
+
+### `std.html.strong`
+
+Wrap text content in a `<strong>` element.
+
+**Overloads**
+
+- `std.html.strong(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.strong("Hello")
+  ```
+
+- `std.html.strong(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<strong>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.strong(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.strong("Hello")
+```
+
+### `std.html.stylesheet`
+
+Link an external CSS stylesheet.
+
+**Overloads**
+
+- `std.html.stylesheet(href: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.stylesheet("/site.css")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.stylesheet("/site.css")
+```
+
+### `std.html.submitButton`
+
+Create a form submit button with escaped label text.
+
+**Overloads**
+
+- `std.html.submitButton(label: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.submitButton("Save")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.submitButton("Save")
+```
+
+### `std.html.summary`
+
+Wrap text content in a `<summary>` element.
+
+**Overloads**
+
+- `std.html.summary(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.summary("Hello")
+  ```
+
+- `std.html.summary(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<summary>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.summary(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.summary("Hello")
+```
+
+### `std.html.table`
+
+Wrap text content in a `<table>` element.
+
+**Overloads**
+
+- `std.html.table(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.table("Hello")
+  ```
+
+- `std.html.table(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<table>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.table(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.table("Hello")
+```
+
+### `std.html.tbody`
+
+Wrap text content in a `<tbody>` element.
+
+**Overloads**
+
+- `std.html.tbody(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.tbody("Hello")
+  ```
+
+- `std.html.tbody(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<tbody>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.tbody(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.tbody("Hello")
+```
+
+### `std.html.td`
+
+Wrap text content in a `<td>` element.
+
+**Overloads**
+
+- `std.html.td(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.td("Hello")
+  ```
+
+- `std.html.td(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<td>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.td(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.td("Hello")
+```
+
+### `std.html.text`
+
+Escape plain text for use as HTML content.
+
+**Overloads**
+
+- `std.html.text(value: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.text("A & B")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.text("A & B")
+```
+
+### `std.html.textarea`
+
+Wrap text content in a `<textarea>` element.
+
+**Overloads**
+
+- `std.html.textarea(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.textarea("Hello")
+  ```
+
+- `std.html.textarea(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<textarea>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.textarea(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.textarea("Hello")
+```
+
+### `std.html.textField`
+
+Create a labelled text input.
+
+**Overloads**
+
+- `std.html.textField(name: String, label: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.textField("name", "Name")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.textField("name", "Name")
+```
+
+### `std.html.th`
+
+Wrap text content in a `<th>` element.
+
+**Overloads**
+
+- `std.html.th(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.th("Hello")
+  ```
+
+- `std.html.th(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<th>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.th(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.th("Hello")
+```
+
+### `std.html.thead`
+
+Wrap text content in a `<thead>` element.
+
+**Overloads**
+
+- `std.html.thead(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.thead("Hello")
+  ```
+
+- `std.html.thead(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<thead>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.thead(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.thead("Hello")
+```
+
+### `std.html.title`
+
+Wrap text content in a `<title>` element.
+
+**Overloads**
+
+- `std.html.title(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.title("Hello")
+  ```
+
+- `std.html.title(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<title>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.title(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.title("Hello")
+```
+
+### `std.html.tr`
+
+Wrap text content in a `<tr>` element.
+
+**Overloads**
+
+- `std.html.tr(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.tr("Hello")
+  ```
+
+- `std.html.tr(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<tr>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.tr(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.tr("Hello")
+```
+
+### `std.html.ul`
+
+Wrap text content in a `<ul>` element.
+
+**Overloads**
+
+- `std.html.ul(child: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.ul("Hello")
+  ```
+
+- `std.html.ul(child: html.Node) -> html.Node`
+
+  Wrap node content in a `<ul>` element.
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.ul(html.text("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.ul("Hello")
+```
+
+### `std.html.when`
+
+Include a child node when a condition is true.
+
+**Overloads**
+
+- `std.html.when(condition: #boolean Int, child: html.Node) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.when(true, html.p("Hello"))
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.when(true, html.p("Hello"))
+```
+
+### `std.html.withAria`
+
+Add an ARIA attribute to an existing element.
+
+**Overloads**
+
+- `std.html.withAria(node: html.Node, name: String, value: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withAria(html.p("Hello"), "label", "Introduction")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withAria(html.p("Hello"), "label", "Introduction")
+```
+
+### `std.html.withAttrs`
+
+Add attributes to an existing element.
+
+**Overloads**
+
+- `std.html.withAttrs(node: html.Node, attributes: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withAttrs(html.p("Hello"), dict{"id" => "intro"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withAttrs(html.p("Hello"), dict{"id" => "intro"})
+```
+
+### `std.html.withBoolean`
+
+Add a boolean attribute when its condition is true.
+
+**Overloads**
+
+- `std.html.withBoolean(node: html.Node, name: String, enabled: #boolean Int) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withBoolean(html.button("Continue"), "disabled", true)
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withBoolean(html.button("Continue"), "disabled", true)
+```
+
+### `std.html.withClass`
+
+Add a class attribute to an existing element.
+
+**Overloads**
+
+- `std.html.withClass(node: html.Node, value: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withClass(html.p("Hello"), "intro")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withClass(html.p("Hello"), "intro")
+```
+
+### `std.html.withData`
+
+Add a custom data attribute to an existing element.
+
+**Overloads**
+
+- `std.html.withData(node: html.Node, name: String, value: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withData(html.p("Hello"), "topic", "intro")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withData(html.p("Hello"), "topic", "intro")
+```
+
+### `std.html.withId`
+
+Add an ID attribute to an existing element.
+
+**Overloads**
+
+- `std.html.withId(node: html.Node, value: String) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withId(html.p("Hello"), "intro")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withId(html.p("Hello"), "intro")
+```
+
+### `std.html.withStyle`
+
+Add validated inline CSS properties to an existing element.
+
+**Overloads**
+
+- `std.html.withStyle(node: html.Node, properties: Dict[String, String]) -> html.Node`
+
+  **Example**
+
+  ```vlnc
+  import {std.html}
+html.withStyle(html.p("Hello"), dict{"color" => "red"})
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.html}
+html.withStyle(html.p("Hello"), dict{"color" => "red"})
+```
+
 ## std.json
 
 ### `std.json.decode`
@@ -11455,4 +13849,6439 @@ Result:
 
 ```text
 0
+```
+
+## std.web
+
+### `std.web.accepts`
+
+Check Accept media ranges, specificity, and quality (including q=0).
+
+**Overloads**
+
+- `std.web.accepts(request: web.Request, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.GetRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.HeadRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.PostRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.PutRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.PatchRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.DeleteRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.OptionsRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+- `std.web.accepts(request: web.QueryRequest, mediaType: String) -> Result[#boolean Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+  ```
+
+
+**Returns:** Boolean or InvalidHeader error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.accepts(web.testRequest("GET", "/"), "text/plain")
+```
+
+### `std.web.addHeader`
+
+Immutably edit validated response header fields.
+
+**Overloads**
+
+- `std.web.addHeader(response: web.Response, name: String, value: String) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+```
+
+### `std.web.bodyBytes`
+
+Decode a bounded buffered body according to its media type; return a typed web.Error for invalid input.
+
+**Overloads**
+
+- `std.web.bodyBytes(request: web.PostRequest) -> Result[#byte+ Int*, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyBytes($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.bodyBytes(request: web.PutRequest) -> Result[#byte+ Int*, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyBytes($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.bodyBytes(request: web.PatchRequest) -> Result[#byte+ Int*, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyBytes($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.bodyBytes(request: web.QueryRequest) -> Result[#byte+ Int*, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyBytes($req) ?
+  "ok"
+end
+  ```
+
+
+**Returns:** Decoded content or a web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyBytes($req) ?
+  "ok"
+end
+```
+
+### `std.web.bodyJson`
+
+Decode bounded JSON content with the existing std.json codec.
+
+**Overloads**
+
+- `public define[T, R] bodyJson(request: R) -> Result[T, Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web} web.bodyJson[Int](web.testRequest("POST", "/"))
+  ```
+
+
+Decode bounded JSON content with the existing std.json codec.
+
+Wrong media types return 415; malformed syntax and type mismatches return 400.
+
+Method-capability checks currently occur at runtime.
+
+**Parameters**
+
+- `request` — Body-capable request whose Content-Type is application/json.
+
+**Returns:** Parsed T or a typed web.Error.
+
+**Example**
+
+```vlnc
+import {std.web} web.bodyJson[Int](web.testRequest("POST", "/"))
+```
+
+### `std.web.bodyJsonText`
+
+Read a bounded UTF-8 body only when the request has a JSON media type. Parse with std.json.decode[T].
+
+**Overloads**
+
+- `std.web.bodyJsonText(request: web.PostRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/json"): fn(req: web.PostRequest) -> String | web.Error => web.bodyJsonText($req) end
+  ```
+
+- `std.web.bodyJsonText(request: web.PutRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/json"): fn(req: web.PostRequest) -> String | web.Error => web.bodyJsonText($req) end
+  ```
+
+- `std.web.bodyJsonText(request: web.PatchRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/json"): fn(req: web.PostRequest) -> String | web.Error => web.bodyJsonText($req) end
+  ```
+
+- `std.web.bodyJsonText(request: web.QueryRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/json"): fn(req: web.PostRequest) -> String | web.Error => web.bodyJsonText($req) end
+  ```
+
+
+**Returns:** Validated JSON text or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.post("/json"): fn(req: web.PostRequest) -> String | web.Error => web.bodyJsonText($req) end
+```
+
+### `std.web.bodyStream`
+
+Claim one owned incoming body stream.
+
+**Overloads**
+
+- `std.web.bodyStream(request: web.PostRequest) -> Result[web.RequestBodyStream, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PostRequest) => web.bodyStream($req) end
+  ```
+
+- `std.web.bodyStream(request: web.PutRequest) -> Result[web.RequestBodyStream, web.Error]`
+
+  Claim one owned incoming body stream.
+
+  **Returns:** RequestBodyStream or Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PutRequest) => web.bodyStream($req) end
+  ```
+
+- `std.web.bodyStream(request: web.PatchRequest) -> Result[web.RequestBodyStream, web.Error]`
+
+  Claim one owned incoming body stream.
+
+  **Returns:** RequestBodyStream or Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PatchRequest) => web.bodyStream($req) end
+  ```
+
+- `std.web.bodyStream(request: web.QueryRequest) -> Result[web.RequestBodyStream, web.Error]`
+
+  Claim one owned incoming body stream.
+
+  **Returns:** RequestBodyStream or Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.QueryRequest) => web.bodyStream($req) end
+  ```
+
+
+**Returns:** RequestBodyStream or Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (req: web.PostRequest) => web.bodyStream($req) end
+```
+
+### `std.web.bodyText`
+
+Decode a bounded buffered body according to its media type; return a typed web.Error for invalid input.
+
+**Overloads**
+
+- `std.web.bodyText(request: web.PostRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyText($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.bodyText(request: web.PutRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyText($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.bodyText(request: web.PatchRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyText($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.bodyText(request: web.QueryRequest) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyText($req) ?
+  "ok"
+end
+  ```
+
+
+**Returns:** Decoded content or a web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.bodyText($req) ?
+  "ok"
+end
+```
+
+### `std.web.boundAddresses`
+
+Read the bound TCP endpoint of an HTTP/1.1 development server.
+
+**Overloads**
+
+- `std.web.boundAddresses(server: web.ServerHandle) -> web.BoundEndpoint+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$server = web.serve(web.App, web.ServerConfig(port = 0)) ?
+  ```
+
+
+**Returns:** BoundEndpoint list.
+
+**Example**
+
+```vlnc
+import {std.web}
+$server = web.serve(web.App, web.ServerConfig(port = 0)) ?
+```
+
+### `std.web.cachePrivate`
+
+Set private cache policy with a nonnegative max-age.
+
+**Overloads**
+
+- `std.web.cachePrivate(response: web.Response, maxAge: Int) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cachePrivate(web.Response(body = "ok"), 60)
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.cachePrivate(web.Response(body = "ok"), 60)
+```
+
+### `std.web.cachePublic`
+
+Set public cache policy with a nonnegative max-age.
+
+**Overloads**
+
+- `std.web.cachePublic(response: web.Response, maxAge: Int) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cachePublic(web.Response(body = "ok"), 60)
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.cachePublic(web.Response(body = "ok"), 60)
+```
+
+### `std.web.collectBody`
+
+Collect a buffered HTTP representation as byte-tagged integers, subject to a limit.
+
+**Overloads**
+
+- `std.web.collectBody(response: web.Response, limit: Int) -> Result[#byte+ Int*, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.collectBody(web.Response(body = "ok"))
+  ```
+
+
+**Returns:** Exact bytes or a typed web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.collectBody(web.Response(body = "ok"))
+```
+
+### `std.web.compression`
+
+Configure opt-in, bounded gzip/Brotli response compression.
+
+**Overloads**
+
+- `std.web.compression(policy: web.CompressionPolicy) -> web.CompressionMiddleware`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.App}
+$app = App
+$app := middleware web.compression(web.CompressionPolicy)
+  ```
+
+
+**Returns:** Validated compression middleware.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.App}
+$app = App
+$app := middleware web.compression(web.CompressionPolicy)
+```
+
+### `std.web.conditional`
+
+Apply safe GET/HEAD conditional representation selection.
+
+**Overloads**
+
+- `std.web.conditional(request: web.GetRequest, response: web.Response) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.get("/"): fn(req: web.GetRequest) =>
+  web.conditional($req, web.withETag(web.Response(body = "ok"), "v1"))
+end
+  ```
+
+- `std.web.conditional(request: web.HeadRequest, response: web.Response) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.get("/"): fn(req: web.GetRequest) =>
+  web.conditional($req, web.withETag(web.Response(body = "ok"), "v1"))
+end
+  ```
+
+
+**Returns:** Original response or 304 Not Modified.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.get("/"): fn(req: web.GetRequest) =>
+  web.conditional($req, web.withETag(web.Response(body = "ok"), "v1"))
+end
+```
+
+### `std.web.context`
+
+Read a typed context value, returning None when the key is absent.
+
+**Overloads**
+
+- `std.web.context(request: web.Request, key: web.ContextKey[T]) -> T?`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.Request) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.GetRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.GetRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.HeadRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.HeadRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.PostRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PostRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.PutRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PutRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.PatchRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PatchRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.DeleteRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.DeleteRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.OptionsRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.OptionsRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.QueryRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.QueryRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+- `std.web.context(request: web.WebSocketRequest, key: web.ContextKey[T]) -> T?`
+
+  Read a typed context value, returning None when the key is absent.
+
+  **Returns:** An optional value of the key type.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.WebSocketRequest) => web.context($req, web.contextKey[String]) end
+  ```
+
+
+**Returns:** An optional value of the key type.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (req: web.Request) => web.context($req, web.contextKey[String]) end
+```
+
+### `std.web.contextKey`
+
+Mint a unique, copyable typed request-context key.
+
+**Overloads**
+
+- `std.web.contextKey() -> web.ContextKey[T]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.contextKey[String]
+  ```
+
+
+**Returns:** An opaque ContextKey[T] with unique identity.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.contextKey[String]
+```
+
+### `std.web.cookie`
+
+Read one Cookie value, reporting malformed or ambiguous names.
+
+**Overloads**
+
+- `std.web.cookie(request: web.Request, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.GetRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.HeadRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.PostRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.PutRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.PatchRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.DeleteRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.OptionsRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+- `std.web.cookie(request: web.QueryRequest, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+  ```
+
+
+**Returns:** Optional value or Cookie error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.cookie(web.testRequest("GET", "/"), "sid")
+```
+
+### `std.web.cookies`
+
+Parse ordered Cookie request pairs without choosing duplicate names.
+
+**Overloads**
+
+- `std.web.cookies(request: web.Request) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.GetRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.HeadRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.PostRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.PutRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.PatchRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.DeleteRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.OptionsRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+- `std.web.cookies(request: web.QueryRequest) -> Result[web.CookiePairs, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+  ```
+
+
+**Returns:** CookiePairs or InvalidCookie.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.cookies(web.testRequest("GET", "/"))
+```
+
+### `std.web.cors`
+
+Create validated, opt-in CORS middleware for App/Router registration.
+
+**Overloads**
+
+- `std.web.cors(policy: web.CorsPolicy) -> web.CorsMiddleware`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.App}
+$app = App
+$app := middleware web.cors(web.CorsPolicy(allowedOrigins = ["https://example.com"], allowedMethods = [web.Method.GET]))
+  ```
+
+
+**Returns:** CORS middleware policy value.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.App}
+$app = App
+$app := middleware web.cors(web.CorsPolicy(allowedOrigins = ["https://example.com"], allowedMethods = [web.Method.GET]))
+```
+
+### `std.web.created`
+
+Create a 201 response with a validated Location, optionally preserving a response body.
+
+**Overloads**
+
+- `std.web.created(location: String, response: web.Response) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.created("/new")
+  ```
+
+
+**Returns:** Created Response.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.created("/new")
+```
+
+### `std.web.defaultErrorResponse`
+
+Return the safe default HTTP error representation for an ErrorContext.
+
+**Overloads**
+
+- `std.web.defaultErrorResponse(context: web.ErrorContext) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end
+  ```
+
+
+**Returns:** Response.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end
+```
+
+### `std.web.delete`
+
+Register a method-specific DELETE handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> String]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> web.Response]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> html.Node]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> web.Error]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[String, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[web.Response, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[html.Node, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> ValueError]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[String, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[web.Response, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[html.Node, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[String, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[web.Response, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.App, path: String, handler: Function[web.DeleteRequest -> Result[html.Node, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> String]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> web.Response]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> html.Node]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> web.Error]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[String, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[web.Response, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[html.Node, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> ValueError]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[String, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[web.Response, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[html.Node, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[String, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[web.Response, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+- `std.web.delete(target: web.Router, path: String, handler: Function[web.DeleteRequest -> Result[html.Node, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[delete]}
+$app = web.App
+$app := delete("/"): fn (req: web.DeleteRequest) => "ok" end
+```
+
+### `std.web.deleteCookie`
+
+Expire a named cookie with caller-selected matching path, domain and partition scope.
+
+**Overloads**
+
+- `std.web.deleteCookie(response: web.Response, name: String, path: String, domain: String?, partitioned: #boolean Int) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.deleteCookie(web.Response, "sid")
+  ```
+
+
+**Returns:** Response or typed cookie error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.deleteCookie(web.Response, "sid")
+```
+
+### `std.web.discardBodyStream`
+
+Discard a streaming request body, up to its limit.
+
+**Overloads**
+
+- `std.web.discardBodyStream(stream: web.RequestBodyStream) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (stream: web.RequestBodyStream) => web.discardBodyStream($stream) end
+  ```
+
+
+**Returns:** None or Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (stream: web.RequestBodyStream) => web.discardBodyStream($stream) end
+```
+
+### `std.web.dispatch`
+
+Execute the same transport-independent routing pipeline for an App or prepared App.
+
+**Overloads**
+
+- `std.web.dispatch(app: web.App, request: web.Request) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.dispatch(web.App, web.testRequest("GET", "/"))
+  ```
+
+- `std.web.dispatch(prepared: web.PreparedApp, request: web.Request) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.dispatch(web.App, web.testRequest("GET", "/"))
+  ```
+
+
+**Returns:** A normalized HTTP Response.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.dispatch(web.App, web.testRequest("GET", "/"))
+```
+
+### `std.web.download`
+
+Read a regular file into a bounded binary Response (16 MiB development limit).
+
+**Overloads**
+
+- `std.web.download(path: String, filename: String) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.download("public/example.txt", "example.txt")
+  ```
+
+- `std.web.download(path: path.Path, filename: String) -> Result[web.Response, web.Error]`
+
+  Serve an application-selected std.path.Path as a bounded binary response.
+
+  **Returns:** Response or web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.path.Path}
+web.download(Path("public/example.txt"), "example.txt")
+  ```
+
+
+**Returns:** Response or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.download("public/example.txt", "example.txt")
+```
+
+### `std.web.eventStream`
+
+Encode owned EventSource events as bounded text/event-stream chunks.
+
+**Overloads**
+
+- `std.web.eventStream(source: web.EventSource) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (source: web.EventSource) => web.eventStream($source) end
+  ```
+
+
+**Returns:** An ordinary streaming Response.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (source: web.EventSource) => web.eventStream($source) end
+```
+
+### `std.web.file`
+
+Read a regular file into a bounded binary Response (16 MiB development limit).
+
+**Overloads**
+
+- `std.web.file(path: String) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.file("public/example.txt")
+  ```
+
+- `std.web.file(path: path.Path) -> Result[web.Response, web.Error]`
+
+  Serve an application-selected std.path.Path as a bounded binary response.
+
+  **Returns:** Response or web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.path.Path}
+web.file(Path("public/example.txt"))
+  ```
+
+
+**Returns:** Response or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.file("public/example.txt")
+```
+
+### `std.web.formParams`
+
+Decode a bounded buffered body according to its media type; return a typed web.Error for invalid input.
+
+**Overloads**
+
+- `std.web.formParams(request: web.PostRequest) -> Result[web.Params, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.formParams($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.formParams(request: web.PutRequest) -> Result[web.Params, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.formParams($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.formParams(request: web.PatchRequest) -> Result[web.Params, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.formParams($req) ?
+  "ok"
+end
+  ```
+
+- `std.web.formParams(request: web.QueryRequest) -> Result[web.Params, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.formParams($req) ?
+  "ok"
+end
+  ```
+
+
+**Returns:** Decoded content or a web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/echo"): fn(req: web.PostRequest) -> String | web.Error =>
+  $value = web.formParams($req) ?
+  "ok"
+end
+```
+
+### `std.web.get`
+
+Register a method-specific GET handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> String]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> web.Response]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> html.Node]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> web.Error]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[String, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[web.Response, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[html.Node, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> ValueError]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[String, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[web.Response, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[html.Node, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[String, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[web.Response, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.App, path: String, handler: Function[web.GetRequest -> Result[html.Node, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> String]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> web.Response]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> html.Node]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> web.Error]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[String, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[web.Response, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[html.Node, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> ValueError]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[String, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[web.Response, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[html.Node, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[String, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[web.Response, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+- `std.web.get(target: web.Router, path: String, handler: Function[web.GetRequest -> Result[html.Node, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[get]}
+$app = web.App
+$app := get("/"): fn (req: web.GetRequest) => "ok" end
+```
+
+### `std.web.group`
+
+Mount a reusable Router at a path prefix, with scoped router middleware.
+
+**Overloads**
+
+- `std.web.group(target: web.App, prefix: String, router: web.Router) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.group(web.App, "/api", web.Router)
+  ```
+
+- `std.web.group(target: web.App, prefix: String, router: Function[web.Router -> web.Router]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.group(web.App, "/api", web.Router)
+  ```
+
+- `std.web.group(target: web.Router, prefix: String, router: web.Router) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.group(web.App, "/api", web.Router)
+  ```
+
+- `std.web.group(target: web.Router, prefix: String, router: Function[web.Router -> web.Router]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.group(web.App, "/api", web.Router)
+  ```
+
+
+**Returns:** New immutable App or Router.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.group(web.App, "/api", web.Router)
+```
+
+### `std.web.head`
+
+Register a method-specific HEAD handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> String]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> web.Response]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> html.Node]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> web.Error]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[String, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[web.Response, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[html.Node, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> ValueError]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[String, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[web.Response, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[html.Node, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[String, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[web.Response, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.App, path: String, handler: Function[web.HeadRequest -> Result[html.Node, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> String]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> web.Response]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> html.Node]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> web.Error]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[String, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[web.Response, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[html.Node, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> ValueError]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[String, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[web.Response, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[html.Node, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[String, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[web.Response, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+- `std.web.head(target: web.Router, path: String, handler: Function[web.HeadRequest -> Result[html.Node, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[head]}
+$app = web.App
+$app := head("/"): fn (req: web.HeadRequest) => "ok" end
+```
+
+### `std.web.header`
+
+Read one validated Headers value, rejecting ambiguous singleton fields.
+
+**Overloads**
+
+- `std.web.header(headers: web.Headers, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.Headers, "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.Request, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.GetRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.HeadRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.PostRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.PutRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.PatchRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.DeleteRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.OptionsRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.QueryRequest, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.header(requestOrResponse: web.Response, name: String) -> Result[String?, web.Error]`
+
+  Read an optional header, rejecting ambiguous singleton or Set-Cookie fields.
+
+  **Returns:** Optional String or typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.header(web.testRequest("GET", "/"), "Accept")
+  ```
+
+
+**Returns:** Optional value or typed Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.header(web.Headers, "Accept")
+```
+
+### `std.web.headerValues`
+
+Get all raw field occurrences by case-insensitive header name.
+
+**Overloads**
+
+- `std.web.headerValues(request: web.Request, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.GetRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.HeadRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.PostRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.PutRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.PatchRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.DeleteRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.OptionsRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(request: web.QueryRequest, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+  ```
+
+- `std.web.headerValues(headers: web.Headers, name: String) -> String+`
+
+  Read all values of a validated Headers collection, including request trailers.
+
+  **Returns:** Values in field arrival order.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.headerValues(web.Headers, "Accept")
+  ```
+
+
+**Returns:** List of values in arrival order.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.headerValues(web.testRequest("GET", "/"), "Accept")
+```
+
+### `std.web.jsonResponse`
+
+Encode a value using std.json and return a JSON HTTP response.
+
+**Overloads**
+
+- `std.web.jsonResponse(value: T, status: web.Status, headers: web.Headers) -> Result[web.Response, ValueError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.jsonResponse(record{name => "Ada"})
+  ```
+
+
+**Returns:** Response or std.json ValueError.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.jsonResponse(record{name => "Ada"})
+```
+
+### `std.web.middleware`
+
+Register before middleware, optionally returning a {request, after} record whose response callback runs in reverse order.
+
+**Overloads**
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> web.Request]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> web.Response]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> web.Error]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> Result[web.Request, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> Result[web.Response, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> record(.request: web.Request, .after: Function[web.Response -> web.Response])]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: Function[web.Request -> record(.request: web.Request, .after: Function[web.Response -> Result[web.Response, web.Error]])]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> web.Request]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> web.Response]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> web.Error]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> Result[web.Request, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> Result[web.Response, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> record(.request: web.Request, .after: Function[web.Response -> web.Response])]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.Router, callback: Function[web.Request -> record(.request: web.Request, .after: Function[web.Response -> Result[web.Response, web.Error]])]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+  ```
+
+- `std.web.middleware(target: web.App, callback: web.CorsMiddleware) -> web.App`
+
+  Register validated CORS middleware on an immutable App or Router.
+
+  **Returns:** Updated App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.App
+$config := web.middleware web.cors(web.CorsPolicy(allowedOrigins = ["https://example.com"], allowedMethods = [web.Method.GET]))
+  ```
+
+- `std.web.middleware(target: web.Router, callback: web.CorsMiddleware) -> web.Router`
+
+  Register validated CORS middleware on an immutable App or Router.
+
+  **Returns:** Updated App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.Router
+$config := web.middleware web.cors(web.CorsPolicy(allowedOrigins = ["https://example.com"], allowedMethods = [web.Method.GET]))
+  ```
+
+- `std.web.middleware(target: web.App, callback: web.CompressionMiddleware) -> web.App`
+
+  Register opt-in response compression on App or Router.
+
+  **Returns:** New immutable App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.App
+$config := web.middleware web.compression(web.CompressionPolicy)
+  ```
+
+- `std.web.middleware(target: web.Router, callback: web.CompressionMiddleware) -> web.Router`
+
+  Register opt-in response compression on App or Router.
+
+  **Returns:** New immutable App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.Router
+$config := web.middleware web.compression(web.CompressionPolicy)
+  ```
+
+
+**Returns:** New immutable App or Router.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.middleware: fn(req: web.Request) => $req end
+```
+
+### `std.web.multipart`
+
+Parse a bounded buffered multipart/form-data body with repeated UTF-8 fields and exact file bytes.
+
+**Overloads**
+
+- `std.web.multipart(request: web.PostRequest) -> Result[web.MultipartForm, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/upload"): fn(req: web.PostRequest) -> String | web.Error =>
+  $form = web.multipart($req) ?
+  web.requireParam(web.multipartFields($form), "name") ?
+end
+  ```
+
+- `std.web.multipart(request: web.PutRequest) -> Result[web.MultipartForm, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/upload"): fn(req: web.PostRequest) -> String | web.Error =>
+  $form = web.multipart($req) ?
+  web.requireParam(web.multipartFields($form), "name") ?
+end
+  ```
+
+- `std.web.multipart(request: web.PatchRequest) -> Result[web.MultipartForm, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/upload"): fn(req: web.PostRequest) -> String | web.Error =>
+  $form = web.multipart($req) ?
+  web.requireParam(web.multipartFields($form), "name") ?
+end
+  ```
+
+- `std.web.multipart(request: web.QueryRequest) -> Result[web.MultipartForm, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.post("/upload"): fn(req: web.PostRequest) -> String | web.Error =>
+  $form = web.multipart($req) ?
+  web.requireParam(web.multipartFields($form), "name") ?
+end
+  ```
+
+
+**Returns:** MultipartForm or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.post("/upload"): fn(req: web.PostRequest) -> String | web.Error =>
+  $form = web.multipart($req) ?
+  web.requireParam(web.multipartFields($form), "name") ?
+end
+```
+
+### `std.web.multipartDiscard`
+
+Discard the current upload with bounded reads to its next MIME boundary.
+
+**Overloads**
+
+- `std.web.multipartDiscard(stream: web.UploadStream) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (stream: web.UploadStream) => web.multipartDiscard($stream) end
+  ```
+
+
+**Returns:** None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (stream: web.UploadStream) => web.multipartDiscard($stream) end
+```
+
+### `std.web.multipartFields`
+
+Read the ordered field Params of a buffered multipart form.
+
+**Overloads**
+
+- `std.web.multipartFields(form: web.MultipartForm) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (form: web.MultipartForm) => web.multipartFields($form) end
+  ```
+
+
+**Returns:** Params preserving all repeated text fields.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (form: web.MultipartForm) => web.multipartFields($form) end
+```
+
+### `std.web.multipartNext`
+
+Advance to the next multipart field/file event (None at EOF). The previous file must already be consumed or discarded.
+
+**Overloads**
+
+- `std.web.multipartNext(stream: web.UploadStream) -> Result[web.MultipartPart?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (stream: web.UploadStream) => web.multipartNext($stream) end
+  ```
+
+
+**Returns:** Optional MultipartPart or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (stream: web.UploadStream) => web.multipartNext($stream) end
+```
+
+### `std.web.multipartRead`
+
+Read up to 64 KiB of the active upload; None means part EOF.
+
+**Overloads**
+
+- `std.web.multipartRead(stream: web.UploadStream, maxBytes: Int) -> Result[#byte+ Int*?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (stream: web.UploadStream) => web.multipartRead($stream, 4096) end
+  ```
+
+
+**Returns:** Exact bytes, None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (stream: web.UploadStream) => web.multipartRead($stream, 4096) end
+```
+
+### `std.web.multipartStream`
+
+Claim a streaming multipart/form-data request once. Iterate ordered field/file events and consume every file before advancing.
+
+**Overloads**
+
+- `std.web.multipartStream(request: web.PostRequest) -> Result[web.UploadStream, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PostRequest) => web.multipartStream($req) end
+  ```
+
+- `std.web.multipartStream(request: web.PutRequest) -> Result[web.UploadStream, web.Error]`
+
+  Claim a streaming multipart/form-data request once. Iterate ordered field/file events and consume every file before advancing.
+
+  **Returns:** Owned UploadStream or web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PutRequest) => web.multipartStream($req) end
+  ```
+
+- `std.web.multipartStream(request: web.PatchRequest) -> Result[web.UploadStream, web.Error]`
+
+  Claim a streaming multipart/form-data request once. Iterate ordered field/file events and consume every file before advancing.
+
+  **Returns:** Owned UploadStream or web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PatchRequest) => web.multipartStream($req) end
+  ```
+
+- `std.web.multipartStream(request: web.QueryRequest) -> Result[web.UploadStream, web.Error]`
+
+  Claim a streaming multipart/form-data request once. Iterate ordered field/file events and consume every file before advancing.
+
+  **Returns:** Owned UploadStream or web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.QueryRequest) => web.multipartStream($req) end
+  ```
+
+
+**Returns:** Owned UploadStream or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (req: web.PostRequest) => web.multipartStream($req) end
+```
+
+### `std.web.noStore`
+
+Set Cache-Control: no-store on a response.
+
+**Overloads**
+
+- `std.web.noStore(response: web.Response) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.noStore(web.Response(body = "ok"))
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.noStore(web.Response(body = "ok"))
+```
+
+### `std.web.options`
+
+Register a method-specific OPTIONS handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> String]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> web.Response]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> html.Node]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> web.Error]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[String, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[web.Response, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[html.Node, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> ValueError]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[String, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[web.Response, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[html.Node, ValueError]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[String, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[web.Response, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.App, path: String, handler: Function[web.OptionsRequest -> Result[html.Node, ValueError | web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> String]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> web.Response]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> html.Node]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> web.Error]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[String, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[web.Response, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[html.Node, web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> ValueError]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[String, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[web.Response, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[html.Node, ValueError]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[String, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[web.Response, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+- `std.web.options(target: web.Router, path: String, handler: Function[web.OptionsRequest -> Result[html.Node, ValueError | web.Error]]) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[options]}
+$app = web.App
+$app := options("/"): fn (req: web.OptionsRequest) => "ok" end
+```
+
+### `std.web.page`
+
+Read a regular file into a bounded binary Response (16 MiB development limit).
+
+**Overloads**
+
+- `std.web.page(path: String) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.page("public/example.txt")
+  ```
+
+- `std.web.page(path: path.Path) -> Result[web.Response, web.Error]`
+
+  Serve an application-selected std.path.Path as a bounded binary response.
+
+  **Returns:** Response or web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.path.Path}
+web.page(Path("public/example.txt"))
+  ```
+
+
+**Returns:** Response or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.page("public/example.txt")
+```
+
+### `std.web.paramOne`
+
+Retrieve exactly one named parameter without silently discarding duplicates.
+
+**Overloads**
+
+- `std.web.paramOne(params: web.Params, name: String) -> Result[String?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.paramOne(web.queryParams(web.testRequest("GET", "/?q=one")), "q")
+  ```
+
+
+**Returns:** Value or typed HTTP parameter error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.paramOne(web.queryParams(web.testRequest("GET", "/?q=one")), "q")
+```
+
+### `std.web.paramValues`
+
+Retrieve every matching parameter in original order.
+
+**Overloads**
+
+- `std.web.paramValues(params: web.Params, name: String) -> String+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.paramValues(web.queryParams(web.testRequest("GET", "/?q=1")), "q")
+  ```
+
+
+**Returns:** Possibly empty list of strings.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.paramValues(web.queryParams(web.testRequest("GET", "/?q=1")), "q")
+```
+
+### `std.web.patch`
+
+Register a method-specific PATCH handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.App, path: String, handler: Function[web.PatchRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+- `std.web.patch(target: web.Router, path: String, handler: Function[web.PatchRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[patch]}
+$app = web.App
+$app := patch("/"): fn (req: web.PatchRequest) => "ok" end
+```
+
+### `std.web.post`
+
+Register a method-specific POST handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.App, path: String, handler: Function[web.PostRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+- `std.web.post(target: web.Router, path: String, handler: Function[web.PostRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[post]}
+$app = web.App
+$app := post("/"): fn (req: web.PostRequest) => "ok" end
+```
+
+### `std.web.preconditions`
+
+Evaluate strong If-Match, If-Unmodified-Since and mutation If-None-Match before state changes.
+
+**Overloads**
+
+- `std.web.preconditions(request: web.Request, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.GetRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.HeadRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.PostRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.PutRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.PatchRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.DeleteRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.OptionsRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+- `std.web.preconditions(request: web.QueryRequest, validators: web.Validators) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+  ```
+
+
+**Returns:** None on success or a typed HTTP error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.preconditions(web.testRequest("PUT", "/"), web.Validators)
+```
+
+### `std.web.prepare`
+
+Validate the immutable route table without starting a listener.
+
+**Overloads**
+
+- `std.web.prepare(app: web.App) -> Result[web.PreparedApp, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.prepare(web.App)
+  ```
+
+
+**Returns:** PreparedApp or ConfigError.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.prepare(web.App)
+```
+
+### `std.web.put`
+
+Register a method-specific PUT handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.App, path: String, handler: Function[web.PutRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+- `std.web.put(target: web.Router, path: String, handler: Function[web.PutRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[put]}
+$app = web.App
+$app := put("/"): fn (req: web.PutRequest) => "ok" end
+```
+
+### `std.web.query`
+
+Register a method-specific QUERY handler on an immutable web configuration.
+
+**Overloads**
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.App, path: String, handler: Function[web.QueryRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> String], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> web.Response], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> html.Node], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> web.Error], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[String, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[web.Response, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[html.Node, web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> ValueError], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[String, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[web.Response, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[html.Node, ValueError]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[String, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[web.Response, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+- `std.web.query(target: web.Router, path: String, handler: Function[web.QueryRequest -> Result[html.Node, ValueError | web.Error]], bodyMode: web.BodyMode, maxBodyBytes: Int?) -> web.Router`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+  ```
+
+
+**Parameters**
+
+- `target` — Application or reusable Router.
+- `path` — Absolute route template.
+- `handler` — Typed request callback returning text or Response.
+
+**Returns:** A new App or Router; the original remains unchanged.
+
+**Example**
+
+```vlnc
+import {std.web, std.web.[query]}
+$app = web.App
+$app := query("/"): fn (req: web.QueryRequest) => "ok" end
+```
+
+### `std.web.queryParams`
+
+Read the ordered query multimap without merging other parameter sources.
+
+**Overloads**
+
+- `std.web.queryParams(request: web.Request) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.GetRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.HeadRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.PostRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.PutRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.PatchRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.DeleteRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.OptionsRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+- `std.web.queryParams(request: web.QueryRequest) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+  ```
+
+
+**Returns:** Immutable Params value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.queryParams(web.testRequest("GET", "/?q=1"))
+```
+
+### `std.web.readBodyStream`
+
+Read up to 64 KiB of request bytes; None means EOF.
+
+**Overloads**
+
+- `std.web.readBodyStream(stream: web.RequestBodyStream, maxBytes: Int) -> Result[#byte+ Int* | None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (stream: web.RequestBodyStream) => web.readBodyStream($stream, 4096) end
+  ```
+
+
+**Returns:** Exact bytes or None or Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (stream: web.RequestBodyStream) => web.readBodyStream($stream, 4096) end
+```
+
+### `std.web.readUpload`
+
+Read exact bytes of a bounded buffered upload, without filename-based path access.
+
+**Overloads**
+
+- `std.web.readUpload(upload: web.Upload) -> Result[#byte+ Int*, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (upload: web.Upload) => web.readUpload($upload) end
+  ```
+
+
+**Returns:** Byte-tagged octets or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (upload: web.Upload) => web.readUpload($upload) end
+```
+
+### `std.web.redirect`
+
+Create a same-origin redirect (default 303) with a validated target and optional status.
+
+**Overloads**
+
+- `std.web.redirect(location: String, status: web.Status) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.redirect("/next")
+  ```
+
+
+**Returns:** Response with Location header.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.redirect("/next")
+```
+
+### `std.web.reloadTLS`
+
+Atomically rotate validated TLS 1.3 credentials on a TLS listener; existing connections retain their original negotiated identity.
+
+**Overloads**
+
+- `std.web.reloadTLS(server: web.ServerHandle, tls: web.TLS) -> Result[None, web.ServerError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (server: web.ServerHandle, tls: web.TLS) => web.reloadTLS($server, $tls) end
+  ```
+
+
+**Returns:** None or ServerError.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (server: web.ServerHandle, tls: web.TLS) => web.reloadTLS($server, $tls) end
+```
+
+### `std.web.replaceParam`
+
+Replace all occurrences of a parameter with one value.
+
+**Overloads**
+
+- `std.web.replaceParam(params: web.Params, name: String, value: String) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.replaceParam(web.queryParams(web.testRequest("GET", "/?q=1")), "q", "2")
+  ```
+
+
+**Returns:** New Params value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.replaceParam(web.queryParams(web.testRequest("GET", "/?q=1")), "q", "2")
+```
+
+### `std.web.requireContext`
+
+Require a typed context value or return Error.MissingContext.
+
+**Overloads**
+
+- `std.web.requireContext(request: web.Request, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.Request) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.GetRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.GetRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.HeadRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.HeadRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.PostRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PostRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.PutRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PutRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.PatchRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PatchRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.DeleteRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.DeleteRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.OptionsRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.OptionsRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.QueryRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.QueryRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+- `std.web.requireContext(request: web.WebSocketRequest, key: web.ContextKey[T]) -> Result[T, web.Error]`
+
+  Require a typed context value or return Error.MissingContext.
+
+  **Returns:** The keyed payload or MissingContext.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.WebSocketRequest) => web.requireContext($req, web.contextKey[String]) end
+  ```
+
+
+**Returns:** The keyed payload or MissingContext.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (req: web.Request) => web.requireContext($req, web.contextKey[String]) end
+```
+
+### `std.web.requireParam`
+
+Retrieve exactly one named parameter without silently discarding duplicates.
+
+**Overloads**
+
+- `std.web.requireParam(params: web.Params, name: String) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.paramOne(web.queryParams(web.testRequest("GET", "/?q=one")), "q")
+  ```
+
+
+**Returns:** Value or typed HTTP parameter error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.paramOne(web.queryParams(web.testRequest("GET", "/?q=one")), "q")
+```
+
+### `std.web.responseText`
+
+Decode a bounded buffered response as strict UTF-8, returning an error for binary data.
+
+**Overloads**
+
+- `std.web.responseText(response: web.Response, limit: Int) -> Result[String, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.responseText(web.Response(body = "ok"))
+  ```
+
+
+**Returns:** UTF-8 content or a typed web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.responseText(web.Response(body = "ok"))
+```
+
+### `std.web.routes`
+
+Inspect validated effective routes and automatic HEAD/OPTIONS entries without exposing closures.
+
+**Overloads**
+
+- `std.web.routes(appOrRouter: web.App) -> Result[web.RouteDescriptor+, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.routes(web.App)
+  ```
+
+- `std.web.routes(appOrRouter: web.Router) -> Result[web.RouteDescriptor+, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.routes(web.App)
+  ```
+
+
+**Returns:** Route descriptors or ConfigError.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.routes(web.App)
+```
+
+### `std.web.routeUrl`
+
+Generate a validated relative URL from a registered route identity.
+
+**Overloads**
+
+- `std.web.routeUrl(appOrRouter: web.App, method: web.Method, template: String, params: Dict[String, String], query: web.Params) -> Result[String, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.get("/p/{id}"): fn(req: web.GetRequest) => "ok" end
+web.routeUrl($app, web.Method.GET, "/p/{id}", dict{"id" => "1"})
+  ```
+
+- `std.web.routeUrl(appOrRouter: web.Router, method: web.Method, template: String, params: Dict[String, String], query: web.Params) -> Result[String, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.get("/p/{id}"): fn(req: web.GetRequest) => "ok" end
+web.routeUrl($app, web.Method.GET, "/p/{id}", dict{"id" => "1"})
+  ```
+
+
+**Returns:** Relative URL or ConfigError.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.get("/p/{id}"): fn(req: web.GetRequest) => "ok" end
+web.routeUrl($app, web.Method.GET, "/p/{id}", dict{"id" => "1"})
+```
+
+### `std.web.run`
+
+Block in the caller scope serving HTTP; SIGINT/SIGTERM initiate shutdown; TLS 1.3 negotiates HTTP/1.1 and HTTP/2 using ALPN. HTTP/3 remains unsupported.
+
+**Overloads**
+
+- `std.web.run(app: web.App, config: web.ServerConfig) -> None`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.run(web.App, web.ServerConfig(port = 8080))
+  ```
+
+
+**Returns:** None on graceful stop.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.run(web.App, web.ServerConfig(port = 8080))
+```
+
+### `std.web.saveMultipartPart`
+
+Save the current unconsumed multipart upload to an explicitly chosen new Path. Streams bytes to a private file, fails if the destination exists, and deletes incomplete uploads.
+
+**Overloads**
+
+- `std.web.saveMultipartPart(stream: web.UploadStream, destination: path.Path) -> Result[Int, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.path}
+fn (stream: web.UploadStream, file: path.Path) => web.saveMultipartPart($stream, $file) end
+  ```
+
+
+**Returns:** Octets written or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.path}
+fn (stream: web.UploadStream, file: path.Path) => web.saveMultipartPart($stream, $file) end
+```
+
+### `std.web.saveUpload`
+
+Save a buffered upload to an explicitly chosen std.path.Path; fail if the path exists.
+
+**Overloads**
+
+- `std.web.saveUpload(upload: web.Upload, destination: path.Path) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.path.Path}
+fn (upload: web.Upload) => web.saveUpload($upload, Path("upload.bin")) end
+  ```
+
+
+**Returns:** None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.path.Path}
+fn (upload: web.Upload) => web.saveUpload($upload, Path("upload.bin")) end
+```
+
+### `std.web.serve`
+
+Start an owned HTTP/1.1 listener, optionally with TLS 1.3 and ALPN HTTP/2.
+
+**Overloads**
+
+- `std.web.serve(app: web.App, config: web.ServerConfig) -> Result[web.ServerHandle, web.ServerError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.serve(web.App, web.ServerConfig(port = 0))
+  ```
+
+
+**Returns:** An exclusive ServerHandle or ServerError.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.serve(web.App, web.ServerConfig(port = 0))
+```
+
+### `std.web.ServerConfig`
+
+Construct a resource-limited cleartext HTTP/1.1 server configuration.
+
+**Overloads**
+
+- `std.web.ServerConfig(host: String, port: Int, tls: None, limits: web.Limits, publicOrigin: None | String, allowedHosts: None | String*, trustedProxies: None | String*, proxyMode: None | web.ProxyMode, protocols: None | web.Protocol*) -> web.ServerConfig`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.ServerConfig(port = 8081, limits = web.Limits)
+  ```
+
+- `std.web.ServerConfig(host: String, port: Int, tls: web.TLS, limits: web.Limits, publicOrigin: None | String, allowedHosts: None | String*, trustedProxies: None | String*, proxyMode: None | web.ProxyMode, protocols: None | web.Protocol*) -> web.ServerConfig`
+
+  Construct a TLS 1.3 server configuration with automatic HTTP/1.1 + HTTP/2 ALPN.
+
+  **Returns:** ServerConfig with TLS enabled.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.ServerConfig(tls = web.TLS(certificateFile = "cert.pem", privateKeyFile = "key.pem"))
+  ```
+
+
+**Returns:** ServerConfig with validated limits.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.ServerConfig(port = 8081, limits = web.Limits)
+```
+
+### `std.web.serverStats`
+
+Read a bounded, read-only snapshot of listener admission and resource counters; no unauthenticated metrics endpoint is created.
+
+**Overloads**
+
+- `std.web.serverStats(server: web.ServerHandle) -> web.ServerStats`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (server: web.ServerHandle) => web.serverStats($server) end
+  ```
+
+
+**Returns:** ServerStats snapshot.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (server: web.ServerHandle) => web.serverStats($server) end
+```
+
+### `std.web.shutdown`
+
+Consume an owned development server handle, close its listener and join workers.
+
+**Overloads**
+
+- `std.web.shutdown(server: web.ServerHandle) -> Result[web.ServerStopReport, web.ServerError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$server = web.serve(web.App, web.ServerConfig(port = 0)) ?
+web.shutdown $server
+  ```
+
+
+**Returns:** ServerStopReport or ServerError.
+
+**Example**
+
+```vlnc
+import {std.web}
+$server = web.serve(web.App, web.ServerConfig(port = 0)) ?
+web.shutdown $server
+```
+
+### `std.web.shutdownWithin`
+
+Consume an owned HTTP/1.1 server handle with an explicit grace timeout in seconds.
+
+**Overloads**
+
+- `std.web.shutdownWithin(server: web.ServerHandle, graceSeconds: Int) -> Result[web.ServerStopReport, web.ServerError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (server: web.ServerHandle) => web.shutdownWithin($server, 5) end
+  ```
+
+
+**Returns:** ServerStopReport or ServerError.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (server: web.ServerHandle) => web.shutdownWithin($server, 5) end
+```
+
+### `std.web.staticRouter`
+
+Build a confined GET/HEAD static Router using no-follow dirfd traversal.
+
+**Overloads**
+
+- `std.web.staticRouter(root: String) -> Result[web.Router, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.staticRouter("public/assets")
+  ```
+
+- `std.web.staticRouter(root: path.Path) -> Result[web.Router, web.ConfigError]`
+
+  Build a confined static Router from a std.path.Path root.
+
+  **Returns:** Router or ConfigError.
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.path.Path}
+web.staticRouter(Path("public/assets"))
+  ```
+
+
+**Returns:** Router or ConfigError.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.staticRouter("public/assets")
+```
+
+### `std.web.stream`
+
+Transfer one owned ByteSource into a single streaming response body.
+
+**Overloads**
+
+- `std.web.stream(source: web.ByteSource, contentType: String) -> web.StreamBody`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (source: web.ByteSource) => web.stream($source, "text/plain") end
+  ```
+
+
+**Returns:** A nonduplicable StreamBody.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (source: web.ByteSource) => web.stream($source, "text/plain") end
+```
+
+### `std.web.streamResponse`
+
+Construct a single-response owned stream without buffering, while the compiler learns to transfer StreamBody through Response constructors.
+
+**Overloads**
+
+- `std.web.streamResponse(source: web.ByteSource, contentType: String) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (source: web.ByteSource) => web.streamResponse($source, "text/plain") end
+  ```
+
+
+**Returns:** Response owning an exclusive ByteSource.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (source: web.ByteSource) => web.streamResponse($source, "text/plain") end
+```
+
+### `std.web.testRequest`
+
+Create a validated, socket-free request.
+
+**Overloads**
+
+- `std.web.testRequest(method: String, target: String, headers: web.Headers, body: #byte+ Int*) -> web.Request`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.testRequest("GET", "/")
+  ```
+
+
+**Returns:** Method-specific request value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.testRequest("GET", "/")
+```
+
+### `std.web.trailers`
+
+Read validated request trailers after streaming-body EOF only; never merge them with initial request headers.
+
+**Overloads**
+
+- `std.web.trailers(request: web.PostRequest) -> Result[web.Headers, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PostRequest) => web.trailers($req) end
+  ```
+
+- `std.web.trailers(request: web.PutRequest) -> Result[web.Headers, web.Error]`
+
+  Read validated request trailers after streaming-body EOF only; never merge them with initial request headers.
+
+  **Returns:** Headers or a typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PutRequest) => web.trailers($req) end
+  ```
+
+- `std.web.trailers(request: web.PatchRequest) -> Result[web.Headers, web.Error]`
+
+  Read validated request trailers after streaming-body EOF only; never merge them with initial request headers.
+
+  **Returns:** Headers or a typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PatchRequest) => web.trailers($req) end
+  ```
+
+- `std.web.trailers(request: web.QueryRequest) -> Result[web.Headers, web.Error]`
+
+  Read validated request trailers after streaming-body EOF only; never merge them with initial request headers.
+
+  **Returns:** Headers or a typed web.Error.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.QueryRequest) => web.trailers($req) end
+  ```
+
+
+**Returns:** Headers or a typed web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (req: web.PostRequest) => web.trailers($req) end
+```
+
+### `std.web.uploadOne`
+
+Read one matching upload, rejecting ambiguous repetitions.
+
+**Overloads**
+
+- `std.web.uploadOne(form: web.MultipartForm, name: String) -> Result[web.Upload?, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (form: web.MultipartForm) => web.uploadOne($form, "file") end
+  ```
+
+
+**Returns:** Optional upload or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (form: web.MultipartForm) => web.uploadOne($form, "file") end
+```
+
+### `std.web.uploads`
+
+Select multipart files under a field name in arrival order.
+
+**Overloads**
+
+- `std.web.uploads(form: web.MultipartForm, name: String) -> web.Upload+`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (form: web.MultipartForm) => web.uploads($form, "file") end
+  ```
+
+
+**Returns:** Possibly empty upload list.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (form: web.MultipartForm) => web.uploads($form, "file") end
+```
+
+### `std.web.wait`
+
+Wait for externally initiated server shutdown and consume its owned handle.
+
+**Overloads**
+
+- `std.web.wait(server: web.ServerHandle) -> Result[web.ServerStopReport, web.ServerError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.run(web.App)
+  ```
+
+
+**Returns:** ServerStopReport or ServerError.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.run(web.App)
+```
+
+### `std.web.websocket`
+
+Register a WebSocket upgrade route separate from ordinary GET.
+
+**Overloads**
+
+- `std.web.websocket(target: web.App, path: String, handler: Function[web.WebSocket -> None], policy: web.WebSocketPolicy) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.App
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+  ```
+
+- `std.web.websocket(target: web.App, path: String, handler: Function[web.WebSocket -> web.Error], policy: web.WebSocketPolicy) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.App
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+  ```
+
+- `std.web.websocket(target: web.App, path: String, handler: Function[web.WebSocket -> Result[None, web.Error]], policy: web.WebSocketPolicy) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.App
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+  ```
+
+- `std.web.websocket(target: web.Router, path: String, handler: Function[web.WebSocket -> None], policy: web.WebSocketPolicy) -> web.Router`
+
+  Register a WebSocket upgrade route separate from ordinary GET.
+
+  **Returns:** Immutable App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.Router
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+  ```
+
+- `std.web.websocket(target: web.Router, path: String, handler: Function[web.WebSocket -> web.Error], policy: web.WebSocketPolicy) -> web.Router`
+
+  Register a WebSocket upgrade route separate from ordinary GET.
+
+  **Returns:** Immutable App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.Router
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+  ```
+
+- `std.web.websocket(target: web.Router, path: String, handler: Function[web.WebSocket -> Result[None, web.Error]], policy: web.WebSocketPolicy) -> web.Router`
+
+  Register a WebSocket upgrade route separate from ordinary GET.
+
+  **Returns:** Immutable App or Router.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.Router
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+  ```
+
+
+**Returns:** Immutable App or Router.
+
+**Example**
+
+```vlnc
+import {std.web}
+$config = web.App
+$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => web.Error.Forbidden("Connection refused") end
+```
+
+### `std.web.websocketClose`
+
+Send a WebSocket close control frame.
+
+**Overloads**
+
+- `std.web.websocketClose(socket: web.WebSocket, code: Int, reason: String) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (socket: web.WebSocket) => web.websocketClose($socket) end
+  ```
+
+
+**Returns:** None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (socket: web.WebSocket) => web.websocketClose($socket) end
+```
+
+### `std.web.websocketPing`
+
+Send a WebSocket ping control frame.
+
+**Overloads**
+
+- `std.web.websocketPing(socket: web.WebSocket, data: #byte+ Int*) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (socket: web.WebSocket) => web.websocketPing($socket) end
+  ```
+
+
+**Returns:** None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (socket: web.WebSocket) => web.websocketPing($socket) end
+```
+
+### `std.web.websocketReceive`
+
+Receive a WebSocket text, binary or close event.
+
+**Overloads**
+
+- `std.web.websocketReceive(socket: web.WebSocket) -> Result[web.WebSocketMessage, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (socket: web.WebSocket) => web.websocketReceive($socket) end
+  ```
+
+
+**Returns:** WebSocketMessage or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (socket: web.WebSocket) => web.websocketReceive($socket) end
+```
+
+### `std.web.websocketRequest`
+
+Read the validated WebSocket handshake snapshot without transferring the connection owner.
+
+**Overloads**
+
+- `std.web.websocketRequest(socket: web.WebSocket) -> web.WebSocketRequest`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (socket: web.WebSocket) => web.websocketRequest($socket) end
+  ```
+
+
+**Returns:** An immutable WebSocketRequest value.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (socket: web.WebSocket) => web.websocketRequest($socket) end
+```
+
+### `std.web.websocketSendBytes`
+
+Send one bounded WebSocket message.
+
+**Overloads**
+
+- `std.web.websocketSendBytes(socket: web.WebSocket, value: #byte+ Int*) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.file.#byte}
+fn (socket: web.WebSocket) => web.websocketSendBytes($socket, [65 #byte]) end
+  ```
+
+
+**Returns:** None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.file.#byte}
+fn (socket: web.WebSocket) => web.websocketSendBytes($socket, [65 #byte]) end
+```
+
+### `std.web.websocketSendText`
+
+Send one bounded WebSocket message.
+
+**Overloads**
+
+- `std.web.websocketSendText(socket: web.WebSocket, value: String) -> Result[None, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web, std.file.#byte}
+fn (socket: web.WebSocket) => web.websocketSendText($socket, "hello") end
+  ```
+
+
+**Returns:** None or web.Error.
+
+**Example**
+
+```vlnc
+import {std.web, std.file.#byte}
+fn (socket: web.WebSocket) => web.websocketSendText($socket, "hello") end
+```
+
+### `std.web.withBodyMode`
+
+Opt a registered content-bearing route into incremental request-body reads.
+
+**Overloads**
+
+- `std.web.withBodyMode(appOrRouter: web.App, method: web.Method, template: String, mode: web.BodyMode) -> Result[web.App, web.ConfigError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.App
+$config := web.post("/upload"): fn (req: web.PostRequest) => "ok" end
+web.withBodyMode($config, web.Method.POST, "/upload", web.BodyMode.Stream)
+  ```
+
+- `std.web.withBodyMode(appOrRouter: web.Router, method: web.Method, template: String, mode: web.BodyMode) -> Result[web.Router, web.ConfigError]`
+
+  Opt a registered content-bearing route into incremental request-body reads.
+
+  **Returns:** New App or Router; rejects unmatched route identities.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$config = web.Router
+$config := web.post("/upload"): fn (req: web.PostRequest) => "ok" end
+web.withBodyMode($config, web.Method.POST, "/upload", web.BodyMode.Stream)
+  ```
+
+
+**Returns:** New App or Router; rejects unmatched route identities.
+
+**Example**
+
+```vlnc
+import {std.web}
+$config = web.App
+$config := web.post("/upload"): fn (req: web.PostRequest) => "ok" end
+web.withBodyMode($config, web.Method.POST, "/upload", web.BodyMode.Stream)
+```
+
+### `std.web.withContext`
+
+Return the same request variant with one typed context value attached.
+
+**Overloads**
+
+- `std.web.withContext(request: web.Request, key: web.ContextKey[T], value: T) -> web.Request`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.Request) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.GetRequest, key: web.ContextKey[T], value: T) -> web.GetRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.GetRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.HeadRequest, key: web.ContextKey[T], value: T) -> web.HeadRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.HeadRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.PostRequest, key: web.ContextKey[T], value: T) -> web.PostRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PostRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.PutRequest, key: web.ContextKey[T], value: T) -> web.PutRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PutRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.PatchRequest, key: web.ContextKey[T], value: T) -> web.PatchRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.PatchRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.DeleteRequest, key: web.ContextKey[T], value: T) -> web.DeleteRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.DeleteRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.OptionsRequest, key: web.ContextKey[T], value: T) -> web.OptionsRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.OptionsRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.QueryRequest, key: web.ContextKey[T], value: T) -> web.QueryRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.QueryRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+- `std.web.withContext(request: web.WebSocketRequest, key: web.ContextKey[T], value: T) -> web.WebSocketRequest`
+
+  Return the same request variant with one typed context value attached.
+
+  **Returns:** An immutable enriched request.
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (req: web.WebSocketRequest) => web.withContext($req, web.contextKey[String], "en") end
+  ```
+
+
+**Returns:** An immutable enriched request.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (req: web.Request) => web.withContext($req, web.contextKey[String], "en") end
+```
+
+### `std.web.withCookie`
+
+Issue a Set-Cookie field using validated, explicit cookie scope, expiration and security settings.
+
+**Overloads**
+
+- `std.web.withCookie(response: web.Response, name: String, value: String, path: String, domain: String?, httpOnly: #boolean Int, secure: #boolean Int, sameSite: web.SameSite, maxAge: Int?, expires: Int?, partitioned: #boolean Int) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withCookie(web.Response, "sid", "value")
+  ```
+
+
+**Returns:** Response or typed cookie error.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withCookie(web.Response, "sid", "value")
+```
+
+### `std.web.withEarlyHints`
+
+Attach validated preload Link metadata for one HTTP 103 Early Hints response.
+
+**Overloads**
+
+- `std.web.withEarlyHints(response: web.Response, links: String+) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withEarlyHints(web.Response(body = "ok"), ["</style.css>; rel=preload; as=style"])
+  ```
+
+
+**Returns:** Response or InvalidHeader.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withEarlyHints(web.Response(body = "ok"), ["</style.css>; rel=preload; as=style"])
+```
+
+### `std.web.withErrorHandler`
+
+Set a single application HTTP error callback. Faults in the error callback revert to a minimal safe 500 response; never reenter the hook.
+
+**Overloads**
+
+- `std.web.withErrorHandler(app: web.App, callback: Function[web.ErrorContext -> web.Response]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.withErrorHandler: fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end
+  ```
+
+- `std.web.withErrorHandler(app: web.App, callback: Function[web.ErrorContext -> Result[web.Response, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.withErrorHandler: fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end
+  ```
+
+
+**Returns:** New immutable App.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.withErrorHandler: fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end
+```
+
+### `std.web.withETag`
+
+Attach a validated strong ETag representation validator.
+
+**Overloads**
+
+- `std.web.withETag(response: web.Response, tag: String) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withETag(web.Response(body = "ok"), "v1")
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withETag(web.Response(body = "ok"), "v1")
+```
+
+### `std.web.withHeader`
+
+Immutably edit validated response header fields.
+
+**Overloads**
+
+- `std.web.withHeader(headers: web.Headers, name: String, value: String) -> web.Headers`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+  ```
+
+- `std.web.withHeader(response: web.Response, name: String, value: String) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+```
+
+### `std.web.withLastModified`
+
+Attach a Last-Modified validator formatted as an HTTP date.
+
+**Overloads**
+
+- `std.web.withLastModified(response: web.Response, unixSeconds: Int) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withLastModified(web.Response(body = "ok"), 0)
+  ```
+
+
+**Returns:** New Response.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withLastModified(web.Response(body = "ok"), 0)
+```
+
+### `std.web.withLogger`
+
+Attach an immutable completion-event logger. Events include no raw URI, authorization, cookie, request body, or response body fields. Logging errors cannot alter an HTTP response.
+
+**Overloads**
+
+- `std.web.withLogger(app: web.App, callback: Function[web.LogEvent -> None]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.withLogger: fn (event: web.LogEvent) -> web.Error => web.Error.Forbidden("Logging unavailable") end
+  ```
+
+- `std.web.withLogger(app: web.App, callback: Function[web.LogEvent -> web.Error]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.withLogger: fn (event: web.LogEvent) -> web.Error => web.Error.Forbidden("Logging unavailable") end
+  ```
+
+- `std.web.withLogger(app: web.App, callback: Function[web.LogEvent -> Result[None, web.Error]]) -> web.App`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+$app = web.App
+$app := web.withLogger: fn (event: web.LogEvent) -> web.Error => web.Error.Forbidden("Logging unavailable") end
+  ```
+
+
+**Returns:** New App with a safe logger.
+
+**Example**
+
+```vlnc
+import {std.web}
+$app = web.App
+$app := web.withLogger: fn (event: web.LogEvent) -> web.Error => web.Error.Forbidden("Logging unavailable") end
+```
+
+### `std.web.withoutHeader`
+
+Immutably edit validated response header fields.
+
+**Overloads**
+
+- `std.web.withoutHeader(response: web.Response, name: String) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+  ```
+
+
+**Returns:** New Response value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withHeader(web.Response(body = "ok"), "X-Web", "yes")
+```
+
+### `std.web.withParam`
+
+Append a parameter without replacing earlier values.
+
+**Overloads**
+
+- `std.web.withParam(params: web.Params, name: String, value: String) -> web.Params`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withParam(web.queryParams(web.testRequest("GET", "/")), "q", "2")
+  ```
+
+
+**Returns:** New Params value.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withParam(web.queryParams(web.testRequest("GET", "/")), "q", "2")
+```
+
+### `std.web.withStatus`
+
+Immutably replace the HTTP response status.
+
+**Overloads**
+
+- `std.web.withStatus(response: web.Response, status: web.Status) -> web.Response`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+web.withStatus(web.Response(body = "ok"), web.Status.Created)
+  ```
+
+
+**Returns:** New Response value with validated status.
+
+**Example**
+
+```vlnc
+import {std.web}
+web.withStatus(web.Response(body = "ok"), web.Status.Created)
+```
+
+### `std.web.withTrailers`
+
+Attach validated HTTP trailing fields to an owned stream. H1 emits a Trailer announcement and chunked terminator.
+
+**Overloads**
+
+- `std.web.withTrailers(response: web.Response, trailers: web.Headers) -> Result[web.Response, web.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web}
+fn (response: web.Response, fields: web.Headers) => web.withTrailers($response, $fields) end
+  ```
+
+
+**Returns:** Response or InvalidHeader.
+
+**Example**
+
+```vlnc
+import {std.web}
+fn (response: web.Response, fields: web.Headers) => web.withTrailers($response, $fields) end
 ```
