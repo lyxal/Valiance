@@ -47,6 +47,20 @@ uses independent worker processes (the CI workflow uses four workers):
 uv run python -m tools.test_suite --workers 4
 ```
 
+Run either suite independently:
+
+```powershell
+uv run python -m tools.test_suite --suite language-core --workers 4
+uv run python -m tools.test_suite --suite standard-library --workers 4
+```
+
+The standard library suite contains dedicated `test_std_*.py` and
+`test_stdlib_*.py` modules and `test_filesystem_core.py`. All other modules,
+including compiler and VM integration regressions that use library APIs, are
+part of language core. Use `--pattern 'test_std_web*.py'` to focus on Web.
+GitHub Actions runs both suites concurrently and uploads a timing report for
+each.
+
 Measure the slowest tests and retain module timings for more balanced later
 runs with:
 

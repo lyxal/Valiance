@@ -104,11 +104,20 @@ def _test_weight(path: Path) -> int:
     return max(1, test_count * 10 + len(source) // 2_000)
 
 
-def discover_test_files(test_dir: Path, patterns: Sequence[str]) -> tuple[Path, ...]:
-    """Return sorted test files matching any supplied glob pattern."""
+def discover_test_files(
+    test_dir: Path, patterns: Sequence[str], suite: str = "all"
+) -> tuple[Path, ...]:
+    """Return sorted test files matching any supplied glob and the selected suite."""
     found: set[Path] = set()
     for pattern in patterns:
         found.update(path for path in test_dir.glob(pattern) if path.is_file())
+    if suite != "all":
+        standard_library = {
+            path for path in found
+            if path.name.startswith(("test_std_", "test_stdlib_"))
+            or path.name == "test_filesystem_core.py"
+        }
+        found = standard_library if suite == "standard-library" else found - standard_library
     return tuple(sorted(found))
 
 
@@ -331,6 +340,12 @@ def _parser() -> argparse.ArgumentParser:
         help="test file glob; repeat for multiple patterns (default: test_*.py)",
     )
     parser.add_argument("--test-dir", type=Path, default=Path("tests"))
+    parser.add_argument(
+        "--suite",
+        choices=("all", "language-core", "standard-library"),
+        default="all",
+        help="select a test suite (default: all)",
+    )
     parser.add_argument("--list", action="store_true", help="show worker allocation only")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
@@ -357,7 +372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    files = discover_test_files(args.test_dir, args.pattern or ["test_*.py"])
+    files = discover_test_files(args.test_dir, args.pattern or ["test_*.py"], args.suite)
     if not files:
         print("error: no test modules matched", file=sys.stderr)
         return 2

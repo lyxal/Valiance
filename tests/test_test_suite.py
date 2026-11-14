@@ -20,6 +20,28 @@ from tools.test_suite import (
 
 
 class ParallelTestSuiteTests(unittest.TestCase):
+    def test_suite_selection_partitions_matching_modules(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            core_names = ["test_parser.py", "test_programs.py"]
+            library_names = [
+                "test_filesystem_core.py", "test_std_web.py", "test_stdlib_native.py",
+            ]
+            for name in core_names + library_names:
+                (root / name).touch()
+            for suite, names in (
+                ("all", core_names + library_names),
+                ("language-core", core_names),
+                ("standard-library", library_names),
+            ):
+                with self.subTest(suite=suite):
+                    found = discover_test_files(root, ("test_*.py",), suite)
+                    self.assertEqual([path.name for path in found], sorted(names))
+            self.assertEqual(
+                discover_test_files(root, ("test_std_web*.py",), "standard-library"),
+                (root / "test_std_web.py",),
+            )
+
     def test_discovery_deduplicates_overlapping_patterns(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
