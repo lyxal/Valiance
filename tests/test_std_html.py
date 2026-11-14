@@ -8,14 +8,19 @@ from pathlib import Path
 from http.client import HTTPConnection
 
 from valiance.analysis import Analyser
+from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.runtime_values import ObjectValue
 from valiance.std import html as html_bridge, web as web_bridge
 
 
+# Each program imports the same standard-library sources.
+_STD_MODULES = ModuleLoader()
+
+
 def evaluate(source: str, *, serialized: bool = False):
-    analyser = Analyser()
+    analyser = Analyser(module_loader=_STD_MODULES)
     checked = analyser.analyse(parse(source))
     failures = [str(issue) for issue in analyser.diagnostics]
     if failures:

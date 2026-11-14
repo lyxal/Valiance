@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
 from valiance.elements.builtins import BUILTIN_ERROR_TYPES, BUILTIN_FAULT_TYPES
+from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
 from valiance.runtime import (
     AssertionFailure,
@@ -79,6 +80,17 @@ def _reorder_implementations(value):
             updates["overloads"] = tuple(reversed(updates["overloads"]))
         return replace(value, **updates)
     return value
+
+
+# These self-contained cases dominate the runtime module's worker time.
+PARALLEL_SAFE_METHODS = (
+    "NumericInteropAndFaultContractTests.test_hashes_are_exact_and_compatible_with_equal_native_numbers",
+    "ComplexArithmeticAndDeepRankTests.test_typed_json_collection_decode_beyond_python_recursion_depth",
+    "ReflectionRuntimeTests.test_json_encode_serializes_nested_objects_without_a_callback",
+    "ReflectionRuntimeTests.test_json_encode_evaluates_finite_lazy_lists_at_any_depth",
+    "ReflectionRuntimeTests.test_json_encode_recurses_through_managed_collection_and_optional_payloads",
+    "ReflectionRuntimeTests.test_json_decode_reconstructs_nested_typed_objects_and_collections",
+)
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -13516,19 +13528,25 @@ class ComplexArithmeticAndDeepRankTests(unittest.TestCase):
 
     def test_typed_json_collection_decode_beyond_python_recursion_depth(self):
         samples = (100, 240, 250, 350)
+        modules = ModuleLoader()
         for rank in samples:
             source = ("import {std.json}\n"
                       f"json.decode[Int+{rank}](json.encode(1 ^+{rank}) ?!) | ?!")
-            for optimize, serialized in self.MODES:
-                with self.subTest(rank=rank, optimize=optimize, serialized=serialized):
-                    value, = self.run_source(source, optimize, serialized)
-                    depth = 0
-                    while isinstance(value, (list, tuple)):
-                        self.assertEqual(1, len(value))
-                        depth += 1
-                        value = value[0]
-                    self.assertEqual(rank, depth)
-                    self.assertEqual(RuntimeNumber(1), value)
+            analyser = Analyser(module_loader=modules)
+            typed = analyser.analyse(parse(source))
+            self.assertEqual([], analyser.diagnostics, source)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(rank=rank, optimize=optimize, serialized=serialized):
+                        value, = run(loads(dumps(program)) if serialized else program)
+                        depth = 0
+                        while isinstance(value, (list, tuple)):
+                            self.assertEqual(1, len(value))
+                            depth += 1
+                            value = value[0]
+                        self.assertEqual(rank, depth)
+                        self.assertEqual(RuntimeNumber(1), value)
 
     def test_regex_helpers_are_bounded_and_preserve_matching_semantics(self):
         from unittest.mock import patch
