@@ -20,6 +20,28 @@ from tools.test_suite import (
 
 
 class ParallelTestSuiteTests(unittest.TestCase):
+    def test_shards_cover_the_same_targets_as_the_combined_run(self):
+        from tools.test_suite import main
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index in range(15):
+                (root / f"test_module_{index}.py").touch()
+            arguments = ["--test-dir", directory, "--workers", "1", "--list"]
+
+            def targets(options):
+                with redirect_stdout(StringIO()) as output:
+                    self.assertEqual(main(arguments + options), 0)
+                return [line.strip() for line in output.getvalue().splitlines()
+                        if line.startswith("  ")]
+
+            shards = [
+                targets(["--shards", "3", "--shard", str(index)])
+                for index in range(3)
+            ]
+            self.assertTrue(all(shards))
+            self.assertCountEqual([target for shard in shards for target in shard], targets([]))
+
     def test_suite_selection_partitions_matching_modules(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

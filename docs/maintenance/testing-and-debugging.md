@@ -58,8 +58,10 @@ The standard library suite contains dedicated `test_std_*.py` and
 `test_stdlib_*.py` modules and `test_filesystem_core.py`. All other modules,
 including compiler and VM integration regressions that use library APIs, are
 part of language core. Use `--pattern 'test_std_web*.py'` to focus on Web.
-GitHub Actions runs both suites concurrently and uploads a timing report for
-each.
+GitHub Actions runs three shards per suite on separate runners. To reproduce a
+shard, use `--workers 4 --shards 3 --shard 0` with the matching `--suite`.
+Each shard logs the targets in every batch as it starts and checkpoints its
+timing report after each completed batch.
 
 Measure the slowest tests and retain module timings for more balanced later
 runs with:
@@ -70,7 +72,9 @@ uv run python -m tools.test_suite --workers 4 --durations 20 --timings .test-tim
 
 The timing report lists individual test durations (excluding class/module
 fixtures) and measured module totals. Its JSON file is reused on subsequent
-runs; unmeasured modules use estimates scaled to the observed durations.
+runs without sharding. Shards use source-based estimates so their assignments
+agree even if local timing files differ. Unmeasured modules use estimates
+scaled to the observed durations when history is available.
 Timing reports from the earlier module-only format remain readable; the current
 format additionally records per-test durations.
 

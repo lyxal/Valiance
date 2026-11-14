@@ -213,6 +213,8 @@ def _run_batch(
     env: dict[str, str],
     timings_file: Path | None = None,
 ) -> tuple[int, TestBatch, int, str]:
+    selections = ", ".join(target.argument() for target in batch.targets)
+    print(f"worker batch {index} starting: {selections}", flush=True)
     completed = subprocess.run(
         _worker_command(batch.targets, verbose=verbose, timings_file=timings_file),
         stdout=subprocess.PIPE,
@@ -264,6 +266,8 @@ def run_batches(
                 for index, batch in enumerate(batches, start=1)
             }
             for future in as_completed(pending):
+                if future.cancelled():
+                    continue
                 index, batch, returncode, output = future.result()
                 results[index] = (batch, returncode, output)
                 status = "FAILED" if returncode else "passed"
@@ -272,31 +276,29 @@ def run_batches(
                     f"({len(set(batch.files))} modules, {len(batch.targets)} selections)",
                     flush=True,
                 )
+                if timing_dir is not None:
+                    path = timing_dir / f"{index}.json"
+                    if path.is_file():
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                        for module, seconds in data["modules"].items():
+                            measured_modules[module] = measured_modules.get(module, 0.0) + seconds
+                        measured_tests.extend(data["tests"])
+                        measured_test_durations.update(data.get("test_durations", {}))
+                if timings_file is not None:
+                    timings_file.parent.mkdir(parents=True, exist_ok=True)
+                    checkpoint = timings_file.with_suffix(timings_file.suffix + ".tmp")
+                    checkpoint.write_text(
+                        json.dumps(
+                            {"version": 2, "modules": measured_modules,
+                             "tests": measured_test_durations},
+                            indent=2,
+                        ) + "\n",
+                        encoding="utf-8",
+                    )
+                    checkpoint.replace(timings_file)
                 if returncode and fail_fast:
                     for other in pending:
                         other.cancel()
-                    break
-        if timing_dir:
-            for path in sorted(timing_dir.glob("*.json")):
-                data = json.loads(path.read_text(encoding="utf-8"))
-                for module, seconds in data["modules"].items():
-                    measured_modules[module] = measured_modules.get(module, 0.0) + seconds
-                measured_tests.extend(data["tests"])
-                measured_test_durations.update(data.get("test_durations", {}))
-        if timings_file is not None:
-            timings_file.parent.mkdir(parents=True, exist_ok=True)
-            timings_file.write_text(
-                json.dumps(
-                    {
-                        "version": 2,
-                        "modules": measured_modules,
-                        "tests": measured_test_durations,
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
         if durations:
             print(f"\nSlowest {durations} individual tests (excluding class/module setup):")
             slowest = sorted(
@@ -340,6 +342,8 @@ def _parser() -> argparse.ArgumentParser:
         help="test file glob; repeat for multiple patterns (default: test_*.py)",
     )
     parser.add_argument("--test-dir", type=Path, default=Path("tests"))
+    parser.add_argument("--shards", type=int, default=1, help="number of CI shards")
+    parser.add_argument("--shard", type=int, default=0, help="zero-based CI shard index")
     parser.add_argument(
         "--suite",
         choices=("all", "language-core", "standard-library"),
@@ -365,7 +369,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not 0 <= args.shard < args.shards:
+        parser.error("--shard must be between 0 and --shards minus one")
     if args.workers < 1 or args.durations < 0:
         print(
             "error: --workers must be at least 1 and --durations nonnegative",
@@ -381,7 +388,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # still amortizes interpreter startup across several modules.
     timings = None
     test_timings = None
-    if args.timings and args.timings.is_file():
+    # Shards must agree on membership even when their timing reports differ.
+    if args.shards == 1 and args.timings and args.timings.is_file():
         try:
             data = json.loads(args.timings.read_text(encoding="utf-8"))
             if data["version"] not in (1, 2) or not isinstance(data["modules"], dict):
@@ -396,7 +404,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
     try:
-        batches = partition_test_files(files, args.workers * 4, timings, test_timings)
+        batches = partition_test_files(
+            files, args.workers * 4 * args.shards, timings, test_timings
+        )
+        if args.shards > 1:
+            batches = tuple(sorted(
+                batches, key=lambda batch: batch.estimated_weight, reverse=True
+            ))[args.shard::args.shards]
     except (OSError, SyntaxError, ValueError) as error:
         print(f"error: cannot schedule tests ({error})", file=sys.stderr)
         return 2

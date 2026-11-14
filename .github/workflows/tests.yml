@@ -12,12 +12,13 @@ permissions:
 
 jobs:
   tests:
-    name: Tests (${{ matrix.suite }})
+    name: Tests (${{ matrix.suite }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         suite: [language-core, standard-library]
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,12 +35,12 @@ jobs:
         run: uv run --frozen python -c "import regex; import valiance.std.regex"
       - name: Run test suite in parallel and collect timings
         timeout-minutes: 15
-        run: uv run --frozen --with websockets --with wsproto --with websocket-client python -m tools.test_suite --suite ${{ matrix.suite }} --workers 4 --durations 20 --timings test-timings.json
+        run: uv run --frozen --with websockets --with wsproto --with websocket-client python -m tools.test_suite --suite ${{ matrix.suite }} --shards 3 --shard ${{ matrix.shard }} --workers 4 --durations 20 --timings test-timings.json
       - name: Upload test timing report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unittest-timings-${{ matrix.suite }}
+          name: unittest-timings-${{ matrix.suite }}-${{ matrix.shard }}
           path: test-timings.json
           if-no-files-found: ignore
 
