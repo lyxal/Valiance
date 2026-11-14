@@ -217,12 +217,12 @@ def _run_batch(
     print(f"worker batch {index} starting: {selections}", flush=True)
     completed = subprocess.run(
         _worker_command(batch.targets, verbose=verbose, timings_file=timings_file),
-        stdout=subprocess.PIPE,
+        stdout=None if verbose else subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         env=env,
     )
-    return index, batch, completed.returncode, completed.stdout
+    return index, batch, completed.returncode, completed.stdout or ""
 
 
 def run_batches(
@@ -245,7 +245,7 @@ def run_batches(
         pythonpath.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath)
 
-    results: dict[int, tuple[TestBatch, int, str]] = {}
+    failed = False
     measured_modules: dict[str, float] = {}
     measured_tests: list[dict[str, str | float]] = []
     measured_test_durations: dict[str, float] = {}
@@ -269,13 +269,15 @@ def run_batches(
                 if future.cancelled():
                     continue
                 index, batch, returncode, output = future.result()
-                results[index] = (batch, returncode, output)
+                failed |= returncode != 0
                 status = "FAILED" if returncode else "passed"
                 print(
                     f"worker batch {index}/{len(batches)}: {status} "
                     f"({len(set(batch.files))} modules, {len(batch.targets)} selections)",
                     flush=True,
                 )
+                if returncode and output:
+                    print(output.rstrip(), flush=True)
                 if timing_dir is not None:
                     path = timing_dir / f"{index}.json"
                     if path.is_file():
@@ -312,15 +314,6 @@ def run_batches(
             )[:10]
             for name, seconds in modules_by_duration:
                 print(f"  {seconds:8.3f}s  {name}")
-
-    failed = any(returncode for _, returncode, _ in results.values())
-    for index in sorted(results):
-        batch, returncode, output = results[index]
-        if not (verbose or returncode):
-            continue
-        status = "FAILED" if returncode else "passed"
-        print(f"\n=== batch {index}: {status} ===")
-        print(output.rstrip())
 
     elapsed = time.perf_counter() - started
     print(f"\nParallel suite {'FAILED' if failed else 'passed'} in {elapsed:.2f}s.")

@@ -3,8 +3,33 @@ import unittest
 
 from valiance.std import _web_core as web
 from valiance.analysis import Analyser
+from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
+
+
+# The tests import the same on-disk standard library. Share its analysed
+# modules while giving each test program a fresh analyser.
+_STD_MODULES = ModuleLoader()
+
+
+# These integration tests create their own compiler and runtime state. Tests
+# that open a listener use an ephemeral port, and filesystem cases use a
+# temporary directory.
+PARALLEL_SAFE_METHODS = (
+    "WebLanguageIntegrationTests.test_native_errors_propagate_through_try_operator",
+    "WebLanguageIntegrationTests.test_prepared_app_and_route_descriptors_from_valiance",
+    "WebJsonResponseIncrementTests.test_json_body_http_media_validation_and_codec",
+    "WebLanguageIntegrationTests.test_binary_post_echo_survives_middleware_and_bytecode",
+    "WebLanguageIntegrationTests.test_binary_response_constructor_and_bounded_readers",
+    "WebLanguageIntegrationTests.test_canonical_get_route_executes_and_serializes",
+    "WebOwnedHTTP1LifecycleTests.test_serve_bind_shutdown_and_error_values",
+    "WebJsonResponseIncrementTests.test_json_response_record_status_and_default",
+    "WebJsonResponseIncrementTests.test_real_http1_json_roundtrip",
+    "WebStaticFileTests.test_std_path_inputs_and_invalid_static_root",
+    "WebObjectFriendlyAndRequestsTests.test_importing_app_automatically_imports_all_route_verbs",
+    "WebMultipartBufferedTests.test_valiance_text_fields_and_upload_bytes_in_optimized_serialized_execution",
+)
 
 
 class WebPublicErrorHookTests(unittest.TestCase):
@@ -21,7 +46,7 @@ $app := get("/ok"): fn(req: web.GetRequest) => "ok" end
 web.dispatch($app, web.testRequest("GET", "/missing"))
 web.dispatch($app, web.testRequest("POST", "/ok"))
 web.dispatch($app, web.testRequest("GET", "/ok"))'''
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         for optimize, serialize in ((False, False), (True, True)):
@@ -46,7 +71,7 @@ $app := web.withLogger: fn (event: web.LogEvent) -> web.Error =>
 end
 $app := get("/ok"): fn(req: web.GetRequest) => "ok" end
 web.dispatch($app, web.testRequest("GET", "/ok"))'''
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         result, = run(compile_program(typed))
@@ -555,11 +580,14 @@ web.run($app, web.ServerConfig(port = {port}))'''
 
 
 class WebLanguageIntegrationTests(unittest.TestCase):
-    def _run(self, source: str, *, optimize: bool = False, serialized: bool = False):
-        analyzer = Analyser()
+    def _analyse(self, source: str):
+        analyzer = Analyser(module_loader=_STD_MODULES)
         nodes = analyzer.analyse(parse(source))
         self.assertEqual(analyzer.diagnostics, [])
-        program = compile_program(nodes, optimize=optimize)
+        return nodes
+
+    def _run(self, source: str, *, serialized: bool = False):
+        program = compile_program(self._analyse(source), optimize=False)
         return run(loads(dumps(program)) if serialized else program)
 
     def test_canonical_get_route_executes_and_serializes(self):
@@ -567,10 +595,12 @@ class WebLanguageIntegrationTests(unittest.TestCase):
 $app = web.App
 $app := get("/"): fn (req: web.GetRequest) => "Hello, world!" end
 web.dispatch($app, web.testRequest("GET", "/"))'''
+        nodes = self._analyse(source)
         for optimized in (False, True):
+            program = compile_program(nodes, optimize=optimized)
             for serialized in (False, True):
                 with self.subTest(optimized=optimized, serialized=serialized):
-                    response = self._run(source, optimize=optimized, serialized=serialized)[0]
+                    response = run(loads(dumps(program)) if serialized else program)[0]
                     self.assertEqual(response.fields['status'], 200)
                     self.assertEqual(response.fields['body'], 'Hello, world!')
 
@@ -633,10 +663,12 @@ $app := get("/users/{id}"): fn(req: web.GetRequest) => "one" end
 $descriptors = web.routes($app) ?
 $prepared = web.prepare($app) ?
 web.dispatch($prepared, web.testRequest("GET", "/users/21"))'''
+        nodes = self._analyse(source)
         for optimized in (False, True):
+            program = compile_program(nodes, optimize=optimized)
             for serialized in (False, True):
                 with self.subTest(optimized=optimized, serialized=serialized):
-                    response = self._run(source, optimize=optimized, serialized=serialized)[0]
+                    response = run(loads(dumps(program)) if serialized else program)[0]
                     self.assertEqual(response.fields['status'], 200)
                     self.assertEqual(response.fields['body'], 'one')
         source = '''import {std.web, std.web.App}
@@ -685,10 +717,12 @@ $app := get("/search"): fn(req: web.GetRequest) -> String | web.Error =>
   web.requireParam(web.queryParams($req), "term") ?
 end
 web.dispatch($app, web.testRequest("GET", "/search?term=first&term=second"))'''
+        nodes = self._analyse(source)
         for optimized in (False, True):
+            program = compile_program(nodes, optimize=optimized)
             for serialized in (False, True):
                 with self.subTest(optimized=optimized, serialized=serialized):
-                    res = self._run(source, optimize=optimized, serialized=serialized)[0]
+                    res = run(loads(dumps(program)) if serialized else program)[0]
                     self.assertEqual(res.fields['status'], 400)
         # ConfigError from a native route utility also needs to short-circuit.
         source = r'''import {std.web, std.web.App}
@@ -772,7 +806,7 @@ web.deleteCookie(web.Response, "sid")'''
         source = '''import {std.web, std.web.[get]}
 $app = web.App
 $app := get("/"): fn (req: web.GetRequest) => 42 end'''
-        analyzer = Analyser()
+        analyzer = Analyser(module_loader=_STD_MODULES)
         analyzer.analyse(parse(source))
         self.assertTrue(analyzer.diagnostics)
         self.assertTrue(any('no overloads' in d for d in analyzer.diagnostics), analyzer.diagnostics)
@@ -801,20 +835,23 @@ web.responseText(web.Response(body = [255 #byte]))
 web.responseText(web.Response(body = "ok"), 1)
 web.responseText(web.Response(body = "ok"), 2)
 web.collectBody(web.Response(body = [0 #byte, 128 #byte]), 1)'''
-        for optimized, serialized in ((False, False), (True, False), (False, True), (True, True)):
-            with self.subTest(optimized=optimized, serialized=serialized):
-                response, accepted, collected, bad_utf8, too_small, text, oversized = self._run(
-                    source, optimize=optimized, serialized=serialized)
-                self.assertEqual(_unwrap_response(response).bytes, b'\x00\x80\xff')
-                self.assertEqual((_unwrap_response(accepted).status, _unwrap_response(accepted).bytes),
-                                 (202, b'*'))
-                self.assertEqual(_unwrap_response(response).headers.one('Content-Type'),
-                                 'application/octet-stream')
-                self.assertEqual(bytes(map(int, collected)), b'\x00\x80\xff')
-                self.assertEqual(bad_utf8.type_name, 'web.Error.BadText')
-                self.assertEqual(too_small.type_name, 'web.Error.BodyTooLarge')
-                self.assertEqual(text, 'ok')
-                self.assertEqual(oversized.type_name, 'web.Error.BodyTooLarge')
+        nodes = self._analyse(source)
+        for optimized in (False, True):
+            program = compile_program(nodes, optimize=optimized)
+            for serialized in (False, True):
+                with self.subTest(optimized=optimized, serialized=serialized):
+                    response, accepted, collected, bad_utf8, too_small, text, oversized = run(
+                        loads(dumps(program)) if serialized else program)
+                    self.assertEqual(_unwrap_response(response).bytes, b'\x00\x80\xff')
+                    self.assertEqual((_unwrap_response(accepted).status, _unwrap_response(accepted).bytes),
+                                     (202, b'*'))
+                    self.assertEqual(_unwrap_response(response).headers.one('Content-Type'),
+                                     'application/octet-stream')
+                    self.assertEqual(bytes(map(int, collected)), b'\x00\x80\xff')
+                    self.assertEqual(bad_utf8.type_name, 'web.Error.BadText')
+                    self.assertEqual(too_small.type_name, 'web.Error.BodyTooLarge')
+                    self.assertEqual(text, 'ok')
+                    self.assertEqual(oversized.type_name, 'web.Error.BodyTooLarge')
 
     def test_binary_post_echo_survives_middleware_and_bytecode(self):
         from valiance.std.web import _unwrap_response
@@ -830,21 +867,24 @@ $app := post("/echo"): fn(req: web.PostRequest) -> web.Response | web.Error =>
   web.Response(body = $binary)
 end
 web.dispatch($app, web.testRequest("POST", "/echo", web.Headers, [0 #byte, 128 #byte, 255 #byte]))'''
-        for optimized, serialized in ((False, False), (True, False), (False, True), (True, True)):
-            with self.subTest(optimized=optimized, serialized=serialized):
-                result, = self._run(source, optimize=optimized, serialized=serialized)
-                response = _unwrap_response(result)
-                self.assertEqual(response.status, 200)
-                self.assertEqual(response.bytes, b'\x00\x80\xff')
-                self.assertEqual(response.headers.one('X-After'), 'seen')
-                self.assertEqual(response.headers.one('Content-Type'), 'application/octet-stream')
+        nodes = self._analyse(source)
+        for optimized in (False, True):
+            program = compile_program(nodes, optimize=optimized)
+            for serialized in (False, True):
+                with self.subTest(optimized=optimized, serialized=serialized):
+                    result, = run(loads(dumps(program)) if serialized else program)
+                    response = _unwrap_response(result)
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.bytes, b'\x00\x80\xff')
+                    self.assertEqual(response.headers.one('X-After'), 'seen')
+                    self.assertEqual(response.headers.one('Content-Type'), 'application/octet-stream')
 
 
 class WebObjectFriendlyAndRequestsTests(unittest.TestCase):
     """Public imports and request helpers must work through compiled Valiance."""
 
     def execute(self, source, *, optimize=False, serialized=False):
-        analyzer = Analyser()
+        analyzer = Analyser(module_loader=_STD_MODULES)
         typed = analyzer.analyse(parse(source))
         self.assertEqual(analyzer.diagnostics, [])
         program = compile_program(typed, optimize=optimize)
@@ -925,7 +965,7 @@ class WebMiddlewareNegotiationAndHintsTests(unittest.TestCase):
     """New v4 API and actual HTTP/1.1 informational-response coverage."""
 
     def evaluate(self, source, *, optimize=False, serialized=False):
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         nodes = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         program = compile_program(nodes, optimize=optimize)
@@ -1050,7 +1090,7 @@ class WebJsonResponseIncrementTests(unittest.TestCase):
     """v8 JSON uses std.json encoding and strict HTTP media validation."""
 
     def execute(self, source: str, *, optimized=False, serialized=False):
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         program = compile_program(typed, optimize=optimized)
@@ -1173,7 +1213,7 @@ class WebOwnedHTTP1LifecycleTests(unittest.TestCase):
     """Exercise Valiance-owned HTTP/1.1 listener values, not only Python handles."""
 
     def execute(self, source: str, *, optimized: bool = False, serialized: bool = False):
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         program = compile_program(typed, optimize=optimized)
@@ -1299,7 +1339,7 @@ $server = web.serve(web.App, web.ServerConfig(port = 0)) ?
 $left = $server
 $right = $server
 web.shutdown $left'''
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         analyser.analyse(parse(source))
         self.assertTrue(analyser.diagnostics)
 
@@ -1340,7 +1380,7 @@ class WebStaticFileTests(unittest.TestCase):
     """Bounded fixed files and confined static routes through Valiance."""
 
     def execute(self, source: str, *, optimized: bool = False, serialized: bool = False):
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         bytecode = compile_program(typed, optimize=optimized)
@@ -1593,7 +1633,7 @@ class WebMultipartBufferedTests(unittest.TestCase):
             headers=web.Headers((('Content-Type', media),)), body=raw)
 
     def execute(self, source, *, optimized=False, serialized=False):
-        analyser = Analyser()
+        analyser = Analyser(module_loader=_STD_MODULES)
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         bytecode = compile_program(typed, optimize=optimized)

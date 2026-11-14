@@ -60,8 +60,8 @@ including compiler and VM integration regressions that use library APIs, are
 part of language core. Use `--pattern 'test_std_web*.py'` to focus on Web.
 GitHub Actions runs three shards per suite on separate runners. To reproduce a
 shard, use `--workers 4 --shards 3 --shard 0` with the matching `--suite`.
-Each shard logs the targets in every batch as it starts and checkpoints its
-timing report after each completed batch.
+Each shard streams individual test progress and checkpoints its timing report
+after each completed batch. Output from concurrent workers can interleave.
 
 Measure the slowest tests and retain module timings for more balanced later
 runs with:
