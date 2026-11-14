@@ -2454,7 +2454,7 @@ def _with_reachable_import_prelude(nodes: list[TypedNode]) -> list[TypedNode]:
     # A hidden binding uniquely identifies the checked provider declaration;
     # source-level names only supplement that exact identity for constructor
     # metadata and raw bodies that do not contain a checked call.
-    runtime_bindings: dict[Symbol, int] = {}
+    runtime_bindings: dict[Symbol, set[int]] = {}
     qualified_names: dict[Symbol, set[int]] = {}
     unqualified_names: dict[str, set[int]] = {}
     provider_names: dict[tuple[str, str], set[int]] = {}
@@ -2463,7 +2463,7 @@ def _with_reachable_import_prelude(nodes: list[TypedNode]) -> list[TypedNode]:
         runtime_name = typed.runtime_name
         if runtime_name is None:
             return nodes
-        runtime_bindings[runtime_name] = index
+        runtime_bindings.setdefault(runtime_name, set()).add(index)
         source_name = typed.node.name
         if source_name.namespace:
             qualified_names.setdefault(source_name, set()).add(index)
@@ -2478,9 +2478,12 @@ def _with_reachable_import_prelude(nodes: list[TypedNode]) -> list[TypedNode]:
     pending: list[int] = []
 
     def add(index: int) -> None:
-        if index not in retained:
-            retained.add(index)
-            pending.append(index)
+        """Keep all overload fragments sharing a runtime function binding."""
+        runtime_name = imports[index].runtime_name
+        for candidate in runtime_bindings.get(runtime_name, (index,)):
+            if candidate not in retained:
+                retained.add(candidate)
+                pending.append(candidate)
 
     def scan(value: object, provider: str | None) -> bool:
         """Return false when dynamic metadata forces conservative linking."""
@@ -2489,8 +2492,7 @@ def _with_reachable_import_prelude(nodes: list[TypedNode]) -> list[TypedNode]:
         while stack:
             item = stack.pop()
             if isinstance(item, Symbol):
-                index = runtime_bindings.get(item)
-                if index is not None:
+                for index in runtime_bindings.get(item, ()):
                     add(index)
                 # A variant member or object method is installed by the
                 # enclosing declaration. E.g. ``Figure.Circle`` has no

@@ -90,6 +90,21 @@ class MultiModuleInteractionTests(unittest.TestCase):
                     self.assertTrue(check_invalid_interaction(
                         family, "facade", 512, layout))
 
+    def test_imported_overloads_retain_checked_implementation_identities(self):
+        """Overload fragments share a binding across source and binary imports."""
+        cases = (
+            ("branch_enum_overload", "direct", "source"),
+            ("branch_enum_overload", "nested", "compiled"),
+            ("branch_enum_overload", "nested", "dependent_binary"),
+            ("try_overload_object", "alias", "source"),
+        )
+        for family, graph, layout in cases:
+            with self.subTest(family=family, graph=graph, layout=layout):
+                self.assertEqual(
+                    execute_interaction(interaction_case(family, graph, 709), layout),
+                    4,
+                )
+
     def test_source_direct_group_0(self):
         self._check_source_graph("direct", 0)
 
