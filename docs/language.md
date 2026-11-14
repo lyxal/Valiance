@@ -4418,6 +4418,7 @@ Project shape and testing are independent choices. Available templates are:
   application module;
 - `package`: a reusable root package module with no executable entry;
 - `multi-module`: a runnable application split across source modules;
+- `web-app` (alias `web`): an HTTP app with an HTML home page and a health route;
 - `empty`: project metadata and documentation without generated source.
 
 Tests may be included or omitted for any source-bearing template:
@@ -4426,8 +4427,12 @@ Tests may be included or omitted for any source-bearing template:
 vln init my_app --template application --tests
 vln init my_app --template application --no-tests
 vln init my_lib --template package --tests
+vln init my_site --template web-app --tests
 vln init scratch --template empty --no-tests
 ```
+
+In a web app project, `vln run` starts the server at <http://127.0.0.1:8080/>.
+Edit the home page and `/health` route in `src/app.vlnc`.
 
 When standard input and output are interactive and neither choice was supplied,
 `vln init` keeps the normal terminal screen and presents an inline keyboard

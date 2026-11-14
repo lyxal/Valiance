@@ -37,6 +37,7 @@ PROJECT_TEMPLATES = (
         "multi-module", "A runnable application split across source modules"
     ),
     ProjectTemplate("empty", "Project metadata and documentation without source"),
+    ProjectTemplate("web-app", "An HTTP application with an HTML home page"),
 )
 DEFAULT_PROJECT_TEMPLATE = "application"
 _TEMPLATE_ALIASES = {
@@ -50,6 +51,8 @@ _TEMPLATE_ALIASES = {
     "multimodule": "multi-module",
     "multi": "multi-module",
     "empty": "empty",
+    "web-app": "web-app",
+    "web": "web-app",
 }
 
 
@@ -515,6 +518,52 @@ def _project_template_files(
             + ("vln test\n" if include_tests else "")
             + "vln compile\n```\n"
         )
+    elif template == "web-app":
+        files[Path("src/app.vlnc")] = (
+            "import { std.web, std.web.App, std.html }\n\n"
+            "public define \\createApp -> App =>\n"
+            "  $app = App\n"
+            '  $app := get("/"): fn(req: web.GetRequest) =>\n'
+            "    html.document(html.html(html.fragment([\n"
+            f'      html.head(html.title "{project_name}"),\n'
+            f'      html.body(html.h1 "Welcome to {project_name}!")\n'
+            "    ])))\n"
+            "  end\n"
+            '  $app := get("/health"): fn(req: web.GetRequest) => "ok" end\n'
+            "  $app\n"
+            "end\n"
+        )
+        files[DEFAULT_PROJECT_ENTRY] = (
+            "import { std.web, root.src.app }\n\n"
+            'web.run(app.\\createApp, web.ServerConfig(host = "127.0.0.1", port = 8080))\n'
+        )
+        entries["main"] = DEFAULT_PROJECT_ENTRY.as_posix()
+        files[Path("README.md")] = (
+            f"# {project_name}\n\n"
+            "A Valiance web application using `std.web` and `std.html`. "
+            "Edit the routes in `src/app.vlnc`.\n\n"
+            "## Run\n\n```text\nvln run\n```\n\n"
+            "Open <http://127.0.0.1:8080/> in your browser. "
+            "The health endpoint is at <http://127.0.0.1:8080/health>.\n\n"
+            f"{test_section}"
+            "## Build\n\n```text\nvln compile\n```\n"
+        )
+        if include_tests:
+            files[Path("tests/project.vlnc")] = (
+                "import { std.testing, std.web, root.src.app }\n\n"
+                f'@testgroup("{project_name}")\n'
+                "define \\project =>\n"
+                '  @test("serves the home page and health endpoint")\n'
+                "  define \\servesRoutes =>\n"
+                "    $app = app.\\createApp\n"
+                '    $home = web.dispatch($app, web.testRequest("GET", "/"))\n'
+                '    $health = web.dispatch($app, web.testRequest("GET", "/health"))\n'
+                "    testing.assertEqual($home.status, 200)\n"
+                "    testing.assertEqual($health.status, 200)\n"
+                '    testing.assertEqual($health.body, "ok")\n'
+                "  end\n"
+                "end\n"
+            )
     elif template == "package":
         files[Path(f"{project_name}.vlnc")] = greeting
         test_import = f"root.{project_name}.greeting"

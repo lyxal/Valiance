@@ -1336,9 +1336,35 @@ class MainTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("application", rendered)
         self.assertIn("multi-module", rendered)
+        self.assertIn("web-app", rendered)
         self.assertIn("package", rendered)
         self.assertIn("empty", rendered)
         self.assertIn("(default)", rendered)
+
+    def test_init_web_app_runs_generated_route_tests(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "my_site"
+            output = io.StringIO()
+            old_cwd = Path.cwd()
+            try:
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(main(["init", str(project), "--template", "web-app", "--tests"]), 0)
+                    os.chdir(project)
+                    self.assertEqual(main(["test"]), 0)
+                    self.assertEqual(main(["compile"]), 0)
+            finally:
+                os.chdir(old_cwd)
+            self.assertIn("src/app.vlnc", output.getvalue())
+
+    def test_init_web_alias_can_omit_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "my_site"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["init", str(project), "--template", "web", "--no-tests"]), 0)
+            self.assertTrue((project / "src/main.vlnc").is_file())
+            self.assertFalse((project / "tests").exists())
 
     @unittest.skip("Temporarily disabled: project creation tests are deferred")
     def test_init_package_can_scaffold_current_directory(self):

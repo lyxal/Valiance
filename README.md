@@ -293,9 +293,13 @@ For a repeatable setup without prompts, supply the options explicitly:
 
 ```powershell
 vln init myproject --template application --tests
+vln init my_site --template web-app --tests
 vln init my_library --template package --no-tests
 vln init --list-templates
 ```
+
+Run `vln run` from the web app project directory and open
+<http://127.0.0.1:8080/> in your browser.
 
 ## License
 

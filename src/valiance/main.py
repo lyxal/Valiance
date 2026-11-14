@@ -192,7 +192,7 @@ def _command_help_text(prog: str, action: str) -> str:
         "init": (
             "Create a Valiance project in a new directory or the current directory.\n\n"
             "OPTIONS\n"
-            "  --template <name>  Use application, package, multi-module, or empty\n"
+            "  --template <name>  Use application, package, multi-module, web-app, or empty\n"
             "  --tests            Include tests that exercise generated project code\n"
             "  --no-tests         Do not create a test scaffold\n"
             "  --list-templates   Show available templates and exit\n\n"
@@ -1014,6 +1014,8 @@ def _print_project_ready(root: Path, target: str, template: str, tests: bool) ->
         print(f"  {entry_path:<26} application entry point")
     if template == "package":
         print(f"  {project_name + '.vlnc':<26} public package API")
+    if template == "web-app":
+        print(f"  {'src/app.vlnc':<26} HTTP routes")
     if tests:
         print(f"  {'tests/project.vlnc':<26} example test for your public API")
     print(f"  {'valiance.toml':<26} project settings and dependencies")
