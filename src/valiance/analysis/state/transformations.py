@@ -41,6 +41,7 @@ from valiance.asts import (
     TypedObjectNode,
     TypedLiteralNode,
     TypedStringInterpolationNode,
+    TypedProtocolIndexNode,
     TypedMatchNode,
     TypedNode,
     TypedSpawnNode,
@@ -177,6 +178,15 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             tuple(
                 part if isinstance(part, str) else _refine_typed_body(part, old, new)
                 for part in typed_node.parts
+            ),
+        )
+    if isinstance(typed_node, TypedProtocolIndexNode):
+        return replace(
+            typed_node,
+            typ=typ,
+            providers=tuple(
+                _refine_typed_node(provider, old, new)
+                for provider in typed_node.providers
             ),
         )
     if isinstance(typed_node, TypedDescriptorConversionNode):

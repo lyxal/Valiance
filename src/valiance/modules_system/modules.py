@@ -144,12 +144,18 @@ def collect_module_exports(
     analyser: object,
 ) -> ModuleExports:
     """Collect the complete analysed static and runtime-facing module interface."""
+    objects = _module_objects(program, typed, analyser.env.context.nominal_origins)
+    nominal_origins = {
+        **analyser.env.context.nominal_origins,
+        **{obj.name: obj.origin or Symbol(obj.name.text, tuple(module_name.split(".")))
+           for obj in objects
+           if isinstance(obj.typed.node, ObjectNode)
+           and obj.typed.node.kind == Symbol("object") and obj.typed.node.target is None},
+    }
     return ModuleExports(
         module_name,
-        _deduplicate(_module_definitions(program, typed, analyser.env.context.nominal_origins) + analyser.public_import_definitions),
-        _deduplicate(_module_objects(
-            program, typed, analyser.env.context.nominal_origins
-        ) + analyser.public_import_objects),
+        _deduplicate(_module_definitions(program, typed, nominal_origins) + analyser.public_import_definitions),
+        _deduplicate(objects + analyser.public_import_objects),
         _deduplicate(_module_tags(program, analyser.env) + analyser.public_import_tags),
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,

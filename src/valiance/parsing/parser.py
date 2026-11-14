@@ -193,7 +193,10 @@ class _ChainPiece:
 
 def parse(source: str) -> list[ASTNode]:
     """Parse Valiance source, reporting all reasonably recoverable errors."""
-    result = parse_with_diagnostics(source)
+    return _require_valid_parse(parse_with_diagnostics(source))
+
+
+def _require_valid_parse(result: ParseResult) -> list[ASTNode]:
     if result.diagnostics:
         if len(result.diagnostics) == 1:
             raise result.diagnostics[0]
@@ -201,9 +204,11 @@ def parse(source: str) -> list[ASTNode]:
     return list(result.nodes)
 
 
-def parse_with_diagnostics(source: str) -> ParseResult:
+def parse_with_diagnostics(
+    source: str, *, origin: SourceLocation | None = None
+) -> ParseResult:
     """Return a best-effort AST together with lexer and parser diagnostics."""
-    tokens, lex_errors = lex_with_diagnostics(source)
+    tokens, lex_errors = lex_with_diagnostics(source, origin=origin)
     # Lexical ERROR tokens identify already-reported spans.  Removing them lets
     # the parser continue from the next real token without duplicate messages.
     parse_tokens = [token for token in tokens if token.kind is not TokenKind.ERROR]
@@ -4214,7 +4219,15 @@ def _string_parts(raw: str, token: Token) -> tuple[str | tuple[ASTNode, ...], ..
             if literal:
                 parts.append("".join(literal))
                 literal.clear()
-            parsed = _interpolation_expression(expression, token)
+            prefix = raw[: index + 2]
+            lines = prefix.count("\n")
+            origin = SourceLocation(
+                token.line + lines,
+                len(prefix.rsplit("\n", 1)[-1]) + 1 if lines
+                else token.column + 1 + len(prefix),
+                token.offset + 1 + len(prefix),
+            )
+            parsed = _require_valid_parse(parse_with_diagnostics(expression, origin=origin))
             if not parsed:
                 raise ParseError(
                     "empty string interpolation",
@@ -4242,14 +4255,6 @@ def _string_parts(raw: str, token: Token) -> tuple[str | tuple[ASTNode, ...], ..
     if literal or not parts:
         parts.append("".join(literal))
     return tuple(parts)
-
-
-def _interpolation_expression(
-    expression: str,
-    token: Token,
-) -> tuple[ASTNode, ...]:
-    """Parse interpolation expression from the current token stream."""
-    return tuple(parse(expression))
 
 
 def _contextual_empty_list(

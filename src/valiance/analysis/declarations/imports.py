@@ -215,6 +215,8 @@ class _ImportDeclarations:
                     overload,
                     params=_rename_imported_types(overload.params, private_nominals),
                     returns=_rename_imported_types(overload.returns, private_nominals),
+                    index_target=_rename_imported_types(overload.index_target, private_nominals),
+                    update_target=_rename_imported_types(overload.update_target, private_nominals),
                     generic_constraints=_rename_imported_types(
                         overload.generic_constraints, private_nominals
                     ),

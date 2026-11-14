@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 import unicodedata
 
 from valiance.analysis.diagnostics import DiagnosticError
+from valiance.asts.nodes import SourceLocation
 from valiance.parsing.unicode_identifiers import (
     forbidden_identifier_character,
     is_xid_continue,
@@ -86,7 +87,9 @@ def lex(source: str) -> list[Token]:
     return tokens
 
 
-def lex_with_diagnostics(source: str) -> tuple[list[Token], tuple[LexError, ...]]:
+def lex_with_diagnostics(
+    source: str, *, origin: SourceLocation | None = None
+) -> tuple[list[Token], tuple[LexError, ...]]:
     """Tokenize *source* and collect recoverable lexical diagnostics.
 
     Invalid characters become ``ERROR`` tokens.  Scanning then resumes at the
@@ -94,7 +97,13 @@ def lex_with_diagnostics(source: str) -> tuple[list[Token], tuple[LexError, ...]
     errors from the rest of the file.
     """
     lexer = _Lexer(source, recover=True)
-    return lexer.lex(), tuple(lexer.diagnostics)
+    if origin is not None:
+        lexer.line = origin.line
+        lexer.column = origin.column
+    tokens = lexer.lex()
+    if origin is not None:
+        tokens = [replace(token, offset=token.offset + origin.offset) for token in tokens]
+    return tokens, tuple(lexer.diagnostics)
 
 
 class _Lexer:

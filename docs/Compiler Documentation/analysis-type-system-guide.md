@@ -1575,6 +1575,9 @@ user-defined compiler plugins should be able to register specs through the same
 Implemented annotations:
 - `@index(Type)` and `@update(Type)`: register visible, statically resolved
   custom index and indexed-replacement providers for named non-intrinsic types.
+  A shorthand callback can resolve `$[selector]` using the receiver type from
+  its expected function signature. Imported providers use the same nominal
+  aliases as the rest of their signatures.
   Provider applicability uses assignability rather than vectorising call
   compatibility.
 

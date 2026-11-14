@@ -49,6 +49,7 @@ class ModifierArgumentAnalysis:
     typ: T.Type
     typed_node: TypedFunctionNode
     outer: AnalysisBranch | None = None
+    inference_diagnostics: tuple[str, ...] = ()
 
 @dataclass(frozen=True)
 class ElementArguments:

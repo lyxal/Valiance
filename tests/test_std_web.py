@@ -574,6 +574,19 @@ web.dispatch($app, web.testRequest("GET", "/"))'''
                     self.assertEqual(response.fields['status'], 200)
                     self.assertEqual(response.fields['body'], 'Hello, world!')
 
+    def test_route_capture_in_shorthand_and_explicit_handlers(self):
+        source = '''import {std.web, std.web.App, std.html}
+$app = App
+$app := get("/greet/{name}"): html.p "Hello, ${$["name"] ?}!"
+$app := get("/explicit/{name}"): fn(req: web.GetRequest) =>
+  html.p "Hello, ${$req["name"] ?}!"
+end
+web.dispatch($app, web.testRequest("GET", "/greet/Ada"))
+web.dispatch($app, web.testRequest("GET", "/explicit/Ada"))'''
+        responses = self._run(source, serialized=True)
+        self.assertEqual([r.fields['body'] for r in responses],
+                         ['<p>Hello, Ada!</p>', '<p>Hello, Ada!</p>'])
+
     def test_route_specificity_and_head_from_valiance(self):
         source = '''import {std.web, std.web.[get, post]}
 $app = web.App

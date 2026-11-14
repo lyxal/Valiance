@@ -495,6 +495,12 @@ end
             ],
         )
 
+    def test_interpolation_preserves_source_location(self):
+        source = '\n  "count: ${\n    42}"'
+        (node,) = parse(source)
+        (expression,) = node.parts[1]
+        self.assertEqual(expression.location, SourceLocation(3, 5, source.index("42")))
+
     def test_parses_string_expression_interpolation(self):
         self.assertEqual(
             parse('"Count is ${1 + 2}"'),

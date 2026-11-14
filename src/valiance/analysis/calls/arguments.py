@@ -185,15 +185,30 @@ class _CallArguments:
         """Determine the types used for modifier argument during static analysis."""
         analyses: list[ModifierArgumentAnalysis] = []
         for arg in node.modifier_args:
-            result = self._analyse_function_literal(branch, arg)
+            inference_diagnostics = ()
+            analyser = self
+            if arg.contextual_signature and arg.params is None:
+                analyser = self._child_analyser(self.env.lexical_child_scope())
+            result = analyser._analyse_function_literal(branch, arg)
             if result is None:
-                return None
-            function, _ = result
+                if analyser is self:
+                    return None
+                # Standalone inference can fail before the receiver type is
+                # known. Let the candidate supply its callback signature.
+                typ, overloads = T.FunctionType(None, None), ()
+                inference_diagnostics = tuple(analyser.diagnostics)
+            else:
+                function, _ = result
+                typ, overloads = function.typ, function.overloads
+                if analyser is not self:
+                    self.diagnostics.extend(analyser.diagnostics)
+                    self.warnings.extend(analyser.warnings)
             analyses.append(
                 ModifierArgumentAnalysis(
-                    function.typ,
-                    TypedFunctionNode(arg, function.typ, function.overloads),
+                    typ,
+                    TypedFunctionNode(arg, typ, overloads),
                     branch,
+                    inference_diagnostics,
                 )
             )
         return tuple(analyses)

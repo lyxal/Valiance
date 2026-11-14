@@ -102,6 +102,14 @@ class _ElementCalls:
         del self.call_site_failures[failure_start:]
         if _allow_no_match and not candidates:
             return BranchSet.collect(terminal)
+        if not candidates:
+            inference_diagnostics = tuple(dict.fromkeys(
+                diagnostic for modifier in modifier_args
+                for diagnostic in modifier.inference_diagnostics
+            ))
+            if inference_diagnostics:
+                self.diagnostics.extend(inference_diagnostics)
+                return BranchSet.collect(terminal)
         if node.name in (Symbol("field?"), Symbol("length")) and not self.reflection_unsafe:
             from valiance.vtypes.reflection import fields_type_owners
             permitted = []

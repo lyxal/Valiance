@@ -926,3 +926,13 @@ public define[T, R] bodyJson(request: R) -> Result[T, Error] =>
   $text = std.web.bodyJsonRaw($request) ?
   std.web.decodeBodyJson[T]($text, typeInfo[T].name) ?
 end
+
+#? Look up a named GET route capture.
+@index(GetRequest)
+public define routeCapture(request: GetRequest, name: String) -> String | Error =>
+  try =>
+    $request.routeParams[$name]
+  handle KeyFault =>
+    Error.MissingParam("Route capture is missing")
+  end
+end

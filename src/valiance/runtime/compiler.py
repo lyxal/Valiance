@@ -1892,6 +1892,7 @@ class _Compiler:
                     raise CompileError("custom updater is missing resolved call metadata")
                 self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
             return
+        self.emit(OpCode.SOURCE_ARGS, 1)
         self.emit(OpCode.STORE_VAR, receiver)
         for index, provider in enumerate(typed_node.providers):
             self.emit(OpCode.LOAD_VAR, receiver)

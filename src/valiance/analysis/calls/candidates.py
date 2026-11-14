@@ -849,11 +849,11 @@ def _modifier_variants_for_expected(
         expected,
         T.FunctionType,
     ) or _functions._is_bare_function_type(expected):
-        if T.compatible(modifier.typ, expected, ctx):
+        if modifier.typed_node.overloads and T.compatible(modifier.typ, expected, ctx):
             yield modifier, {}
         return
 
-    if _function_has_union_parameter(expected):
+    if modifier.typed_node.overloads and _function_has_union_parameter(expected):
         substitution = _branch_argument_substitution((modifier.typ,), (expected,), ctx)
         if substitution is not None:
             concrete_expected = _substitute_branch_type(expected, substitution)
