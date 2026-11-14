@@ -548,6 +548,8 @@ class _ObjectDeclarations:
                 generic_constraints=constraints,
                 param_defaults=tuple(field.default or None for field in node.fields),
             )
+            if not attributes:
+                self._bind_niladic_constructor(name)
         else:
             self.env.define_constructor_metadata(
                 name,
@@ -555,6 +557,17 @@ class _ObjectDeclarations:
                 defaults=defaults,
                 generic_constraints=constraints,
             )
+
+    def _bind_niladic_constructor(self, name: Symbol) -> None:
+        """Expose a synthesized zero-argument constructor under its niladic name."""
+        if name.text.startswith("\\"):
+            return
+        alias = Symbol(f"\\{name.text}", name.namespace)
+        overload = self.env.overloads_for(name)[-1]
+        self.env.define_overload(alias, overload)
+        self.env.bind_runtime_name(
+            alias, self.env.runtime_name_for(name, overload), overload,
+        )
 
     def _register_constructor_definition(
         self,

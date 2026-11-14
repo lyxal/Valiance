@@ -7449,6 +7449,45 @@ triple "H"
         """
         self.assertEqual(execute(source), ["HHH"])
 
+    def test_multimethod_dispatch_selects_the_overload_at_the_meet(self):
+        stack = execute(r'''
+trait Animal => end
+object Dog => end
+object Dog as Animal => end
+object Cat => end
+object Cat as Animal => end
+
+define f(:Animal, :Animal) -> String => "Animal, Animal"
+multi define f(:Dog, :Animal) -> String => "Dog, Animal"
+multi define f(:Dog, :Cat) => "Dog, Cat"
+multi define f(:Animal, :Cat) -> String => "Animal, Cat"
+define g(a: Animal, b: Animal) -> String => f($a, $b) end
+
+f(\Dog, \Cat)
+g(\Dog, \Cat)
+''')
+        self.assertEqual(stack, ["Dog, Cat", "Dog, Cat"])
+
+    def test_multimethod_dispatch_selects_trait_intersection(self):
+        stack = execute(r'''
+trait Animal => end
+trait Pet => end
+trait Trained => end
+object Dog => end
+object Dog as Animal => end
+object Dog as Pet => end
+object Dog as Trained => end
+
+define f(:Animal) -> String => "animal"
+multi define f(:Animal & Pet) -> String => "pet"
+multi define f(:Animal & Trained) -> String => "trained"
+multi define f(:Animal & Pet & Trained) -> String => "trained pet"
+define g(a: Animal) -> String => f($a) end
+
+g(\Dog)
+''')
+        self.assertEqual(stack, ["trained pet"])
+
     def test_multimethod_dispatches_collision_by_runtime_object_types(self):
         source = """
 trait Collidable => end
@@ -7899,6 +7938,26 @@ end
             )
 
         self.assertEqual(stack, ["Joe"])
+
+    def test_executes_niladic_object_constructors(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pets.vlnc").write_text(
+                "public object Dog => end", encoding="utf-8",
+            )
+            stack = execute(
+                r"""
+import { pets }
+object Cat => end
+\Cat pets.\Dog
+""",
+                root / "main.vlnc",
+            )
+
+        self.assertEqual(
+            tuple(format_runtime_value(value) for value in stack),
+            ("Cat{}", "pets.Dog{}"),
+        )
 
     def test_executes_imported_namespace_explicit_object_constructor(self):
         with TemporaryDirectory() as tmp:

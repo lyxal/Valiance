@@ -84,7 +84,7 @@ choose(widen(Item(1)), widen(Other(2)))
       'choose("a", "b")\nchoose(widen(Item(1)), widen(Other(2)))', ["strings", "io"]),
     C("MM-020", MULTI_BASE + 'multi define choose(a: Item, b: Sized) -> String => "left" end\n'
       'multi define choose(a: Sized, b: Item) -> String => "right" end\n'
-      'choose(widen(Item(1)), widen(Item(2)))', fault="ambiguous multimethod"),
+      'choose(widen(Item(1)), widen(Item(2)))', reject=("unique overload at their meet (Item, Item)",)),
 ])
 
 

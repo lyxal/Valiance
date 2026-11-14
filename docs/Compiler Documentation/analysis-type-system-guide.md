@@ -377,6 +377,15 @@ Element application happens in `Analyser._element`:
 Overload resolution itself belongs in `types.relations`, not in the analyser.
 The analyser owns how overload application transforms branches.
 
+After checking a module's definitions, the analyser checks the visible
+`multi define` overloads in pairs. When their runtime parameter domains
+overlap, exactly one specialization must have the componentwise greatest
+lower bound of those domains. For example, `(Dog, Animal)` and
+`(Animal, Cat)` require a `(Dog, Cat)` specialization. The check runs even
+when no call site exposes the overlap. Distinct concrete object types
+exclude one another. Two open traits can overlap through an implementer of
+both, and their meet is an intersection.
+
 `AppliedOverload.returns` and `AppliedOverload.actual_returns` are different:
 
 - `returns`: declared returns after generic substitution
@@ -639,6 +648,10 @@ receivers retain ordinary named-argument binding and the owner's private-field
 access. `@self` returns the named receiver, including updates to its fields.
 Checked explicit-receiver bodies travel with `TypedObjectNode`, preserving
 selected calls and vectorisation through code generation and module interfaces.
+
+An object with no fields and a synthesized constructor also exposes a
+backslash-prefixed name such as `\Dog`. A namespaced import of the object
+exposes the same spelling under its namespace, such as `pets.\Dog`.
 
 Object declarations synthesize their field-order constructor only when the
 declaration has no definition with the same name as the object. A same-name

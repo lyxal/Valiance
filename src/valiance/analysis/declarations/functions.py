@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import fields, is_dataclass, replace
 from functools import cache
-from itertools import count
+from itertools import combinations, count
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.contracts.mustcall_flow import prove_local_mustcall
@@ -13,6 +13,7 @@ import valiance.vtypes as T
 from valiance.asts import ASTNode, DefineNode, FunctionNode, TypedFunctionNode, TypedNode
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
+from valiance.vtypes.relations import _contains_type_var, multimethod_dispatch_type
 
 from ..overload_identity import declaration_id
 from ..calls import candidates as _calls
@@ -54,6 +55,112 @@ class Analyser:
 
 class _FunctionDeclarations:
     """Own declaration operations for this domain."""
+
+    def _validate_multimethod_meets(self, nodes: tuple[ASTNode, ...]) -> bool:
+        """Check that overlapping runtime specializations have a unique meet."""
+        origins = {
+            node.name: node for node in nodes
+            if isinstance(node, DefineNode) and node.is_multi
+        }
+        valid = True
+        for name, overloads in self.env.overloads.items():
+            domains = {
+                overload.implementation_id: tuple(
+                    multimethod_dispatch_type(param) for param in overload.params
+                )
+                for overload in overloads if overload.is_multi
+            }
+            signatures = tuple(
+                domain for domain in domains.values() if any(param is not None for param in domain)
+            )
+            for left, right in combinations(signatures, 2):
+                meet = tuple(
+                    self._multimethod_parameter_meet(a, b)
+                    for a, b in zip(left, right, strict=True)
+                )
+                if any(isinstance(param, T.NeverType) for param in meet):
+                    continue
+                if sum(
+                    self._multimethod_domain_subset(signature, meet)
+                    and self._multimethod_domain_subset(meet, signature)
+                    for signature in signatures
+                ) == 1:
+                    continue
+                expected = ", ".join(T.show(param) if param is not None else "_" for param in meet)
+                self._diagnose(
+                    f"ambiguous overloads for element '{name}': overlapping multimethods "
+                    f"require a unique overload at their meet ({expected})",
+                    origins.get(name, nodes[-1]),
+                )
+                valid = False
+        return valid
+
+    def _multimethod_domain_subset(
+        self, left: tuple[T.Type | None, ...], right: tuple[T.Type | None, ...],
+    ) -> bool:
+        """Compare runtime parameter domains componentwise."""
+        return all(
+            b is None or (a is not None and T.subtype(a, b, self.env.context))
+            for a, b in zip(left, right, strict=True)
+        )
+
+    def _multimethod_parameter_meet(self, left: T.Type | None, right: T.Type | None) -> T.Type | None:
+        """Intersect runtime parameter domains, preserving potentially inhabited overlaps."""
+        if left is None:
+            return right
+        if right is None:
+            return left
+        ctx = self.env.context
+        if T.subtype(left, right, ctx):
+            return left
+        if T.subtype(right, left, ctx):
+            return right
+        if isinstance(left, T.UnionType):
+            return T.U(*(self._multimethod_parameter_meet(item, right) for item in left.items))
+        if isinstance(right, T.UnionType):
+            return self._multimethod_parameter_meet(right, left)
+        if isinstance(left, T.IntersectionType):
+            return T.I(*(self._multimethod_parameter_meet(item, right) for item in left.items))
+        if isinstance(right, T.IntersectionType):
+            return self._multimethod_parameter_meet(right, left)
+        if isinstance(left, T.NominalType) and isinstance(right, T.NominalType):
+            same_owner = ctx.nominal_origin(left.name) == ctx.nominal_origin(right.name)
+            if (
+                same_owner
+                and len(left.args) == len(right.args)
+                and self.env.lookup_object(left.name) is not None
+                and any(
+                    variance is T.Variance.INVARIANT
+                    and not T.same(a, b)
+                    and not (_contains_type_var(a) or _contains_type_var(b))
+                    for a, b, variance in zip(
+                        left.args, right.args, ctx.variance_for(left.name, len(left.args)),
+                        strict=True,
+                    )
+                )
+            ):
+                return T.Never()
+            scalar_names = {Symbol("Int"), Symbol("Real"), Symbol("Number"), Symbol("String")}
+            if (
+                not same_owner
+                and all(
+                    self.env.lookup_trait(typ.name) is None
+                    and self.env.lookup_variant(typ.name) is None
+                    and (
+                        typ.name in scalar_names
+                        or (
+                            self.env.lookup_object(typ.name) is not None
+                            and (
+                                typ.name.namespace
+                                or typ.name.text not in {"Some", "OK", "Result", "Optional"}
+                            )
+                        )
+                    )
+                    for typ in (left, right)
+                )
+            ):
+                return T.Never()
+        return T.I(left, right)
 
     def _validate_function_type_names(
         self, function: FunctionNode, origin: ASTNode,

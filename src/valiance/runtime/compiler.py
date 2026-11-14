@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Iterator, NoReturn
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement, runtime_elements
 from valiance.vtypes.identities import constructor_implementation_id, overload_implementation_id
+from valiance.vtypes.relations import multimethod_dispatch_type
 from valiance.asts import (
     TypedFunctionDispatchNode,
     TypedConstructionNode,
@@ -3408,16 +3409,8 @@ def _runtime_parameter_rank(typ: Type) -> int | None:
 
 def _runtime_dispatch_type(typ: Type) -> str | None:
     """Determine the type of runtime dispatch during typed-AST bytecode lowering."""
-    typ = normalize(typ)
-    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
-        return _runtime_dispatch_type(typ.inner)
-    if isinstance(typ, NominalType):
-        return show(typ)
-    if isinstance(typ, (UnionType, IntersectionType)) and all(
-        _runtime_dispatch_type(item) is not None for item in typ.items
-    ):
-        return show(typ)
-    return None
+    domain = multimethod_dispatch_type(typ)
+    return show(domain) if domain is not None else None
 
 
 def _unfold_state_arity(node: UnfoldNode, typed_node: TypedNode | None) -> int:

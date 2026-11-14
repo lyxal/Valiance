@@ -427,6 +427,12 @@ class _ImportDeclarations:
                         overload.returns, {node.name: obj.name},
                     ),
                 ))
+            if (
+                node.kind == Symbol("object")
+                and not node.fields
+                and not constructor_definitions(node.name, node.definitions)
+            ):
+                self._bind_niladic_constructor(obj.name)
             if node.kind == Symbol("variant"):
                 self._define_variant_shape(replace(node, name=obj.name))
                 for member in node.variants:

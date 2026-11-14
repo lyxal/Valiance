@@ -492,6 +492,35 @@ class SourceOverloadResolutionTests(unittest.TestCase):
                     self.assertIn("-> Int", diagnostic)
                     self.assertIn("-> String", diagnostic)
 
+    def test_niladic_objects_expose_ambiguous_multimethod_call(self):
+        declarations = '''
+trait Animal => end
+object Dog => end
+object Dog as Animal => end
+object Cat => end
+object Cat as Animal => end
+
+define f(:Animal, :Animal) -> String => "Animal, Animal"
+multi define f(:Dog, :Animal) -> String => "Dog, Animal"
+multi define f(:Animal, :Cat) -> String => "Animal, Cat"
+'''
+        call = r'println f(\Dog, \Cat)'
+        for body in ("", call, r'''
+define g(a: Animal, b: Animal) -> String => f($a, $b) end
+println g(\Dog, \Cat)
+'''):
+            with self.subTest(body=body):
+                analyser = Analyser()
+                analyser.analyse(parse(declarations + body))
+                self.assertEqual(len(analyser.diagnostics), 1)
+                self.assertIn("require a unique overload at their meet (Dog, Cat)", analyser.diagnostics[0])
+
+        analyser = Analyser()
+        analyser.analyse(parse(
+            declarations + 'multi define f(:Dog, :Cat) => "Dog, Cat"\n' + call,
+        ))
+        self.assertEqual(analyser.diagnostics, [])
+
     def test_nonmatching_calls_produce_no_match_diagnostics(self):
         declarations = '''
 define choose(a: Int, b: String) -> String => $b end

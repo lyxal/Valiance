@@ -2042,6 +2042,20 @@ def _combine_all_strict(
     return out
 
 
+def multimethod_dispatch_type(typ: Type) -> Type | None:
+    """Project a parameter onto the type predicate used by runtime dispatch."""
+    typ = normalize(typ)
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
+        return multimethod_dispatch_type(typ.inner)
+    if isinstance(typ, NominalType):
+        return typ
+    if isinstance(typ, (UnionType, IntersectionType)):
+        items = tuple(multimethod_dispatch_type(item) for item in typ.items)
+        if all(item is not None for item in items):
+            return type(typ)(frozenset(items))
+    return None
+
+
 def meet_required_inputs(
     requirements: Iterable[Type],
     ctx: Context | None = None,

@@ -554,7 +554,9 @@ class Analyser:
         current = self.analyse_block(initial, setup)
         if current:
             self._discover_reflection_shapes(current, definitions, executable, early_definitions)
-        final = self._analyse_program_tail(current, definitions, executable, early_definitions)
+        final = self._analyse_program_tail(
+            current, definitions, executable, early_definitions, setup=setup,
+        )
         # A generic parameter used only in a return type needs explicit type
         # arguments or an unambiguous expected result. Contextual assignments
         # and declared function returns specialize their producer before this
@@ -595,7 +597,7 @@ class Analyser:
                 )
         return final
 
-    def _analyse_program_tail(self, current, definitions, executable, early_definitions):
+    def _analyse_program_tail(self, current, definitions, executable, early_definitions, *, setup=()):
         """Check declarations and execution against the module's frozen shape universe."""
         if current:
             for definition in definitions:
@@ -608,6 +610,9 @@ class Analyser:
                     definition,
                 )
             current = self.analyse_block(current, definitions)
+            if current and (definitions or setup) and not self.diagnostics:
+                if not self.declarations._validate_multimethod_meets((*setup, *definitions)):
+                    return current
         final = self.analyse_block(current, executable) if current else current
         return final
 
@@ -1010,7 +1015,10 @@ class Analyser:
         self.env = outer.lexical_child_scope()
         self._scope_depth += 1
         try:
-            return self.analyse_block(initial, nodes)
+            result = self.analyse_block(initial, nodes)
+            if result and self.env.overloads:
+                self.declarations._validate_multimethod_meets(nodes)
+            return result
         finally:
             self._scope_depth -= 1
             self.env = outer

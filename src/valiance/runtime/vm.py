@@ -5338,6 +5338,8 @@ class VirtualMachine:
                             tuple(args), overload.code.dispatch_types
                         )
                     ]
+                    if len(matches) > 1:
+                        matches = _most_specific_multimethods(matches, tuple(args))
                     if len(matches) != 1:
                         runtime_types = tuple(_runtime_type_name(arg) for arg in args)
                         if not matches:
@@ -8363,6 +8365,16 @@ def _structural_declared_subtype(
             _structural_declared_subtype(actual, branch, type_facts=type_facts)
             for branch in expected.children
         )
+    if expected.kind == "intersection":
+        return all(
+            _structural_declared_subtype(actual, item, type_facts=type_facts)
+            for item in expected.children
+        )
+    if actual.kind == "intersection":
+        return any(
+            _structural_declared_subtype(item, expected, type_facts=type_facts)
+            for item in actual.children
+        )
     if actual.kind != expected.kind:
         return False
     if actual.kind != "nominal":
@@ -8498,6 +8510,8 @@ def _select_multimethod_for_args(
             and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
         ):
             matches.append(overload)
+    if len(matches) > 1:
+        matches = _most_specific_multimethods(matches, args)
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
@@ -8506,6 +8520,46 @@ def _select_multimethod_for_args(
             f"{tuple(_runtime_type_name(arg) for arg in args)}"
         )
     return fallback
+
+
+def _most_specific_multimethods(
+    matches: list[FunctionValue],
+    args: tuple[Any, ...],
+) -> list[FunctionValue]:
+    """Keep applicable methods whose declared domains are not strictly wider."""
+    values = tuple(unwrap_runtime_value(arg) for arg in args)
+    facts = tuple(
+        value.runtime_type.type_facts
+        if isinstance(value, ObjectValue) and value.runtime_type is not None
+        else ()
+        for value in values
+    )
+    signatures = [
+        tuple(
+            _parse_runtime_type_pattern(typ, type_facts) if typ is not None else None
+            for typ, type_facts in zip(method.code.dispatch_types, facts, strict=True)
+        )
+        for method in matches
+    ]
+
+    def subtype(
+        left: tuple[RuntimeTypePattern | None, ...],
+        right: tuple[RuntimeTypePattern | None, ...],
+    ) -> bool:
+        """Compare parameter domains pointwise using facts for each argument."""
+        return all(
+            b is None or (a is not None and _structural_declared_subtype(a, b, type_facts=type_facts))
+            for a, b, type_facts in zip(left, right, facts, strict=True)
+        )
+
+    return [
+        method
+        for method, signature in zip(matches, signatures, strict=True)
+        if not any(
+            subtype(other, signature) and not subtype(signature, other)
+            for other in signatures
+        )
+    ]
 
 
 def _runtime_multimethod_types_match(
