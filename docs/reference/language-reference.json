@@ -32655,6 +32655,71 @@
     {
       "aliases": [],
       "category": "Web",
+      "description": [
+        "Look up a named GET route capture."
+      ],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.web} fn(req: web.GetRequest) => web.routeCapture($req, \"id\") end"
+        }
+      ],
+      "module": "std.web",
+      "name": "routeCapture",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Web",
+          "description": [
+            "Look up a named GET route capture."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.web} fn(req: web.GetRequest) => web.routeCapture($req, \"id\") end"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "GET request matched to a route.",
+              "name": "request"
+            },
+            {
+              "description": "Name of the route capture.",
+              "name": "name"
+            }
+          ],
+          "returns": "Captured string or Error.MissingParam if the name is absent.",
+          "see_also": [],
+          "summary": "Look up a named GET route capture."
+        }
+      ],
+      "overloads": [
+        "public define routeCapture(request: GetRequest, name: String) -> Result[String, Error]"
+      ],
+      "parameters": [
+        {
+          "description": "GET request matched to a route.",
+          "name": "request"
+        },
+        {
+          "description": "Name of the route capture.",
+          "name": "name"
+        }
+      ],
+      "qualified_name": "std.web.routeCapture",
+      "returns": "Captured string or Error.MissingParam if the name is absent.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/web.vlnc",
+      "summary": "Look up a named GET route capture."
+    },
+    {
+      "aliases": [],
+      "category": "Web",
       "description": [],
       "examples": [
         {

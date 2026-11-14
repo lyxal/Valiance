@@ -19002,6 +19002,36 @@ import {std.web}
 web.responseText(web.Response(body = "ok"))
 ```
 
+### `std.web.routeCapture`
+
+Look up a named GET route capture.
+
+**Overloads**
+
+- `public define routeCapture(request: GetRequest, name: String) -> Result[String, Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.web} fn(req: web.GetRequest) => web.routeCapture($req, "id") end
+  ```
+
+
+Look up a named GET route capture.
+
+**Parameters**
+
+- `request` — GET request matched to a route.
+- `name` — Name of the route capture.
+
+**Returns:** Captured string or Error.MissingParam if the name is absent.
+
+**Example**
+
+```vlnc
+import {std.web} fn(req: web.GetRequest) => web.routeCapture($req, "id") end
+```
+
 ### `std.web.routes`
 
 Inspect validated effective routes and automatic HEAD/OPTIONS entries without exposing closures.
