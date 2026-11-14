@@ -246,7 +246,8 @@ for _target_type, _label in ((_APP, 'app'), (_ROUTER, 'router')):
                 'Register a WebSocket upgrade route separate from ordinary GET.',
                 category='Web', returns='Immutable App or Router.',
                 examples=(f'import {{std.web}}\n$config = web.{_label.title()}\n'
-                          '$config := web.websocket("/ws"): fn (socket: web.WebSocket) => \\None end',)),
+                          '$config := web.websocket("/ws"): fn (socket: web.WebSocket) -> web.Error => '
+                          'web.Error.Forbidden("Connection refused") end',)),
         )(_register_ws)
         globals()[_register_ws.__name__] = _register_ws
 
@@ -1321,7 +1322,8 @@ for _log_result in (T.N(Symbol('None')), _ERROR, T.Result(T.N(Symbol('None')), _
             'Logging errors cannot alter an HTTP response.',
             category='Web', returns='New App with a safe logger.',
             examples=('import {std.web}\n$app = web.App\n'
-                      '$app := web.withLogger: fn (event: web.LogEvent) -> None => \\None end',)))(_with_logger)
+                      '$app := web.withLogger: fn (event: web.LogEvent) -> web.Error => '
+                      'web.Error.Forbidden("Logging unavailable") end',)))(_with_logger)
     globals()[_with_logger.__name__] = _with_logger
 
 del _with_logger

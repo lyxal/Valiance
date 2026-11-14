@@ -29,7 +29,7 @@ jobs:
         run: uv run --frozen python -c "import regex; import valiance.std.regex"
       - name: Run test suite in parallel and collect timings
         timeout-minutes: 15
-        run: uv run --frozen python -m tools.test_suite --workers 4 --durations 20 --timings test-timings.json
+        run: uv run --frozen --with websockets --with wsproto --with websocket-client python -m tools.test_suite --workers 4 --durations 20 --timings test-timings.json
       - name: Upload test timing report
         if: always()
         uses: actions/upload-artifact@v4
