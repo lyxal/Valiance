@@ -110,7 +110,9 @@ ReplCompletion = CompletionItem
 
 
 class TypeHintProvider(Protocol):
-    def __call__(self, source: str, *, fresh: bool = False) -> str | None: ...
+    def __call__(self, source: str, *, fresh: bool = False) -> str | None:
+        """Return a type hint for the source, optionally bypassing cached analysis."""
+        ...
 
 
 class ReplFrontend(Protocol):

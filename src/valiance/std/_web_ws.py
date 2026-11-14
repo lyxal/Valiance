@@ -45,6 +45,7 @@ class WebSocketPolicy:
     extension_policy: str = 'Disabled'
 
     def __post_init__(self) -> None:
+        """Validate the handshake, framing and timeout policy."""
         if self.extension_policy not in ('Disabled', 'PermessageDeflate'):
             raise core.ConfigError('Unsupported WebSocket extension policy')
         if any(not isinstance(value, str) or not value for value in self.allowed_origins):
@@ -81,6 +82,7 @@ class WebSocketMessage:
 
 
 def _single(headers: core.Headers, name: str) -> str | None:
+    """Read a singleton handshake field and reject duplicate occurrences."""
     values = headers.values(name)
     if len(values) > 1:
         raise core.WebError('BadRequest', f'Duplicate WebSocket {name}')
@@ -88,6 +90,7 @@ def _single(headers: core.Headers, name: str) -> str | None:
 
 
 def _tokens(value: str | None) -> set[str]:
+    """Parse comma-separated tokens from the handshake field values."""
     if value is None:
         return set()
     items = [v.strip() for v in value.split(',')]
@@ -108,6 +111,7 @@ def _origin_tuple(value: str) -> tuple[str, str, int]:
     # urllib.parse strips leading C0 controls and embedded TAB/CR/LF before
     # splitting. The wire Origin grammar does not: silently normalizing these
     # can turn a malformed attacker-supplied Origin into a trusted one.
+    """Normalize an origin to its scheme, host and port."""
     if not value or any(ord(char) <= 0x20 or ord(char) == 0x7f for char in value):
         raise core.WebError('Forbidden', 'Invalid WebSocket Origin')
     try:
@@ -138,6 +142,7 @@ _DEFLATE_RESPONSE = 'permessage-deflate; server_no_context_takeover; client_no_c
 
 
 def _negotiated_deflate(headers: core.Headers, policy: WebSocketPolicy) -> bool:
+    """Negotiate per-message deflate from the offered extensions."""
     if policy.extension_policy == 'Disabled':
         return False
     offers = headers.values('Sec-WebSocket-Extensions')
@@ -256,6 +261,7 @@ def _valid_close_code(code: int) -> bool:
     # 1012 (service restart), 1013 (try again later) and 1014 (gateway)
     # are assigned. 1004/1005/1006/1015 must never appear on the wire;
     # 1016..2999 remain unassigned. 3000..4999 are app/private-use ranges.
+    """Check whether a close code may appear on the wire."""
     return code in (1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010,
                     1011, 1012, 1013, 1014) or 3000 <= code <= 4999
 
@@ -267,6 +273,7 @@ class WebSocket:
                  *, initial_bytes: bytes = b'', subprotocol: str | None = None,
                  buffer_budget: object | None = None,
                  permessage_deflate: bool = False):
+        """Initialize the upgraded transport and session state."""
         self.request = request
         self.subprotocol = subprotocol
         self._permessage_deflate = permessage_deflate
@@ -360,6 +367,7 @@ class WebSocket:
             raise TypeError('WebSocket child callback must be callable')
 
         def run_child() -> None:
+            """Run the child callback and publish its completion to the session."""
             try:
                 callback(self._child_cancel)
             except Exception:
@@ -473,6 +481,7 @@ class WebSocket:
                 self._buffer_budget.release_h2_buffer(length)
 
     def _frame(self, opcode: int, payload: bytes = b'') -> None:
+        """Encode and write a server frame to the upgraded transport."""
         if opcode >= 8 and len(payload) > 125:
             raise core.WebError('BadRequest', 'WebSocket control frame too large')
         if len(payload) > self._policy.max_frame_bytes:
@@ -493,6 +502,7 @@ class WebSocket:
             self._send_wire(header, payload)
 
     def _message(self, opcode: int, payload: bytes) -> None:
+        """Send a message with the negotiated encoding and framing."""
         if len(payload) > self._policy.max_message_bytes:
             raise core.WebError('BodyTooLarge', 'WebSocket message exceeds configured limit')
         if self._closed or self._sent_close:
@@ -526,6 +536,7 @@ class WebSocket:
     def _message_frames(self, opcode: int, payload: bytes, *, compressed: bool) -> None:
         # Hold the lock for the entire fragmented message. An intervening
         # application control frame may be serialized *between* messages.
+        """Split a message into frames within the outgoing frame limit."""
         with self._send_lock:
             # Abort may have acquired the owner transition while this sender
             # was waiting for serialization. Recheck *under* the lock so an
@@ -551,6 +562,7 @@ class WebSocket:
                 self._send_wire(bytes([0x80 | opcode, 0]), b'')
 
     def send_text(self, text: str) -> None:
+        """Send a UTF-8 text message."""
         try:
             encoded = text.encode('utf-8')
         except (UnicodeError, AttributeError) as exc:
@@ -558,9 +570,11 @@ class WebSocket:
         self._message(1, encoded)
 
     def send_bytes(self, payload: bytes) -> None:
+        """Send a binary message."""
         self._message(2, bytes(payload))
 
     def ping(self, data: bytes = b'') -> None:
+        """Send a ping control frame."""
         if len(data) > 125:
             raise core.WebError('BadRequest', 'WebSocket ping too large')
         self._frame(9, bytes(data))
@@ -569,6 +583,7 @@ class WebSocket:
         # RFC 6455 §7.4.1 reserves 1010 (Mandatory Extension) for a client
         # that did not receive its required handshake extensions. A server
         # rejects those handshakes instead of sending close code 1010.
+        """Send a close frame and begin closing the session."""
         if code == 1010 or not _valid_close_code(code):
             raise core.WebError('BadRequest', 'Invalid WebSocket close code')
         try:
@@ -731,6 +746,7 @@ class WebSocket:
                 self._incoming_condition.notify_all()
 
     def _incoming_frame(self) -> tuple[int, bool, bytes, bool]:
+        """Read and validate the next masked client frame."""
         first, second = self._read(2)
         fin = bool(first & 0x80)
         opcode = first & 0x0f
@@ -767,6 +783,7 @@ class WebSocket:
         return opcode, fin, bytes(v ^ mask[i % 4] for i, v in enumerate(payload)), compressed
 
     def receive(self) -> WebSocketMessage:
+        """Receive the next complete application message."""
         if not self._receive_lock.acquire(blocking=False):
             raise core.WebError('BodyUnavailable', 'WebSocket already has an active receiver')
         try:
@@ -790,6 +807,7 @@ class WebSocket:
             self._receive_lock.release()
 
     def _receive_exclusive(self) -> WebSocketMessage:
+        """Handle frame assembly and control frames for the active receiver."""
         if self._closed or self._received_close:
             return WebSocketMessage('Closed', code=1006)
         parts = bytearray()
@@ -902,6 +920,7 @@ class WebSocket:
 
 class _ProtocolError(Exception):
     def __init__(self, code: int, message: str):
+        """Record the protocol failure and its WebSocket close code."""
         super().__init__(message)
         self.code = code
 

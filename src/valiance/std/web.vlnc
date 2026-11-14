@@ -927,8 +927,12 @@ public define[T, R] bodyJson(request: R) -> Result[T, Error] =>
   std.web.decodeBodyJson[T]($text, typeInfo[T].name) ?
 end
 
-#? Look up a named GET route capture.
 @index(GetRequest)
+#?? Look up a named GET route capture.
+#?? @param request GET request matched to a route.
+#?? @param name Name of the route capture.
+#?? @returns Captured string or Error.MissingParam if the name is absent.
+#?? @example import {std.web} fn(req: web.GetRequest) => web.routeCapture($req, "id") end
 public define routeCapture(request: GetRequest, name: String) -> String | Error =>
   try =>
     $request.routeParams[$name]

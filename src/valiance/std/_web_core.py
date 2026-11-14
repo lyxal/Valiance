@@ -48,6 +48,7 @@ class WebError(Exception):
 
     @property
     def status(self) -> int:
+        """Map the error category to its HTTP status."""
         return _ERROR_STATUS.get(self.name, 500)
 
 
@@ -71,31 +72,38 @@ class Params:
     pairs: tuple[tuple[str, str], ...] = ()
 
     def values(self, name: str) -> tuple[str, ...]:
+        """Return all values for the exact parameter name in arrival order."""
         return tuple(value for key, value in self.pairs if key == name)
 
     def one(self, name: str) -> str | None:
+        """Return the sole value, rejecting ambiguous duplicates."""
         found = self.values(name)
         if len(found) > 1:
             raise WebError("AmbiguousParam", "Parameter appears more than once")
         return found[0] if found else None
 
     def require(self, name: str) -> str:
+        """Require exactly one value for the parameter."""
         value = self.one(name)
         if value is None:
             raise WebError("MissingParam", "Required parameter is missing")
         return value
 
     def append(self, name: str, value: str) -> Params:
+        """Return a copy with another occurrence appended."""
         return Params((*self.pairs, (name, value)))
 
     def replace(self, name: str, value: str) -> Params:
+        """Replace every occurrence with one new value."""
         return Params(tuple(pair for pair in self.pairs if pair[0] != name) + ((name, value),))
 
     def render_query(self) -> str:
+        """Encode the ordered pairs as a query string."""
         return "&".join(f"{quote(k, safe='~')}={quote(v, safe='~')}" for k, v in self.pairs)
 
 
 def _percent_decode(value: str, *, form: bool = False) -> str:
+    """Decode percent escapes and optionally treat plus as a space."""
     if _PERCENT.search(value):
         raise WebError("MalformedTarget", "Malformed percent encoding")
     if form:
@@ -110,6 +118,7 @@ def _percent_decode(value: str, *, form: bool = False) -> str:
 
 
 def parse_params(value: str, *, form: bool = False, max_fields: int = 1024) -> Params:
+    """Parse an ordered query or form parameter multimap."""
     if not value:
         return Params()
     pieces = value.split("&")
@@ -145,6 +154,7 @@ def validate_target(raw: str) -> tuple[str, Params]:
 
 
 def _validate_header(name: str, value: str) -> None:
+    """Reject invalid header field names and values."""
     if not _TOKEN.fullmatch(name) or _CONTROL.search(value):
         raise WebError("InvalidHeader", "Invalid header name or value")
 
@@ -154,13 +164,16 @@ class Headers:
     pairs: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
+        """Validate each header pair at construction."""
         for name, value in self.pairs:
             _validate_header(name, value)
 
     def values(self, name: str) -> tuple[str, ...]:
+        """Return all occurrences of a case-insensitive field name."""
         return tuple(v for k, v in self.pairs if k.lower() == name.lower())
 
     def one(self, name: str) -> str | None:
+        """Return a single field value and reject duplicate occurrences."""
         values = self.values(name)
         if len(values) > 1 and name.lower() in _SINGLETON_HEADERS:
             raise WebError("AmbiguousHeader", "Conflicting singleton field")
@@ -169,20 +182,24 @@ class Headers:
         return values[0] if values else None
 
     def with_header(self, name: str, value: str) -> Headers:
+        """Replace all instances of a header with one value."""
         _validate_header(name, value)
         return Headers(tuple((k, v) for k, v in self.pairs if k.lower() != name.lower()) + ((name, value),))
 
     def add(self, name: str, value: str) -> Headers:
+        """Append a header field without merging occurrences."""
         _validate_header(name, value)
         if name.lower() in _SINGLETON_HEADERS and self.values(name):
             raise WebError("InvalidHeader", "Duplicate singleton field")
         return Headers((*self.pairs, (name, value)))
 
     def without(self, name: str) -> Headers:
+        """Remove all occurrences of a header field."""
         return Headers(tuple((k, v) for k, v in self.pairs if k.lower() != name.lower()))
 
 
 def _validate_template(path: str) -> tuple[tuple[str, str], ...]:
+    """Validate and split a route template into segments."""
     if not isinstance(path, str) or not path.startswith("/"):
         raise ConfigError("Route path must begin with /")
     if path == "/":
@@ -212,10 +229,12 @@ def _validate_template(path: str) -> tuple[tuple[str, str], ...]:
 
 
 def _path_segments(path: str) -> tuple[str, ...]:
+    """Split a path into its routing segments."""
     return tuple(path[1:].split("/")) if path != "/" else ()
 
 
 def _match(template: tuple[tuple[str, str], ...], path: str) -> dict[str, str] | None:
+    """Match a path and return its named captures."""
     values = _path_segments(path)
     if len(values) < len(template) - (1 if template and template[-1][0] == "catchall" else 0):
         return None
@@ -234,6 +253,7 @@ def _match(template: tuple[tuple[str, str], ...], path: str) -> dict[str, str] |
 
 
 def _specificity(template: tuple[tuple[str, str], ...]) -> tuple[int, ...]:
+    """Rank route segments by their matching specificity."""
     weights = {"literal": 4, "capture": 3, "catchall": 1}
     return tuple(weights[kind] for kind, _ in template) + (2,)
 
@@ -254,6 +274,7 @@ class RequestBodyStream:
     def __init__(self, source: object, *, max_bytes: int = 1024 ** 3,
                  synthetic_trailers: Headers | None = None,
                  initial_headers: Headers | None = None):
+        """Track an incoming body and its limits for one consumer."""
         from threading import RLock
         if not callable(getattr(source, 'read', None)) or not callable(getattr(source, 'close', None)):
             raise DispatchError('Streaming request source requires read and close')
@@ -276,6 +297,7 @@ class RequestBodyStream:
         self._lock = RLock()
 
     def claim(self) -> RequestBodyStream:
+        """Claim exclusive access to the incoming body."""
         with self._lock:
             if self.claimed or self.closed:
                 raise WebError('BodyUnavailable', 'Request stream already claimed or closed')
@@ -283,6 +305,7 @@ class RequestBodyStream:
             return self
 
     def read(self, max_bytes: int) -> bytes | None:
+        """Read a bounded chunk and track completion of the body."""
         if type(max_bytes) is not int or not 0 < max_bytes <= 65536:
             raise WebError('BadRequest', 'Request stream read must be between 1 and 65536 bytes')
         with self._lock:
@@ -317,6 +340,7 @@ class RequestBodyStream:
                 raise
 
     def discard(self) -> None:
+        """Consume the remaining body within the discard budget."""
         with self._lock:
             if self.closed:
                 return
@@ -326,6 +350,7 @@ class RequestBodyStream:
                 pass
 
     def close(self) -> None:
+        """Release the incoming source and notify close listeners."""
         with self._lock:
             if not self.closed:
                 self.closed = True
@@ -341,6 +366,7 @@ def test_request_stream(method: str, target: str, source: object, *,
                         headers: Headers | None = None,
                         max_bytes: int = 1024 ** 3,
                         trailers: Headers | None = None) -> Request:
+    """Construct a test request backed by an incoming body stream."""
     if method not in ('POST', 'PUT', 'PATCH', 'QUERY'):
         raise DispatchError('Only POST, PUT, PATCH, QUERY support streaming requests')
     request = test_request(method, target, headers=headers)
@@ -350,6 +376,7 @@ def test_request_stream(method: str, target: str, source: object, *,
 
 
 def body_stream(request: Request) -> RequestBodyStream:
+    """Claim the stream belonging to a body-capable request."""
     _body_capable(request)
     if request.body_stream is None:
         raise WebError('BodyUnavailable', 'Request is not in streaming mode')
@@ -388,6 +415,7 @@ class MultipartLimits:
     max_header_bytes: int = 16384
 
     def __post_init__(self) -> None:
+        """Validate the limits applied to multipart parsing."""
         for name, value in vars(self).items():
             if type(value) is not int or not 0 < value <= 1024 ** 3:
                 raise ConfigError(f'Invalid multipart quota: {name}')
@@ -450,16 +478,19 @@ class Request:
     client_address: str = ""
 
     def capture(self, name: str) -> str:
+        """Retrieve a named capture or raise a missing-parameter error."""
         if name not in self.route_params:
             raise WebError("MissingParam", "Route capture is missing")
         return self.route_params[name]
 
     def with_context(self, key: object, value: object) -> Request:
+        """Return a request with updated context metadata."""
         return replace(self, context={**self.context, key: value})
 
 
 def test_request(method: str, target: str, *, headers: Headers | None = None,
                  body: bytes = b"", authority: str = "localhost") -> Request:
+    """Construct a buffered request for in-process dispatch."""
     if not isinstance(method, str) or not _TOKEN.fullmatch(method):
         raise DispatchError("Invalid synthetic method")
     if not isinstance(body, bytes):
@@ -488,6 +519,7 @@ class StreamBody:
 
     def __init__(self, source: object, content_type: str = 'application/octet-stream',
                  length: int | None = None):
+        """Initialize a response body with a byte budget and cleanup callback."""
         from threading import RLock
         if not isinstance(content_type, str) or not content_type or _CONTROL.search(content_type):
             raise WebError('InvalidHeader', 'Invalid streaming Content-Type')
@@ -506,10 +538,12 @@ class StreamBody:
 
     @property
     def closed(self) -> bool:
+        """Report whether the response source has closed."""
         with self._lock:
             return self._closed
 
     def read(self, max_bytes: int) -> bytes | None:
+        """Read and validate a bounded chunk from the response producer."""
         if type(max_bytes) is not int or not 0 < max_bytes <= 1048576:
             raise WebError('InvalidResponse', 'Stream read limit out of range')
         with self._lock:
@@ -540,6 +574,7 @@ class StreamBody:
             return data
 
     def close(self) -> None:
+        """Close the producer and release its resources once."""
         with self._lock:
             if not self._closed:
                 self._closed = True
@@ -548,6 +583,7 @@ class StreamBody:
 
 def stream(source: object, content_type: str = 'application/octet-stream',
            *, length: int | None = None) -> StreamBody:
+    """Wrap a producer as a bounded streaming response body."""
     return StreamBody(source, content_type, length)
 
 
@@ -560,6 +596,7 @@ class Event:
     retry_ms: int | None = None
 
     def __post_init__(self) -> None:
+        """Validate the fields of a server-sent event."""
         if not isinstance(self.data, str):
             raise WebError('InvalidResponse', 'SSE data must be text')
         for label, value in (('event', self.event), ('id', self.id)):
@@ -572,6 +609,7 @@ class Event:
 
 
 def encode_event(event: Event) -> bytes:
+    """Encode an event as UTF-8 server-sent event fields."""
     if not isinstance(event, Event):
         raise WebError('InvalidResponse', 'EventSource must yield Event or None')
     lines = []
@@ -592,6 +630,7 @@ def encode_event(event: Event) -> bytes:
 class _EventReader:
     """One-event-at-a-time adapter; retains at most one encoded event."""
     def __init__(self, source: object):
+        """Adapt an event producer to the streaming byte interface."""
         if not callable(getattr(source, 'next', None)) or not callable(getattr(source, 'close', None)):
             raise WebError('InvalidResponse', 'EventSource requires next and close')
         self.source = source
@@ -599,6 +638,7 @@ class _EventReader:
         self.closed = False
 
     def read(self, maximum: int) -> bytes | None:
+        """Read bytes from the next encoded event or its buffered remainder."""
         if self.closed:
             return None
         if not self.pending:
@@ -610,6 +650,7 @@ class _EventReader:
         return piece
 
     def close(self) -> None:
+        """Close the underlying event producer."""
         if not self.closed:
             self.closed = True
             self.source.close()
@@ -664,6 +705,7 @@ def validate_request_trailers(fields: Headers, *, max_fields: int = 32,
 
 
 def with_trailers(response: 'Response', trailers: Headers) -> 'Response':
+    """Attach a trailer producer and its declared field names."""
     if not isinstance(response.body, StreamBody) or response.status in (204, 205, 304):
         raise WebError('InvalidHeader', 'Response trailers require a streamed body')
     if not isinstance(trailers, Headers) or not trailers.pairs or len(trailers.pairs) > 32:
@@ -695,6 +737,7 @@ class Response:
     trailers: Headers = field(default_factory=Headers)
 
     def __post_init__(self) -> None:
+        """Validate response metadata and normalize the body representation."""
         if self.trailers.pairs:
             if not isinstance(self.body, StreamBody) or self.status in (204, 205, 304):
                 raise WebError('InvalidResponse', 'Only streamed responses may have trailers')
@@ -734,17 +777,21 @@ class Response:
 
     @property
     def bytes(self) -> bytes:
+        """Return the buffered response body as bytes."""
         if isinstance(self.body, StreamBody):
             raise WebError('BodyUnavailable', 'Streaming responses cannot be implicitly buffered')
         return self.body.encode("utf-8") if isinstance(self.body, str) else (self.body or b"")
 
     def with_header(self, name: str, value: str) -> Response:
+        """Replace the response header with one value."""
         return replace(self, headers=self.headers.with_header(name, value))
 
     def add_header(self, name: str, value: str) -> Response:
+        """Append another occurrence of a response header."""
         return replace(self, headers=self.headers.add(name, value))
 
     def without_header(self, name: str) -> Response:
+        """Remove all occurrences of a response header."""
         return replace(self, headers=self.headers.without(name))
 
 
@@ -786,11 +833,13 @@ def with_early_hints(response: Response, links: Iterable[str]) -> Response:
 
 
 def json_response(value: object, *, status: int = 200) -> Response:
+    """Serialize a value into an application/json response."""
     return Response(status, json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(),
                     Headers((("Content-Type", "application/json"),)))
 
 
 def redirect(location: str, *, status: int = 303, allow_external: bool = False) -> Response:
+    """Build a redirect response with a validated Location."""
     if status not in (301, 302, 303, 307, 308) or _CONTROL.search(location) or "\\" in location:
         raise WebError("InvalidLocation", "Invalid redirect")
     parsed = urlsplit(location)
@@ -807,28 +856,33 @@ def redirect(location: str, *, status: int = 303, allow_external: bool = False) 
 
 
 def no_store(response: Response) -> Response:
+    """Prohibit storing the response in caches."""
     return response.with_header("Cache-Control", "no-store")
 
 
 def cache_public(response: Response, max_age: int, *, immutable: bool = False) -> Response:
+    """Allow shared caches to reuse the response for the supplied lifetime."""
     if not isinstance(max_age, int) or max_age < 0:
         raise WebError("InvalidCachePolicy", "Invalid max-age")
     return response.with_header("Cache-Control", f"public, max-age={max_age}" + (", immutable" if immutable else ""))
 
 
 def cache_private(response: Response, max_age: int) -> Response:
+    """Allow private caches to reuse the response for the supplied lifetime."""
     if not isinstance(max_age, int) or max_age < 0:
         raise WebError("InvalidCachePolicy", "Invalid max-age")
     return response.with_header("Cache-Control", f"private, max-age={max_age}")
 
 
 def with_etag(response: Response, tag: str, *, weak: bool = False) -> Response:
+    """Attach a validated entity tag to the response."""
     if _CONTROL.search(tag) or '"' in tag or "\\" in tag:
         raise WebError("InvalidETag", "Invalid entity tag")
     return response.with_header("ETag", f'{"W/" if weak else ""}"{tag}"')
 
 
 def with_last_modified(response: Response, unix_seconds: int) -> Response:
+    """Attach a Last-Modified timestamp to the response."""
     if not isinstance(unix_seconds, int):
         raise WebError('InvalidHeader', 'Last-Modified requires a Unix timestamp')
     try:
@@ -892,6 +946,7 @@ def response_text(response: Response, limit: int = 16777216) -> str:
         raise WebError('BadText', 'Response body is not valid UTF-8') from exc
 
 def normalize_result(result: object) -> Response:
+    """Convert a handler outcome into a response."""
     if isinstance(result, Response):
         return result
     if isinstance(result, str):
@@ -922,6 +977,7 @@ class Route:
 
     @property
     def template(self) -> tuple[tuple[str, str], ...]:
+        """Reconstruct the route's path template."""
         return _validate_template(self.path)
 
 
@@ -932,6 +988,7 @@ class Router:
 
     def route(self, method: str, path: str, handler: Handler, *,
               body_mode: str = 'Buffered', max_body_bytes: int | None = None) -> Router:
+        """Return a router with the supplied HTTP route registered."""
         _validate_template(path)
         if method not in _METHODS:
             raise ConfigError('Unsupported route method')
@@ -959,6 +1016,7 @@ class Router:
             'WEBSOCKET', path, handler, websocket_policy=policy),))
 
     def with_body_mode(self, method: str, path: str, mode: str) -> Router:
+        """Set request body handling for the selected route."""
         if method not in ('POST', 'PUT', 'PATCH', 'QUERY') or mode not in ('Buffered', 'Stream'):
             raise ConfigError('Only content-bearing methods may select a body mode')
         matches = [i for i, r in enumerate(self.entries) if r.method == method and r.path == path]
@@ -970,10 +1028,12 @@ class Router:
         return replace(self, entries=tuple(result))
 
     def use(self, callback: Middleware) -> Router:
+        """Return a router with an additional middleware callback."""
         return replace(self, middleware=(*self.middleware, callback))
 
     def group(self, prefix: str, router: Router | Callable[[Router], Router],
               middleware: Iterable[Middleware] = ()) -> Router:
+        """Mount a child router under the supplied path prefix."""
         prefix_parts = _validate_template(prefix)
         del prefix_parts
         if callable(router) and not isinstance(router, Router):
@@ -995,6 +1055,7 @@ class Router:
 # Validate all configuration before binding, then use the actual socket peer
 # rather than client-supplied routing metadata to decide proxy trust.
 def _authority_parts(authority: str) -> tuple[str, int | None]:
+    """Split and validate an authority into host and port."""
     if (not isinstance(authority, str) or not authority or len(authority) > 512 or
             _CONTROL.search(authority) or authority != authority.strip() or
             any(ch in authority for ch in ' /\\@?#,%')):
@@ -1065,6 +1126,7 @@ def _forwarded_elements(values: tuple[str, ...]) -> tuple[dict[str, str], ...]:
         raise ValueError('Unsafe Forwarded header')
     # Commas and semicolons inside quotes are data, not separators.
     def split_quoted(text: str, sep: str) -> list[str]:
+        """Split a forwarded header field outside quoted strings."""
         out: list[str] = []
         quoted = False
         start = 0
@@ -1120,6 +1182,7 @@ class NetworkPolicy:
     public_origin: str | None = None
 
     def __post_init__(self) -> None:
+        """Validate proxy trust and forwarded-header settings."""
         if self.proxy_mode not in ('Disabled', 'RFCForwarded', 'XForwarded'):
             raise ConfigError('Unsupported proxy mode')
         if (not isinstance(self.allowed_hosts, tuple) or
@@ -1265,30 +1328,36 @@ class App(Router):
     logger: Callable[[LogEvent], object] | None = None
 
     def with_logger(self, callback: Callable[[LogEvent], object]) -> App:
+        """Return an app with a request logging callback."""
         if not callable(callback):
             raise ConfigError('Logger must be callable')
         return replace(self, logger=callback)
 
     def route(self, method: str, path: str, handler: Handler, *,
               body_mode: str = 'Buffered', max_body_bytes: int | None = None) -> App:
+        """Return an app with an HTTP route registered."""
         updated = super().route(method, path, handler, body_mode=body_mode,
                                 max_body_bytes=max_body_bytes)
         return replace(self, entries=updated.entries)
 
     def websocket(self, path: str, handler: Callable[[object], object],
                   policy: object | None = None) -> App:
+        """Return an app with a WebSocket route registered."""
         updated = super().websocket(path, handler, policy)
         return replace(self, entries=updated.entries)
 
     def with_body_mode(self, method: str, path: str, mode: str) -> App:
+        """Configure how a selected app route consumes its body."""
         updated = super().with_body_mode(method, path, mode)
         return replace(self, entries=updated.entries)
 
     def use(self, callback: Middleware) -> App:
+        """Add a middleware callback to the app."""
         return replace(self, middleware=(*self.middleware, callback))
 
     def group(self, prefix: str, router: Router | Callable[[Router], Router],
               middleware: Iterable[Middleware] = ()) -> App:
+        """Mount a router under an app path prefix."""
         result = super().group(prefix, router, middleware)
         return replace(self, entries=result.entries)
 
@@ -1299,6 +1368,7 @@ _CORS_ROUTE_METHODS = object()
 
 
 def _origin_key(value: str) -> tuple[str, str, int]:
+    """Normalize an origin for policy comparison."""
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError('Origin must be a single absolute HTTP(S) origin')
     try:
@@ -1329,6 +1399,7 @@ def _origin_key(value: str) -> tuple[str, str, int]:
 
 
 def _cors_vary(response: Response, *names: str) -> Response:
+    """Add the CORS-dependent fields to the response's Vary header."""
     lines = response.headers.values('Vary')
     values = [part.strip() for line in lines for part in line.split(',') if part.strip()]
     if '*' in values:
@@ -1350,6 +1421,7 @@ class CorsPolicy:
     allow_private_network: bool = False
 
     def __post_init__(self) -> None:
+        """Validate and normalize the configured CORS rules."""
         for name in ('allowed_origins', 'allowed_methods', 'allowed_headers', 'exposed_headers'):
             values = getattr(self, name)
             if isinstance(values, (str, bytes)):
@@ -1375,6 +1447,7 @@ class CorsPolicy:
 
 
 def cors(policy: CorsPolicy) -> Middleware:
+    """Build middleware for cross-origin requests and preflights."""
     if not isinstance(policy, CorsPolicy):
         raise ConfigError('CORS requires a validated CorsPolicy')
     allowed_origin_keys = (set(_origin_key(origin) for origin in policy.allowed_origins)
@@ -1383,18 +1456,21 @@ def cors(policy: CorsPolicy) -> Middleware:
     allowed_headers = {header.lower() for header in policy.allowed_headers}
 
     def middleware(request: Request) -> Request | Response | After:
+        """Evaluate an incoming request against the CORS policy."""
         origin_values = request.headers.values('Origin')
         preflight = request.method == 'OPTIONS' and any(
             request.headers.values(name) for name in
             ('Access-Control-Request-Method', 'Access-Control-Request-Headers',
              'Access-Control-Request-Private-Network'))
         def deny() -> Response:
+            """Build a response rejecting the cross-origin request."""
             response = Response(403, 'Forbidden')
             return _cors_vary(response, 'Origin', 'Access-Control-Request-Method',
                               'Access-Control-Request-Headers', 'Access-Control-Request-Private-Network')
         def no_grant(response: Response) -> Response:
             # Do not let a handler-supplied CORS grant circumvent the installed
             # middleware policy on denied origins or requests without Origin.
+            """Continue the request without granting cross-origin access."""
             for name in ('Access-Control-Allow-Origin', 'Access-Control-Allow-Credentials',
                          'Access-Control-Expose-Headers'):
                 response = replace(response, headers=response.headers.without(name))
@@ -1413,6 +1489,7 @@ def cors(policy: CorsPolicy) -> Middleware:
         grant = '*' if policy.allowed_origins == ('*',) else origin
 
         def grant_headers(response: Response) -> Response:
+            """Build the headers that grant the approved origin access."""
             response = response.with_header('Access-Control-Allow-Origin', grant)
             if grant != '*':
                 response = _cors_vary(response, 'Origin')
@@ -1450,6 +1527,7 @@ def cors(policy: CorsPolicy) -> Middleware:
                               'Access-Control-Request-Private-Network')
 
         def after(response: Response) -> Response:
+            """Apply the approved CORS headers to the downstream response."""
             response = grant_headers(response)
             if policy.exposed_headers:
                 response = response.with_header('Access-Control-Expose-Headers',
@@ -1470,6 +1548,7 @@ class CompressionPolicy:
     max_bytes: int = 16 * 1024 * 1024
 
     def __post_init__(self) -> None:
+        """Validate the compression limits and configured codings."""
         if (type(self.min_bytes) is not int or self.min_bytes < 0 or
                 type(self.max_bytes) is not int or self.max_bytes < 1 or
                 self.min_bytes > self.max_bytes or
@@ -1484,6 +1563,7 @@ class CompressionPolicy:
 
 
 def _encoding_preferences(headers: Headers) -> dict[str, float] | None:
+    """Parse the client's encoding quality preferences."""
     lines = headers.values('Accept-Encoding')
     if not lines:
         return None
@@ -1513,6 +1593,7 @@ def _encoding_preferences(headers: Headers) -> dict[str, float] | None:
 
 
 def _coding_quality(preferences: dict[str, float], coding: str) -> float:
+    """Find the effective quality of an encoding."""
     if coding in preferences:
         return preferences[coding]
     if coding == 'identity':
@@ -1521,6 +1602,7 @@ def _coding_quality(preferences: dict[str, float], coding: str) -> float:
 
 
 def _can_compress(response: Response, size: int, max_bytes: int) -> bool:
+    """Determine whether a response is eligible for compression."""
     if size == 0 or size > max_bytes or response.status < 200 or response.status in (204, 205, 206, 304):
         return False
     if (response.headers.values('Content-Encoding') or response.headers.values('Content-Range') or
@@ -1556,6 +1638,7 @@ def compression(policy: CompressionPolicy) -> Middleware:
         raise ConfigError('compression requires a CompressionPolicy')
 
     def before(request: Request) -> After | Request:
+        """Negotiate response compression from the incoming request."""
         preferences = _encoding_preferences(request.headers)
         # A Range applies to the selected identity representation. Do not
         # transform a file/range response, even when If-Range misses.
@@ -1567,6 +1650,7 @@ def compression(policy: CompressionPolicy) -> Middleware:
             # A preceding conditional helper deferred until the selected
             # compressed/identity representation was known. It MUST compare
             # against this variant's ETag, never the original entity tag.
+            """Finalize the middleware result with the required cache variation."""
             context = dict(request.context)
             context.pop(_COMPRESSION_DEFER_CONDITIONAL, None)
             return conditional(replace(request, context=context), response)
@@ -1574,6 +1658,7 @@ def compression(policy: CompressionPolicy) -> Middleware:
         def after(response: Response) -> Response:
             # Streaming bodies are already owned, linear and potentially
             # unbounded. No buffering or speculative encoding is permitted.
+            """Encode an eligible downstream response using the selected coding."""
             if isinstance(response.body, StreamBody):
                 return finish(response)
             raw = response.bytes
@@ -1630,6 +1715,7 @@ class PreparedApp:
 
 
 def prepare(app: App) -> PreparedApp:
+    """Build the dispatch plan from the app's routes and policies."""
     if not isinstance(app, App):
         raise ConfigError("An App is required")
     for i, route in enumerate(app.entries):
@@ -1642,6 +1728,7 @@ def prepare(app: App) -> PreparedApp:
 def routes(app: App | Router) -> tuple[tuple[str, str, bool], ...]:
     # Router introspection must enforce the same route-table validation as an
     # App, rather than reporting ambiguous entries as if they were executable.
+    """List the routes exposed by the app or router."""
     if not isinstance(app, (Router, App)):
         raise ConfigError('An App or Router is required')
     prepare(app if isinstance(app, App) else App(app.entries, app.middleware))
@@ -1661,6 +1748,7 @@ def routes(app: App | Router) -> tuple[tuple[str, str, bool], ...]:
 
 def route_url(app: App | Router, method: str, path: str,
               params: Mapping[str, str], query: Params = Params()) -> str:
+    """Build a route URL by substituting encoded capture values."""
     if not any(route.method == method and route.path == path for route in app.entries):
         raise ConfigError("Unknown route identity")
     tokens = _validate_template(path)
@@ -1687,6 +1775,7 @@ def route_url(app: App | Router, method: str, path: str,
 
 
 def _error_response(request: Request, error: Exception, stage: str, app: App) -> Response:
+    """Convert a dispatch failure into an HTTP response."""
     from valiance.runtime.runtime_values import PanicSignal, is_recoverable_fault
     if isinstance(error, PanicSignal) and not is_recoverable_fault(error):
         raise error
@@ -1716,6 +1805,7 @@ def _error_response(request: Request, error: Exception, stage: str, app: App) ->
 
 
 def _identity_ok(before: Request, after: Request) -> bool:
+    """Check that middleware preserved the original request identity."""
     return (before.method == after.method and before.original_method == after.original_method
             and before.path == after.path and before.raw_target == after.raw_target
             and before.route_params == after.route_params and before.body == after.body
@@ -1727,6 +1817,7 @@ def _identity_ok(before: Request, after: Request) -> bool:
 
 
 def _allow(methods: Iterable[str]) -> tuple[str, ...]:
+    """Build the allowed method list for the matched routes."""
     enabled = set(methods)
     if "GET" in enabled:
         enabled.add("HEAD")
@@ -1773,6 +1864,7 @@ def select_body_mode(app: App | PreparedApp, method: str, target: str) -> str:
 
 def _dispatch_unlogged(app: App | PreparedApp, request: Request, *,
                        defer_head_stream_close: bool = False) -> Response:
+    """Run route matching and middleware without emitting the request log."""
     prepared = prepare(app) if isinstance(app, App) else app
     if not isinstance(prepared, PreparedApp) or not isinstance(request, Request):
         raise DispatchError("Expected prepared application and validated synthetic request")
@@ -1923,6 +2015,7 @@ _SAFE_LOG = logging.getLogger(__name__)
 
 def dispatch(app: App | PreparedApp, request: Request, *,
              defer_head_stream_close: bool = False) -> Response:
+    """Dispatch a request and report the outcome to the configured logger."""
     started = time.monotonic()
     response = _dispatch_unlogged(app, request,
                                   defer_head_stream_close=defer_head_stream_close)
@@ -2019,6 +2112,7 @@ def _split_http_list(value: str, delimiter: str) -> list[str]:
 
 
 def _media_parameters(parts: list[str]) -> dict[str, str]:
+    """Parse a media type and its parameters."""
     parameters: dict[str, str] = {}
     for part in parts:
         key, sep, value = part.partition('=')
@@ -2081,11 +2175,13 @@ def accepts(request: Request, media_type: str) -> bool:
 
 
 def _body_capable(request: Request) -> None:
+    """Check whether this request method exposes a body."""
     if request.method not in ("POST", "PUT", "PATCH", "QUERY"):
         raise WebError("BodyUnavailable", "The method has no request-body helper")
 
 
 def body_bytes(request: Request, *, max_bytes: int = 16 * 1024 * 1024) -> bytes:
+    """Read the buffered request body as bytes."""
     _body_capable(request)
     if request.body_stream is not None:
         raise WebError('BodyUnavailable', 'Streaming request does not support buffered body helpers')
@@ -2095,6 +2191,7 @@ def body_bytes(request: Request, *, max_bytes: int = 16 * 1024 * 1024) -> bytes:
 
 
 def body_text(request: Request) -> str:
+    """Decode the buffered request body as text."""
     raw = body_bytes(request)
     media = content_type(request)
     if media is not None and media[1].get("charset", "utf-8").lower() != "utf-8":
@@ -2106,6 +2203,7 @@ def body_text(request: Request) -> str:
 
 
 def body_json(request: Request) -> object:
+    """Decode JSON from a request with an appropriate media type."""
     media = content_type(request)
     if media is None or (media[0] != "application/json" and
                          not (media[0].startswith("application/") and media[0].endswith("+json"))):
@@ -2120,6 +2218,7 @@ def body_json(request: Request) -> object:
 
 
 def form_params(request: Request, *, max_fields: int = 1000) -> Params:
+    """Decode URL-encoded form fields from a buffered body."""
     media = content_type(request)
     if media is None or media[0] != "application/x-www-form-urlencoded":
         raise WebError("UnsupportedMediaType", "Expected URL-encoded form content")
@@ -2147,6 +2246,7 @@ class BufferedUpload:
 
     @property
     def size(self) -> int:
+        """Return the size of the buffered file in bytes."""
         return len(self.data)
 
 
@@ -2156,9 +2256,11 @@ class MultipartForm:
     files: tuple[BufferedUpload, ...] = ()
 
     def uploads(self, name: str) -> tuple[BufferedUpload, ...]:
+        """Return all uploaded files for the supplied form field."""
         return tuple(item for item in self.files if item.name == name)
 
     def upload_one(self, name: str) -> BufferedUpload | None:
+        """Return the sole upload and reject duplicate files for that field."""
         matches = self.uploads(name)
         if len(matches) > 1:
             raise WebError('AmbiguousParam', 'Multiple uploads have the same field name')
@@ -2405,6 +2507,7 @@ def cookies(request: Request) -> Params:
 
 
 def cookie(request: Request, name: str) -> str | None:
+    """Look up a single named cookie in the request."""
     try:
         return cookies(request).one(name)
     except WebError as exc:
@@ -2465,12 +2568,14 @@ def with_cookie(response: Response, name: str, value: str, *, path: str = "/",
 
 def delete_cookie(response: Response, name: str, *, path: str = "/",
                   domain: str | None = None, partitioned: bool = False) -> Response:
+    """Expire a cookie by writing an immediate deletion header."""
     return with_cookie(response, name, "", path=path, domain=domain,
                        max_age=0, expires=0, partitioned=partitioned)
 
 
 def created(location: str, response: Response | None = None) -> Response:
     # Redirect validates location syntax but created must not redirect or change methods.
+    """Build a 201 response with the supplied resource location."""
     location_header = redirect(location).headers.one("Location")
     return replace(response or Response(201), status=201).with_header("Location", location_header)
 
@@ -2488,6 +2593,7 @@ class Validators:
     exists: bool = True
 
     def __post_init__(self) -> None:
+        """Validate the entity tag and modification time."""
         if self.etag is not None and not _is_etag(self.etag):
             raise WebError('InvalidETag', 'Invalid representation ETag')
         if self.last_modified is not None and not isinstance(self.last_modified, int):
@@ -2501,6 +2607,7 @@ _ETAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 
 
 def _is_etag(value: str) -> bool:
+    """Check whether a string is a valid entity tag."""
     return bool(_ETAG.fullmatch(value))
 
 
@@ -2535,6 +2642,7 @@ def _etag_list(raw: str) -> tuple[str, ...] | None:
 
 
 def _etag_matches(raw: str, tag: str | None, *, weak: bool, exists: bool = True) -> bool:
+    """Compare entity tags with the requested comparison strength."""
     candidates = _etag_list(raw)
     if candidates is None:
         return exists
@@ -2548,6 +2656,7 @@ def _etag_matches(raw: str, tag: str | None, *, weak: bool, exists: bool = True)
 
 
 def _http_date(value: str):
+    """Parse an HTTP timestamp for conditional request evaluation."""
     from email.utils import parsedate_to_datetime
     from datetime import timezone
     try:
@@ -2660,6 +2769,7 @@ _FILE_MIME = {
 
 
 def _read_regular_file(fd: int, *, limit: int | None = None) -> tuple[bytes, object]:
+    """Read a bounded regular file for a buffered file response."""
     import os
     import stat
     if limit is None:
@@ -2677,6 +2787,7 @@ def _read_regular_file(fd: int, *, limit: int | None = None) -> tuple[bytes, obj
 
 
 def _file_response(content: bytes, filename: str, *, html: bool = False) -> Response:
+    """Build a file response with content metadata and validators."""
     from pathlib import PurePath
     mime = 'text/html; charset=utf-8' if html else _FILE_MIME.get(PurePath(filename).suffix.lower(), 'application/octet-stream')
     return Response(200, content, Headers((

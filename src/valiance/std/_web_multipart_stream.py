@@ -22,6 +22,7 @@ class MultipartPart:
 
     @property
     def is_file(self) -> bool:
+        """Report whether the part has a filename."""
         return self.filename is not None
 
 
@@ -39,6 +40,7 @@ class UploadStream:
                  max_header_bytes: int = 16384,
                  max_file_bytes: int = 256 * 1024 * 1024,
                  max_name_bytes: int = 1024, max_filename_bytes: int = 4096):
+        """Initialize multipart parsing with the request stream and its limits."""
         if (any(type(v) is not int or v <= 0 for v in (
                 max_parts, max_fields, max_files, max_field_bytes,
                 max_header_bytes, max_file_bytes, max_name_bytes,
@@ -68,6 +70,7 @@ class UploadStream:
 
     def _fill(self, minimum: int) -> bool:
         # Each transport read is bounded, independent of the total upload size.
+        """Read more input until the buffer reaches the requested size or EOF."""
         while len(self._buffer) < minimum:
             if self.body.complete:
                 return False
@@ -78,6 +81,7 @@ class UploadStream:
         return True
 
     def _take(self, size: int) -> bytes:
+        """Remove and return the requested prefix of the input buffer."""
         item = bytes(self._buffer[:size])
         del self._buffer[:size]
         return item
@@ -85,6 +89,7 @@ class UploadStream:
     def _finish(self) -> None:
         # Final boundary may be followed by one CRLF, nothing else. Reaching
         # request EOF also validates any HTTP chunked trailers via the owner.
+        """Finish the multipart message and validate the remaining input."""
         if self._fill(2) and self._buffer[:2] == b'\r\n':
             self._take(2)
         if self._buffer or self._fill(1):
@@ -92,6 +97,7 @@ class UploadStream:
         self._finished = True
 
     def _begin(self) -> None:
+        """Consume the opening multipart boundary."""
         if self._started:
             return
         self._started = True
@@ -107,6 +113,7 @@ class UploadStream:
     def _read_headers(self) -> tuple[dict[str, str], dict[str, str]]:
         # Reject obs-fold and excessive headers before untrusted data can
         # force large allocations. The limit counts all header block octets.
+        """Read and validate the current part's headers and disposition."""
         while True:
             end = self._buffer.find(b'\r\n\r\n')
             if end >= 0:
@@ -147,6 +154,7 @@ class UploadStream:
         return headers, disposition
 
     def _read_data(self, maximum: int) -> bytes | None:
+        """Read part data while retaining bytes that may form a boundary."""
         if type(maximum) is not int or maximum < 1 or maximum > 65536:
             raise core.WebError('BadRequest', 'Multipart read limit must be 1..65536')
         if not self._active:
@@ -192,6 +200,7 @@ class UploadStream:
                 raise core.WebError('InvalidMultipart', 'Missing final multipart boundary')
 
     def next_part(self) -> MultipartPart | None:
+        """Advance to the next part and return its metadata."""
         if self.closed:
             raise core.WebError('BodyUnavailable', 'Multipart stream is closed')
         if self._active:
@@ -245,6 +254,7 @@ class UploadStream:
             raise
 
     def read_part(self, maximum: int) -> bytes | None:
+        """Read a bounded chunk from the current part."""
         if self.closed:
             raise core.WebError('BodyUnavailable', 'Multipart stream is closed')
         try:
@@ -254,6 +264,7 @@ class UploadStream:
             raise
 
     def discard_part(self) -> None:
+        """Consume the remainder of the current part."""
         if self.closed:
             raise core.WebError('BodyUnavailable', 'Multipart stream is closed')
         if not self._active:
@@ -316,6 +327,7 @@ class UploadStream:
                         pass
 
     def close(self) -> None:
+        """Release the underlying incoming body stream."""
         if not self.closed:
             self.closed = True
             self.body.close()

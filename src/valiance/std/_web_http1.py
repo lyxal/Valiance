@@ -36,11 +36,13 @@ class TLSConfig:
     key_file: str
 
     def __post_init__(self) -> None:
+        """Validate the TLS certificate configuration."""
         if not self.cert_file or not self.key_file:
             raise core.ConfigError('TLS certificate and private key paths are required')
 
 
 def _tls_context(config: TLSConfig, protocols: tuple[str, ...]) -> ssl.SSLContext:
+    """Build the server TLS context from the configured certificate and key."""
     try:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -96,6 +98,7 @@ class Limits:
 
     @property
     def multipart_policy(self) -> core.MultipartLimits:
+        """Collect multipart limits for request parsing."""
         return core.MultipartLimits(
             max_fields=self.max_form_fields,
             max_parts=self.max_multipart_parts,
@@ -105,6 +108,7 @@ class Limits:
             max_filename_bytes=self.max_multipart_filename_bytes)
 
     def __post_init__(self) -> None:
+        """Validate the server's resource and timeout limits."""
         for name, value in vars(self).items():
             if (type(value) not in (int, float) or value < 0 or
                     (value == 0 and name != 'graceful_shutdown_seconds')):
@@ -115,6 +119,7 @@ class Limits:
 
 
 def _headers_from_request(event: h11.Request, limits: Limits) -> core.Headers:
+    """Convert parsed request fields to the ordered header collection."""
     if len(event.headers.raw_items()) > limits.max_header_fields:
         raise core.WebError("HeadersTooLarge", "Too many header fields")
     if sum(len(k) + len(v) + 4 for k, v in event.headers.raw_items()) > limits.max_header_bytes:
@@ -169,6 +174,7 @@ def _request_trailer_declarations(headers: core.Headers) -> frozenset[str]:
 
 def _headers_from_trailers(event: h11.EndOfMessage, initial: core.Headers,
                            limits: Limits) -> core.Headers:
+    """Validate and convert fields from the request trailers."""
     raw = event.headers.raw_items()
     # Never permit trailer blocks to evade the initial header quota.
     if (len(raw) > min(32, limits.max_header_fields) or
@@ -188,6 +194,7 @@ def _headers_from_trailers(event: h11.EndOfMessage, initial: core.Headers,
 
 
 def _validate_request(event: h11.Request, limits: Limits) -> tuple[str, str, core.Headers]:
+    """Validate the HTTP request and resolve its target metadata."""
     if event.http_version != b'1.1':
         raise core.WebError("BadRequest", "Only HTTP/1.1 is supported")
     if len(event.target) > limits.max_request_target_bytes:
@@ -290,6 +297,7 @@ def _send_stream_response(conn: h11.Connection, tcp: socket.socket,
 
 
 def _failure_response(exc: Exception) -> core.Response:
+    """Convert a request or protocol failure into an HTTP response."""
     if isinstance(exc, h11.RemoteProtocolError):
         status = exc.error_status_hint
         if status not in (400, 408, 413, 414, 431):
@@ -320,6 +328,7 @@ class _H11IncomingBody:
     """
     def __init__(self, handler: '_ConnectionHandler', conn: h11.Connection,
                  tcp: socket.socket, limits: Limits, headers: core.Headers):
+        """Adapt an h11 request body to the streaming reader interface."""
         self.handler = handler
         self.conn = conn
         self.tcp = tcp
@@ -331,6 +340,7 @@ class _H11IncomingBody:
         self.closed = False
 
     def read(self, maximum: int) -> bytes | None:
+        """Read bounded body bytes and capture trailers when the message ends."""
         if self.closed:
             raise core.WebError('BodyUnavailable', 'Request body source is closed')
         while not self.pending:
@@ -355,11 +365,13 @@ class _H11IncomingBody:
         return part
 
     def close(self) -> None:
+        """Close the incoming body reader."""
         self.closed = True
 
 
 class _ConnectionHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
+        """Serve requests on one connection and hand off accepted upgrades."""
         tcp = self.request
         limits = self.server.web_limits
         conn = h11.Connection(h11.SERVER, max_incomplete_event_size=limits.max_header_bytes)
@@ -578,6 +590,7 @@ class _ConnectionHandler(socketserver.BaseRequestHandler):
 
     def _next_event(self, conn: h11.Connection, tcp: socket.socket, timeout: float,
                     *, header_phase: bool = False) -> object:
+        """Read the next h11 event within the applicable deadline."""
         deadline = time.monotonic() + timeout
         # h11 can retain pipelined bytes after a prior EndOfMessage. Inspect
         # those bytes *before* h11 normalises Content-Length in the next
@@ -632,6 +645,7 @@ class _ConnectionHandler(socketserver.BaseRequestHandler):
             raise core.WebError('BadRequest', 'Duplicate Content-Length')
 
     def _protocol_error(self, conn: h11.Connection, tcp: socket.socket, exc: Exception) -> bool:
+        """Write the terminal response for an HTTP protocol failure."""
         try:
             response = _failure_response(exc)
             # An invalid request can leave h11's receive state unusable.
@@ -660,6 +674,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
                  protocols: tuple[str, ...] = ('HTTP/1.1',),
                  network_policy: core.NetworkPolicy | None = None):
         # Validate certificate and private key *before* binding a port.
+        """Initialize the listener and its shared resource accounting."""
         self.web_tls = _tls_context(tls, protocols) if tls is not None else None
         self.web_protocols = protocols
         self.web_app = core.prepare(app)
@@ -714,6 +729,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         super().__init__((host, port), _ConnectionHandler)
 
     def process_request(self, request, client_address):
+        """Admit an accepted connection to a transport worker."""
         if not self._slots.acquire(blocking=False):
             request.close()
             return
@@ -732,6 +748,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             raise
 
     def process_request_thread(self, request, client_address):
+        """Run the connection worker and release its admission slot."""
         worker = current_thread()
         with self._metric_lock:
             self._connection_workers.add(worker)
@@ -842,6 +859,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             return sum(worker.is_alive() for worker in self._connection_workers)
 
     def begin_request(self, connection: socket.socket) -> bool:
+        """Reserve capacity for an admitted request."""
         with self._metric_lock:
             if (self.draining.is_set() or connection not in self._connections or
                     self._active_requests >= self.web_limits.max_concurrent_requests):
@@ -868,15 +886,18 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             return True
 
     def end_websocket(self) -> None:
+        """Release an active WebSocket session slot."""
         with self._metric_lock:
             assert self._active_websockets > 0
             self._active_websockets -= 1
 
     def begin_websocket_callback(self) -> None:
+        """Record the start of a WebSocket handler callback."""
         with self._metric_lock:
             self._active_websocket_callbacks += 1
 
     def end_websocket_callback(self) -> None:
+        """Record completion of a WebSocket handler callback."""
         with self._metric_lock:
             assert self._active_websocket_callbacks > 0
             self._active_websocket_callbacks -= 1
@@ -890,6 +911,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             owner.abort(1001)
 
     def unregister_websocket_owner(self, owner: object) -> None:
+        """Remove an upgraded socket from shutdown supervision."""
         with self._metric_lock:
             self._websocket_owners.discard(owner)
             if owner.owned_threads_alive:
@@ -906,6 +928,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             return True
 
     def release_h2_buffer(self, size: int) -> None:
+        """Release reserved HTTP/2 buffer capacity."""
         with self._metric_lock:
             assert 0 <= size <= self._h2_buffered_bytes
             self._h2_buffered_bytes -= size
@@ -967,6 +990,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             }
 
     def end_request(self, connection: socket.socket, completed: bool) -> None:
+        """Record a completed or cancelled request and release its slot."""
         with self._metric_lock:
             if connection in self._connections:
                 assert self._connections[connection] > 0
@@ -982,6 +1006,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
                 self.cancelled_requests += 1
 
     def start_drain(self) -> None:
+        """Stop admitting new work and begin draining active connections."""
         with self._metric_lock:
             self.draining.set()
             ws_sockets = {owner._socket for owner in self._websocket_owners
@@ -993,6 +1018,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
     @staticmethod
     def _interrupt(connections: list[socket.socket]) -> None:
+        """Interrupt a connection to wake blocked transport operations."""
         for conn in connections:
             try:
                 conn.shutdown(socket.SHUT_RDWR)
@@ -1000,6 +1026,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
                 pass
 
     def drain_finished(self) -> bool:
+        """Check whether outstanding work has drained."""
         with self._metric_lock:
             return not any(self._connections.values()) and self._active_websockets == 0
 
@@ -1045,6 +1072,7 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 class ServerHandle:
     """Python-owned ALPN HTTP/1.1 + HTTP/2 listener."""
     def __init__(self, server: _ThreadedTCPServer):
+        """Wrap the listener and track its serving lifecycle."""
         self._server = server
         self._stopped = Event()
         self._close_lock = Lock()
@@ -1055,19 +1083,23 @@ class ServerHandle:
 
     @property
     def tls_enabled(self) -> bool:
+        """Report whether the listener is configured for TLS."""
         return self._server.web_tls is not None
 
     @property
     def bound_address(self) -> tuple[str, int]:
+        """Return the address assigned to the listening socket."""
         return self._server.server_address
 
     def _run(self) -> None:
+        """Run the listener loop and signal its exit."""
         try:
             self._server.serve_forever(poll_interval=0.05)
         finally:
             self._stopped.set()
 
     def shutdown(self, grace_seconds: float | None = None) -> None:
+        """Drain active work within the grace period and stop the listener."""
         if grace_seconds is None:
             grace_seconds = self._server.web_limits.graceful_shutdown_seconds
         if type(grace_seconds) not in (int, float) or not 0 <= grace_seconds <= 86400:
@@ -1146,15 +1178,18 @@ class ServerHandle:
 
     @property
     def counts(self) -> tuple[int, int]:
+        """Return a snapshot of the listener counters."""
         with self._server._metric_lock:
             return self._server.accepted_requests, self._server.completed_requests
 
     @property
     def cancelled(self) -> int:
+        """Report how many requests were cancelled."""
         with self._server._metric_lock:
             return self._server.cancelled_requests
 
     def wait(self) -> None:
+        """Wait for the listener to stop."""
         self._thread.join()
 
 

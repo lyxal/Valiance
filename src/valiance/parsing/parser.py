@@ -197,6 +197,7 @@ def parse(source: str) -> list[ASTNode]:
 
 
 def _require_valid_parse(result: ParseResult) -> list[ASTNode]:
+    """Return the parsed nodes or raise the collected syntax diagnostics."""
     if result.diagnostics:
         if len(result.diagnostics) == 1:
             raise result.diagnostics[0]

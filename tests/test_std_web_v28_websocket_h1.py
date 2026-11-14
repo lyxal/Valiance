@@ -463,12 +463,21 @@ class WebSocketH1Tests(unittest.TestCase):
 
     def test_browser_cookies_do_not_bypass_explicit_websocket_authentication(self):
         """WS-15: Origin filtering and cookie delivery are not authentication."""
+        from threading import Event
+
         entered = []
+        handler_entered = Event()
+
+        def handler(ws):
+            entered.append(1)
+            handler_entered.set()
+            ws.close()
+
         def auth(req):
             if req.method == 'WEBSOCKET' and req.headers.one('Authorization') != 'Bearer allow':
                 return core.Response(401, 'authorization required')
             return req
-        app = core.App().websocket('/ws', lambda ws: (entered.append(1), ws.close())).use(auth)
+        app = core.App().websocket('/ws', handler).use(auth)
         server = self.start(app)
         for extra, wanted in (
             (b'Cookie: session=trusted\r\n', b'401 '),
@@ -478,7 +487,10 @@ class WebSocketH1Tests(unittest.TestCase):
             sock, response = self.raw(server, extra=extra)
             try:
                 self.assertIn(wanted, response)
-                self.assertNotIn(b'101 ', response) if wanted == b'401 ' else None
+                if wanted == b'401 ':
+                    self.assertNotIn(b'101 ', response)
+                else:
+                    self.assertTrue(handler_entered.wait(timeout=3))
             finally:
                 sock.close()
         self.assertEqual(entered, [1])

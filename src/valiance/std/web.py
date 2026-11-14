@@ -28,6 +28,7 @@ from valiance.std.html import render_node as _render_html_node
 
 
 def _nominal(name: str) -> T.Type:
+    """Construct a nominal type belonging to std.web."""
     return T.N(Symbol(name.rsplit('.', 1)[-1], ('web', *name.rsplit('.', 1)[:-1])))
 
 _APP = _nominal('App')
@@ -85,6 +86,7 @@ _METHODS = (('get', 'Get'), ('head', 'Head'), ('post', 'Post'),
 
 
 def _optional_contents(value: Any) -> list[Any]:
+    """Extract the contents of an optional runtime value."""
     if not isinstance(value, ObjectValue):
         raise TypeError('Expected an optional collection')
     if value.type_name == 'None':
@@ -95,6 +97,7 @@ def _optional_contents(value: Any) -> list[Any]:
 
 
 def _optional_list(values: list[Any]) -> ObjectValue:
+    """Convert an optional list to its runtime items."""
     if not values:
         return ObjectValue('None', {})
     return ObjectValue('Some', {'value': ListValue(values, runtime_rank=1)})
@@ -102,6 +105,7 @@ def _optional_list(values: list[Any]) -> ObjectValue:
 
 def _new_config(old: ObjectValue, *, routes: list[Any] | None = None,
                 middleware: list[Any] | None = None) -> ObjectValue:
+    """Copy the configuration with optional route and middleware replacements."""
     fields = {
         'routes': _optional_list(routes if routes is not None else
                                  [_duplicate_occurrence(route) for route in _optional_contents(old.fields['routes'])]),
@@ -117,6 +121,7 @@ def _new_config(old: ObjectValue, *, routes: list[Any] | None = None,
 def _install_route(args: tuple[Any, ...], kind: str) -> tuple[Any, ...]:
     # Modifier callbacks arrive last at runtime, even when their nominal
     # parameter appears before the trailing optional arguments.
+    """Register a route and retain the callback's runtime ownership."""
     is_body_route = kind in ('Post', 'Put', 'Patch', 'Query')
     if is_body_route:
         target, path, mode, limit, handler = args
@@ -188,6 +193,7 @@ for _lower, _title in _METHODS:
             # covariant Result output.
             def _register(args: tuple[Any, ...], ctx: RuntimeContext,
                           kind: str = _title) -> tuple[Any, ...]:
+                """Register an HTTP route with its Valiance handler."""
                 del ctx
                 return _install_route(args, kind)
 
@@ -222,6 +228,7 @@ for _target_type, _label in ((_APP, 'app'), (_ROUTER, 'router')):
     for _output_type, _output_name in ((T.N(Symbol('None')), 'none'), (_ERROR, 'error'),
                                       (T.Result(T.N(Symbol('None')), _ERROR), 'result')):
         def _register_ws(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+            """Register a WebSocket route with its Valiance handler."""
             del ctx
             target, path, policy, handler = args
             from valiance.std import _web_ws
@@ -255,6 +262,7 @@ del _register_ws
 
 
 def _core_ws_policy(obj: ObjectValue):
+    """Convert the language policy to the WebSocket core policy."""
     from valiance.std._web_ws import WebSocketPolicy
     return WebSocketPolicy(
         allowed_origins=tuple(_optional_contents(obj.fields['allowedOrigins'])),
@@ -289,6 +297,7 @@ for _target_type, _label in ((_APP, 'app'), (_ROUTER, 'router')):
         (_AFTER_ERROR_RECORD, 'after_error_record'),
     ):
         def _register_middleware(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+            """Add a language middleware callback to the configuration."""
             del ctx
             return _append_middleware(*args)
 
@@ -320,6 +329,7 @@ del _register_middleware
                     category='Web', returns='CORS middleware policy value.',
                     examples=(('import {std.web, std.web.App}\n$app = App\n$app := middleware web.cors(web.CorsPolicy(allowedOrigins = [\"https://example.com\"], allowedMethods = [web.Method.GET]))', None),)))
 def _cors_factory(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a middleware value carrying a CORS policy."""
     del ctx
     # Validate at app construction, not on the first incoming request.
     _core_cors_policy(args[0])
@@ -327,12 +337,15 @@ def _cors_factory(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
 
 
 def _core_cors_policy(value: ObjectValue) -> core.CorsPolicy:
+    """Convert the language policy to the core CORS policy."""
     if not isinstance(value, ObjectValue) or value.type_name != 'web.CorsPolicy':
         raise core.ConfigError('Expected web.CorsPolicy')
     def names(field: str) -> tuple[str, ...]:
+        """Extract a list of configured CORS field names."""
         raw = value.fields[field]
         return tuple(_optional_contents(raw)) if isinstance(raw, ObjectValue) else tuple(raw)
     def truth(field: str) -> bool:
+        """Read a Boolean CORS option from the policy."""
         number = value.fields[field]
         number = int(number.value if isinstance(number, TaggedValue) else number)
         if number not in (0, 1):
@@ -353,6 +366,7 @@ def _core_cors_policy(value: ObjectValue) -> core.CorsPolicy:
 
 
 def _core_tls(config: ObjectValue) -> object:
+    """Convert the language TLS configuration to listener settings."""
     from valiance.std import _web_http1
     option = config.fields.get('tls', ObjectValue('None', {}))
     if isinstance(option, ObjectValue) and option.type_name == 'None':
@@ -392,6 +406,7 @@ def _core_protocols(config: ObjectValue) -> tuple[str, ...] | None:
 def _core_network_policy(config: ObjectValue) -> core.NetworkPolicy:
     """Validate the public host/proxy configuration before listener binding."""
     def strings(name: str) -> tuple[str, ...]:
+        """Read a list of strings from a network policy field."""
         option = config.fields.get(name, ObjectValue('None', {}))
         if isinstance(option, ObjectValue) and option.type_name == 'None':
             return ()
@@ -472,6 +487,7 @@ def _core_limits(config: ObjectValue) -> object:
 
 for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
     def _register_cors(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Add CORS middleware to the app or router."""
         del ctx
         return _append_middleware(*args)
     _register_cors.__name__ = f'_middleware_cors_{_suffix}'
@@ -493,9 +509,11 @@ del _register_cors
 # Compression is another normal after-middleware, with an opaque native
 # registration value until the compiler supports callable middleware factories.
 def _core_compression_policy(value: ObjectValue) -> core.CompressionPolicy:
+    """Convert the language policy to the core compression policy."""
     if not isinstance(value, ObjectValue) or value.type_name != 'web.CompressionPolicy':
         raise core.ConfigError('Expected web.CompressionPolicy')
     def flag(field: str) -> bool:
+        """Read a Boolean compression option from the policy."""
         val = value.fields[field]
         val = int(val.value if isinstance(val, TaggedValue) else val)
         if val not in (0, 1):
@@ -513,6 +531,7 @@ def _core_compression_policy(value: ObjectValue) -> core.CompressionPolicy:
                     examples=(('import {std.web, std.web.App}\n$app = App\n'
                                '$app := middleware web.compression(web.CompressionPolicy)', None),)))
 def _compression_factory(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a middleware value carrying a compression policy."""
     del ctx
     _core_compression_policy(args[0])
     return (ObjectValue('web.CompressionMiddleware', {'policy': _duplicate_occurrence(args[0])}),)
@@ -520,6 +539,7 @@ def _compression_factory(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
 
 for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
     def _register_compression(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Add compression middleware to the app or router."""
         del ctx
         return _append_middleware(*args)
     _register_compression.__name__ = f'_middleware_compression_{_suffix}'
@@ -539,6 +559,7 @@ del _register_compression
 # Mounting is a pure composition operation.  The router's own middleware is
 # captured for each mounted route so it remains scoped, not app-global.
 def _mount_router(args: tuple[Any, ...], ctx: RuntimeContext, *, builder: bool) -> tuple[Any, ...]:
+    """Mount a router under a path prefix."""
     target, prefix, router = args
     core._validate_template(prefix)
     if builder:
@@ -578,6 +599,7 @@ for _target, _kind in ((_APP, 'app'), (_ROUTER, 'router')):
     ):
         def _register_group(args: tuple[Any, ...], ctx: RuntimeContext,
                             is_builder: bool = _is_builder) -> tuple[Any, ...]:
+            """Register the child router produced by the group callback."""
             return _mount_router(args, ctx, builder=is_builder)
 
         _register_group.__name__ = f'_group_{_kind}_{_suffix}'
@@ -594,6 +616,7 @@ for _target, _kind in ((_APP, 'app'), (_ROUTER, 'router')):
 del _register_group
 
 def _wrap_params(params: core.Params) -> ObjectValue:
+    """Convert ordered parameter pairs into a language Params value."""
     return ObjectValue('web.Params', {
         'names': _optional_list(list(name for name, _ in params.pairs)),
         'values': _optional_list(list(value for _, value in params.pairs)),
@@ -601,11 +624,13 @@ def _wrap_params(params: core.Params) -> ObjectValue:
 
 
 def _unwrap_params(value: ObjectValue) -> core.Params:
+    """Recover ordered parameter pairs from a language Params value."""
     return core.Params(tuple(zip(_optional_contents(value.fields['names']),
                                  _optional_contents(value.fields['values']), strict=True)))
 
 
 def _wrap_headers(headers: core.Headers) -> ObjectValue:
+    """Convert ordered header pairs into a language Headers value."""
     return ObjectValue('web.Headers', {
         'names': _optional_list([key for key, _ in headers.pairs]),
         'values': _optional_list([val for _, val in headers.pairs]),
@@ -613,6 +638,7 @@ def _wrap_headers(headers: core.Headers) -> ObjectValue:
 
 
 def _unwrap_headers(value: Any) -> core.Headers:
+    """Recover ordered header pairs from a language Headers value."""
     if isinstance(value, ObjectValue) and value.type_name == 'None':
         return core.Headers()
     if isinstance(value, ObjectValue) and value.type_name == 'Some':
@@ -637,6 +663,7 @@ _REQUEST_BODY_RUNTIME = ObjectRuntimeType(
 
 
 def _request_token(stream: core.RequestBodyStream | None) -> int:
+    """Allocate or reuse a token for a request body stream."""
     if stream is None:
         return 0
     with _REQUEST_STREAM_LOCK:
@@ -651,6 +678,7 @@ def _request_token(stream: core.RequestBodyStream | None) -> int:
         previous_close = getattr(stream, '_on_close', None)
         stream_ref = ref(stream)
         def on_close():
+            """Remove the body stream registration when the stream closes."""
             current = stream_ref()
             with _REQUEST_STREAM_LOCK:
                 _REQUEST_STREAM_LEASES.pop(token, None)
@@ -663,6 +691,7 @@ def _request_token(stream: core.RequestBodyStream | None) -> int:
 
 
 def _stream_for_token(token: int) -> core.RequestBodyStream | None:
+    """Resolve a request body stream token."""
     if not token:
         return None
     with _REQUEST_STREAM_LOCK:
@@ -673,6 +702,7 @@ def _stream_for_token(token: int) -> core.RequestBodyStream | None:
 def _context_snapshot(request: core.Request) -> DictValue:
     # Store the immutable request-local snapshot directly in the VM value.
     # No global registry, leaked lease, or easily forgeable string-name key.
+    """Copy the context metadata exposed to a language callback."""
     return DictValue({key: _duplicate_occurrence(value)
                       for key, value in request.context.items()})
 
@@ -680,6 +710,7 @@ def _context_snapshot(request: core.Request) -> DictValue:
 def _wrap_request(request: core.Request, *, concrete: bool = False) -> ObjectValue:
     # Route captures are an immutable String -> String dictionary with no
     # interpretation as query fields.
+    """Convert a core request to the appropriate language request value."""
     name = ('WebSocketRequest' if request.method == 'WEBSOCKET' else
             f'{request.method.capitalize()}Request')
     return ObjectValue(f'web.{name}' if concrete else f'web.Request.{name}', {
@@ -701,6 +732,7 @@ def _wrap_request(request: core.Request, *, concrete: bool = False) -> ObjectVal
 
 
 def _unwrap_request(value: ObjectValue) -> core.Request:
+    """Rebuild a core request from a language request value."""
     if not isinstance(value, ObjectValue) or not value.type_name.startswith('web.Request.'):
         raise TypeError('Expected web.Request')
     kind = value.type_name.rsplit('.', 1)[-1]
@@ -730,11 +762,13 @@ _CONTEXT_KEY_SECRET = token_bytes(32)
 
 
 def _context_key_mac(token: int) -> int:
+    """Compute the message authentication code for a request context key nonce."""
     data = token.to_bytes(16, 'big')
     return int.from_bytes(hmac.new(_CONTEXT_KEY_SECRET, data, hashlib.sha256).digest()[:16], 'big')
 
 
 def _context_key_token(obj: ObjectValue) -> int:
+    """Validate the key's authenticator and recover its nonce."""
     if not isinstance(obj, ObjectValue) or obj.type_name != 'web.ContextKey':
         raise core.WebError('MissingContext', 'Expected a typed web.ContextKey')
     try:
@@ -753,12 +787,14 @@ def _context_key_token(obj: ObjectValue) -> int:
 
 @stdlib_element('nativeContextNonce', (), (T.Int,), exported=False)
 def _mint_context_nonce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Generate a nonce for a new request context key."""
     del args, ctx
     return (RuntimeNumber(randbits(112) or 1),)
 
 
 @stdlib_element('nativeContextAuthenticator', (T.Int,), (T.Int,), exported=False)
 def _mint_context_authenticator(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Compute the authenticator for a new request context key."""
     del ctx
     return (RuntimeNumber(_context_key_mac(int(args[0]))),)
 
@@ -770,6 +806,7 @@ def _mint_context_authenticator(args: tuple[Any, ...], ctx: RuntimeContext) -> t
                     returns='An opaque ContextKey[T] with unique identity.',
             examples=('import {std.web}\nweb.contextKey[String]',)))
 def _new_context_key(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a typed request context key."""
     del args
     nonce = randbits(112) or 1
     return (ObjectValue('web.ContextKey', {
@@ -781,6 +818,7 @@ def _new_context_key(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, .
 
 
 def _context_items(req: ObjectValue) -> dict[object, object]:
+    """Read the stored context entries from a request."""
     if not isinstance(req, ObjectValue) or not (
             req.type_name.startswith('web.Request.') or
             req.type_name.endswith('Request') and req.type_name.startswith('web.')):
@@ -791,6 +829,7 @@ def _context_items(req: ObjectValue) -> dict[object, object]:
 def _new_context_request(req: ObjectValue, items: dict[object, object]) -> ObjectValue:
     # A new request value has its own fields. The application-facing request's
     # original identity, framing tokens and route captures are not changed.
+    """Rebuild the request with updated context entries."""
     fields = {name: _duplicate_occurrence(value) for name, value in req.fields.items()
               if name != '__contextValues'}
     fields['__contextValues'] = DictValue(items)
@@ -803,6 +842,7 @@ _REQ_CONTEXT_TYPES = ((_REQUEST, 'Request'),
                                      'Delete', 'Options', 'Query', 'WebSocket')])
 for _ctx_type, _ctx_name in _REQ_CONTEXT_TYPES:
     def _with_context(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Set a value under a typed request context key."""
         del ctx
         req, key, value = args
         token = _context_key_token(key)
@@ -824,6 +864,7 @@ for _ctx_type, _ctx_name in _REQ_CONTEXT_TYPES:
     globals()[_with_context.__name__] = _with_context
 
     def _get_context(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Look up an optional value under a typed request context key."""
         del ctx
         req, key = args
         items = _context_items(req)
@@ -842,6 +883,7 @@ for _ctx_type, _ctx_name in _REQ_CONTEXT_TYPES:
     globals()[_get_context.__name__] = _get_context
 
     def _require_context(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Retrieve the value or report that the context key is missing."""
         del ctx
         req, key = args
         items = _context_items(req)
@@ -869,6 +911,7 @@ def _wrap_bytes(value: bytes) -> TaggedValue:
 def _unwrap_bytes(value: TaggedValue | ListValue) -> bytes:
     # Native argument conversion may erase tag *evidence* after static checking.
     # Stored Response fields keep evidence; both paths still verify byte ranges.
+    """Convert a language byte list to Python bytes."""
     if isinstance(value, TaggedValue):
         if not _BYTE_TAGS.issubset(value.tags):
             raise core.WebError('InvalidResponse', 'Expected byte-tagged response body')
@@ -897,6 +940,7 @@ _STREAM_BODY_RUNTIME = ObjectRuntimeType(
 
 
 def _lease_stream(body: core.StreamBody) -> ObjectValue:
+    """Resolve the owned response stream's lease."""
     with _STREAM_LEASES_LOCK:
         token = randbits(112) or 1
         while token in _STREAM_LEASES:
@@ -907,6 +951,7 @@ def _lease_stream(body: core.StreamBody) -> ObjectValue:
 
 
 def _claim_stream(obj: ObjectValue) -> core.StreamBody:
+    """Transfer a response stream from its language owner."""
     if not isinstance(obj, ObjectValue) or obj.type_name != 'web.StreamBody':
         raise core.WebError('InvalidResponse', 'Expected a StreamBody')
     with _STREAM_LEASES_LOCK:
@@ -919,6 +964,7 @@ def _claim_stream(obj: ObjectValue) -> core.StreamBody:
 @stdlib_element('nativeCloseStream', (T.Int,), (), exported=False,
                 param_names=('token',))
 def _native_close_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Close a response stream held by a language owner."""
     del ctx
     with _STREAM_LEASES_LOCK:
         body = _STREAM_LEASES.pop(int(args[0]), None)
@@ -929,12 +975,14 @@ def _native_close_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
 
 class _VMByteSource:
     def __init__(self, source: ObjectValue, ctx: RuntimeContext):
+        """Retain a language callback as a byte source."""
         self.read_callback = _duplicate_occurrence(source.fields['read'])
         self.close_callback = _duplicate_occurrence(source.fields['close'])
         self.ctx = ctx
         self.closed = False
 
     def read(self, max_bytes: int) -> bytes | None:
+        """Invoke the byte producer and convert its next chunk."""
         with _STREAM_CALLBACK_GATE:
             result = self.ctx.call(self.read_callback, [RuntimeNumber(max_bytes)])
         if len(result) != 1:
@@ -949,6 +997,7 @@ class _VMByteSource:
         raise core.WebError('InvalidResponse', 'ByteSource.read must return bytes or None')
 
     def close(self) -> None:
+        """Release the retained byte producer."""
         if self.closed:
             return
         self.closed = True
@@ -971,12 +1020,14 @@ class _VMByteSource:
 class _VMEventSource:
     """Keep event-producing callbacks alive until stream EOF/disconnect."""
     def __init__(self, source: ObjectValue, ctx: RuntimeContext):
+        """Retain a language callback as an event source."""
         self.next_callback = _duplicate_occurrence(source.fields['next'])
         self.close_callback = _duplicate_occurrence(source.fields['close'])
         self.ctx = ctx
         self.closed = False
 
     def next(self) -> core.Event | None:
+        """Invoke the producer and convert its next event."""
         with _STREAM_CALLBACK_GATE:
             result = self.ctx.call(self.next_callback, [])
         if len(result) != 1:
@@ -996,6 +1047,7 @@ class _VMEventSource:
                           _optional_scalar(fields['retryMs']))
 
     def close(self) -> None:
+        """Release the retained event producer."""
         if self.closed:
             return
         self.closed = True
@@ -1020,6 +1072,7 @@ class _VMEventSource:
                     category='Web', returns='An ordinary streaming Response.',
             examples=('import {std.web}\nfn (source: web.EventSource) => web.eventStream($source) end',)))
 def _event_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create an owned server-sent event stream."""
     return (_wrap_response(core.event_stream(_VMEventSource(args[0], ctx))),)
 
 
@@ -1031,6 +1084,7 @@ def _event_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                     category='Web', returns='A nonduplicable StreamBody.',
             examples=('import {std.web}\nfn (source: web.ByteSource) => web.stream($source, "text/plain") end',)))
 def _stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create an owned streaming byte body."""
     source, content_type = args
     return (_lease_stream(core.stream(_VMByteSource(source, ctx), content_type)),)
 
@@ -1044,12 +1098,14 @@ def _stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     category='Web', returns='Response owning an exclusive ByteSource.',
             examples=('import {std.web}\nfn (source: web.ByteSource) => web.streamResponse($source, "text/plain") end',)))
 def _stream_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Attach an owned byte stream to a language response."""
     source, content_type = args
     return (_wrap_response(core.Response(body=core.stream(_VMByteSource(source, ctx), content_type))),)
 
 def _wrap_response(response: core.Response) -> ObjectValue:
     # Response is one public nominal type for both textual and binary bodies.
     # Never force opaque response bytes through UTF-8, even on an error path.
+    """Convert a core response to a language response."""
     body = (_lease_stream(response.body) if isinstance(response.body, core.StreamBody) else
             _wrap_bytes(response.body) if isinstance(response.body, bytes) else
             response.body if isinstance(response.body, str) else '')
@@ -1065,6 +1121,7 @@ def _wrap_response(response: core.Response) -> ObjectValue:
 
 
 def _unwrap_response(value: ObjectValue) -> core.Response:
+    """Convert a language response to the core representation."""
     if not isinstance(value, ObjectValue) or value.type_name != 'web.Response':
         raise TypeError('Expected a web.Response')
     headers = value.fields['headers']
@@ -1112,6 +1169,7 @@ def _wrap_ws_request(request: core.Request) -> ObjectValue:
 
 
 def _ws_lease(ws: object) -> ObjectValue:
+    """Resolve the lease for a language WebSocket owner."""
     with _WS_LOCK:
         token = randbits(112) or 1
         while token in _WS_LEASES:
@@ -1130,11 +1188,13 @@ def _ws_lease(ws: object) -> ObjectValue:
                     category='Web', returns='An immutable WebSocketRequest value.',
             examples=('import {std.web}\nfn (socket: web.WebSocket) => web.websocketRequest($socket) end',)))
 def _ws_request(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the approved request associated with a WebSocket."""
     del ctx
     return (_wrap_ws_request(_ws_get(args[0]).request),)
 
 
 def _ws_get(obj: ObjectValue):
+    """Resolve the live session associated with the language owner."""
     with _WS_LOCK:
         conn = _WS_LEASES.get(int(obj.fields['token']))
     if conn is None:
@@ -1143,6 +1203,7 @@ def _ws_get(obj: ObjectValue):
 
 
 def _ws_retire(token: int) -> None:
+    """Remove the WebSocket lease and abort its session if still registered."""
     with _WS_LOCK:
         conn = _WS_LEASES.pop(token, None)
     if conn is not None:
@@ -1151,6 +1212,7 @@ def _ws_retire(token: int) -> None:
 
 @stdlib_element('nativeCloseWebSocket', (T.Int,), (), exported=False)
 def _native_close_websocket(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Close the session when its language owner is released."""
     del ctx
     _ws_retire(int(args[0]))
     return ()
@@ -1162,6 +1224,7 @@ def _native_close_websocket(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple
                                                     category='Web', returns='WebSocketMessage or web.Error.',
             examples=('import {std.web}\nfn (socket: web.WebSocket) => web.websocketReceive($socket) end',)))
 def _ws_receive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Receive a message and convert it to the language result."""
     del ctx
     try:
         message = _ws_get(args[0]).receive()
@@ -1181,6 +1244,7 @@ for _method, _data_type in (('websocketSendText', T.String),
                            ('websocketSendBytes', _BYTE_LIST)):
     def _ws_send(args: tuple[Any, ...], ctx: RuntimeContext, name: str = _method
                  ) -> tuple[Any, ...]:
+        """Convert and send a language WebSocket message."""
         del ctx
         try:
             socket_obj, payload = args
@@ -1220,6 +1284,7 @@ del _ws_send
                                                     examples=('import {std.web}\n'
                                                               'fn (socket: web.WebSocket) => web.websocketPing($socket) end',)))
 def _ws_ping(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a WebSocket ping from a language callback."""
     del ctx
     try:
         _ws_get(args[0]).ping(_unwrap_bytes(args[1]))
@@ -1240,6 +1305,7 @@ def _ws_ping(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                                                     examples=('import {std.web}\n'
                                                               'fn (socket: web.WebSocket) => web.websocketClose($socket) end',)))
 def _ws_close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a WebSocket close using the supplied code and reason."""
     del ctx
     try:
         _ws_get(args[0]).close(int(args[1]), args[2])
@@ -1254,6 +1320,7 @@ def _ws_close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 for _error_output, _error_label in ((_RESPONSE, 'response'),
                                      (T.Result(_RESPONSE, _ERROR), 'response_or_error')):
     def _set_error_handler(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Install a language callback for dispatch errors."""
         del ctx
         app, callback = args
         result = _new_config(app)
@@ -1282,6 +1349,7 @@ del _set_error_handler
                     examples=('import {std.web}\n'
                               'fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end',)))
 def _default_error_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Convert a dispatch error to the default language response."""
     del ctx
     info, = args
     status = int(info.fields['status'])
@@ -1306,6 +1374,7 @@ def _default_error_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple
 
 for _log_result in (T.N(Symbol('None')), _ERROR, T.Result(T.N(Symbol('None')), _ERROR)):
     def _with_logger(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Install a language callback for request logs."""
         del ctx
         app, callback = args
         result = _new_config(app)
@@ -1330,17 +1399,20 @@ del _with_logger
 
 
 def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
+    """Translate an app configuration into a core dispatch configuration."""
     app = core.App()
     # The interpreter callback context is not safe to invoke concurrently on
     # separate socket workers. Serialize Valiance callbacks for this subset.
     callback_gate = _STREAM_CALLBACK_GATE
 
     def make_middleware(callback: Any):
+        """Adapt one retained language middleware callback."""
         if isinstance(callback, ObjectValue) and callback.type_name == 'web.CorsMiddleware':
             return core.cors(_core_cors_policy(callback.fields['policy']))
         if isinstance(callback, ObjectValue) and callback.type_name == 'web.CompressionMiddleware':
             return core.compression(_core_compression_policy(callback.fields['policy']))
         def middleware(req: core.Request) -> object:
+            """Invoke language middleware for the incoming request."""
             with callback_gate:
                 outputs = ctx.call(callback, [_wrap_request(req)])
             if len(outputs) != 1:
@@ -1350,6 +1422,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
                 updated_request = _unwrap_request(value['request'])
                 after_callback = value['after']
                 def run_after(response: core.Response) -> object:
+                    """Run the language middleware's response callback."""
                     with callback_gate:
                         after_outputs = ctx.call(after_callback, [_wrap_response(response)])
                     if len(after_outputs) != 1:
@@ -1375,6 +1448,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
         callback = route.fields['handler']
         if method == 'WEBSOCKET':
             def websocket_handler(ws, callback=callback):
+                """Invoke the language handler for an upgraded session."""
                 socket_value = _ws_lease(ws)
                 token = int(socket_value.fields['token'])
                 try:
@@ -1400,6 +1474,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
         if isinstance(callback, ObjectValue) and callback.type_name == 'web._StaticFileHandler':
             root = callback.fields['root']
             def handler(req: core.Request, root: str = root) -> object:
+                """Invoke the language handler for a streaming request."""
                 return core.static_file(root, req)
             app = app.route(method, route.fields['path'], handler)
             scoped = tuple(make_middleware(cb) for cb in
@@ -1407,6 +1482,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
             app = replace(app, entries=(*app.entries[:-1], replace(app.entries[-1], middleware=scoped)))
             continue
         def handler(req: core.Request, callback: Any = callback) -> object:
+            """Invoke the language handler for a buffered request."""
             with callback_gate:
                 outputs = ctx.call(callback, [_wrap_request(req, concrete=True)])
             if len(outputs) != 1:
@@ -1437,6 +1513,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
     error_callback = target.fields.get('errorHandler', ObjectValue('None', {}))
     if not isinstance(error_callback, ObjectValue) or error_callback.type_name != 'None':
         def on_error(req: core.Request | None, error: Exception, stage: str) -> core.Response:
+            """Convert the dispatch error and invoke the language error handler."""
             if isinstance(error, core.WebError):
                 name = error.name
                 status = error.status
@@ -1466,6 +1543,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
     logger_value = target.fields.get('logger', ObjectValue('None', {}))
     if not isinstance(logger_value, ObjectValue) or logger_value.type_name != 'None':
         def log_callback(event: core.LogEvent) -> None:
+            """Convert the log entry and invoke the language logger."""
             wrapped = ObjectValue('web.LogEvent', {
                 'requestId': event.request_id,
                 'method': event.method,
@@ -1491,6 +1569,7 @@ def _to_core_config(target: ObjectValue, ctx: RuntimeContext) -> core.App:
 
 for _cfg_type, _which in ((_APP, 'app'), (_ROUTER, 'router')):
     def _set_stream_mode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Configure request body streaming for a selected route."""
         del ctx
         target, method, path, mode = args
         try:
@@ -1529,6 +1608,7 @@ del _set_stream_mode
 
 @stdlib_element('nativeCloseRequestStream', (T.Int,), (), exported=False)
 def _native_close_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Release an owned incoming request stream."""
     del ctx
     stream = _stream_for_token(int(args[0]))
     if stream is not None:
@@ -1538,6 +1618,7 @@ def _native_close_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> 
 
 for _method_name in ('Post', 'Put', 'Patch', 'Query'):
     def _body_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Claim the incoming request body as an owned language stream."""
         del ctx
         value, = args
         stream = _stream_for_token(int(value.fields.get('streamToken', 0)))
@@ -1569,6 +1650,7 @@ del _body_stream
 # They cannot be observed before the stream was consumed all the way to EOF.
 for _method_name in ('Post', 'Put', 'Patch', 'Query'):
     def _request_trailers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Convert completed request trailers to the language representation."""
         del ctx
         request, = args
         stream = _stream_for_token(int(request.fields.get('streamToken', 0)))
@@ -1603,6 +1685,7 @@ del _request_trailers
                                                     category='Web', returns='Exact bytes or None or Error.',
             examples=('import {std.web}\nfn (stream: web.RequestBodyStream) => web.readBodyStream($stream, 4096) end',)))
 def _read_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read a bounded chunk from the owned request stream."""
     del ctx
     stream = _stream_for_token(int(args[0].fields['token']))
     try:
@@ -1621,6 +1704,7 @@ def _read_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
                                                     category='Web', returns='None or Error.',
             examples=('import {std.web}\nfn (stream: web.RequestBodyStream) => web.discardBodyStream($stream) end',)))
 def _discard_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Consume the rest of the owned request stream."""
     del ctx
     stream = _stream_for_token(int(args[0].fields['token']))
     try:
@@ -1638,12 +1722,14 @@ _DEFAULT_BYTES = (ElementNode(Symbol('nativeEmptyBytes', ('std', 'web'))),)
 
 @stdlib_element('nativeEmptyHeaders', (), (_HEADERS,), exported=False)
 def _native_empty_headers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply the default empty headers value."""
     del args, ctx
     return (_wrap_headers(core.Headers()),)
 
 
 @stdlib_element('nativeEmptyBytes', (), (_BYTE_LIST,), exported=False)
 def _native_empty_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply the default empty byte list."""
     del args, ctx
     return (_wrap_bytes(b''),)
 
@@ -1655,6 +1741,7 @@ def _native_empty_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any
                                                      returns='Method-specific request value.',
                                                      examples=(('import {std.web}\nweb.testRequest("GET", "/")', None),)))
 def _test_request(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Construct a language request for in-process testing."""
     del ctx
     method, target, headers, body = args
     return (_wrap_request(core.test_request(method, target, headers=_unwrap_headers(headers),
@@ -1671,6 +1758,7 @@ _DISPATCH_DOCS = element_documentation(
 @stdlib_element('dispatch', (_APP, _REQUEST), (_RESPONSE,),
                 param_names=('app', 'request'), documentation=_DISPATCH_DOCS)
 def _dispatch(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Dispatch a language request through the app in process."""
     target, request = args
     return (_wrap_response(core.dispatch(_to_core_config(target, ctx), _unwrap_request(request))),)
 
@@ -1682,6 +1770,7 @@ def _dispatch(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     category='Web', returns='PreparedApp or ConfigError.',
                     examples=(('import {std.web}\nweb.prepare(web.App)', None),)))
 def _prepare_app(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Prepare an app for repeated in-process dispatch."""
     target, = args
     try:
         core.prepare(_to_core_config(target, ctx))
@@ -1693,6 +1782,7 @@ def _prepare_app(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element('dispatch', (_PREPARED_APP, _REQUEST), (_RESPONSE,),
                 param_names=('prepared', 'request'), documentation=_DISPATCH_DOCS)
 def _dispatch_prepared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Dispatch a request using the prepared app."""
     target, request = args
     return (_wrap_response(core.dispatch(
         _to_core_config(target.fields['app'], ctx), _unwrap_request(request))),)
@@ -1700,6 +1790,7 @@ def _dispatch_prepared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any,
 
 for _target_type, _kind in ((_APP, 'app'), (_ROUTER, 'router')):
     def _routes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Convert registered route metadata to language values."""
         try:
             registered = core.routes(_to_core_config(args[0], ctx))
             descriptors = []
@@ -1738,6 +1829,7 @@ del _routes
                     category='Web', returns='New Response value.',
                     examples=(('import {std.web}\nweb.withHeader(web.Response(body = "ok"), "X-Web", "yes")', None),)))
 def _with_headers_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Replace a response's complete header collection."""
     del ctx
     headers, name, value = args
     return (_wrap_headers(_unwrap_headers(headers).with_header(name, value)),)
@@ -1757,6 +1849,7 @@ _DEFAULT_COLLECT_LIMIT = (NumberLiteralNode('16777216'),)
                     category='Web', returns='Exact bytes or a typed web.Error.',
                     examples=(('import {std.web}\nweb.collectBody(web.Response(body = "ok"))', None),)))
 def _collect_body(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Collect a response body up to the requested limit."""
     del ctx
     try:
         return (_wrap_bytes(core.collect_body(_unwrap_response(args[0]), int(args[1]))),)
@@ -1772,6 +1865,7 @@ def _collect_body(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                     category='Web', returns='UTF-8 content or a typed web.Error.',
                     examples=(('import {std.web}\nweb.responseText(web.Response(body = "ok"))', None),)))
 def _response_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read a response's buffered text."""
     del ctx
     try:
         return (core.response_text(_unwrap_response(args[0]), int(args[1])),)
@@ -1784,6 +1878,7 @@ def _response_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
 for _req_type, _req_label in ((_REQUEST, 'common'), *(
     (_nominal(f'{title}Request'), title.lower()) for _, title in _METHODS)):
     def _accepts(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Check whether the request accepts a media type."""
         del ctx
         request, proposed = args
         if not request.type_name.startswith('web.Request.'):
@@ -1813,6 +1908,7 @@ _STRING_LIST = T.ExactList(T.String)
 for _req_type, _req_name in ((_REQUEST, 'common'), *(
     (_nominal(f'{title}Request'), title.lower()) for _, title in _METHODS)):
     def _request_query(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Extract query parameters from the language request."""
         del ctx
         return (_duplicate_occurrence(args[0].fields['query']),)
 
@@ -1824,6 +1920,7 @@ for _req_type, _req_name in ((_REQUEST, 'common'), *(
     globals()[_request_query.__name__] = _request_query
 
     def _request_header_values(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Return every occurrence of a request header."""
         del ctx
         request, name = args
         headers = _unwrap_headers(request.fields['headers'])
@@ -1847,6 +1944,7 @@ del _request_query, _request_header_values
                     category='Web', returns='Values in field arrival order.',
             examples=('import {std.web}\nweb.headerValues(web.Headers, "Accept")',)))
 def _header_values_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Look up all values in a language header collection."""
     del ctx
     return (ListValue(list(_unwrap_headers(args[0]).values(args[1])), runtime_rank=1),)
 
@@ -1859,6 +1957,7 @@ def _header_values_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tup
                     category='Web', returns='Optional value or typed Error.',
             examples=('import {std.web}\nweb.header(web.Headers, "Accept")',)))
 def _header_single_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Look up a singleton value in a language header collection."""
     del ctx
     try:
         return (_string_optional(_unwrap_headers(args[0]).one(args[1])),)
@@ -1878,6 +1977,7 @@ for _body_method in ('Post', 'Put', 'Patch', 'Query'):
     ):
         def _body_helper(args: tuple[Any, ...], ctx: RuntimeContext,
                          impl: Any = _impl) -> tuple[Any, ...]:
+            """Adapt a core request-body accessor to a language overload."""
             del ctx
             request, = args
             # The concrete request is a method-specific nominal view, whereas
@@ -1929,6 +2029,7 @@ _MULTIPART_STREAM_RUNTIME = ObjectRuntimeType(
 
 
 def _multipart_stream_token(stream: core.UploadStream) -> int:
+    """Allocate a token for an owned multipart reader."""
     with _MULTIPART_STREAM_LOCK:
         token = randbits(112) or 1
         while token in _MULTIPART_STREAM_LEASES:
@@ -1936,6 +2037,7 @@ def _multipart_stream_token(stream: core.UploadStream) -> int:
         _MULTIPART_STREAM_LEASES[token] = stream
         prev = getattr(stream, '_on_close', None)
         def cleanup():
+            """Remove the multipart registration when its request closes."""
             with _MULTIPART_STREAM_LOCK:
                 _MULTIPART_STREAM_LEASES.pop(token, None)
             if prev is not None:
@@ -1945,12 +2047,14 @@ def _multipart_stream_token(stream: core.UploadStream) -> int:
 
 
 def _multipart_stream_for_token(token: int) -> core.UploadStream | None:
+    """Resolve a live multipart reader from its token."""
     with _MULTIPART_STREAM_LOCK:
         return _MULTIPART_STREAM_LEASES.get(token)
 
 
 @stdlib_element('nativeCloseMultipartStream', (T.Int,), (), exported=False)
 def _native_close_multipart_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Release the owned multipart reader."""
     del ctx
     stream = _multipart_stream_for_token(int(args[0]))
     if stream is not None:
@@ -1960,6 +2064,7 @@ def _native_close_multipart_stream(args: tuple[Any, ...], ctx: RuntimeContext) -
 
 for _method in ('Post', 'Put', 'Patch', 'Query'):
     def _multipart_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Claim a request body for streaming multipart parsing."""
         del ctx
         request, = args
         raw = ObjectValue('web.Request.' + request.type_name.rsplit('.', 1)[-1], request.fields)
@@ -1995,6 +2100,7 @@ del _multipart_stream
                     category='Web', returns='Optional MultipartPart or web.Error.',
             examples=('import {std.web}\nfn (stream: web.UploadStream) => web.multipartNext($stream) end',)))
 def _multipart_next(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Advance the owned multipart reader to the next part."""
     del ctx
     reader = _multipart_stream_for_token(int(args[0].fields['token']))
     try:
@@ -2022,6 +2128,7 @@ def _multipart_next(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
                     category='Web', returns='Exact bytes, None or web.Error.',
             examples=('import {std.web}\nfn (stream: web.UploadStream) => web.multipartRead($stream, 4096) end',)))
 def _multipart_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read a bounded chunk from the current multipart part."""
     del ctx
     reader = _multipart_stream_for_token(int(args[0].fields['token']))
     try:
@@ -2042,6 +2149,7 @@ def _multipart_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
                     category='Web', returns='None or web.Error.',
             examples=('import {std.web}\nfn (stream: web.UploadStream) => web.multipartDiscard($stream) end',)))
 def _multipart_discard(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Discard the rest of the current multipart part."""
     del ctx
     reader = _multipart_stream_for_token(int(args[0].fields['token']))
     try:
@@ -2064,6 +2172,7 @@ def _multipart_discard(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any,
                     category='Web', returns='Octets written or web.Error.',
             examples=('import {std.web, std.path}\nfn (stream: web.UploadStream, file: path.Path) => web.saveMultipartPart($stream, $file) end',)))
 def _save_multipart_part(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Save the current multipart part to a file."""
     del ctx
     stream, destination = args
     reader = _multipart_stream_for_token(int(stream.fields['token']))
@@ -2076,6 +2185,7 @@ def _save_multipart_part(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
 
 
 def _wrap_upload(upload: core.BufferedUpload) -> ObjectValue:
+    """Convert a buffered upload to a language value."""
     return ObjectValue('web.Upload', {
         'filename': _string_optional(upload.filename),
         'contentType': _string_optional(upload.content_type),
@@ -2086,6 +2196,7 @@ def _wrap_upload(upload: core.BufferedUpload) -> ObjectValue:
 
 
 def _wrap_multipart(form: core.MultipartForm) -> ObjectValue:
+    """Convert buffered multipart fields and files to a language value."""
     return ObjectValue('web.MultipartForm', {
         'fields': _wrap_params(form.fields),
         'files': _optional_list([_wrap_upload(upload) for upload in form.files]),
@@ -2094,6 +2205,7 @@ def _wrap_multipart(form: core.MultipartForm) -> ObjectValue:
 
 for _method in ('Post', 'Put', 'Patch', 'Query'):
     def _multipart(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Parse a buffered multipart request body."""
         del ctx
         request, = args
         raw = ObjectValue('web.Request.' + request.type_name.rsplit('.', 1)[-1], request.fields)
@@ -2127,6 +2239,7 @@ del _multipart
                     examples=('import {std.web}\n'
                               'fn (form: web.MultipartForm) => web.multipartFields($form) end',)))
 def _multipart_fields(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the parsed multipart form's ordinary fields."""
     del ctx
     return (_duplicate_occurrence(args[0].fields['fields']),)
 
@@ -2139,6 +2252,7 @@ def _multipart_fields(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
                     examples=('import {std.web}\n'
                               'fn (form: web.MultipartForm) => web.uploads($form, "file") end',)))
 def _uploads(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Retrieve all buffered uploads for a form field."""
     del ctx
     form, name = args
     uploads = [item for item in _optional_contents(form.fields['files'])
@@ -2154,6 +2268,7 @@ def _uploads(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     examples=('import {std.web}\n'
                               'fn (form: web.MultipartForm) => web.uploadOne($form, "file") end',)))
 def _upload_one(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Retrieve the single buffered upload for a form field."""
     del ctx
     form, name = args
     matches = [item for item in _optional_contents(form.fields['files'])
@@ -2174,6 +2289,7 @@ def _upload_one(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     examples=('import {std.web, std.path.Path}\n'
                               'fn (upload: web.Upload) => web.saveUpload($upload, Path("upload.bin")) end',)))
 def _save_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Save a buffered upload to the requested destination."""
     del ctx
     upload, destination = args
     try:
@@ -2196,6 +2312,7 @@ def _save_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     examples=('import {std.web}\n'
                               'fn (upload: web.Upload) => web.readUpload($upload) end',)))
 def _read_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the buffered upload as a language byte list."""
     del ctx
     upload, = args
     return (_duplicate_occurrence(upload.fields['data']),)
@@ -2205,6 +2322,7 @@ def _read_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=('params', 'name'),
                 documentation=element_documentation('Retrieve every matching parameter in original order.', category='Web', returns='Possibly empty list of strings.', examples=(('import {std.web}\nweb.paramValues(web.queryParams(web.testRequest("GET", "/?q=1")), "q")', None),)))
 def _param_values(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Retrieve all values for a parameter name."""
     del ctx
     params, name = args
     return (ListValue(list(_unwrap_params(params).values(name)), runtime_rank=1),)
@@ -2214,6 +2332,7 @@ def _param_values(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                 param_names=('params', 'name', 'value'),
                 documentation=element_documentation('Append a parameter without replacing earlier values.', category='Web', returns='New Params value.', examples=(('import {std.web}\nweb.withParam(web.queryParams(web.testRequest("GET", "/")), "q", "2")', None),)))
 def _with_param(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Append a value to the ordered parameter collection."""
     del ctx
     params, name, value = args
     return (_wrap_params(_unwrap_params(params).append(name, value)),)
@@ -2223,12 +2342,14 @@ def _with_param(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=('params', 'name', 'value'),
                 documentation=element_documentation('Replace all occurrences of a parameter with one value.', category='Web', returns='New Params value.', examples=(('import {std.web}\nweb.replaceParam(web.queryParams(web.testRequest("GET", "/?q=1")), "q", "2")', None),)))
 def _replace_param(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Replace all values for a parameter name."""
     del ctx
     params, name, value = args
     return (_wrap_params(_unwrap_params(params).replace(name, value)),)
 
 
 def _string_optional(value: str | None) -> ObjectValue:
+    """Wrap a nullable string as a language optional."""
     return ObjectValue('None', {}) if value is None else ObjectValue('Some', {'value': value})
 
 
@@ -2244,6 +2365,7 @@ def _web_error_value(error: core.WebError) -> ObjectValue:
     # Native Err values need the same nominal trait evidence as values made by
     # Valiance's generated variant constructors. The VM's `?` operation uses
     # this evidence to propagate errors rather than treating them as success.
+    """Convert a core request failure to a language web.Error."""
     fields = {'message': error.message}
     # A response-cookie policy error has the public InvalidCookie case, but
     # must never be interpreted as malformed client Cookie input (HTTP 400).
@@ -2255,11 +2377,13 @@ def _web_error_value(error: core.WebError) -> ObjectValue:
 
 
 def _unpack_web_error(value: ObjectValue) -> core.WebError:
+    """Convert a language web.Error back to the core error representation."""
     return core.WebError(value.type_name.rsplit('.', 1)[-1], value.fields['message'],
                          stage=value.fields.get('_web_error_stage', 'Handler'))
 
 
 def _config_error_value(error: core.ConfigError) -> ObjectValue:
+    """Convert a configuration failure to a language error."""
     return ObjectValue('web.ConfigError.InvalidRoute', {'message': str(error)},
                        runtime_type=_WEB_CONFIG_ERROR_RUNTIME)
 
@@ -2270,6 +2394,7 @@ for _public_name, _operation, _type in (
 ):
     def _param_single(args: tuple[Any, ...], ctx: RuntimeContext,
                       operation: Any = _operation, optional: bool = _public_name == 'paramOne') -> tuple[Any, ...]:
+        """Adapt a singleton parameter lookup to a language overload."""
         del ctx
         params, name = args
         try:
@@ -2299,6 +2424,7 @@ for _req_type, _req_name in ((_REQUEST, 'common'), *(
     (_nominal(f'{title}Request'), title.lower()) for _, title in _METHODS),
     (_RESPONSE, 'response')):
     def _header_single(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Look up a singleton request header for a language overload."""
         del ctx
         source, name = args
         try:
@@ -2330,6 +2456,7 @@ for _fn_name, _core_method, _arguments in (
 ):
     def _response_header_helper(args: tuple[Any, ...], ctx: RuntimeContext,
                                 method: str = _core_method) -> tuple[Any, ...]:
+        """Adapt a response header mutation to a language overload."""
         del ctx
         response, *params = args
         return (_wrap_response(getattr(_unwrap_response(response), method)(*params)),)
@@ -2349,24 +2476,28 @@ del _response_header_helper
 # regular Valiance arguments, not a secondary/options-only API.
 @stdlib_element('nativeCookieTrue', (), (T.Boolean,), exported=False)
 def _native_cookie_true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply a true default for a cookie option."""
     del args, ctx
     return (TaggedValue(RuntimeNumber(1), T.Boolean.tags),)
 
 
 @stdlib_element('nativeCookieFalse', (), (T.Boolean,), exported=False)
 def _native_cookie_false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply a false default for a cookie option."""
     del args, ctx
     return (TaggedValue(RuntimeNumber(0), T.Boolean.tags),)
 
 
 @stdlib_element('nativeCookieNoneString', (), (T.optional(T.String),), exported=False)
 def _native_cookie_none_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply an absent optional string for a cookie option."""
     del args, ctx
     return (ObjectValue('None', {}),)
 
 
 @stdlib_element('nativeCookieNoneInt', (), (T.optional(T.Int),), exported=False)
 def _native_cookie_none_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply an absent optional integer for a cookie option."""
     del args, ctx
     return (ObjectValue('None', {}),)
 
@@ -2380,6 +2511,7 @@ _DEFAULT_COOKIE_SITE = (ElementNode(Symbol('Lax', ('web', 'SameSite'))),)
 
 
 def _cookie_bool(value: Any) -> bool:
+    """Convert a language Bool cookie option to Python."""
     if isinstance(value, TaggedValue):
         return bool(value.value)
     return bool(value)
@@ -2402,6 +2534,7 @@ def _cookie_bool(value: Any) -> bool:
                     category='Web', returns='Response or typed cookie error.',
                     examples=(('import {std.web}\nweb.withCookie(web.Response, "sid", "value")', None),)))
 def _with_cookie_options(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add a Set-Cookie field using the supplied language options."""
     del ctx
     response, name, value, path, domain, http_only, secure, same_site, max_age, expires, partitioned = args
     try:
@@ -2427,6 +2560,7 @@ def _with_cookie_options(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
                     category='Web', returns='Response or typed cookie error.',
                     examples=(('import {std.web}\nweb.deleteCookie(web.Response, "sid")', None),)))
 def _delete_cookie_options(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Expire a cookie using the supplied language options."""
     del ctx
     response, name, path, domain, partitioned = args
     try:
@@ -2441,6 +2575,7 @@ def _delete_cookie_options(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[
                 param_names=('response',),
                 documentation=element_documentation('Set Cache-Control: no-store on a response.', category='Web', returns='New Response value.', examples=(('import {std.web}\nweb.noStore(web.Response(body = "ok"))', None),)))
 def _no_store(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Apply no-store cache control to the response."""
     del ctx
     return (_wrap_response(core.no_store(_unwrap_response(args[0]))),)
 
@@ -2449,6 +2584,7 @@ def _no_store(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=('response', 'maxAge'),
                 documentation=element_documentation('Set public cache policy with a nonnegative max-age.', category='Web', returns='New Response value.', examples=(('import {std.web}\nweb.cachePublic(web.Response(body = "ok"), 60)', None),)))
 def _cache_public(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Set public cache control for the requested lifetime."""
     del ctx
     return (_wrap_response(core.cache_public(_unwrap_response(args[0]), int(args[1]))),)
 
@@ -2457,6 +2593,7 @@ def _cache_public(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                 param_names=('response', 'maxAge'),
                 documentation=element_documentation('Set private cache policy with a nonnegative max-age.', category='Web', returns='New Response value.', examples=(('import {std.web}\nweb.cachePrivate(web.Response(body = "ok"), 60)', None),)))
 def _cache_private(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Set private cache control for the requested lifetime."""
     del ctx
     return (_wrap_response(core.cache_private(_unwrap_response(args[0]), int(args[1]))),)
 
@@ -2465,6 +2602,7 @@ def _cache_private(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
                 param_names=('response', 'tag'),
                 documentation=element_documentation('Attach a validated strong ETag representation validator.', category='Web', returns='New Response value.', examples=(('import {std.web}\nweb.withETag(web.Response(body = "ok"), "v1")', None),)))
 def _with_etag(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Attach an entity tag to the response."""
     del ctx
     return (_wrap_response(core.with_etag(_unwrap_response(args[0]), args[1])),)
 
@@ -2477,6 +2615,7 @@ _DEFAULT_REDIRECT_STATUS = (ElementNode(Symbol('SeeOther', ('web', 'Status'))),)
                 param_defaults=(None, _DEFAULT_REDIRECT_STATUS),
                 documentation=element_documentation('Create a same-origin redirect (default 303) with a validated target and optional status.', category='Web', returns='Response with Location header.', examples=(('import {std.web}\nweb.redirect("/next")', None),)))
 def _redirect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Build a redirect response for the supplied location."""
     del ctx
     try:
         return (_wrap_response(core.redirect(args[0], status=_status_code(args[1]))),)
@@ -2489,6 +2628,7 @@ _DEFAULT_CREATED_RESPONSE = (ElementNode(Symbol('nativeCreatedEmptyResponse', ('
 
 @stdlib_element('nativeCreatedEmptyResponse', (), (_RESPONSE,), exported=False)
 def _created_empty_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Build an empty 201 response for a newly created resource."""
     del args, ctx
     return (_wrap_response(core.Response(201)),)
 
@@ -2498,6 +2638,7 @@ def _created_empty_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple
                 param_defaults=(None, _DEFAULT_CREATED_RESPONSE),
                 documentation=element_documentation('Create a 201 response with a validated Location, optionally preserving a response body.', category='Web', returns='Created Response.', examples=(('import {std.web}\nweb.created("/new")', None),)))
 def _created(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Build a 201 response with a location and body."""
     del ctx
     try:
         core.redirect(args[0])
@@ -2532,6 +2673,7 @@ def _run_http1(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     try:
         if current_thread() is main_thread():
             def stop_signal(signum: int, frame: Any) -> None:
+                """Signal the blocking server run loop to stop."""
                 stop.set()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 previous[sig] = signal.signal(sig, stop_signal)
@@ -2557,6 +2699,7 @@ def _run_http1(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # native constructor overload, without changing normal ServerConfig calls.
 @stdlib_element('nativeDefaultLimits', (), (_LIMITS,), exported=False)
 def _default_web_limits(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Construct the default web server limits value."""
     del args, ctx
     return (ObjectValue('web.Limits', {
         'maxRequestTargetBytes': RuntimeNumber(8192),
@@ -2597,6 +2740,7 @@ _DEFAULT_LIMITS = (ElementNode(Symbol('nativeDefaultLimits', ('std', 'web'))),)
 
 @stdlib_element('nativeNoneTLS', (), (T.N(Symbol('None')),), exported=False)
 def _native_none_tls(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply the default absent TLS configuration."""
     del args, ctx
     return (ObjectValue('None', {}),)
 
@@ -2623,6 +2767,7 @@ _DEFAULT_PROXY_DISABLED = _DEFAULT_NONE_TLS
                     category='Web', returns='ServerConfig with validated limits.',
             examples=('import {std.web}\nweb.ServerConfig(port = 8081, limits = web.Limits)',)))
 def _server_config_with_limits(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a server configuration with the supplied limits."""
     del ctx
     host, port, _tls, limits, origin, hosts, proxies, mode, protocols = args
     return (ObjectValue('web.ServerConfig', {
@@ -2651,6 +2796,7 @@ def _server_config_with_limits(args: tuple[Any, ...], ctx: RuntimeContext) -> tu
                     category='Web', returns='ServerConfig with TLS enabled.',
             examples=('import {std.web}\nweb.ServerConfig(tls = web.TLS(certificateFile = "cert.pem", privateKeyFile = "key.pem"))',)))
 def _server_config_with_tls(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a server configuration with the supplied TLS settings."""
     del ctx
     host, port, tls, limits, origin, hosts, proxies, mode, protocols = args
     if not isinstance(tls, ObjectValue) or tls.type_name != 'web.TLS':
@@ -2673,6 +2819,7 @@ _DEFAULT_SERVER_CONFIG = (ElementNode(Symbol('nativeDefaultServerConfig', ('std'
 
 @stdlib_element('nativeDefaultServerConfig', (), (_SERVER_CONFIG,), exported=False)
 def _native_default_server_config(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Construct the default language server configuration."""
     del args, ctx
     return (ObjectValue('web.ServerConfig', {'host': '127.0.0.1',
                                             'port': RuntimeNumber(8080),
@@ -2694,6 +2841,7 @@ def _native_default_server_config(args: tuple[Any, ...], ctx: RuntimeContext) ->
                     category='Web', returns='None on graceful stop.',
                     examples=(('import {std.web}\nweb.run(web.App, web.ServerConfig(port = 8080))', None),)))
 def _run(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Run the app's HTTP server until it stops."""
     return _run_http1(args, ctx)
 
 
@@ -2712,17 +2860,20 @@ _SERVER_ERROR_RUNTIME = ObjectRuntimeType(accepted_names=('Err', 'web.ServerErro
 
 
 def _server_error(message: str, *, stopped: bool = False) -> ObjectValue:
+    """Build a language error from a server lifecycle failure."""
     return ObjectValue('web.ServerError.Stopped' if stopped else 'web.ServerError.Failed',
                        {'message': message}, runtime_type=_SERVER_ERROR_RUNTIME)
 
 
 def _lease_token(value: Any) -> int:
+    """Resolve the token held by a language server owner."""
     if not isinstance(value, ObjectValue) or value.type_name != 'web.ServerHandle':
         raise ValueError('Expected owned web.ServerHandle')
     return int(value.fields['token'])
 
 
 def _close_server_token(token: int, grace_seconds: float | None = None) -> tuple[Any, int, int, int, float] | None:
+    """Retire the server token and shut down the associated listener."""
     with _SERVER_LEASES_LOCK:
         handle = _SERVER_LEASES.pop(token, None)
     if handle is None:
@@ -2738,6 +2889,7 @@ def _close_server_token(token: int, grace_seconds: float | None = None) -> tuple
 
 def _stop_report(accepted: int, completed: int, cancelled: int, seconds: float,
                  diagnostics: dict[str, int] | None = None) -> ObjectValue:
+    """Convert the shutdown result to a language report."""
     stats = diagnostics or {}
     return ObjectValue('web.ServerStopReport', {
         'reason': ObjectValue('web.ServerStopReason.Requested', {}),
@@ -2756,6 +2908,7 @@ def _stop_report(accepted: int, completed: int, cancelled: int, seconds: float,
 @stdlib_element('nativeCloseServer', (T.Int,), (), exported=False,
                 param_names=('token',))
 def _native_close_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Shut down the listener when the server owner is released."""
     del ctx
     # Destructor cleanup is intentionally idempotent.
     _close_server_token(int(args[0]))
@@ -2771,6 +2924,7 @@ def _native_close_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
                     category='Web', returns='An exclusive ServerHandle or ServerError.',
                     examples=(('import {std.web}\nweb.serve(web.App, web.ServerConfig(port = 0))', None),)))
 def _serve_owned(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Start a listener and return its owned language handle."""
     from valiance.std import _web_http1
     app, config = args
     try:
@@ -2798,6 +2952,7 @@ def _serve_owned(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     category='Web', returns='BoundEndpoint list.',
                     examples=(('import {std.web}\n$server = web.serve(web.App, web.ServerConfig(port = 0)) ?', None),)))
 def _bound_addresses(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the addresses bound by the owned server."""
     del ctx
     with _SERVER_LEASES_LOCK:
         handle = _SERVER_LEASES.get(_lease_token(args[0]))
@@ -2818,6 +2973,7 @@ def _bound_addresses(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, .
                     category='Web', returns='ServerStats snapshot.',
             examples=('import {std.web}\nfn (server: web.ServerHandle) => web.serverStats($server) end',)))
 def _server_stats(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Snapshot the owned server's runtime counters."""
     del ctx
     with _SERVER_LEASES_LOCK:
         handle = _SERVER_LEASES.get(_lease_token(args[0]))
@@ -2851,6 +3007,7 @@ def _server_stats(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                     examples=('import {std.web}\n'
                               'fn (server: web.ServerHandle, tls: web.TLS) => web.reloadTLS($server, $tls) end',)))
 def _reload_tls(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Reload the owned listener's TLS configuration."""
     del ctx
     server, tls = args
     try:
@@ -2875,6 +3032,7 @@ def _reload_tls(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                     category='Web', returns='ServerStopReport or ServerError.',
                     examples=(('import {std.web}\n$server = web.serve(web.App, web.ServerConfig(port = 0)) ?\nweb.shutdown $server', None),)))
 def _shutdown_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Shut down the owned listener with its default grace period."""
     del ctx
     try:
         stopped = _close_server_token(_lease_token(args[0]))
@@ -2896,6 +3054,7 @@ def _shutdown_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, .
                     examples=('import {std.web}\n'
                               'fn (server: web.ServerHandle) => web.shutdownWithin($server, 5) end',)))
 def _shutdown_server_with_grace(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Shut down the owned listener with the supplied grace period."""
     del ctx
     try:
         grace = int(args[1])
@@ -2919,6 +3078,7 @@ def _shutdown_server_with_grace(args: tuple[Any, ...], ctx: RuntimeContext) -> t
                     category='Web', returns='ServerStopReport or ServerError.',
                     examples=(('import {std.web}\nweb.run(web.App)', None),)))
 def _wait_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Wait for the owned listener to stop."""
     del ctx
     try:
         token = _lease_token(args[0])
@@ -2938,6 +3098,7 @@ def _wait_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _status_code(value: ObjectValue) -> int:
+    """Extract the numeric status from a language status value."""
     if not isinstance(value, ObjectValue) or not value.type_name.startswith('web.Status.'):
         raise core.WebError('InvalidResponse', 'Expected web.Status')
     name = value.type_name.rsplit('.', 1)[-1]
@@ -2958,6 +3119,7 @@ def _status_code(value: ObjectValue) -> int:
                     category='Web', returns='New Response value with validated status.',
                     examples=(('import {std.web}\nweb.withStatus(web.Response(body = "ok"), web.Status.Created)', None),)))
 def _with_status(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a response with the requested status."""
     del ctx
     response, status = args
     return (_wrap_response(replace(_unwrap_response(response), status=_status_code(status))),)
@@ -2966,6 +3128,7 @@ def _with_status(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # Cookie request utilities use a distinct nominal type because Cookie header
 # values are not query strings (notably, + and % are not decoded).
 def _wrap_cookie_pairs(pairs: core.Params) -> ObjectValue:
+    """Convert parsed cookie pairs to language cookie values."""
     return ObjectValue('web.CookiePairs', {
         'names': _optional_list([name for name, _ in pairs.pairs]),
         'values': _optional_list([value for _, value in pairs.pairs]),
@@ -2975,6 +3138,7 @@ def _wrap_cookie_pairs(pairs: core.Params) -> ObjectValue:
 for _req_type, _req_label in ((_REQUEST, 'common'), *(
     (_nominal(f'{title}Request'), title.lower()) for _, title in _METHODS)):
     def _get_cookies(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Retrieve the cookies sent with a request."""
         del ctx
         req = args[0]
         if not req.type_name.startswith('web.Request.'):
@@ -2996,6 +3160,7 @@ for _req_type, _req_label in ((_REQUEST, 'common'), *(
     globals()[_get_cookies.__name__] = _get_cookies
 
     def _get_cookie(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Look up a named request cookie."""
         del ctx
         req, name = args
         if not req.type_name.startswith('web.Request.'):
@@ -3021,6 +3186,7 @@ del _get_cookie, _get_cookies
 
 for _kind in ('Get', 'Head'):
     def _conditional(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Apply conditional request handling to a response."""
         del ctx
         req, response = args
         if not req.type_name.startswith('web.Request.'):
@@ -3059,6 +3225,7 @@ del _conditional
                     examples=(('import {std.web}\n'
                                'web.withEarlyHints(web.Response(body = "ok"), ["</style.css>; rel=preload; as=style"])', None),)))
 def _with_early_hints(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Attach early hint fields to a language response."""
     del ctx
     try:
         return (_wrap_response(core.with_early_hints(_unwrap_response(args[0]), list(args[1]))),)
@@ -3075,6 +3242,7 @@ def _with_early_hints(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
                     category='Web', returns='Response or InvalidHeader.',
             examples=('import {std.web}\nfn (response: web.Response, fields: web.Headers) => web.withTrailers($response, $fields) end',)))
 def _with_trailers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Attach trailer fields to a language response."""
     del ctx
     response = None
     try:
@@ -3094,6 +3262,7 @@ def _with_trailers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
                     examples=(('import {std.web}\n'
                                'web.withLastModified(web.Response(body = "ok"), 0)', None),)))
 def _with_last_modified(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Attach a Last-Modified time to the response."""
     del ctx
     return (_wrap_response(core.with_last_modified(_unwrap_response(args[0]), int(args[1]))),)
 
@@ -3101,6 +3270,7 @@ def _with_last_modified(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any
 def _optional_scalar(value: Any) -> Any | None:
     # Optional object fields may hold a direct successful value: the runtime
     # only boxes absence (None) and some generic/union field operations.
+    """Extract a scalar from a language optional."""
     if not isinstance(value, ObjectValue):
         return value
     if value.type_name == 'None':
@@ -3113,6 +3283,7 @@ def _optional_scalar(value: Any) -> Any | None:
 for _req_type, _label in ((_REQUEST, 'common'), *(
     (_nominal(f'{title}Request'), title.lower()) for _, title in _METHODS)):
     def _preconditions(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Evaluate the request's preconditions against the supplied validators."""
         del ctx
         request, given = args
         if not request.type_name.startswith('web.Request.'):
@@ -3151,11 +3322,13 @@ _DEFAULT_PARAMS = (ElementNode(Symbol('nativeEmptyParams', ('std', 'web'))),)
 
 @stdlib_element('nativeEmptyParams', (), (_PARAMS,), exported=False)
 def _native_empty_params(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply the default empty parameter collection."""
     del args, ctx
     return (_wrap_params(core.Params()),)
 
 
 def _method_name(value: ObjectValue) -> str:
+    """Read the method name used to register a route."""
     if not isinstance(value, ObjectValue) or not value.type_name.startswith('web.Method.'):
         raise core.ConfigError('Expected web.Method')
     method = value.type_name.rsplit('.', 1)[-1]
@@ -3166,6 +3339,7 @@ def _method_name(value: ObjectValue) -> str:
 
 for _config, _kind in ((_APP, 'app'), (_ROUTER, 'router')):
     def _route_url(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Construct a URL from a named route and its arguments."""
         target, method, template, params, query = args
         try:
             compiled = _to_core_config(target, ctx)
@@ -3208,6 +3382,7 @@ del _route_url
     ),
 )
 def _json_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Build a JSON response using the language JSON encoder."""
     from valiance.std.json import encode_host
     try:
         text = encode_host(args[0], ctx.type_services)
@@ -3225,6 +3400,7 @@ for _json_method in ('Post', 'Put', 'Patch', 'Query'):
     _json_request_type = _nominal(f'{_json_method}Request')
 
     def _json_body_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+        """Read JSON request content as text for decoding."""
         del ctx
         request, = args
         kind = request.type_name.rsplit('.', 1)[-1]
@@ -3270,6 +3446,7 @@ for _name, _operation, _args in (
 ):
     def _file_helper(args: tuple[Any, ...], ctx: RuntimeContext,
                      operation: Any = _operation) -> tuple[Any, ...]:
+        """Adapt a core file response operation to a language overload."""
         del ctx
         try:
             return (_wrap_response(operation(*args)),)
@@ -3299,6 +3476,7 @@ del _file_helper
                     category='Web', returns='Router or ConfigError.',
                     examples=(('import {std.web}\nweb.staticRouter("public/assets")', None),)))
 def _static_router(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a router that serves files under the supplied root."""
     del ctx
     try:
         root = core.static_root(args[0])
@@ -3320,6 +3498,7 @@ _PATH = T.N(Symbol('Path', ('path',)))
 
 
 def _native_file_path(value: ObjectValue) -> str:
+    """Decode a typed filesystem path for the Python file helpers."""
     import os
     from valiance.std.path import native_path
     return os.fsdecode(native_path(value).native)
@@ -3332,6 +3511,7 @@ for _name, _operation, _args in (
 ):
     def _path_file_helper(args: tuple[Any, ...], ctx: RuntimeContext,
                           operation: Any = _operation) -> tuple[Any, ...]:
+        """Adapt a typed path file operation to a language overload."""
         del ctx
         try:
             return (_wrap_response(operation(_native_file_path(args[0]), *args[1:])),)
@@ -3362,6 +3542,7 @@ del _path_file_helper
                     examples=(('import {std.web, std.path.Path}\n'
                                'web.staticRouter(Path("public/assets"))', None),)))
 def _static_router_path(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a static router from a typed filesystem path."""
     return _static_router((_native_file_path(args[0]),), ctx)
 
 # Common, generic bridge for the source-level bodyJson[T] wrapper. Valiance
@@ -3370,6 +3551,7 @@ def _static_router_path(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any
 # inferred nominal request type and enforces the body-capable method policy.
 @stdlib_element('bodyJsonRaw', (T.V('R'),), (T.Result(T.String, _ERROR),), exported=False)
 def _body_json_raw(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Validate a JSON request and extract its text body."""
     del ctx
     request, = args
     try:
@@ -3403,6 +3585,7 @@ def _decode_body_json(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     # The public wrapper supplies typeInfo[T].name. Reuse the exact same
     # checked schema reconstruction, private-field checks, and error handling
     # as std.json.decode[T]; never introduce a separate JSON deserializer.
+    """Decode JSON text into the requested language type."""
     from valiance.std.json import decode_host
     try:
         return (decode_host(args[0], args[1], ctx.type_services),)

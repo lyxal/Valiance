@@ -52,12 +52,14 @@ class _DaemonTaskPool:
     """
 
     def __init__(self, max_workers: int, max_pending: int):
+        """Initialize the daemon workers and their bounded work queue."""
         self._queue: Queue[tuple[object, object]] = Queue(maxsize=max_pending)
         self._workers: list[Thread] = []
         self._max_workers = max_workers
         self._closed = False
 
     def submit(self, fn, state):
+        """Queue a callback if the pool can accept it."""
         if self._closed:
             raise RuntimeError('HTTP/2 task pool closed')
         self._queue.put_nowait((fn, state))
@@ -68,6 +70,7 @@ class _DaemonTaskPool:
             t.start()
 
     def _work(self):
+        """Run submitted callbacks on a daemon worker."""
         while True:
             try:
                 fn, state = self._queue.get(timeout=.05)
@@ -83,6 +86,7 @@ class _DaemonTaskPool:
                 self._queue.task_done()
 
     def shutdown(self) -> list['_State']:
+        """Stop accepting work and shut down the worker pool."""
         self._closed = True
         abandoned = []
         while True:
@@ -159,12 +163,14 @@ class _State:
 
 class _Incoming:
     def __init__(self, state: _State, ack: list[tuple[int, int]], ack_lock: Lock):
+        """Adapt HTTP/2 request data to the incoming body reader interface."""
         self.state = state
         self.ack = ack
         self.ack_lock = ack_lock
         self.trailers = core.Headers()
 
     def read(self, maximum: int) -> bytes | None:
+        """Read the next bounded chunk of request data."""
         s = self.state
         with s.condition:
             while not s.chunks and not s.incoming_end and not s.cancelled.is_set():
@@ -184,6 +190,7 @@ class _Incoming:
         return part
 
     def close(self) -> None:
+        """Close the incoming request body reader."""
         s = self.state
         with s.condition:
             # Flow-controlled octets retained by a handler that returned early
@@ -208,14 +215,17 @@ class _H2WebSocketTransport:
     """
 
     def __init__(self, owner: 'HTTP2Connection', state: _State):
+        """Bind the WebSocket byte transport to one HTTP/2 stream."""
         self.owner = owner
         self.state = state
         self.timeout = 60.0
 
     def settimeout(self, seconds: float) -> None:
+        """Set the receive timeout for the stream transport."""
         self.timeout = seconds
 
     def recv(self, maximum: int) -> bytes:
+        """Read bytes queued for the upgraded stream."""
         s = self.state
         deadline = time.monotonic() + self.timeout
         with s.condition:
@@ -237,9 +247,11 @@ class _H2WebSocketTransport:
         return piece
 
     def set_write_timeout(self, seconds: float) -> None:
+        """Set the timeout for writing to the upgraded stream."""
         self._write_timeout = min(seconds, self.owner.limits.write_idle_timeout_seconds)
 
     def sendall(self, payload: bytes) -> None:
+        """Queue bytes for transmission on the upgraded stream."""
         s = self.state
         limit = min(MAX_OUTPUT_CHUNK, self.owner.limits.max_total_buffered_bytes,
                     self.owner.limits.max_buffered_bytes_per_connection,
@@ -305,6 +317,7 @@ class _H2WebSocketTransport:
 
 
 def _request_headers(fields: list[tuple[bytes, bytes]], limits: Limits) -> tuple[str, str, core.Headers, str]:
+    """Validate request pseudo-headers and convert ordinary fields."""
     if len(fields) > limits.max_header_fields + 4 or sum(len(k) + len(v) + 4 for k, v in fields) > limits.max_header_bytes:
         raise core.WebError('HeadersTooLarge', 'HTTP/2 decoded header quota exceeded')
     pseudo: dict[bytes, bytes] = {}
@@ -407,6 +420,7 @@ def _authority_identity(authority: str) -> tuple[str, int]:
 
 def _request_trailers(fields: list[tuple[bytes, bytes]], initial: core.Headers,
                       limits: Limits) -> core.Headers:
+    """Validate fields received in a trailing header block."""
     if (len(fields) > min(32, limits.max_header_fields) or
             sum(len(k) + len(v) + 4 for k, v in fields) > min(32768, limits.max_header_bytes)):
         raise core.WebError('HeadersTooLarge', 'HTTP/2 trailers exceed configured limits')
@@ -429,6 +443,7 @@ def _request_trailers(fields: list[tuple[bytes, bytes]], initial: core.Headers,
 
 
 def _response_headers(response: core.Response, method: str) -> list[tuple[str, str]]:
+    """Build the HTTP/2 response header block."""
     core.validate_response(response, head=method == 'HEAD')
     fields = [(':status', str(response.status))]
     for name, value in response.headers.pairs:
@@ -461,11 +476,13 @@ class _RFC9113FrameBuffer(h2.frame_buffer.FrameBuffer):
     """
 
     def add_data(self, data: bytes) -> None:
+        """Append incoming wire data for frame decoding."""
         super().add_data(data)
         self.peak_pending_bytes = max(
             getattr(self, 'peak_pending_bytes', 0), len(self._data))
 
     def __next__(self):
+        """Decode the next available frame with HTTP/2 validation."""
         if not self._preamble_len and len(self._data) >= 9:
             size = int.from_bytes(self._data[:3], 'big')
             # The underlying FrameBuffer checks this only after receiving
@@ -492,10 +509,12 @@ class _StreamIsolatingH2Connection(h2.connection.H2Connection):
     """
 
     def __init__(self, config):
+        """Configure stream-local error handling on the HTTP/2 connection."""
         super().__init__(config)
         self.incoming_buffer = _RFC9113FrameBuffer(server=not config.client_side)
 
     def _receive_headers_frame(self, frame):
+        """Process a HEADERS frame with stream-local error handling."""
         try:
             return super()._receive_headers_frame(frame)
         except h2.exceptions.ProtocolError as exc:
@@ -516,6 +535,7 @@ class _StreamIsolatingH2Connection(h2.connection.H2Connection):
             raise
 
     def _receive_data_frame(self, frame):
+        """Process a DATA frame with stream-local error handling."""
         try:
             return super()._receive_data_frame(frame)
         except h2.exceptions.InvalidBodyLengthError:
@@ -552,6 +572,7 @@ class _CompressedHeaderBudget:
     PREFACE_LENGTH = 24
 
     def __init__(self, limit: int):
+        """Initialize counters and deadlines for compressed header blocks."""
         self.limit = limit
         self.preface_remaining = self.PREFACE_LENGTH
         self.preface_started_at = time.monotonic()
@@ -568,6 +589,7 @@ class _CompressedHeaderBudget:
         self.block_open = False
 
     def feed(self, data: bytes) -> None:
+        """Track header-block bytes as raw data arrives."""
         pos = 0
         while pos < len(data):
             if self.preface_remaining:
@@ -629,6 +651,7 @@ class _CompressedHeaderBudget:
                 'Compressed HTTP/2 field block exceeds quota')
 
     def _finish_frame(self) -> None:
+        """Update header-block accounting at the end of a frame."""
         if self.frame_type == 1:  # HEADERS begins a field section.
             self.block_bytes = 0
             self.block_open = True
@@ -654,6 +677,7 @@ class _CompressedHeaderBudget:
         # The connection preface and each HPACK field section must complete
         # within an absolute bounded interval. Sending a trickle of bytes
         # cannot extend the budget indefinitely.
+        """Check whether an unfinished header block exceeded its deadline."""
         return (self.preface_remaining > 0 and
                 now - self.preface_started_at >= max_seconds or
                 self.header_section_started_at is not None and
@@ -662,6 +686,7 @@ class _CompressedHeaderBudget:
 
 class HTTP2Connection:
     def __init__(self, tcp: socket.socket, server: object):
+        """Initialize one connection's protocol state and stream accounting."""
         self.tcp = tcp
         self.server = server
         self.limits: Limits = server.web_limits
@@ -705,6 +730,7 @@ class HTTP2Connection:
         self.failure_code = h2.errors.ErrorCodes.NO_ERROR
 
     def _release_ws_inbound(self, s: _State, size: int) -> None:
+        """Release accounting for buffered WebSocket input on a stream."""
         with self._buffer_lock:
             consumed = min(size, s.buffered_bytes)
             s.buffered_bytes -= consumed
@@ -762,6 +788,7 @@ class HTTP2Connection:
     def _discard_producer_queue(self, s: _State) -> None:
         # The reader/writer thread owns this method. Keep DATA already handed
         # to hyper-h2 reserved until the next successful socket flush.
+        """Discard queued response chunks and release their buffer reservations."""
         with s.condition:
             queued = sum(map(len, s.stream_queue))
             s.stream_queue.clear()
@@ -803,6 +830,7 @@ class HTTP2Connection:
                 self.ack.append((s.id, discarded))
 
     def _fail_stream(self, s: _State, code: h2.errors.ErrorCodes) -> None:
+        """Terminate a failed stream and clean up its state."""
         s.cancelled.set()
         if s.websocket_owner is not None:
             s.websocket_owner.abort(1001, fast=True)
@@ -817,6 +845,7 @@ class HTTP2Connection:
         self._account(s, False)
 
     def _start_request(self, s: _State, pool: _DaemonTaskPool) -> None:
+        """Admit a request stream and schedule its handler when ready."""
         if s.worker_started or s.cancelled.is_set():
             return
         s.worker_started = True
@@ -827,6 +856,7 @@ class HTTP2Connection:
             self._fail_stream(s, h2.errors.ErrorCodes.REFUSED_STREAM)
 
     def _dispatch(self, s: _State) -> None:
+        """Dispatch a stream request or its WebSocket upgrade."""
         incoming = None
         try:
             if s.cancelled.is_set():
@@ -973,6 +1003,7 @@ class HTTP2Connection:
                 self._account(s, False)
 
     def _consume(self, event: object, pool: _DaemonTaskPool) -> None:
+        """Consume HTTP/2 events and update connection and stream state."""
         if isinstance(event, h2.events.RequestReceived):
             sid = event.stream_id
             if (self.server.draining.is_set() or
@@ -1211,6 +1242,7 @@ class HTTP2Connection:
     def _account(self, s: _State, completed: bool) -> None:
         # The protocol stream can close before its handler/response producer
         # exits. Never reuse a request-task lease while user code is alive.
+        """Finalize the request's accounting once."""
         if s.worker_started and not s.done.is_set():
             return
         # The transport has not yet flushed the final DATA / END_STREAM /
@@ -1230,6 +1262,7 @@ class HTTP2Connection:
                     self.server.end_websocket()
 
     def _produce(self, s: _State) -> None:
+        """Produce response body chunks for the connection writer."""
         source = s.producer
         assert isinstance(source, core.StreamBody)
         try:
@@ -1343,6 +1376,7 @@ class HTTP2Connection:
         self._account(s, True)
 
     def _writes(self, pool: _DaemonTaskPool) -> None:
+        """Flush queued response data within flow-control and buffer limits."""
         with self.ack_lock:
             pending = self.ack[:]
             self.ack.clear()
@@ -1514,6 +1548,7 @@ class HTTP2Connection:
                 del self.states[sid]
 
     def _initiate_drain(self) -> None:
+        """Begin draining the connection for graceful shutdown."""
         if self.drain_started is not None:
             return
         self.drain_started = time.monotonic()
@@ -1528,6 +1563,7 @@ class HTTP2Connection:
         self.shutdown_goaway_sent = True
 
     def _close_abandoned_producer(self, s: _State) -> None:
+        """Release a response producer whose stream can no longer send data."""
         try:
             if isinstance(s.producer, core.StreamBody):
                 s.producer.close()
@@ -1538,6 +1574,7 @@ class HTTP2Connection:
             self._account(s, False)
 
     def run(self) -> None:
+        """Drive the HTTP/2 connection until it closes or finishes draining."""
         self.tcp.settimeout(self.limits.write_idle_timeout_seconds)
         self.conn.initiate_connection()
         self.conn.update_settings({
@@ -1653,5 +1690,6 @@ class HTTP2Connection:
 
 
 def _error_response(exc: Exception) -> core.Response:
+    """Translate a stream request failure into a response."""
     from valiance.std._web_http1 import _failure_response
     return _failure_response(exc)

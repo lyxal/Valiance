@@ -67,6 +67,7 @@ _URL_ATTRS = frozenset(('href', 'src', 'action', 'formaction', 'poster', 'cite',
 
 
 def _markup_node(markup: str, tag: str = '') -> ObjectValue:
+    """Wrap rendered markup in a typed HTML node."""
     if not isinstance(markup, str):
         raise ValueError('HTML serialization must produce text')
     # UTF-8 encoder rejects isolated surrogate code points rather than producing
@@ -94,6 +95,7 @@ def render_node(node: Any) -> str:
 
 
 def _escape_text(value: str) -> str:
+    """Escape text before inserting it into HTML."""
     value.encode('utf-8', 'strict')
     # HTML5 has no representation for NUL and forbids most control codepoints.
     if any((ord(char) < 32 and char not in '\t\n\r') or 127 <= ord(char) <= 159
@@ -104,6 +106,7 @@ def _escape_text(value: str) -> str:
 
 
 def _check_tag(tag: str) -> str:
+    """Validate an element tag name."""
     if not isinstance(tag, str) or not _TAG_NAME.fullmatch(tag):
         raise ValueError('Invalid HTML element name')
     if tag in _RESTRICTED:
@@ -114,6 +117,7 @@ def _check_tag(tag: str) -> str:
 def _check_url(item: str) -> None:
     # Browsers normalize URL input; reject whitespace, controls, backslashes,
     # and entity-obfuscated schemes before serializing anything into HTML.
+    """Validate a URL before rendering it in an attribute."""
     candidate = _html.unescape(item)
     for value in (item, candidate):
         if any(char.isspace() or char == "\\" or unicodedata.category(char).startswith('C')
@@ -146,6 +150,7 @@ def _check_web_resource(url: str) -> None:
 
 
 def _attributes(value: Any) -> str:
+    """Validate and render the element's attributes."""
     if isinstance(value, BorrowedValue):
         value = value.read()
     if value is None:
@@ -186,6 +191,7 @@ def _attributes(value: Any) -> str:
 
 
 def _element(tag: str, inner: str = '', attrs: Any = None) -> ObjectValue:
+    """Render an HTML element with its attributes and children."""
     tag = _check_tag(tag)
     attr_text = _attributes(attrs)
     if tag in _TEXT_ONLY and '<' in inner:
