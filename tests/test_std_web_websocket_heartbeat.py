@@ -79,6 +79,9 @@ class HeartbeatH1Tests(unittest.TestCase):
         self.assertEqual((opcode, payload), (8, struct.pack('!H', 1001)))
         self.assertTrue(handler_done.wait(2))
         self.assertEqual(failures, ['BodyUnavailable'])
+        deadline = time.monotonic() + 2
+        while server._server._active_websockets and time.monotonic() < deadline:
+            time.sleep(.005)
         self.assertEqual(server._server._active_websockets, 0)
 
     def test_incorrect_pong_does_not_satisfy_deadline(self):

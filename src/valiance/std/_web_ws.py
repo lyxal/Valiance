@@ -398,16 +398,24 @@ class WebSocket:
                      and self._socket.state.cancelled.is_set()))
 
     def _read(self, n: int) -> bytes:
+        """Read exactly one frame segment while allowing session cancellation."""
+        deadline = time.monotonic() + self._policy.idle_timeout_seconds
         while len(self._buffer) < n:
-            if self._reader is not None and current_thread() is self._reader:
+            supervised = self._reader is not None and current_thread() is self._reader
+            if self._terminated.is_set():
+                raise EOFError('WebSocket transport closed')
+            if supervised:
                 self._heartbeat_tick()
-                if isinstance(self._socket, socket.socket):
-                    try:
-                        pending = self._socket.pending() if hasattr(self._socket, 'pending') else 0
-                        if not pending and not select.select([self._socket], [], [], .1)[0]:
-                            continue
-                    except (OSError, ValueError) as exc:
-                        raise EOFError('WebSocket transport closed') from exc
+            if isinstance(self._socket, socket.socket):
+                remaining = .1 if supervised else deadline - time.monotonic()
+                if remaining <= 0:
+                    raise socket.timeout('WebSocket read timed out')
+                try:
+                    pending = self._socket.pending() if hasattr(self._socket, 'pending') else 0
+                    if not pending and not select.select([self._socket], [], [], min(.1, remaining))[0]:
+                        continue
+                except (OSError, ValueError) as exc:
+                    raise EOFError('WebSocket transport closed') from exc
             try:
                 data = self._socket.recv(min(65536, n - len(self._buffer)))
             except socket.timeout:
@@ -417,6 +425,7 @@ class WebSocket:
             if not data:
                 raise EOFError('WebSocket transport closed')
             self._buffer.extend(data)
+            deadline = time.monotonic() + self._policy.idle_timeout_seconds
         chunk = bytes(self._buffer[:n])
         del self._buffer[:n]
         with self._initial_lock:
@@ -613,7 +622,7 @@ class WebSocket:
                 self._send_lock.release()
         try:
             if isinstance(self._socket, socket.socket):
-                self._socket.shutdown(socket.SHUT_RD if acquired else socket.SHUT_RDWR)
+                self._socket.shutdown(socket.SHUT_WR if acquired else socket.SHUT_RDWR)
             else:
                 if not acquired and callable(getattr(self._socket, 'interrupt_write', None)):
                     self._socket.interrupt_write()

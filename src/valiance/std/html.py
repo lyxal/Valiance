@@ -18,6 +18,7 @@ from typing import Any
 
 import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
+from valiance.elements.documentation import ElementDocumentation, element_documentation
 from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import ObjectValue, TaggedValue, BorrowedValue
 from valiance.vtypes.symbols import Symbol
@@ -138,6 +139,7 @@ def _check_url(item: str) -> None:
 
 
 def _check_web_resource(url: str) -> None:
+    """Validate a URL for a stylesheet, script, or form action."""
     _check_url(url)
     if urlsplit(_html.unescape(url)).scheme.lower() in ('mailto', 'tel'):
         raise ValueError('Web resources require an HTTP or relative URL')
@@ -195,19 +197,29 @@ def _element(tag: str, inner: str = '', attrs: Any = None) -> ObjectValue:
     return _markup_node(f'<{tag}{attr_text}>{inner}</{tag}>', tag)
 
 
-@stdlib_element('text', (T.String,), (_NODE,), param_names=('value',))
+def _html_documentation(summary: str, example: str) -> ElementDocumentation:
+    """Build reference documentation for an HTML element or helper."""
+    return element_documentation(summary, category='HTML', examples=(f'import {{std.html}}\n{example}',))
+
+
+@stdlib_element('text', (T.String,), (_NODE,), param_names=('value',),
+                documentation=_html_documentation('Escape plain text for use as HTML content.', 'html.text("A & B")'))
 def _text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Escape plain text for use as HTML content."""
     del ctx
     return (_markup_node(_escape_text(args[0])),)
 
 
-@stdlib_element('render', (_NODE,), (T.String,), param_names=('node',))
+@stdlib_element('render', (_NODE,), (T.String,), param_names=('node',),
+                documentation=_html_documentation('Render a verified node as an HTML string.', 'html.render(html.p("Hello"))'))
 def _render(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Render a verified node as an HTML string."""
     del ctx
     return (render_node(args[0]),)
 
 
 def _node_items(value: Any) -> list[Any]:
+    """Read the children of a list of HTML nodes."""
     if isinstance(value, BorrowedValue):
         value = value.read()
     if isinstance(value, TaggedValue):
@@ -215,28 +227,34 @@ def _node_items(value: Any) -> list[Any]:
     return list(value)
 
 
-@stdlib_element('empty', (), (_NODE,))
+@stdlib_element('empty', (), (_NODE,),
+                documentation=_html_documentation('Create a fragment with no markup.', 'html.empty'))
 def _empty(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Render no content without requiring an inferred empty list type."""
     del args, ctx
     return (_markup_node(''),)
 
 
-@stdlib_element('fragment', (_NODE_LIST,), (_NODE,), param_names=('children',))
+@stdlib_element('fragment', (_NODE_LIST,), (_NODE,), param_names=('children',),
+                documentation=_html_documentation('Combine child nodes without a wrapper element.', 'html.fragment([html.p("One"), html.p("Two")])'))
 def _fragment(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Combine child nodes without a wrapper element."""
     del ctx
     return (_markup_node(''.join(render_node(child) for child in _node_items(args[0]))),)
 
 
 @stdlib_element('element', (T.String, _NODE_LIST, _ATTRIBUTES), (_NODE,),
-                param_names=('name', 'children', 'attributes'))
+                param_names=('name', 'children', 'attributes'),
+                documentation=_html_documentation('Create a named element with child nodes and attributes.', 'html.element("main", [html.p("Hello")], dict{"id" => "intro"})'))
 def _make_element(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a named element with child nodes and attributes."""
     del ctx
     name, children, attributes = args
     return (_element(name, ''.join(render_node(child) for child in _node_items(children)), attributes),)
 
 
 def _validated_node(value: Any) -> ObjectValue:
+    """Read and verify an HTML node before reusing its markup."""
     if isinstance(value, BorrowedValue):
         value = value.read()
     render_node(value)
@@ -269,6 +287,7 @@ def _opening_attributes(markup: str, tag: str) -> tuple[int, set[str]]:
 
 
 def _attach_attributes(value: Any, attributes: Any) -> ObjectValue:
+    """Add validated attributes to the opening tag of an existing node."""
     node = _validated_node(value)
     tag = node.fields['tag']
     if not tag:
@@ -283,7 +302,8 @@ def _attach_attributes(value: Any, attributes: Any) -> ObjectValue:
     return _markup_node(markup[:opening_end] + added + markup[opening_end:], tag)
 
 
-@stdlib_element('document', (_NODE,), (_NODE,), param_names=('root',))
+@stdlib_element('document', (_NODE,), (_NODE,), param_names=('root',),
+                documentation=_html_documentation('Add a standards-mode doctype to an HTML root node.', 'html.document(html.html(html.body("Hello")))'))
 def _document(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Create a standards-mode document from a single root html element."""
     del ctx
@@ -295,20 +315,25 @@ def _document(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element('withAttrs', (_NODE, _ATTRIBUTES), (_NODE,),
-                param_names=('node', 'attributes'))
+                param_names=('node', 'attributes'),
+                documentation=_html_documentation('Add attributes to an existing element.', 'html.withAttrs(html.p("Hello"), dict{"id" => "intro"})'))
 def _with_attrs(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add attributes to an existing element."""
     del ctx
     return (_attach_attributes(args[0], args[1]),)
 
 
 @stdlib_element('withClass', (_NODE, T.String), (_NODE,),
-                param_names=('node', 'value'))
+                param_names=('node', 'value'),
+                documentation=_html_documentation('Add a class attribute to an existing element.', 'html.withClass(html.p("Hello"), "intro")'))
 def _with_class(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add a class attribute to an existing element."""
     del ctx
     return (_attach_attributes(args[0], {'class': args[1]}),)
 
 
 def _attach_style(node: Any, properties: Any) -> ObjectValue:
+    """Serialize permitted CSS declarations into a style attribute."""
     node = _validated_node(node)
     tag = node.fields['tag']
     if not tag:
@@ -338,15 +363,19 @@ def _attach_style(node: Any, properties: Any) -> ObjectValue:
 
 
 @stdlib_element('withStyle', (_NODE, _ATTRIBUTES), (_NODE,),
-                param_names=('node', 'properties'))
+                param_names=('node', 'properties'),
+                documentation=_html_documentation('Add validated inline CSS properties to an existing element.', 'html.withStyle(html.p("Hello"), dict{"color" => "red"})'))
 def _with_style(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add validated inline CSS properties to an existing element."""
     del ctx
     return (_attach_style(args[0], args[1]),)
 
 
 @stdlib_element('withId', (_NODE, T.String), (_NODE,),
-                param_names=('node', 'value'))
+                param_names=('node', 'value'),
+                documentation=_html_documentation('Add an ID attribute to an existing element.', 'html.withId(html.p("Hello"), "intro")'))
 def _with_id(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add an ID attribute to an existing element."""
     del ctx
     if not args[1] or any(ch.isspace() or unicodedata.category(ch).startswith('C')
                           for ch in args[1]):
@@ -355,28 +384,35 @@ def _with_id(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _custom_attribute(prefix: str, name: str) -> str:
+    """Validate and qualify a data or ARIA attribute name."""
     if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]*', name):
         raise ValueError('Invalid HTML custom attribute suffix')
     return prefix + name
 
 
 @stdlib_element('withData', (_NODE, T.String, T.String), (_NODE,),
-                param_names=('node', 'name', 'value'))
+                param_names=('node', 'name', 'value'),
+                documentation=_html_documentation('Add a custom data attribute to an existing element.', 'html.withData(html.p("Hello"), "topic", "intro")'))
 def _with_data(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add a custom data attribute to an existing element."""
     del ctx
     return (_attach_attributes(args[0], {_custom_attribute('data-', args[1]): args[2]}),)
 
 
 @stdlib_element('withAria', (_NODE, T.String, T.String), (_NODE,),
-                param_names=('node', 'name', 'value'))
+                param_names=('node', 'name', 'value'),
+                documentation=_html_documentation('Add an ARIA attribute to an existing element.', 'html.withAria(html.p("Hello"), "label", "Introduction")'))
 def _with_aria(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add an ARIA attribute to an existing element."""
     del ctx
     return (_attach_attributes(args[0], {_custom_attribute('aria-', args[1]): args[2]}),)
 
 
 @stdlib_element('withBoolean', (_NODE, T.String, T.Boolean), (_NODE,),
-                param_names=('node', 'name', 'enabled'))
+                param_names=('node', 'name', 'enabled'),
+                documentation=_html_documentation('Add a boolean attribute when its condition is true.', 'html.withBoolean(html.button("Continue"), "disabled", true)'))
 def _with_boolean(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add a boolean attribute when its condition is true."""
     del ctx
     node, name, enabled = args
     _validated_node(node)
@@ -388,8 +424,10 @@ def _with_boolean(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
 
 
 @stdlib_element('when', (T.Boolean, _NODE), (_NODE,),
-                param_names=('condition', 'child'))
+                param_names=('condition', 'child'),
+                documentation=_html_documentation('Include a child node when a condition is true.', 'html.when(true, html.p("Hello"))'))
 def _when(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Include a child node when a condition is true."""
     del ctx
     value, child = args
     node = _validated_node(child)
@@ -399,8 +437,10 @@ def _when(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element('choose', (T.Boolean, _NODE, _NODE), (_NODE,),
-                param_names=('condition', 'yes', 'no'))
+                param_names=('condition', 'yes', 'no'),
+                documentation=_html_documentation('Select one of two nodes based on a condition.', 'html.choose(true, html.p("Yes"), html.p("No"))'))
 def _choose(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Select one of two nodes based on a condition."""
     del ctx
     condition, yes, no = args
     true_node, false_node = _validated_node(yes), _validated_node(no)
@@ -410,16 +450,20 @@ def _choose(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element('join', (_NODE_LIST, _NODE), (_NODE,),
-                param_names=('children', 'separator'))
+                param_names=('children', 'separator'),
+                documentation=_html_documentation('Join child nodes with a separator node.', 'html.join([html.span("A"), html.span("B")], html.text(", "))'))
 def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Join child nodes with a separator node."""
     del ctx
     items = [render_node(child) for child in _node_items(args[0])]
     return (_markup_node(render_node(args[1]).join(items)),)
 
 
 @stdlib_element('children', (T.String, _NODE_LIST), (_NODE,),
-                param_names=('name', 'children'))
+                param_names=('name', 'children'),
+                documentation=_html_documentation('Wrap child nodes in a named element.', 'html.children("main", [html.p("Hello")])'))
 def _children(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Wrap child nodes in a named element."""
     del ctx
     return (_element(args[0], ''.join(render_node(child) for child in _node_items(args[1]))),)
 
@@ -437,53 +481,79 @@ for _tag in _BUILDERS:
     for _kind, _arg_type in (('text', T.String), ('node', _NODE)):
         def _builder(args: tuple[Any, ...], ctx: RuntimeContext, tag: str = _tag,
                      kind: str = _kind) -> tuple[Any, ...]:
+            """Wrap escaped text or a verified child node in the given tag."""
             del ctx
             return (_element(tag, _escape_text(args[0]) if kind == 'text'
                              else render_node(args[0])),)
         _builder.__name__ = f'_{_tag}_{_kind}'
-        _builder = stdlib_element(_tag, (_arg_type,), (_NODE,),
-                                  param_names=('child',))(_builder)
+        _example_child = '"Hello"' if _kind == 'text' else 'html.text("Hello")'
+        _builder = stdlib_element(
+            _tag, (_arg_type,), (_NODE,), param_names=('child',),
+            documentation=_html_documentation(
+                f'Wrap {_kind} content in a `<{_tag}>` element.',
+                f'html.{_tag}({_example_child})',
+            ),
+        )(_builder)
         globals()[_builder.__name__] = _builder
 
 del _builder
 
-for _tag in ('br', 'hr', 'img', 'input'):
+for _tag, _example_attributes in (
+    ('br', 'dict{"class" => "clear"}'),
+    ('hr', 'dict{"class" => "divider"}'),
+    ('img', 'dict{"src" => "/logo.png", "alt" => "Logo"}'),
+    ('input', 'dict{"type" => "text", "name" => "query"}'),
+):
     def _void_builder(args: tuple[Any, ...], ctx: RuntimeContext,
                       tag: str = _tag) -> tuple[Any, ...]:
+        """Create a void HTML element with validated attributes."""
         del ctx
         return (_element(tag, attrs=args[0]),)
     _void_builder.__name__ = f'_{_tag}_void'
-    _void_builder = stdlib_element(_tag, (_ATTRIBUTES,), (_NODE,),
-                                   param_names=('attributes',))(_void_builder)
+    _void_builder = stdlib_element(
+        _tag, (_ATTRIBUTES,), (_NODE,), param_names=('attributes',),
+        documentation=_html_documentation(
+            f'Create a `<{_tag}>` element with attributes.',
+            f'html.{_tag}({_example_attributes})',
+        ),
+    )(_void_builder)
     globals()[_void_builder.__name__] = _void_builder
 
 del _void_builder
 
 
 
-@stdlib_element('lineBreak', (), (_NODE,))
+@stdlib_element('lineBreak', (), (_NODE,),
+                documentation=_html_documentation('Create a line break element.', 'html.lineBreak'))
 def _line_break(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a line break element."""
     del args, ctx
     return (_element('br'),)
 
 
-@stdlib_element('horizontalRule', (), (_NODE,))
+@stdlib_element('horizontalRule', (), (_NODE,),
+                documentation=_html_documentation('Create a thematic break element.', 'html.horizontalRule'))
 def _horizontal_rule(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a thematic break element."""
     del args, ctx
     return (_element('hr'),)
 
 
 # Document/head and form helpers intentionally accept plain, escaped data. Raw
 # CSS and JavaScript text are not accepted; linked resources are explicit.
-@stdlib_element('metaDescription', (T.String,), (_NODE,), param_names=('description',))
+@stdlib_element('metaDescription', (T.String,), (_NODE,), param_names=('description',),
+                documentation=_html_documentation('Create a page description metadata element.', 'html.metaDescription("Introduction")'))
 def _meta_description(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a page description metadata element."""
     del ctx
     return (_markup_node('<meta' + _attributes({'name': 'description', 'content': args[0]}) + '>', 'meta'),)
 
 
 @stdlib_element('meta', (T.String, T.String), (_NODE,),
-                param_names=('name', 'content'))
+                param_names=('name', 'content'),
+                documentation=_html_documentation('Create a named metadata element.', 'html.meta("author", "Ada")'))
 def _meta(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a named metadata element."""
     del ctx
     name, content = args
     if name not in _META_NAMES:
@@ -492,8 +562,10 @@ def _meta(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element('link', (T.String, T.String), (_NODE,),
-                param_names=('rel', 'href'))
+                param_names=('rel', 'href'),
+                documentation=_html_documentation('Create a link to a related resource.', 'html.link("canonical", "/intro")'))
 def _link(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a link to a related resource."""
     del ctx
     rel, href = args
     if rel not in _LINK_RELS:
@@ -502,14 +574,18 @@ def _link(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_markup_node('<link' + _attributes({'rel': rel, 'href': href}) + '>', 'link'),)
 
 
-@stdlib_element('stylesheet', (T.String,), (_NODE,), param_names=('href',))
+@stdlib_element('stylesheet', (T.String,), (_NODE,), param_names=('href',),
+                documentation=_html_documentation('Link an external CSS stylesheet.', 'html.stylesheet("/site.css")'))
 def _stylesheet(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Link an external CSS stylesheet."""
     del ctx
     return _link(('stylesheet', args[0]), None)
 
 
-@stdlib_element('scriptSrc', (T.String,), (_NODE,), param_names=('src',))
+@stdlib_element('scriptSrc', (T.String,), (_NODE,), param_names=('src',),
+                documentation=_html_documentation('Reference an external script.', 'html.scriptSrc("/site.js")'))
 def _script_src(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Reference an external script."""
     del ctx
     # Only an explicit external script resource. No inline script contents or
     # templated JS evaluation are possible through this safe builder.
@@ -519,6 +595,7 @@ def _script_src(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _page(title: str, body: Any, extra: list[Any], lang: str) -> ObjectValue:
+    """Build a complete HTML page from its title, body, and head nodes."""
     if not _LANG.fullmatch(lang):
         raise ValueError('Invalid document language')
     # Only trusted metadata nodes can appear inside the head. This also keeps
@@ -536,22 +613,28 @@ def _page(title: str, body: Any, extra: list[Any], lang: str) -> ObjectValue:
 
 
 @stdlib_element('page', (T.String, _NODE), (_NODE,),
-                param_names=('title', 'body'))
+                param_names=('title', 'body'),
+                documentation=_html_documentation('Create an HTML document with a title and body.', 'html.page("Introduction", html.p("Hello"))'))
 def _page_simple(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create an HTML document with a title and body."""
     del ctx
     return (_page(args[0], args[1], [], 'en'),)
 
 
 @stdlib_element('pageWithHead', (T.String, _NODE, _NODE_LIST, T.String), (_NODE,),
-                param_names=('title', 'body', 'head', 'lang'))
+                param_names=('title', 'body', 'head', 'lang'),
+                documentation=_html_documentation('Create an HTML document with additional head nodes and a language.', 'html.pageWithHead("Introduction", html.p("Hello"), [html.metaDescription("Example")], "en")'))
 def _page_extended(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create an HTML document with additional head nodes and a language."""
     del ctx
     return (_page(args[0], args[1], _node_items(args[2]), args[3]),)
 
 
 @stdlib_element('formFor', (T.String, T.String, _NODE), (_NODE,),
-                param_names=('method', 'action', 'fields'))
+                param_names=('method', 'action', 'fields'),
+                documentation=_html_documentation('Create a GET or POST form with the given fields.', 'html.formFor("get", "/search", html.textField("q", "Search"))'))
 def _form_for(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a GET or POST form with the given fields."""
     del ctx
     method, action, fields = args
     if method.lower() not in ('get', 'post'):
@@ -561,15 +644,19 @@ def _form_for(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element('postForm', (T.String, _NODE), (_NODE,),
-                param_names=('action', 'fields'))
+                param_names=('action', 'fields'),
+                documentation=_html_documentation('Create a POST form with the given fields.', 'html.postForm("/save", html.submitButton("Save"))'))
 def _post_form(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a POST form with the given fields."""
     del ctx
     return _form_for(('post', args[0], args[1]), None)
 
 
 @stdlib_element('textField', (T.String, T.String), (_NODE,),
-                param_names=('name', 'label'))
+                param_names=('name', 'label'),
+                documentation=_html_documentation('Create a labelled text input.', 'html.textField("name", "Name")'))
 def _text_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a labelled text input."""
     del ctx
     name, label = args
     if not name or any(ch.isspace() or unicodedata.category(ch).startswith('C')
@@ -582,15 +669,19 @@ def _text_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element('hiddenField', (T.String, T.String), (_NODE,),
-                param_names=('name', 'value'))
+                param_names=('name', 'value'),
+                documentation=_html_documentation('Create a hidden input with a name and value.', 'html.hiddenField("mode", "edit")'))
 def _hidden_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a hidden input with a name and value."""
     del ctx
     return (_element('input', attrs={'type': 'hidden', 'name': args[0], 'value': args[1]}),)
 
 
 @stdlib_element('checkboxField', (T.String, T.String), (_NODE,),
-                param_names=('name', 'label'))
+                param_names=('name', 'label'),
+                documentation=_html_documentation('Create a labelled checkbox input.', 'html.checkboxField("notify", "Notify me")'))
 def _checkbox_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a labelled checkbox input."""
     del ctx
     name, label = args
     child = (_element('input', attrs={'type': 'checkbox', 'name': name}).fields['markup']
@@ -598,7 +689,9 @@ def _checkbox_field(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
     return (_element('label', child),)
 
 
-@stdlib_element('submitButton', (T.String,), (_NODE,), param_names=('label',))
+@stdlib_element('submitButton', (T.String,), (_NODE,), param_names=('label',),
+                documentation=_html_documentation('Create a form submit button with escaped label text.', 'html.submitButton("Save")'))
 def _submit_button(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Create a form submit button with escaped label text."""
     del ctx
     return (_element('button', _escape_text(args[0]), {'type': 'submit'}),)

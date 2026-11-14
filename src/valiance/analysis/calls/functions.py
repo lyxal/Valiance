@@ -663,7 +663,9 @@ class _CallableValues:
             from valiance.modules_system.modules import ModuleObject
 
             provider = self._child_analyser(self.env.lexical_child_scope())
-            for dependency in dependencies:
+            # The provider's declarations follow its transitive runtime
+            # prelude and take precedence over homonyms in that prelude.
+            for dependency in reversed(dependencies):
                 if isinstance(dependency, TypedImportedObjectNode):
                     provider._register_imported_object(
                         ModuleObject(
@@ -673,8 +675,13 @@ class _CallableValues:
                         dependency.runtime_name,
                     )
                 elif isinstance(dependency, TypedImportedFunctionNode):
+                    name = dependency.node.name
+                    visible = provider.env.overloads.get(name)
+                    overloads = provider._selected_import_overloads(dependency)
+                    if visible and overloads and len(visible[0].params) != len(overloads[0].params):
+                        name = dependency.runtime_name
                     provider._register_imported_definition(
-                        dependency.node.name, dependency, dependency.runtime_name, dependencies,
+                        name, dependency, dependency.runtime_name, dependencies,
                     )
             result = provider._analyse_function_at_call_site(
                 outer, node, call_params, rank_values=rank_values, type_values=type_values,

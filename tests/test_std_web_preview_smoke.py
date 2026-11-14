@@ -112,6 +112,7 @@ class WebPreviewSmokeTests(unittest.TestCase):
 class FeatureDemoSmokeTests(unittest.TestCase):
     """End-to-end public CLI smoke for the everyday HTTP feature envelope."""
 
+    @unittest.skipUnless(os.name == 'posix', 'The feature demo mounts a POSIX-only static router')
     def test_compiled_feature_demo_http_security_and_websocket(self):
         import gzip
         import json

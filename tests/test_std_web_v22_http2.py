@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import shutil
 import socket
 import ssl
@@ -210,7 +211,8 @@ $app := get("/via-vm"): fn(req: web.GetRequest) -> String =>
   "valiance-h2"
 end
 web.serve($app, web.ServerConfig(port = 0,
-  tls = web.TLS(certificateFile = "{self.cert}", privateKeyFile = "{self.key}"))) ?'''
+  tls = web.TLS(certificateFile = "{Path(self.cert).as_posix()}",
+                privateKeyFile = "{Path(self.key).as_posix()}"))) ?'''
         analyser = Analyser()
         program = analyser.analyse(parse(source))
         self.assertEqual([str(d) for d in analyser.diagnostics], [])

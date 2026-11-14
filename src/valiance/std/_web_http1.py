@@ -543,6 +543,8 @@ class _ConnectionHandler(socketserver.BaseRequestHandler):
                         tcp.sendall(wire)
                     finished = True
                     if close_after or self.server.draining.is_set():
+                        if not isinstance(tcp, ssl.SSLSocket):
+                            tcp.shutdown(socket.SHUT_WR)
                         return
                     tcp.settimeout(limits.connection_idle_timeout_seconds)
                     if conn.our_state is h11.DONE and conn.their_state is h11.DONE:
@@ -638,6 +640,8 @@ class _ConnectionHandler(socketserver.BaseRequestHandler):
             body = response.bytes
             fields = f'Content-Type: text/plain; charset=utf-8\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n'
             tcp.sendall(line.encode('ascii') + fields.encode('ascii') + body)
+            if not isinstance(tcp, ssl.SSLSocket):
+                tcp.shutdown(socket.SHUT_WR)
             return True
         except (OSError, UnicodeError, ValueError):
             return False

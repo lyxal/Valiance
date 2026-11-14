@@ -364,7 +364,8 @@ class HTTPSTransportTests(unittest.TestCase):
         source = f'''import {{std.web, std.web.App}}
 $app = App
 $app := get("/secure"): fn(req: web.GetRequest) => $req.scheme end
-web.serve($app, web.ServerConfig(port = 0, tls = web.TLS(certificateFile = "{self.cert}", privateKeyFile = "{self.key}"))) ?'''
+web.serve($app, web.ServerConfig(port = 0, tls = web.TLS(
+  certificateFile = "{Path(self.cert).as_posix()}", privateKeyFile = "{Path(self.key).as_posix()}"))) ?'''
         owner, = CorsValianceTests.execute(source, serialized=True)
         token = bridge._lease_token(owner)
         try:

@@ -1295,27 +1295,26 @@ web.shutdown $left'''
         # Stop its listener externally, then let wait consume the owned handle.
         from valiance.std import web as bridge
         from threading import Thread
-        from time import sleep, monotonic
-        import unittest.mock
+        from unittest.mock import patch
+        from valiance.std import _web_http1 as http1
 
-        def stop_when_started():
-            deadline = monotonic() + 6
-            while monotonic() < deadline:
-                with bridge._SERVER_LEASES_LOCK:
-                    handles = list(bridge._SERVER_LEASES.values())
-                if handles:
-                    sleep(0.05)
-                    handles[0].shutdown()
-                    return
-                sleep(0.01)
+        serve = http1.serve
+        stoppers = []
 
-        stopper = Thread(target=stop_when_started, daemon=True)
-        stopper.start()
+        def serve_and_stop(*args, **kwargs):
+            owner = serve(*args, **kwargs)
+            stopper = Thread(target=owner.shutdown, daemon=True)
+            stopper.start()
+            stoppers.append(stopper)
+            return owner
+
         source = '''import {std.web}
 $server = web.serve(web.App, web.ServerConfig(port = 0)) ?
 web.wait $server'''
-        report, = self.execute(source)
-        stopper.join(timeout=3)
+        with patch.object(http1, 'serve', side_effect=serve_and_stop):
+            report, = self.execute(source)
+        for stopper in stoppers:
+            stopper.join(timeout=3)
         self.assertEqual(report.type_name, 'web.ServerStopReport')
         self.assertFalse(bridge._SERVER_LEASES)
 
@@ -1344,10 +1343,10 @@ class WebStaticFileTests(unittest.TestCase):
             page = Path(folder) / 'page.bin'
             page.write_text('<b>Hi</b>', encoding='utf-8')
             source = f'''import {{std.web}}
-web.file("{binary}")
-web.page("{page}")
-web.download("{binary}", "parent/é report.txt")
-web.file("{folder}/absent.txt")'''
+web.file("{binary.as_posix()}")
+web.page("{page.as_posix()}")
+web.download("{binary.as_posix()}", "parent/é report.txt")
+web.file("{(Path(folder) / 'absent.txt').as_posix()}")'''
             for optimized, serialized in ((False, False), (True, True)):
                 with self.subTest(optimized=optimized, serialized=serialized):
                     values = self.execute(source, optimized=optimized, serialized=serialized)
@@ -1439,10 +1438,13 @@ web.dispatch($app, web.testRequest("POST", "/assets/health"))'''
                 core.static_root(str(root / 'linked-dir'))
 
     def test_static_ranges_head_validators_and_416_size(self):
+        import os
         from dataclasses import replace
         from pathlib import Path
         from tempfile import TemporaryDirectory
         from valiance.std import _web_core as core
+        if os.name != 'posix':
+            self.skipTest('Secure static routes require POSIX no-follow directory descriptors')
         with TemporaryDirectory() as folder:
             (Path(folder) / 'payload.bin').write_bytes(b'0123456789')
             app = core.App().route('GET', '/{*path}', lambda req: core.static_file(folder, req))
@@ -1526,6 +1528,7 @@ web.serve($app, web.ServerConfig(port = 0)) ?'''
                 bridge._close_server_token(token)
 
     def test_std_path_inputs_and_invalid_static_root(self):
+        import os
         from pathlib import Path
         from tempfile import TemporaryDirectory
         from valiance.std import web as bridge
@@ -1533,15 +1536,19 @@ web.serve($app, web.ServerConfig(port = 0)) ?'''
             root = Path(folder)
             (root / 'file.bin').write_bytes(b'\x00\xff')
             source = f'''import {{std.web, std.path.Path, std.web.App}}
-web.file(Path("{root}/file.bin"))
-$app = App
-$app := group("/files", web.staticRouter(Path("{root}")) ?)
-web.dispatch($app, web.testRequest("GET", "/files/file.bin"))
-web.staticRouter("{root}/does-not-exist")'''
+web.file(Path("{(root / 'file.bin').as_posix()}"))'''
             result = self.execute(source, serialized=True)
-            self.assertEqual([bridge._unwrap_response(value).bytes for value in result[:2]],
-                             [b'\x00\xff', b'\x00\xff'])
-            self.assertEqual(result[2].type_name, 'web.ConfigError.InvalidRoute')
+            self.assertEqual(bridge._unwrap_response(result[0]).bytes, b'\x00\xff')
+
+            if os.name == 'posix':
+                source += f'''
+$app = App
+$app := group("/files", web.staticRouter(Path("{root.as_posix()}")) ?)
+web.dispatch($app, web.testRequest("GET", "/files/file.bin"))
+web.staticRouter("{(root / 'does-not-exist').as_posix()}")'''
+                result = self.execute(source, serialized=True)
+                self.assertEqual(bridge._unwrap_response(result[1]).bytes, b'\x00\xff')
+                self.assertEqual(result[2].type_name, 'web.ConfigError.InvalidRoute')
 
 
 class WebMultipartBufferedTests(unittest.TestCase):
@@ -1737,7 +1744,7 @@ $app = App
 $app := post("/save"): fn(req: web.PostRequest) -> String | web.Error =>
   $form = web.multipart($req) ?
   $files = web.uploads($form, "blob")
-  web.saveUpload($files[0], Path("{destination}")) ?
+  web.saveUpload($files[0], Path("{destination.as_posix()}")) ?
   "saved"
 end
 $h = web.withHeader(web.Headers, "Content-Type", "multipart/form-data; boundary=MULTI")

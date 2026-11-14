@@ -579,6 +579,7 @@ def _prepare_element_call_branches(
     analyser: _core.Analyser,
     *,
     align_positional_right: bool = True,
+    function_value_call: bool = False,
 ) -> tuple[_core.ElementCallPreparation, ...]:
     """Prepare element call branches during static analysis."""
     plan = _element_call_argument_plan(
@@ -586,6 +587,7 @@ def _prepare_element_call_branches(
         call_args,
         has_modifier_args,
         align_positional_right=align_positional_right,
+        function_value_call=function_value_call,
     )
     if plan is None:
         return ()
@@ -624,6 +626,7 @@ def _element_call_argument_plan(
     has_modifier_args: bool,
     *,
     align_positional_right: bool = True,
+    function_value_call: bool = False,
 ) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...], frozenset[int], tuple[int, ...]] | None:
     """Build the plan for element call argument during static analysis."""
     param_count = len(overload.params)
@@ -671,7 +674,9 @@ def _element_call_argument_plan(
     if len(positional_args) > len(positional_slots):
         return None
     if positional_args:
-        if align_positional_right:
+        if function_value_call and any(arg.placeholder for arg in call_args):
+            positional_slots = positional_slots[:len(positional_args)]
+        elif align_positional_right:
             positional_slots = positional_slots[-len(positional_args):]
         else:
             # A defaulted suffix cannot take the path from a modifier call

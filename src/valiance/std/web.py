@@ -158,8 +158,14 @@ _ROUTE_DOCS = {
     for lower, title in _METHODS
 }
 
-_DEFAULT_ROUTE_MODE = (ElementNode(Symbol('Buffered', ('web', 'BodyMode'))),)
+_DEFAULT_ROUTE_MODE = (ElementNode(Symbol('nativeBufferedBodyMode', ('std', 'web'))),)
 _DEFAULT_ROUTE_LIMIT = (ElementNode(Symbol('nativeCookieNoneInt', ('std', 'web'))),)
+
+
+@stdlib_element('nativeBufferedBodyMode', (), (_BODY_MODE,), exported=False)
+def _default_buffered_body_mode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Supply the buffered route default even when BodyMode was not imported."""
+    return (ObjectValue('web.BodyMode.Buffered', {}),)
 
 for _lower, _title in _METHODS:
     for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
@@ -206,6 +212,12 @@ del _register
 
 
 _DEFAULT_WS_POLICY = (ElementNode(Symbol('WebSocketPolicy', ('web',))),)
+def _append_middleware(target: ObjectValue, callback: Any) -> tuple[Any, ...]:
+    """Return a new configuration with an independently retained middleware chain."""
+    old = [_duplicate_occurrence(item) for item in _optional_contents(target.fields['middleware'])]
+    return (_new_config(target, middleware=[*old, _duplicate_occurrence(callback)]),)
+
+
 for _target_type, _label in ((_APP, 'app'), (_ROUTER, 'router')):
     for _output_type, _output_name in ((T.N(Symbol('None')), 'none'), (_ERROR, 'error'),
                                       (T.Result(T.N(Symbol('None')), _ERROR), 'result')):
@@ -232,7 +244,9 @@ for _target_type, _label in ((_APP, 'app'), (_ROUTER, 'router')):
             import_with=('App',) if _label == 'app' else ('Router',),
             documentation=element_documentation(
                 'Register a WebSocket upgrade route separate from ordinary GET.',
-                category='Web', returns='Immutable App or Router.'),
+                category='Web', returns='Immutable App or Router.',
+                examples=(f'import {{std.web}}\n$config = web.{_label.title()}\n'
+                          '$config := web.websocket("/ws"): fn (socket: web.WebSocket) => \\None end',)),
         )(_register_ws)
         globals()[_register_ws.__name__] = _register_ws
 
@@ -275,9 +289,7 @@ for _target_type, _label in ((_APP, 'app'), (_ROUTER, 'router')):
     ):
         def _register_middleware(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             del ctx
-            target, callback = args
-            old = [_duplicate_occurrence(item) for item in _optional_contents(target.fields['middleware'])]
-            return (_new_config(target, middleware=[*old, _duplicate_occurrence(callback)]),)
+            return _append_middleware(*args)
 
         _register_middleware.__name__ = f'_{_label}_middleware_{_result_label}'
         _register_middleware = stdlib_element(
@@ -460,9 +472,7 @@ def _core_limits(config: ObjectValue) -> object:
 for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
     def _register_cors(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         del ctx
-        target, callback = args
-        old = [_duplicate_occurrence(item) for item in _optional_contents(target.fields['middleware'])]
-        return (_new_config(target, middleware=[*old, _duplicate_occurrence(callback)]),)
+        return _append_middleware(*args)
     _register_cors.__name__ = f'_middleware_cors_{_suffix}'
     _register_cors = stdlib_element(
         'middleware', (_target_type, _CORS_MIDDLEWARE), (_target_type,),
@@ -470,7 +480,10 @@ for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
         import_with=('App',) if _suffix == 'app' else ('Router',),
         documentation=element_documentation(
             'Register validated CORS middleware on an immutable App or Router.',
-            category='Web', returns='Updated App or Router.'),
+            category='Web', returns='Updated App or Router.',
+            examples=(f'import {{std.web}}\n$config = web.{_suffix.title()}\n'
+                      '$config := web.middleware web.cors(web.CorsPolicy('
+                      'allowedOrigins = ["https://example.com"], allowedMethods = [web.Method.GET]))',)),
     )(_register_cors)
     globals()[_register_cors.__name__] = _register_cors
 del _register_cors
@@ -507,9 +520,7 @@ def _compression_factory(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
 for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
     def _register_compression(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         del ctx
-        target, callback = args
-        old = [_duplicate_occurrence(item) for item in _optional_contents(target.fields['middleware'])]
-        return (_new_config(target, middleware=[*old, _duplicate_occurrence(callback)]),)
+        return _append_middleware(*args)
     _register_compression.__name__ = f'_middleware_compression_{_suffix}'
     _register_compression = stdlib_element(
         'middleware', (_target_type, _COMPRESSION_MIDDLEWARE), (_target_type,),
@@ -517,7 +528,8 @@ for _target_type, _suffix in ((_APP, 'app'), (_ROUTER, 'router')):
         import_with=('App',) if _suffix == 'app' else ('Router',),
         documentation=element_documentation(
             'Register opt-in response compression on App or Router.',
-            category='Web', returns='New immutable App or Router.'),
+            category='Web', returns='New immutable App or Router.',
+            examples=('import {std.web}\n' + f'$config = web.{_suffix.title()}\n$config := web.middleware web.compression(web.CompressionPolicy)',)),
     )(_register_compression)
     globals()[_register_compression.__name__] = _register_compression
 del _register_compression
@@ -754,7 +766,8 @@ def _mint_context_authenticator(args: tuple[Any, ...], ctx: RuntimeContext) -> t
                 param_names=(),
                 documentation=element_documentation(
                     'Mint a unique, copyable typed request-context key.', category='Web',
-                    returns='An opaque ContextKey[T] with unique identity.'))
+                    returns='An opaque ContextKey[T] with unique identity.',
+            examples=('import {std.web}\nweb.contextKey[String]',)))
 def _new_context_key(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del args
     nonce = randbits(112) or 1
@@ -805,7 +818,8 @@ for _ctx_type, _ctx_name in _REQ_CONTEXT_TYPES:
         (_ctx_type,), param_names=('request', 'key', 'value'),
         documentation=element_documentation(
             'Return the same request variant with one typed context value attached.',
-            category='Web', returns='An immutable enriched request.'))(_with_context)
+            category='Web', returns='An immutable enriched request.',
+            examples=('import {std.web}\n' + f'fn (req: web.{_ctx_name}) => web.withContext($req, web.contextKey[String], "en") end',)))(_with_context)
     globals()[_with_context.__name__] = _with_context
 
     def _get_context(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -822,7 +836,8 @@ for _ctx_type, _ctx_name in _REQ_CONTEXT_TYPES:
         (T.optional(T.V('T')),), param_names=('request', 'key'),
         documentation=element_documentation(
             'Read a typed context value, returning None when the key is absent.',
-            category='Web', returns='An optional value of the key type.'))(_get_context)
+            category='Web', returns='An optional value of the key type.',
+            examples=('import {std.web}\n' + f'fn (req: web.{_ctx_name}) => web.context($req, web.contextKey[String]) end',)))(_get_context)
     globals()[_get_context.__name__] = _get_context
 
     def _require_context(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -839,7 +854,8 @@ for _ctx_type, _ctx_name in _REQ_CONTEXT_TYPES:
         (T.Result(T.V('T'), _ERROR),), param_names=('request', 'key'),
         documentation=element_documentation(
             'Require a typed context value or return Error.MissingContext.',
-            category='Web', returns='The keyed payload or MissingContext.'))(_require_context)
+            category='Web', returns='The keyed payload or MissingContext.',
+            examples=('import {std.web}\n' + f'fn (req: web.{_ctx_name}) => web.requireContext($req, web.contextKey[String]) end',)))(_require_context)
     globals()[_require_context.__name__] = _require_context
 del _with_context, _get_context, _require_context
 
@@ -1000,7 +1016,8 @@ class _VMEventSource:
                 param_names=('source',),
                 documentation=element_documentation(
                     'Encode owned EventSource events as bounded text/event-stream chunks.',
-                    category='Web', returns='An ordinary streaming Response.'))
+                    category='Web', returns='An ordinary streaming Response.',
+            examples=('import {std.web}\nfn (source: web.EventSource) => web.eventStream($source) end',)))
 def _event_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_wrap_response(core.event_stream(_VMEventSource(args[0], ctx))),)
 
@@ -1010,7 +1027,8 @@ def _event_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                 param_defaults=(None, (StringLiteralNode('application/octet-stream'),)),
                 documentation=element_documentation(
                     'Transfer one owned ByteSource into a single streaming response body.',
-                    category='Web', returns='A nonduplicable StreamBody.'))
+                    category='Web', returns='A nonduplicable StreamBody.',
+            examples=('import {std.web}\nfn (source: web.ByteSource) => web.stream($source, "text/plain") end',)))
 def _stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     source, content_type = args
     return (_lease_stream(core.stream(_VMByteSource(source, ctx), content_type)),)
@@ -1022,7 +1040,8 @@ def _stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 documentation=element_documentation(
                     'Construct a single-response owned stream without buffering, while the '
                     'compiler learns to transfer StreamBody through Response constructors.',
-                    category='Web', returns='Response owning an exclusive ByteSource.'))
+                    category='Web', returns='Response owning an exclusive ByteSource.',
+            examples=('import {std.web}\nfn (source: web.ByteSource) => web.streamResponse($source, "text/plain") end',)))
 def _stream_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     source, content_type = args
     return (_wrap_response(core.Response(body=core.stream(_VMByteSource(source, ctx), content_type))),)
@@ -1107,7 +1126,8 @@ def _ws_lease(ws: object) -> ObjectValue:
                 param_names=('socket',),
                 documentation=element_documentation(
                     'Read the validated WebSocket handshake snapshot without transferring the connection owner.',
-                    category='Web', returns='An immutable WebSocketRequest value.'))
+                    category='Web', returns='An immutable WebSocketRequest value.',
+            examples=('import {std.web}\nfn (socket: web.WebSocket) => web.websocketRequest($socket) end',)))
 def _ws_request(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     return (_wrap_ws_request(_ws_get(args[0]).request),)
@@ -1138,7 +1158,8 @@ def _native_close_websocket(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple
 @stdlib_element('websocketReceive', (_WEBSOCKET,), (T.Result(_WEBSOCKET_MESSAGE, _ERROR),),
                 param_names=('socket',),
                 documentation=element_documentation('Receive a WebSocket text, binary or close event.',
-                                                    category='Web', returns='WebSocketMessage or web.Error.'))
+                                                    category='Web', returns='WebSocketMessage or web.Error.',
+            examples=('import {std.web}\nfn (socket: web.WebSocket) => web.websocketReceive($socket) end',)))
 def _ws_receive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     try:
@@ -1175,11 +1196,14 @@ for _method, _data_type in (('websocketSendText', T.String),
                                       'WebSocket transport is unavailable')),)
 
     _ws_send.__name__ = '_ws_send_' + _method
+    _example_value = '"hello"' if _data_type == T.String else '[65 #byte]'
     _ws_send = stdlib_element(
         _method, (_WEBSOCKET, _data_type), (T.Result(T.N(Symbol('None')), _ERROR),),
         param_names=('socket', 'value'),
         documentation=element_documentation('Send one bounded WebSocket message.',
-                                            category='Web', returns='None or web.Error.'),
+                                            category='Web', returns='None or web.Error.',
+                                            examples=(f'import {{std.web, std.file.#byte}}\n'
+                                                      f'fn (socket: web.WebSocket) => web.{_method}($socket, {_example_value}) end',)),
     )(_ws_send)
     globals()[_ws_send.__name__] = _ws_send
 
@@ -1191,7 +1215,9 @@ del _ws_send
                 param_names=('socket', 'data'),
                 param_defaults=(None, (ElementNode(Symbol('nativeEmptyBytes', ('std', 'web'))),)),
                 documentation=element_documentation('Send a WebSocket ping control frame.',
-                                                    category='Web', returns='None or web.Error.'))
+                                                    category='Web', returns='None or web.Error.',
+                                                    examples=('import {std.web}\n'
+                                                              'fn (socket: web.WebSocket) => web.websocketPing($socket) end',)))
 def _ws_ping(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     try:
@@ -1209,7 +1235,9 @@ def _ws_ping(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=('socket', 'code', 'reason'),
                 param_defaults=(None, (NumberLiteralNode(1000),), (StringLiteralNode(''),)),
                 documentation=element_documentation('Send a WebSocket close control frame.',
-                                                    category='Web', returns='None or web.Error.'))
+                                                    category='Web', returns='None or web.Error.',
+                                                    examples=('import {std.web}\n'
+                                                              'fn (socket: web.WebSocket) => web.websocketClose($socket) end',)))
 def _ws_close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     try:
@@ -1238,7 +1266,8 @@ for _error_output, _error_label in ((_RESPONSE, 'response'),
         documentation=element_documentation(
             'Set a single application HTTP error callback. Faults in the error '
             'callback revert to a minimal safe 500 response; never reenter the hook.',
-            category='Web', returns='New immutable App.'))(_set_error_handler)
+            category='Web', returns='New immutable App.',
+            examples=('import {std.web}\n$app = web.App\n$app := web.withErrorHandler: fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end',)))(_set_error_handler)
     globals()[_set_error_handler.__name__] = _set_error_handler
 
 del _set_error_handler
@@ -1248,7 +1277,9 @@ del _set_error_handler
                 param_names=('context',),
                 documentation=element_documentation(
                     'Return the safe default HTTP error representation for an ErrorContext.',
-                    category='Web', returns='Response.'))
+                    category='Web', returns='Response.',
+                    examples=('import {std.web}\n'
+                              'fn (err: web.ErrorContext) => web.defaultErrorResponse($err) end',)))
 def _default_error_response(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     info, = args
@@ -1288,7 +1319,9 @@ for _log_result in (T.N(Symbol('None')), _ERROR, T.Result(T.N(Symbol('None')), _
             'Attach an immutable completion-event logger. Events include no raw '
             'URI, authorization, cookie, request body, or response body fields. '
             'Logging errors cannot alter an HTTP response.',
-            category='Web', returns='New App with a safe logger.'))(_with_logger)
+            category='Web', returns='New App with a safe logger.',
+            examples=('import {std.web}\n$app = web.App\n'
+                      '$app := web.withLogger: fn (event: web.LogEvent) -> None => \\None end',)))(_with_logger)
     globals()[_with_logger.__name__] = _with_logger
 
 del _with_logger
@@ -1482,7 +1515,10 @@ for _cfg_type, _which in ((_APP, 'app'), (_ROUTER, 'router')):
         param_names=('appOrRouter', 'method', 'template', 'mode'),
         documentation=element_documentation(
             'Opt a registered content-bearing route into incremental request-body reads.',
-            category='Web', returns='New App or Router; rejects unmatched route identities.'),
+            category='Web', returns='New App or Router; rejects unmatched route identities.',
+            examples=(f'import {{std.web}}\n$config = web.{_which.title()}\n'
+                      '$config := web.post("/upload"): fn (req: web.PostRequest) => "ok" end\n'
+                      'web.withBodyMode($config, web.Method.POST, "/upload", web.BodyMode.Stream)',)),
     )(_set_stream_mode)
     globals()[_set_stream_mode.__name__] = _set_stream_mode
 
@@ -1519,7 +1555,8 @@ for _method_name in ('Post', 'Put', 'Patch', 'Query'):
         (T.Result(_REQUEST_BODY_STREAM, _ERROR),),
         param_names=('request',),
         documentation=element_documentation('Claim one owned incoming body stream.', category='Web',
-                                           returns='RequestBodyStream or Error.'),
+                                           returns='RequestBodyStream or Error.',
+            examples=('import {std.web}\n' + f'fn (req: web.{_method_name}Request) => web.bodyStream($req) end',)),
     )(_body_stream)
     globals()[_body_stream.__name__] = _body_stream
 
@@ -1549,7 +1586,8 @@ for _method_name in ('Post', 'Put', 'Patch', 'Query'):
         documentation=element_documentation(
             'Read validated request trailers after streaming-body EOF only; '
             'never merge them with initial request headers.',
-            category='Web', returns='Headers or a typed web.Error.'),
+            category='Web', returns='Headers or a typed web.Error.',
+            examples=('import {std.web}\n' + f'fn (req: web.{_method_name}Request) => web.trailers($req) end',)),
     )(_request_trailers)
     globals()[_request_trailers.__name__] = _request_trailers
 
@@ -1560,7 +1598,8 @@ del _request_trailers
                 (T.Result(T.U(_BYTE_LIST, T.N(Symbol('None'))), _ERROR),),
                 param_names=('stream', 'maxBytes'),
                 documentation=element_documentation('Read up to 64 KiB of request bytes; None means EOF.',
-                                                    category='Web', returns='Exact bytes or None or Error.'))
+                                                    category='Web', returns='Exact bytes or None or Error.',
+            examples=('import {std.web}\nfn (stream: web.RequestBodyStream) => web.readBodyStream($stream, 4096) end',)))
 def _read_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     stream = _stream_for_token(int(args[0].fields['token']))
@@ -1577,7 +1616,8 @@ def _read_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[An
                 (T.Result(T.N(Symbol('None')), _ERROR),),
                 param_names=('stream',),
                 documentation=element_documentation('Discard a streaming request body, up to its limit.',
-                                                    category='Web', returns='None or Error.'))
+                                                    category='Web', returns='None or Error.',
+            examples=('import {std.web}\nfn (stream: web.RequestBodyStream) => web.discardBodyStream($stream) end',)))
 def _discard_request_stream(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     stream = _stream_for_token(int(args[0].fields['token']))
@@ -1802,7 +1842,8 @@ del _request_query, _request_header_values
                 param_names=('headers', 'name'),
                 documentation=element_documentation(
                     'Read all values of a validated Headers collection, including request trailers.',
-                    category='Web', returns='Values in field arrival order.'))
+                    category='Web', returns='Values in field arrival order.',
+            examples=('import {std.web}\nweb.headerValues(web.Headers, "Accept")',)))
 def _header_values_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     return (ListValue(list(_unwrap_headers(args[0]).values(args[1])), runtime_rank=1),)
@@ -1813,7 +1854,8 @@ def _header_values_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tup
                 param_names=('headers', 'name'),
                 documentation=element_documentation(
                     'Read one validated Headers value, rejecting ambiguous singleton fields.',
-                    category='Web', returns='Optional value or typed Error.'))
+                    category='Web', returns='Optional value or typed Error.',
+            examples=('import {std.web}\nweb.header(web.Headers, "Accept")',)))
 def _header_single_collection(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     try:
@@ -1934,7 +1976,8 @@ for _method in ('Post', 'Put', 'Patch', 'Query'):
         documentation=element_documentation(
             'Claim a streaming multipart/form-data request once. Iterate ordered '
             'field/file events and consume every file before advancing.',
-            category='Web', returns='Owned UploadStream or web.Error.'),
+            category='Web', returns='Owned UploadStream or web.Error.',
+            examples=('import {std.web}\n' + f'fn (req: web.{_method}Request) => web.multipartStream($req) end',)),
     )(_multipart_stream)
     globals()[_multipart_stream.__name__] = _multipart_stream
 
@@ -1947,7 +1990,8 @@ del _multipart_stream
                 documentation=element_documentation(
                     'Advance to the next multipart field/file event (None at EOF). '
                     'The previous file must already be consumed or discarded.',
-                    category='Web', returns='Optional MultipartPart or web.Error.'))
+                    category='Web', returns='Optional MultipartPart or web.Error.',
+            examples=('import {std.web}\nfn (stream: web.UploadStream) => web.multipartNext($stream) end',)))
 def _multipart_next(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     reader = _multipart_stream_for_token(int(args[0].fields['token']))
@@ -1973,7 +2017,8 @@ def _multipart_next(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
                 param_names=('stream', 'maxBytes'),
                 documentation=element_documentation(
                     'Read up to 64 KiB of the active upload; None means part EOF.',
-                    category='Web', returns='Exact bytes, None or web.Error.'))
+                    category='Web', returns='Exact bytes, None or web.Error.',
+            examples=('import {std.web}\nfn (stream: web.UploadStream) => web.multipartRead($stream, 4096) end',)))
 def _multipart_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     reader = _multipart_stream_for_token(int(args[0].fields['token']))
@@ -1992,7 +2037,8 @@ def _multipart_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
                 param_names=('stream',),
                 documentation=element_documentation(
                     'Discard the current upload with bounded reads to its next MIME boundary.',
-                    category='Web', returns='None or web.Error.'))
+                    category='Web', returns='None or web.Error.',
+            examples=('import {std.web}\nfn (stream: web.UploadStream) => web.multipartDiscard($stream) end',)))
 def _multipart_discard(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     reader = _multipart_stream_for_token(int(args[0].fields['token']))
@@ -2013,7 +2059,8 @@ def _multipart_discard(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any,
                     'Save the current unconsumed multipart upload to an explicitly '
                     'chosen new Path. Streams bytes to a private file, fails if '
                     'the destination exists, and deletes incomplete uploads.',
-                    category='Web', returns='Octets written or web.Error.'))
+                    category='Web', returns='Octets written or web.Error.',
+            examples=('import {std.web, std.path}\nfn (stream: web.UploadStream, file: path.Path) => web.saveMultipartPart($stream, $file) end',)))
 def _save_multipart_part(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     stream, destination = args
@@ -2075,7 +2122,8 @@ del _multipart
                 documentation=element_documentation(
                     'Read the ordered field Params of a buffered multipart form.',
                     category='Web', returns='Params preserving all repeated text fields.',
-                    examples=(('import {std.web}\nweb.multipartFields', None),)))
+                    examples=('import {std.web}\n'
+                              'fn (form: web.MultipartForm) => web.multipartFields($form) end',)))
 def _multipart_fields(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     return (_duplicate_occurrence(args[0].fields['fields']),)
@@ -2086,7 +2134,8 @@ def _multipart_fields(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
                 documentation=element_documentation(
                     'Select multipart files under a field name in arrival order.',
                     category='Web', returns='Possibly empty upload list.',
-                    examples=(('import {std.web}\nweb.uploads', None),)))
+                    examples=('import {std.web}\n'
+                              'fn (form: web.MultipartForm) => web.uploads($form, "file") end',)))
 def _uploads(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     form, name = args
@@ -2100,7 +2149,8 @@ def _uploads(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 documentation=element_documentation(
                     'Read one matching upload, rejecting ambiguous repetitions.',
                     category='Web', returns='Optional upload or web.Error.',
-                    examples=(('import {std.web}\nweb.uploadOne', None),)))
+                    examples=('import {std.web}\n'
+                              'fn (form: web.MultipartForm) => web.uploadOne($form, "file") end',)))
 def _upload_one(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     form, name = args
@@ -2119,7 +2169,8 @@ def _upload_one(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 documentation=element_documentation(
                     'Save a buffered upload to an explicitly chosen std.path.Path; fail if the path exists.',
                     category='Web', returns='None or web.Error.',
-                    examples=(('import {std.web, std.path.Path}\nweb.saveUpload', None),)))
+                    examples=('import {std.web, std.path.Path}\n'
+                              'fn (upload: web.Upload) => web.saveUpload($upload, Path("upload.bin")) end',)))
 def _save_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     upload, destination = args
@@ -2140,7 +2191,8 @@ def _save_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 documentation=element_documentation(
                     'Read exact bytes of a bounded buffered upload, without filename-based path access.',
                     category='Web', returns='Byte-tagged octets or web.Error.',
-                    examples=(('import {std.web}\nweb.readUpload', None),)))
+                    examples=('import {std.web}\n'
+                              'fn (upload: web.Upload) => web.readUpload($upload) end',)))
 def _read_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     upload, = args
@@ -2561,7 +2613,8 @@ _DEFAULT_PROXY_DISABLED = _DEFAULT_NONE_TLS
                                 _DEFAULT_NONE_TLS, _DEFAULT_PROXY_DISABLED, _DEFAULT_NONE_TLS),
                 documentation=element_documentation(
                     'Construct a resource-limited cleartext HTTP/1.1 server configuration.',
-                    category='Web', returns='ServerConfig with validated limits.'))
+                    category='Web', returns='ServerConfig with validated limits.',
+            examples=('import {std.web}\nweb.ServerConfig(port = 8081, limits = web.Limits)',)))
 def _server_config_with_limits(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     host, port, _tls, limits, origin, hosts, proxies, mode, protocols = args
@@ -2588,7 +2641,8 @@ def _server_config_with_limits(args: tuple[Any, ...], ctx: RuntimeContext) -> tu
                                 _DEFAULT_NONE_TLS, _DEFAULT_PROXY_DISABLED, _DEFAULT_NONE_TLS),
                 documentation=element_documentation(
                     'Construct a TLS 1.3 server configuration with automatic HTTP/1.1 + HTTP/2 ALPN.',
-                    category='Web', returns='ServerConfig with TLS enabled.'))
+                    category='Web', returns='ServerConfig with TLS enabled.',
+            examples=('import {std.web}\nweb.ServerConfig(tls = web.TLS(certificateFile = "cert.pem", privateKeyFile = "key.pem"))',)))
 def _server_config_with_tls(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     host, port, tls, limits, origin, hosts, proxies, mode, protocols = args
@@ -2754,7 +2808,8 @@ def _bound_addresses(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, .
                 documentation=element_documentation(
                     'Read a bounded, read-only snapshot of listener admission and '
                     'resource counters; no unauthenticated metrics endpoint is created.',
-                    category='Web', returns='ServerStats snapshot.'))
+                    category='Web', returns='ServerStats snapshot.',
+            examples=('import {std.web}\nfn (server: web.ServerHandle) => web.serverStats($server) end',)))
 def _server_stats(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     with _SERVER_LEASES_LOCK:
@@ -2785,7 +2840,9 @@ def _server_stats(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
                 documentation=element_documentation(
                     'Atomically rotate validated TLS 1.3 credentials on a TLS listener; '
                     'existing connections retain their original negotiated identity.',
-                    category='Web', returns='None or ServerError.'))
+                    category='Web', returns='None or ServerError.',
+                    examples=('import {std.web}\n'
+                              'fn (server: web.ServerHandle, tls: web.TLS) => web.reloadTLS($server, $tls) end',)))
 def _reload_tls(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     server, tls = args
@@ -2828,7 +2885,9 @@ def _shutdown_server(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, .
                 param_names=('server', 'graceSeconds'),
                 documentation=element_documentation(
                     'Consume an owned HTTP/1.1 server handle with an explicit grace timeout in seconds.',
-                    category='Web', returns='ServerStopReport or ServerError.'))
+                    category='Web', returns='ServerStopReport or ServerError.',
+                    examples=('import {std.web}\n'
+                              'fn (server: web.ServerHandle) => web.shutdownWithin($server, 5) end',)))
 def _shutdown_server_with_grace(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     try:
@@ -3006,7 +3065,8 @@ def _with_early_hints(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
                 documentation=element_documentation(
                     'Attach validated HTTP trailing fields to an owned stream. '
                     'H1 emits a Trailer announcement and chunked terminator.',
-                    category='Web', returns='Response or InvalidHeader.'))
+                    category='Web', returns='Response or InvalidHeader.',
+            examples=('import {std.web}\nfn (response: web.Response, fields: web.Headers) => web.withTrailers($response, $fields) end',)))
 def _with_trailers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     del ctx
     response = None

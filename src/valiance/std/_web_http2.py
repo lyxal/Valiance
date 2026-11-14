@@ -300,10 +300,8 @@ class _H2WebSocketTransport:
             s.condition.notify_all()
 
     def finish(self) -> None:
-        s = self.state
-        with s.condition:
-            s.ws_outbound_done = True
-            s.condition.notify_all()
+        """Mark outbound WebSocket production complete and wake the writer."""
+        self.interrupt_write()
 
 
 def _request_headers(fields: list[tuple[bytes, bytes]], limits: Limits) -> tuple[str, str, core.Headers, str]:

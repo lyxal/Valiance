@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 import gzip
 import http.client
+import os
 import ssl
 import shutil
 import subprocess
@@ -135,6 +136,7 @@ class CompressionCoreTests(unittest.TestCase):
         self.assertEqual(result.status, 409)
         self.assertEqual(gzip.decompress(result.bytes), b'something rejected')
 
+    @unittest.skipUnless(os.name == 'posix', 'Secure static routes require POSIX no-follow directory descriptors')
     def test_static_validators_are_selected_per_content_coding(self):
         with tempfile.TemporaryDirectory() as root:
             (Path(root) / 'example.txt').write_text(BODY)

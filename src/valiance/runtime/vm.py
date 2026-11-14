@@ -1391,6 +1391,18 @@ class VirtualMachine:
                     f"invalid bytecode: {body_error}", body_error
                 ) from body_error
             raise body_error
+        for index, value in enumerate(result):
+            if _borrowed_payload(value) is None:
+                continue
+            try:
+                _check_duplication_allowed(value)
+            except PanicSignal as fault:
+                if fault.value.type_name != "DuplicationFault":
+                    raise
+                # The host can inspect an access to a protected owner without
+                # acquiring a second occurrence or changing its lifetime.
+            else:
+                result[index] = _retain_runtime_reference(value)
         _enable_host_fault_boundary(result)
         return result
 

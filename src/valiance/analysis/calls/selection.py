@@ -870,6 +870,7 @@ class _CallSelection:
                 False,
                 self,
                 align_positional_right=False,
+                function_value_call=True,
             )
             for preparation in prepared:
                 if preparation.branch.terminal:

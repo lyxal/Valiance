@@ -268,6 +268,10 @@ This module defines values used by both the VM and built-ins:
 Putting these rules in one place keeps `println`, diagnostics, built-ins, and
 the VM from disagreeing about what a value is.
 
+At the Python `VirtualMachine.run` boundary, copyable returned accesses become
+independently retained occurrences. A returned access to a protected owner
+remains a borrow and does not increment the owner's reference count.
+
 ### `analysis/builtins.py`: shared static/runtime built-ins
 
 A built-in declaration pairs a static `Overload` with a Python runtime

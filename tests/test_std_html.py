@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from http.client import HTTPConnection
@@ -339,6 +340,7 @@ html.render(html.page("Hello <friend>",
                     '<p class="welcome">&amp; welcome</p></body></html>')
         self.assertEqual(evaluate(source, serialized=True), [expected])
 
+    @unittest.skipUnless(os.name == 'posix', 'The sample mounts a POSIX-only static router')
     def test_full_html_sample_over_http(self):
         source = Path('samples/web/html_components.vlnc').read_text(encoding='utf-8')
         self.assertIn('web.run($app, web.ServerConfig(port = 8767))', source)

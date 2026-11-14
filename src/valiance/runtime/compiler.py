@@ -2649,9 +2649,11 @@ def _typed_call_borrows(
             stack.append(None)
         elif isinstance(candidate, TypedReflectiveReadNode):
             receiver, _descriptor = take(2)
-            # A projection may be observed by the eventual consumer. Storage
-            # and escaping results still materialize through the ordinary path.
-            stack.append(receiver)
+            if receiver is not None and isinstance(_unwrap(receiver), GetVariableNode):
+                borrowed.add(id(receiver))
+            # The projection has its own identity. Storage and escaping
+            # results still materialize through the ordinary path.
+            stack.append(None)
         elif isinstance(ast, FieldAccessNode):
             # A projection is not another occurrence of its enclosing object.
             # The root of a field-read chain is borrowed separately by
