@@ -1354,6 +1354,13 @@ def _import_node(
                 constructor_dependencies += (
                     with_import_runtime_name(selected.typed, selected_runtime),
                 )
+        # All selected objects share the provider's private dependency scope.
+        # Rebuilding it for every exported object makes namespace imports
+        # quadratic in the number of declarations.
+        dependency_env = (
+            self._imported_dependency_environment(constructor_dependencies)
+            if objects and constructor_dependencies else None
+        )
         # Every imported spelling of an object denotes the declaration in its
         # provider, not a fresh nominal constructor.  Keep this separate from
         # unqualified locally defined objects of the same name.
@@ -1423,7 +1430,9 @@ def _import_node(
                 imported_supertypes=imported_supertypes,
                 imported_guarded_supertypes=imported_guarded_supertypes,
             )
-            self._register_imported_object(obj, runtime_name, constructor_dependencies)
+            self._register_imported_object(
+                obj, runtime_name, constructor_dependencies, dependency_env=dependency_env,
+            )
             module_source = resolved_spec.path.show()
             for definition in obj.private_friendly_definitions:
                 candidate = (obj.name, module_source)

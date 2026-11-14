@@ -7,6 +7,7 @@ import importlib
 import json
 from decimal import Decimal
 from enum import Enum
+from functools import cache
 from typing import Any
 
 from valiance.runtime.serialization import BytecodeFormatError
@@ -31,8 +32,14 @@ _ALLOWED_MODULES = (
 )
 
 
+@cache
 def _registry() -> dict[str, type[Any]]:
-    """Build the closed record-tag registry from approved compiler model modules."""
+    """Lazily build the fixed compiler schema once, after model imports complete.
+
+    Encoding and decoding visit many records per interface. The approved model
+    classes do not change during a process, so scanning their modules for every
+    record needlessly multiplies the cost of imports and interface hashes.
+    """
     result: dict[str, type[Any]] = {}
     for module_name in _ALLOWED_MODULES:
         module = importlib.import_module(module_name)

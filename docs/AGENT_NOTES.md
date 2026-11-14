@@ -254,6 +254,20 @@ Do not drop binder correlation: `(T,T)` and `(T,U)` are different patterns.
 This is **not** permission to infer extra constraints inside generic bodies;
 keep declaration-time universal checking as documented above.
 
+# Reachability-based imported-runtime linking
+
+Runtime compilation filters imported declarations by a transitive closure of
+checked runtime identities and provider-local dependencies; it preserves full
+object declarations (including methods, destructors, and variant cases) once
+selected. `Kind.\NUMBER` and `Figure.Circle` are emitted by their *enclosing*
+variant, even under selected aliases. Type-only trait references such as
+`as[Named]` can require trait method definitions without a direct element call.
+Do not match only whole runtime bindings or bare constructor invocation names.
+Preserve `public import` for source-free consumers, and leave all declarations
+reachable during `lookupRuntimeType?` until reflection schema roots are known.
+Run compiled-module variants, private trait/facade cases, and the standard
+library single-use size regression when changing this pass.
+
 # Private runtime dependencies in module imports
 
 `ModuleExports` includes private local declarations for runtime linking even

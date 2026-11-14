@@ -606,25 +606,47 @@ def batched_campaign(*, seed: int, start: int, iterations: int,
     failed: list[dict[str, Any]] = []
     checks = 0
     diagnostics = 0
-    for offset in range(start, start + iterations, batch_size):
-        n = min(batch_size, start + iterations - offset)
+
+    def collect_window(offset: int, count: int) -> None:
+        nonlocal checks, diagnostics
         argv = [sys.executable, "-m", "tools.multimodule_interactions", "--seed", str(seed),
-                "--start", str(offset), "--iterations", str(n), "--batch-size", "0"]
+                "--start", str(offset), "--iterations", str(count), "--batch-size", "0"]
         if negative:
             argv.append("--negative")
         try:
             worker = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
             result = json.loads(worker.stdout)
-        except (subprocess.TimeoutExpired, ValueError) as exc:
-            failed.append({"index_range": [offset, offset + n], "error": repr(exc)})
-        else:
-            combined.extend(result["passed"])
-            failed.extend(result["failures"])
-            checks += result["execution_checks_passed"]
-            diagnostics += result["diagnostic_checks_passed"]
-            if worker.returncode and not result["failures"]:
-                failed.append({"index_range": [offset, offset + n],
-                               "error": f"worker exited {worker.returncode}: {worker.stderr[-1000:]}"})
+            passed = result["passed"]
+            failures = result["failures"]
+            if (not isinstance(passed, list) or not isinstance(failures, list)
+                    or len(passed) + len(failures) != count):
+                raise ValueError("incomplete worker report")
+            if worker.returncode and not failures:
+                raise RuntimeError(
+                    f"worker exited {worker.returncode}: {worker.stderr[-1000:]}"
+                )
+            execution_checks = result["execution_checks_passed"]
+            diagnostic_checks = result["diagnostic_checks_passed"]
+        except (subprocess.TimeoutExpired, OSError, ValueError, KeyError,
+                TypeError, RuntimeError) as exc:
+            # A timed-out/crashed batch must not hide valid neighbouring cases.
+            # Retry smaller windows until the faulty case has its own process.
+            if count > 1:
+                left = count // 2
+                collect_window(offset, left)
+                if not (fail_fast and failed):
+                    collect_window(offset + left, count - left)
+            else:
+                failed.append({"index_range": [offset, offset + 1],
+                               "error": repr(exc)})
+            return
+        combined.extend(passed)
+        failed.extend(failures)
+        checks += execution_checks
+        diagnostics += diagnostic_checks
+
+    for offset in range(start, start + iterations, batch_size):
+        collect_window(offset, min(batch_size, start + iterations - offset))
         if fail_fast and failed:
             break
     return {"seed": seed, "start": start, "iterations_requested": iterations,

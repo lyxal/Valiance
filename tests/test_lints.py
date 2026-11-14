@@ -320,6 +320,28 @@ class ProjectLintConfigurationTests(unittest.TestCase):
         analyser.analyse(parse(source))
         return temporary, analyser
 
+    def test_nested_function_reuses_project_lint_policy(self) -> None:
+        """Function scopes inherit lint policy without reopening the manifest."""
+        from unittest.mock import patch
+
+        from valiance.modules_system.packages import find_project_root
+
+        with patch(
+            "valiance.modules_system.packages.find_project_root",
+            wraps=find_project_root,
+        ) as find_root:
+            temporary, analyser = self._project(
+                'enabled = true\ndisable = ["redundant-cast"]',
+                "define value(input: Int) -> Int => $input as[Int]\nvalue(1)",
+            )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(find_root.call_count, 1)
+        self.assertNotIn(
+            "redundant-cast",
+            [finding.code for finding in analyser.lint_findings],
+        )
+
     def test_project_can_disable_specific_lints(self) -> None:
         """The disable array suppresses only named lint codes project-wide."""
         temporary, analyser = self._project(

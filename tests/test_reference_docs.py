@@ -54,6 +54,7 @@ class ReferenceDocumentationTests(unittest.TestCase):
 
     def test_all_reference_examples_parse_and_analyse(self):
         from valiance.analysis import Analyser
+        from valiance.modules_system.modules import ModuleLoader
         from valiance.parsing import parse
 
         sources = {
@@ -62,9 +63,12 @@ class ReferenceDocumentationTests(unittest.TestCase):
             for documentation in reference.overload_documentation
             for example in documentation.examples
         }
+        # Examples have separate analysis environments, but import the same
+        # unchanged library sources. Reuse their checked module interfaces.
+        loader = ModuleLoader()
         for source in sorted(sources):
             with self.subTest(source=source):
-                analyser = Analyser()
+                analyser = Analyser(module_loader=loader)
                 analyser.analyse(parse(source))
                 self.assertEqual(analyser.diagnostics, [])
 
@@ -90,7 +94,10 @@ class ReferenceDocumentationTests(unittest.TestCase):
             self.assertIn("An empty collection panics", rendered)
 
     def test_reference_examples_with_stack_results_execute(self):
-        from tests.test_programs import execute
+        from valiance.analysis import Analyser
+        from valiance.modules_system.modules import ModuleLoader
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program, run
         from valiance.runtime.runtime_values import format_runtime_value
 
         examples = {
@@ -104,9 +111,14 @@ class ReferenceDocumentationTests(unittest.TestCase):
             and "FFI." not in example.source
             and "cArr" not in example.source
         }
+        loader = ModuleLoader()
         for example in sorted(examples, key=lambda item: item.source):
             with self.subTest(source=example.source):
-                actual = " ".join(format_runtime_value(value) for value in execute(example.source))
+                analyser = Analyser(module_loader=loader)
+                typed = analyser.analyse(parse(example.source))
+                self.assertEqual(analyser.diagnostics, [])
+                values = run(compile_program(typed, optimize=False))
+                actual = " ".join(format_runtime_value(value) for value in values)
                 self.assertEqual(actual, example.result)
 
     def test_sidebar_drills_from_scope_through_group_to_every_entry(self):

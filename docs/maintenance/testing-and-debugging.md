@@ -72,18 +72,26 @@ uv run python -m tools.test_suite --workers 4 --durations 20 --timings .test-tim
 
 The timing report lists individual test durations (excluding class/module
 fixtures) and measured module totals. Its JSON file is reused on subsequent
-runs without sharding. Shards use source-based estimates so their assignments
-agree even if local timing files differ. Unmeasured modules use estimates
-scaled to the observed durations when history is available.
-Timing reports from the earlier module-only format remain readable; the current
-format additionally records per-test durations.
+runs without sharding. CI downloads timing artifacts from the last successful
+run on the default branch and uses their combined durations to schedule all six
+shards. Every shard reads the *same* snapshot and writes a fresh independent
+report, so the assignments cannot disagree. If no prior artifacts are available
+(e.g. the first run or a fork with restricted permissions), the scheduler falls
+back to source-based estimates. Unmeasured modules use estimates scaled to the
+observed durations. Timing reports from the earlier module-only format remain
+readable; the current format additionally records per-test durations.
+
+To reproduce CI's timing-aware selection locally, extract the previous run's
+`unittest-timings-*` artifacts into one directory, then pass
+`--history-dir .ci-test-history` along with `--shards 3 --shard 0`.
 
 Tests that do not share mutable module/class state may opt into method-level
 parallelism with a top-level `PARALLEL_SAFE_METHODS` tuple of
 `"ClassName.test_method"` identifiers. The runner schedules each listed
 method independently and **still runs every other test in that module** in a
-separate selection. `tests/test_multimodule_interactions.py` uses this to
-spread its three longest tests across workers. Do not opt in tests that rely
+separate selection. `tests/test_multimodule_interactions.py` splits its source-graph,
+compiled-provider, and negative matrices into independently scheduled groups,
+so every registry case still runs while no one method monopolises a worker. Do not opt in tests that rely
 on `setUpClass`, shared module state, or execution order across methods.
 Keep the isolated trait and generics oracle campaigns as distinct CI gates;
 they run concurrently with the standard suite on GitHub Actions.

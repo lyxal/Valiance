@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from difflib import SequenceMatcher
 import hashlib
 from pathlib import Path
+from threading import RLock
 from typing import Protocol
 
 import valiance.vtypes as T
@@ -137,6 +139,40 @@ class ModuleLoadError(Exception):
 _PROCESS_INTERFACE_CACHE: dict[tuple[str, str, str], ModuleExports] = {}
 
 
+@dataclass(frozen=True)
+class _SourceInterfaceEntry:
+    """Process-local, content-validated source standard-library analysis."""
+
+    exports: ModuleExports
+    typed: tuple[TypedNode, ...]
+    interface_hash: str
+    direct_imports: tuple[str, ...]
+    paths: tuple[Path, ...]
+    fingerprints: tuple[str | None, ...]
+
+
+# Source-only stdlib modules can be costly to analyse repeatedly in a test
+# worker. Reuse their immutable interfaces between independent ModuleLoader
+# instances without trusting file names, mtimes, or the size of a source file.
+_PROCESS_SOURCE_INTERFACE_CACHE: OrderedDict[Path, _SourceInterfaceEntry] = OrderedDict()
+_PROCESS_SOURCE_INTERFACE_LOCK = RLock()
+_MAX_PROCESS_SOURCE_INTERFACES = 32
+
+
+def _file_fingerprints(paths: tuple[Path, ...]) -> tuple[str | None, ...] | None:
+    """Fingerprint both present and *absent* source/compiled candidates."""
+    fingerprints: list[str | None] = []
+    try:
+        for path in paths:
+            try:
+                fingerprints.append(hashlib.sha256(path.read_bytes()).hexdigest())
+            except FileNotFoundError:
+                fingerprints.append(None)
+    except OSError:
+        return None
+    return tuple(fingerprints)
+
+
 def collect_module_exports(
     module_name: str,
     program: list,
@@ -197,6 +233,11 @@ class ModuleLoader:
     _cache: dict[Path, ModuleExports] = field(default_factory=dict)
     _interface_hashes: dict[Path, str] = field(default_factory=dict)
     _implementation_hashes: dict[Path, str] = field(default_factory=dict)
+    # Analysing an import need not compile its entire runtime implementation.
+    # The checked body is only lowered when an incremental build actually
+    # requests a dependency implementation fingerprint.
+    _pending_implementations: dict[Path, list[TypedNode]] = field(default_factory=dict)
+    _dependency_implementation_keys: dict[Path, dict[str, Path]] = field(default_factory=dict)
     _dependency_hashes: dict[Path, dict[str, str]] = field(default_factory=dict)
     _dependency_implementation_hashes: dict[Path, dict[str, str]] = field(default_factory=dict)
     _dependency_sources: dict[Path, set[Path]] = field(default_factory=dict)
@@ -224,6 +265,79 @@ class ModuleLoader:
         from valiance.runtime.compiled_module import loads_module
 
         return loads_module(self._read_bytes(path))
+
+    def _source_cache_eligible(self, path: ImportPath, source_file: Path) -> bool:
+        """Never reuse a disk interface for an overlaid or captured source view."""
+        if (not path.parts or path.parts[0] != "std" or source_file.suffix != ".vlnc"
+                or self.source_provider is not None or self.source_overrides):
+            return False
+        root = (self.std_root or Path(__file__).parent.parent / "std").resolve()
+        return source_file.resolve().is_relative_to(root)
+
+    def _restore_source_interface(
+        self, source_file: Path, path: ImportPath, cache_key: Path,
+    ) -> ModuleExports | None:
+        """Replay a checked stdlib interface and reconstruct loader dependencies."""
+        if not self._source_cache_eligible(path, source_file):
+            return None
+        with _PROCESS_SOURCE_INTERFACE_LOCK:
+            cached = _PROCESS_SOURCE_INTERFACE_CACHE.get(cache_key)
+        if cached is None or _file_fingerprints(cached.paths) != cached.fingerprints:
+            return None
+        with _PROCESS_SOURCE_INTERFACE_LOCK:
+            if _PROCESS_SOURCE_INTERFACE_CACHE.get(cache_key) is cached:
+                _PROCESS_SOURCE_INTERFACE_CACHE.move_to_end(cache_key)
+        self._cache[cache_key] = cached.exports
+        self._interface_hashes[cache_key] = cached.interface_hash
+        self._pending_implementations[cache_key] = list(cached.typed)
+        # Re-register dependency hashes and implementation keys just as a real
+        # analysis would. Consumers may request these hashes when compiling
+        # a .vbcm or an incremental build, so returning the exports alone is
+        # insufficient. A warm dependency load uses its own validated cache.
+        for identity in cached.direct_imports:
+            self.load(dependency_path_from_identity(identity), current_file=source_file)
+        return cached.exports
+
+    def _remember_source_interface(
+        self, source_file: Path, path: ImportPath, cache_key: Path,
+        exports: ModuleExports, typed: list[TypedNode],
+    ) -> None:
+        """Snapshot the transitive source and compiled files of a std import."""
+        if not self._source_cache_eligible(path, source_file):
+            return
+        root = (self.std_root or Path(__file__).parent.parent / "std").resolve()
+        pending = [cache_key.resolve()]
+        seen: set[Path] = set()
+        while pending:
+            item = pending.pop()
+            if item in seen:
+                continue
+            if not item.is_relative_to(root):
+                return
+            seen.add(item)
+            # A newly produced artifact must invalidate a source interface,
+            # since subsequent loads prefer matching compiled modules.
+            seen.add(item.with_suffix(".vbcm"))
+            pending.extend(self._dependency_sources.get(item, ()))
+        # Project lint policy participates in semantic checking. A std_root
+        # inside a project can change diagnostics without changing a .vlnc.
+        project_root = find_project_root(source_file)
+        if project_root is not None:
+            seen.add((project_root / "valiance.toml").resolve())
+        paths = tuple(sorted(seen))
+        fingerprints = _file_fingerprints(paths)
+        if fingerprints is None:
+            return
+        entry = _SourceInterfaceEntry(
+            exports, tuple(typed), self._interface_hashes[cache_key],
+            tuple(sorted(self._dependency_hashes.get(cache_key, {}))),
+            paths, fingerprints,
+        )
+        with _PROCESS_SOURCE_INTERFACE_LOCK:
+            _PROCESS_SOURCE_INTERFACE_CACHE[cache_key] = entry
+            _PROCESS_SOURCE_INTERFACE_CACHE.move_to_end(cache_key)
+            if len(_PROCESS_SOURCE_INTERFACE_CACHE) > _MAX_PROCESS_SOURCE_INTERFACES:
+                _PROCESS_SOURCE_INTERFACE_CACHE.popitem(last=False)
 
     def load(
         self,
@@ -254,6 +368,10 @@ class ModuleLoader:
         self._loading.add(cache_key)
         self._loading_stack.append(cache_key)
         try:
+            reused = self._restore_source_interface(source_file, path, cache_key)
+            if reused is not None:
+                self._record_dependency(current_file, path, cache_key)
+                return reused
             compiled_module = None
             if self._exists(compiled_file):
 
@@ -353,13 +471,11 @@ class ModuleLoader:
                     exports.runtime_dependencies,
                 )
             self._cache[cache_key] = exports
-            from valiance.runtime import compile_program
-            from valiance.runtime.compiled_module import interface_hash, implementation_hash
+            from valiance.runtime.compiled_module import interface_hash
 
             self._interface_hashes[cache_key] = interface_hash(exports)
-            self._implementation_hashes[cache_key] = implementation_hash(
-                compile_program(typed), options="optimize=true"
-            )
+            self._pending_implementations[cache_key] = typed
+            self._remember_source_interface(source_file, path, cache_key, exports, typed)
             self._record_dependency(current_file, path, cache_key)
             return exports
         except OSError as exc:
@@ -475,7 +591,9 @@ class ModuleLoader:
                 self._cache.pop(key, None)
                 self._interface_hashes.pop(key, None)
                 self._implementation_hashes.pop(key, None)
+                self._pending_implementations.pop(key, None)
                 self._provisional.pop(key, None)
+            self._dependency_implementation_keys.pop(path, None)
             self._dependency_hashes.pop(path, None)
             self._dependency_implementation_hashes.pop(path, None)
             self._dependency_sources.pop(path, None)
@@ -493,20 +611,36 @@ class ModuleLoader:
                 return self._interface_hashes[cache_key]
         raise ModuleLoadError("module interface was not loaded by this loader")
 
+    def _implementation_hash_for_key(self, cache_key: Path) -> str:
+        """Compile and fingerprint a source module only when its hash is needed."""
+        existing = self._implementation_hashes.get(cache_key)
+        if existing is not None:
+            return existing
+        typed = self._pending_implementations[cache_key]
+        from valiance.runtime import compile_program
+        from valiance.runtime.compiled_module import implementation_hash
+
+        digest = implementation_hash(compile_program(typed), options="optimize=true")
+        self._implementation_hashes[cache_key] = digest
+        del self._pending_implementations[cache_key]
+        return digest
+
     def implementation_hash_for(self, exports: ModuleExports) -> str:
         """Return the runtime implementation hash associated with loaded exports."""
         for cache_key, cached in self._cache.items():
             if cached is exports:
-                return self._implementation_hashes[cache_key]
+                return self._implementation_hash_for_key(cache_key)
         raise ModuleLoadError("module implementation was not loaded by this loader")
 
     def dependency_implementation_hashes_for(
         self, source_file: Path
     ) -> tuple[tuple[str, str], ...]:
         """Return canonical direct dependency identities and implementation hashes."""
-        dependencies = self._dependency_implementation_hashes.get(
-            source_file.resolve(), {}
-        )
+        requester = source_file.resolve()
+        dependencies = self._dependency_implementation_hashes.setdefault(requester, {})
+        for identity, cache_key in self._dependency_implementation_keys.get(requester, {}).items():
+            if identity not in dependencies:
+                dependencies[identity] = self._implementation_hash_for_key(cache_key)
         return tuple(sorted(dependencies.items()))
 
     def _record_dependency(
@@ -521,10 +655,15 @@ class ModuleLoader:
         self._dependency_hashes.setdefault(requester, {})[identity] = self._interface_hashes[
             cache_key
         ]
-        if cache_key in self._implementation_hashes:
-            self._dependency_implementation_hashes.setdefault(requester, {})[
+        if (cache_key in self._implementation_hashes
+                or cache_key in self._pending_implementations):
+            self._dependency_implementation_keys.setdefault(requester, {})[
                 identity
-            ] = self._implementation_hashes[cache_key]
+            ] = cache_key
+            if cache_key in self._implementation_hashes:
+                self._dependency_implementation_hashes.setdefault(requester, {})[
+                    identity
+                ] = self._implementation_hashes[cache_key]
 
     def _compiled_dependencies_match(
         self, dependencies: tuple[tuple[str, str], ...], source_file: Path,

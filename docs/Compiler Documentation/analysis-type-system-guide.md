@@ -314,6 +314,9 @@ When rebuilding an imported object's constructor and friendly-call signatures,
 the analyser makes the provider's runtime-prelude declarations available in a
 temporary dependency scope. These private dependencies must not become source
 imports in the caller, and importing a dependency first must not be necessary.
+All objects selected by one import share that provider-private scope, including
+the scope retained for constructor defaults. Build it once per import rather
+than repeating dependency registration for every selected object.
 Standard-library object aliases retain the provider's nominal type name (for
 example, selecting `std.path.Path` as `Location` still creates `path.Path`
 values), so native signatures and imported constructors agree on identity.

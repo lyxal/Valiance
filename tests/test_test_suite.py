@@ -15,6 +15,8 @@ from tools.test_suite import (
     TestTarget,
     discover_test_files,
     partition_test_files,
+    read_timing_reports,
+    allocate_shards,
     run_batches,
 )
 
@@ -87,6 +89,80 @@ class ParallelTestSuiteTests(unittest.TestCase):
         self.assertLessEqual(
             abs(batches[0].estimated_weight - batches[1].estimated_weight), 60
         )
+
+    def test_captured_shard_reports_merge_without_losing_method_timings(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "shard-0" / "test-timings.json"
+            second = root / "shard-1" / "test-timings.json"
+            corrupt = root / "shard-2" / "test-timings.json"
+            for path in (first, second, corrupt):
+                path.parent.mkdir()
+            first.write_text(json.dumps({
+                "version": 2,
+                "modules": {"tests/test_a.py": 12, "tests/test_b.py": 3},
+                "tests": {"tests/test_a.py::Example.test_a": 12},
+            }), encoding="utf-8")
+            second.write_text(json.dumps({
+                "version": 2,
+                "modules": {"tests\\test_a.py": 8, "tests/test_c.py": 4},
+                "tests": {"tests\\test_a.py::Example.test_b": 8},
+            }), encoding="utf-8")
+            corrupt.write_text("not JSON", encoding="utf-8")
+            with redirect_stderr(StringIO()) as output:
+                modules, tests = read_timing_reports((second, first, corrupt))
+        self.assertEqual(modules, {"tests/test_a.py": 20, "tests/test_b.py": 3,
+                                   "tests/test_c.py": 4})
+        self.assertEqual(tests, {
+            "tests/test_a.py::Example.test_a": 12,
+            "tests/test_a.py::Example.test_b": 8,
+        })
+        self.assertIn("ignoring timing report", output.getvalue())
+
+    def test_shards_balance_measured_batch_durations(self):
+        batches = tuple(
+            TestBatch((TestTarget(Path(f"test_{i}.py")),), weight)
+            for i, weight in enumerate((10, 9, 8, 7, 6, 5, 4))
+        )
+        shards = allocate_shards(batches, 3)
+        self.assertCountEqual([b for shard in shards for b in shard], batches)
+        self.assertEqual([sum(b.estimated_weight for b in shard)
+                          for shard in shards], [19, 15, 15])
+        self.assertEqual(allocate_shards(batches, 3), shards)
+        with self.assertRaisesRegex(ValueError, "at least 1"):
+            allocate_shards(batches, 0)
+
+    def test_all_shards_plan_from_the_same_historical_snapshot(self):
+        from tools.test_suite import main
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index in range(9):
+                (root / f"test_{index}.py").write_text(
+                    f"def test_{index}(): pass\n", encoding="utf-8")
+            history = root / "history" / "language-core-0"
+            history.mkdir(parents=True)
+            (history / "test-timings.json").write_text(json.dumps({
+                "version": 2,
+                "modules": {(root / f"test_{index}.py").as_posix():
+                            60 if index == 0 else 1 for index in range(9)},
+                "tests": {},
+            }), encoding="utf-8")
+
+            def selection(shard):
+                args = ["--test-dir", str(root), "--workers", "1", "--shards", "3",
+                        "--shard", str(shard), "--history-dir", str(root / "history"),
+                        "--list"]
+                with redirect_stdout(StringIO()) as output:
+                    self.assertEqual(main(args), 0)
+                return output.getvalue()
+
+            plans = [selection(shard) for shard in range(3)]
+        selected = [line.strip() for plan in plans for line in plan.splitlines()
+                    if line.startswith("  ")]
+        self.assertEqual(len(selected), 9)
+        self.assertEqual(len(set(selected)), 9)
+        self.assertTrue(any("weight 60.0" in plan for plan in plans))
 
     def test_measured_durations_override_static_test_counts(self):
         with TemporaryDirectory() as directory:

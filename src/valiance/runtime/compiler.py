@@ -93,6 +93,7 @@ from valiance.asts import (
     TypedIfNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
+    VariantMemberNode,
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
@@ -206,6 +207,7 @@ class _Compiler:
         self._forwarded_rebinding_nodes: set[int] = set()
         self._literal_storage: str | None = None
         self._builtin_elements: dict[str, BuiltinElement] | None = None
+        self._import_method_selection: dict[int, frozenset[str]] = {}
 
     def _runtime_elements(self) -> dict[str, BuiltinElement]:
         """Snapshot dynamic built-ins once for this compiler instance."""
@@ -1212,6 +1214,7 @@ class _Compiler:
                         else None
                     ),
                     method_bodies=dict(typed_node.method_bodies) if isinstance(typed_node, TypedObjectNode) else None,
+                    linked_methods=self._import_method_selection.get(id(typed_node)),
                 )
             case FieldAccessNode(name):
                 argument = (name.text, "optional") if node.optional_safe else name.text
@@ -1390,6 +1393,7 @@ class _Compiler:
         method_results: dict[str, tuple[str, ...]] | None = None,
         method_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
         method_bodies: dict[str, TypedFunctionNode] | None = None,
+        linked_methods: frozenset[str] | None = None,
     ) -> None:
         """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
@@ -1427,6 +1431,8 @@ class _Compiler:
                     )
                 for definition in node.definitions:
                     if definition in constructors:
+                        continue
+                    if linked_methods is not None and definition.name.text not in linked_methods:
                         continue
                     records = dict((method_ids or {}).get(definition.name.text, ()))
                     alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
@@ -2245,6 +2251,339 @@ class _Compiler:
         raise CompileError(f"cannot compile {feature}{location}")
 
 
+
+def _referenced_import_members(nodes: list[TypedNode]) -> frozenset[str]:
+    """Find named runtime uses without treating declaration names as calls.
+
+    This deliberately over-approximates: annotations, inactive branches, and
+    unlinked method bodies may all name declarations. A false positive retains
+    extra code; a false negative would remove something the VM can invoke.
+    """
+    names: set[str] = set()
+    stack: list[object] = list(nodes)
+    visited: set[int] = set()
+    while stack:
+        item = stack.pop()
+        if isinstance(item, Symbol):
+            names.add(item.text.removeprefix("\\"))
+            continue
+        if item is None or isinstance(item, (str, bytes, int, float, bool, type)):
+            continue
+        if isinstance(item, ImportNode):
+            continue
+        ident = id(item)
+        if ident in visited:
+            continue
+        visited.add(ident)
+        if isinstance(item, (tuple, list, set, frozenset)):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, VariantMemberNode):
+            # A member declaration does not make its own constructor live.
+            stack.extend((item.fields, item.definitions))
+        elif isinstance(item, DefineNode):
+            # Defining a method is not a call to it. Its body may be needed by
+            # any reachable method and is scanned conservatively here.
+            stack.extend((item.function, item.annotations, item.generic_constraints))
+        elif is_dataclass(item):
+            stack.extend(getattr(item, field.name) for field in fields(item))
+    return frozenset(names)
+
+
+def _trim_imported_variant_cases(nodes: list[TypedNode]) -> list[TypedNode]:
+    """Omit unreferenced case constructors while keeping their checked types.
+
+    Dynamic type lookup is handled by the enclosing reachability pass, which
+    retains the original prelude. A case name mentioned through any alias is
+    retained regardless of which provider owns it.
+    """
+    if any(_uses_dynamic_import_members(typed) for typed in nodes):
+        return nodes
+    referenced = _referenced_import_members(nodes)
+    result = []
+    for typed in nodes:
+        if (
+            isinstance(typed, TypedImportedObjectNode)
+            and typed.node.kind.text == "variant"
+            and typed.node.variants
+        ):
+            retained_cases = tuple(
+                member
+                for member in typed.node.variants
+                if member.name.text.removeprefix("\\") in referenced
+            )
+            if len(retained_cases) != len(typed.node.variants):
+                typed = replace(typed, node=replace(typed.node, variants=retained_cases))
+        result.append(typed)
+    return result
+
+
+def _uses_dynamic_import_members(value: object) -> bool:
+    """Whether dynamic method/type discovery can observe linked declarations."""
+    stack = [value]
+    visited: set[int] = set()
+    while stack:
+        item = stack.pop()
+        if isinstance(item, ElementNode) and item.name.text in {
+            "lookupRuntimeType?",
+            "runtimeTypeOf?",
+            "fields",
+            "methods",
+            "method",
+            "invokeMethod",
+            "info",
+        }:
+            return True
+        # Witness plans and structural protocol calls carry runtime method
+        # identities as strings. They are not always visible as Symbol uses.
+        if isinstance(item, TypedCastNode) and item.structural_witnesses:
+            return True
+        if isinstance(item, TypedSetVariableNode) and item.structural_witnesses:
+            return True
+        if isinstance(item, TypedElementNode) and (
+            item.structural_witnesses
+            or item.callable_witnesses
+            or (
+                item.overload is not None
+                and item.overload.overload.is_structural_requirement
+            )
+        ):
+            return True
+        if item is None or isinstance(item, (str, bytes, int, float, bool, type)):
+            continue
+        if id(item) in visited:
+            continue
+        visited.add(id(item))
+        if isinstance(item, (tuple, list, set, frozenset)):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif is_dataclass(item):
+            stack.extend(getattr(item, field.name) for field in fields(item))
+    return False
+
+
+def _import_method_selection(nodes: list[TypedNode]) -> dict[int, frozenset[str]]:
+    """Choose ordinary imported methods without erasing schema metadata.
+
+    Constructors, destructors, annotated hooks, extensions, and trait-backed
+    types can dispatch without a direct source-level call; those stay intact.
+    """
+    # Public re-exports and string-based runtime lookups may expose methods
+    # without a statically visible call. Preserve the complete implementation.
+    if any(
+        isinstance(typed.node, ImportNode) and typed.node.public
+        for typed in nodes
+    ):
+        return {}
+    if any(_uses_dynamic_import_members(typed) for typed in nodes):
+        return {}
+    referenced = _referenced_import_members(nodes)
+    selection: dict[int, frozenset[str]] = {}
+    for typed in nodes:
+        if not isinstance(typed, TypedImportedObjectNode):
+            continue
+        node = typed.node
+        if (
+            node.kind.text != "object"
+            or node.target is not None
+            or typed.imported_supertypes
+            or typed.imported_guarded_supertypes
+        ):
+            continue
+        constructors = constructor_definitions(node.name, node.definitions)
+        keep = frozenset(
+            definition.name.text
+            for definition in node.definitions
+            if (
+                definition in constructors
+                or definition.name.text.startswith("~")
+                or definition.is_multi
+                or definition.annotations
+                or definition.name.text.removeprefix("\\") in referenced
+            )
+        )
+        if len(keep) < len({definition.name.text for definition in node.definitions}):
+            selection[id(typed)] = keep
+    return selection
+
+
+def _with_reachable_import_prelude(nodes: list[TypedNode]) -> list[TypedNode]:
+    """Link only imported declarations reachable from the checked program.
+
+    Imports are still fully type-checked and tracked for invalidation. This
+    compile-only pass walks checked runtime references and their dependencies;
+    it preserves required constructors and schema metadata while selecting
+    reachable variant cases and ordinary methods. Dynamic reflection and public
+    re-exports conservatively retain the entire prelude.
+    """
+    prefix_size = 0
+    for item in nodes:
+        if isinstance(item, (TypedImportedFunctionNode, TypedImportedObjectNode)):
+            prefix_size += 1
+        else:
+            break
+    if not prefix_size:
+        return nodes
+    body = nodes[prefix_size:]
+    imports = nodes[:prefix_size]
+
+    namespaces: set[str] = set()
+    components: set[str] = set()
+    seen_import = False
+    for typed in body:
+        if not isinstance(typed.node, ImportNode):
+            continue
+        seen_import = True
+        if typed.node.public:
+            return nodes
+        for spec in typed.node.specs:
+            if spec.components:
+                components.update(
+                    (component.alias or component.name).text
+                    for component in spec.components
+                )
+            else:
+                namespaces.add(spec.alias.text if spec.alias else spec.path.parts[-1])
+    if not seen_import:
+        return nodes
+
+    # A hidden binding uniquely identifies the checked provider declaration;
+    # source-level names only supplement that exact identity for constructor
+    # metadata and raw bodies that do not contain a checked call.
+    runtime_bindings: dict[Symbol, int] = {}
+    qualified_names: dict[Symbol, set[int]] = {}
+    unqualified_names: dict[str, set[int]] = {}
+    provider_names: dict[tuple[str, str], set[int]] = {}
+    provider_by_index: list[str] = []
+    for index, typed in enumerate(imports):
+        runtime_name = typed.runtime_name
+        if runtime_name is None:
+            return nodes
+        runtime_bindings[runtime_name] = index
+        source_name = typed.node.name
+        if source_name.namespace:
+            qualified_names.setdefault(source_name, set()).add(index)
+        else:
+            unqualified_names.setdefault(source_name.text, set()).add(index)
+        scope = runtime_name.namespace[0] if runtime_name.namespace else ""
+        provider = scope.rsplit('_', 1)[0]
+        provider_by_index.append(provider)
+        provider_names.setdefault((provider, source_name.text), set()).add(index)
+
+    retained: set[int] = set()
+    pending: list[int] = []
+
+    def add(index: int) -> None:
+        if index not in retained:
+            retained.add(index)
+            pending.append(index)
+
+    def scan(value: object, provider: str | None) -> bool:
+        """Return false when dynamic metadata forces conservative linking."""
+        stack = [value]
+        visited: set[int] = set()
+        while stack:
+            item = stack.pop()
+            if isinstance(item, Symbol):
+                index = runtime_bindings.get(item)
+                if index is not None:
+                    add(index)
+                # A variant member or object method is installed by the
+                # enclosing declaration. E.g. ``Figure.Circle`` has no
+                # individual import binding: it is emitted by ``Figure``.
+                # Match each ancestor, including namespaced/aliased variants.
+                for depth in range(1, len(item.namespace) + 1):
+                    ancestor = Symbol(
+                        item.namespace[depth - 1], item.namespace[:depth - 1]
+                    )
+                    for candidate in qualified_names.get(ancestor, ()):
+                        if isinstance(imports[candidate], TypedImportedObjectNode):
+                            add(candidate)
+                    if not ancestor.namespace and ancestor.text in components:
+                        for candidate in unqualified_names.get(ancestor.text, ()):
+                            if isinstance(imports[candidate], TypedImportedObjectNode):
+                                add(candidate)
+                for candidate in qualified_names.get(item, ()):
+                    add(candidate)
+                if not item.namespace:
+                    if provider is None and item.text in components:
+                        for candidate in unqualified_names.get(item.text, ()):
+                            add(candidate)
+                    elif provider is not None:
+                        # Trait witnesses and nominal metadata can be used via
+                        # casts or inferred contracts without a runtime call.
+                        for candidate in provider_names.get((provider, item.text), ()):
+                            if isinstance(imports[candidate], TypedImportedObjectNode):
+                                add(candidate)
+                continue
+            if item is None or isinstance(item, (str, bytes, int, float, bool, type)):
+                continue
+            if isinstance(item, ImportNode):
+                continue
+            if isinstance(item, ElementNode) and item.name.text == "lookupRuntimeType?":
+                return False
+            if isinstance(item, GetVariableNode) and provider is not None:
+                for candidate in provider_names.get((provider, item.name.text), ()):
+                    add(candidate)
+            identity = id(item)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            if isinstance(item, (tuple, list, set, frozenset)):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                stack.extend(item.keys())
+                stack.extend(item.values())
+            elif is_dataclass(item):
+                stack.extend(getattr(item, field.name) for field in fields(item))
+        return True
+
+    if not scan(body, None):
+        return nodes
+    while pending:
+        index = pending.pop()
+        if not scan(imports[index], provider_by_index[index]):
+            return nodes
+
+    # Do not rely on source spelling alone to remove a binding: imported type
+    # annotations and reflection are allowed to mention constructor names
+    # without a direct checked invocation. The conservative fallthrough also
+    # protects future syntax that hasn't acquired a checked runtime reference.
+    if not retained:
+        stack = list(body)
+        visited: set[int] = set()
+        while stack:
+            item = stack.pop()
+            if isinstance(item, Symbol):
+                if (item.text in components or item.text in namespaces
+                        or (item.namespace and (
+                            item.namespace[0] in namespaces
+                            or item.namespace[0] in components))):
+                    return nodes
+                continue
+            if item is None or isinstance(item, (str, bytes, int, float, bool, type)):
+                continue
+            if isinstance(item, ImportNode):
+                continue
+            if id(item) in visited:
+                continue
+            visited.add(id(item))
+            if isinstance(item, (tuple, list, set, frozenset)):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                stack.extend(item.keys())
+                stack.extend(item.values())
+            elif is_dataclass(item):
+                stack.extend(getattr(item, field.name) for field in fields(item))
+    return _trim_imported_variant_cases(
+        [item for index, item in enumerate(imports) if index in retained] + body
+    )
+
+
 def compile_program(
     nodes: list[TypedNode],
     *,
@@ -2254,7 +2593,9 @@ def compile_program(
     """Compile analysed typed AST nodes, optimising bytecode by default."""
     if not all(isinstance(node, TypedNode) for node in nodes):
         raise CompileError("compile_program expects analysed TypedNode values")
+    nodes = _with_reachable_import_prelude(nodes)
     compiler = _Compiler()
+    compiler._import_method_selection = _import_method_selection(nodes)
     compiler.prepare_runtime_type_facts(tuple(nodes))
     main = compiler.compile_function(tuple(nodes), name="<main>")
     program = Program(main, tuple(sorted(compiler.tag_parents.items())))

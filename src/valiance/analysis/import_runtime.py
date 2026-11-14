@@ -83,38 +83,33 @@ def _rewrite_imported_self_calls(
     runtime_links: dict[Symbol, Symbol] | None = None,
 ) -> Any:
     """Retarget recursive calls in an imported definition to its hidden binding."""
-    if isinstance(value, TypedElementNode):
-        rewritten = {
-            field.name: _rewrite_imported_self_calls(
-                getattr(value, field.name), source_name, runtime_name, runtime_links
-            )
-            for field in fields(value)
-        }
-        if isinstance(value.node, ElementNode):
-            if (value.node.name == source_name
-                    and value.runtime_name in (None, source_name)):
-                # A provider may have imported a homonymous callable before
-                # this declaration was hoisted.  That already-resolved call
-                # belongs to its original provider, not to the new binding.
-                rewritten["runtime_name"] = runtime_name
-            elif runtime_links and value.runtime_name in (None, value.node.name):
-                target = runtime_links.get(value.node.name)
-                if target is not None:
-                    rewritten["runtime_name"] = target
-        return replace(value, **rewritten)
     if isinstance(value, tuple):
-        return tuple(
+        rewritten = tuple(
             _rewrite_imported_self_calls(item, source_name, runtime_name, runtime_links)
             for item in value
         )
-    if is_dataclass(value) and not isinstance(value, ASTNode):
-        return replace(
-            value,
-            **{
-                field.name: _rewrite_imported_self_calls(
-                    getattr(value, field.name), source_name, runtime_name, runtime_links
-                )
-                for field in fields(value)
-            },
+        return value if all(a is b for a, b in zip(rewritten, value)) else rewritten
+    if not is_dataclass(value) or isinstance(value, ASTNode):
+        return value
+
+    # Imported typed trees are immutable. Most nodes contain no self-call or
+    # provider link to rewrite, so retain their identities rather than
+    # rebuilding every node and every signature in a large imported library.
+    changed = {}
+    for field in fields(value):
+        original = getattr(value, field.name)
+        rewritten = _rewrite_imported_self_calls(
+            original, source_name, runtime_name, runtime_links
         )
-    return value
+        if rewritten is not original:
+            changed[field.name] = rewritten
+    if isinstance(value, TypedElementNode) and isinstance(value.node, ElementNode):
+        if (value.node.name == source_name
+                and value.runtime_name in (None, source_name)):
+            # Do not retarget a call that was already bound to another provider.
+            changed["runtime_name"] = runtime_name
+        elif runtime_links and value.runtime_name in (None, value.node.name):
+            target = runtime_links.get(value.node.name)
+            if target is not None:
+                changed["runtime_name"] = target
+    return replace(value, **changed) if changed else value

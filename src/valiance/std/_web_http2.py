@@ -501,7 +501,7 @@ class _RFC9113FrameBuffer(h2.frame_buffer.FrameBuffer):
 class _StreamIsolatingH2Connection(h2.connection.H2Connection):
     """Isolate malformed message lengths despite hyper-h2's global error path.
 
-    hyper-h2 4.3 promotes some malformed HTTP message conditions to a
+    hyper-h2 promotes some malformed HTTP message conditions to a
     connection GOAWAY. RFC 9113 §8.1.1 requires a stream error for invalid
     Content-Length and trailing HEADERS without END_STREAM. Keep framing, HPACK
     and state management in hyper-h2; isolate only these explicit cases. The
@@ -524,9 +524,12 @@ class _StreamIsolatingH2Connection(h2.connection.H2Connection):
             # Decoding has already completed, so the HPACK dynamic table is
             # consistent. A malformed HTTP *message* must not close the
             # connection or discard valid streams using that table.
-            malformed_length = (str(exc).startswith('Invalid content-length header:')
-                                and isinstance(exc.__cause__, ValueError))
-            malformed_trailers = str(exc) == 'Trailers must have END_STREAM set'
+            message = str(exc)
+            # hyper-h2 4.4 rejects non-digit lengths before int conversion,
+            # so an invalid length may raise ProtocolError without a cause.
+            malformed_length = message.startswith(('Invalid content-length header:',
+                                                   'Conflicting content-length headers:'))
+            malformed_trailers = message == 'Trailers must have END_STREAM set'
             if malformed_length or malformed_trailers:
                 code = h2.errors.ErrorCodes.PROTOCOL_ERROR
                 self.reset_stream(frame.stream_id, error_code=code)

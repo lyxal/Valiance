@@ -400,8 +400,10 @@ PYTHONPATH=src:. python -m tools.multimodule_interactions --replay-index 42 --se
 ```
 
 All reports include seed, absolute case index, graph, artifact layout,
-completed checks and explicit failures. A batch timeout or malformed worker
-report is **one failure** in the aggregate, never a pass. Save on failure:
+completed checks and explicit failures. CI batches eight cases per subprocess
+to amortize Python startup; a timed-out, crashed, or malformed batch is
+retried in smaller windows until any failing case is isolated in its own
+subprocess. An unverified case is always a failure, never a pass. Save on failure:
 exact module sources and consumer, independent output, build order, stderr,
 software version, Python version, scheduler seed and minimized project when
 available. Delta reduction should remove unaffected modules, declaration

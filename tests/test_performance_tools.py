@@ -6,6 +6,7 @@ import unittest
 
 from tools.performance import (
     PerformanceWorkload,
+    WORKLOADS,
     benchmark_workload,
     classify_report_changes,
     compare_reports,
@@ -15,6 +16,23 @@ from tools.performance import (
 
 class PerformanceToolTests(unittest.TestCase):
     """Protect report structure, fixture support, and threshold semantics."""
+
+    def test_large_stdlib_import_is_in_performance_baselines(self):
+        """Keep std.web import cost visible in compiler regressions."""
+        workload = next(
+            entry for entry in WORKLOADS
+            if entry.name == "stdlib-web-import-analysis"
+        )
+        self.assertEqual(workload.category, "imports")
+        self.assertIn("import {std.web}", workload.source)
+        self.assertIn("web.Response", workload.source)
+
+    def test_warm_stdlib_interface_cache_is_benchmarked_separately(self):
+        cold = next(item for item in WORKLOADS if item.name == "stdlib-web-import-analysis")
+        warm = next(item for item in WORKLOADS if item.name == "stdlib-web-warm-import-analysis")
+        self.assertEqual(cold.source, warm.source)
+        self.assertFalse(cold.warm_source_interfaces)
+        self.assertTrue(warm.warm_source_interfaces)
 
     def test_benchmark_records_every_pipeline_stage(self):
         """Produce stable stage, result, bytecode, and instrumentation metadata."""

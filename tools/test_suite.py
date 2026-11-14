@@ -193,6 +193,55 @@ def partition_test_files(
     )
 
 
+def read_timing_reports(paths: Sequence[Path]) -> tuple[dict[str, float], dict[str, float]]:
+    """Combine disjoint worker/shard reports into a reproducible timing profile.
+
+    An interrupted CI run can have partial reports; malformed or missing files
+    are ignored, and tests without history still use static estimates. Each
+    report is written by one shard, so module totals may span several reports.
+    """
+    modules: dict[str, float] = {}
+    tests: dict[str, float] = {}
+    for path in sorted(paths):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data["version"] not in (1, 2) or not isinstance(data["modules"], dict):
+                raise ValueError("unrecognized timings format")
+            observed_tests = data.get("tests", {}) if data["version"] == 2 else {}
+            if not isinstance(observed_tests, dict):
+                raise ValueError("invalid per-test timings")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"warning: ignoring timing report {path} ({error})", file=sys.stderr)
+            continue
+        for source, dest in ((data["modules"], modules), (observed_tests, tests)):
+            for key, value in source.items():
+                if (isinstance(key, str) and type(value) in (int, float)
+                        and math.isfinite(value) and value > 0):
+                    normalized = key.replace("\\", "/")
+                    dest[normalized] = dest.get(normalized, 0.0) + value
+    return modules, tests
+
+
+def allocate_shards(
+    batches: Sequence[TestBatch], shard_count: int
+) -> tuple[tuple[TestBatch, ...], ...]:
+    """Balance entire worker batches across CI machines by estimated duration.
+
+    Keep assignment stable across CI machines by sorting deterministically;
+    simply taking every Nth batch can strand several expensive batches on one
+    shard even if the summed duration estimates are well calibrated.
+    """
+    if shard_count < 1:
+        raise ValueError("shards must be at least 1")
+    slots: list[list[TestBatch]] = [[] for _ in range(shard_count)]
+    weights = [0.0] * shard_count
+    for batch in sorted(batches, key=lambda batch: batch.estimated_weight, reverse=True):
+        index = min(range(shard_count), key=weights.__getitem__)
+        slots[index].append(batch)
+        weights[index] += batch.estimated_weight
+    return tuple(tuple(slot) for slot in slots)
+
+
 def _worker_command(
     targets: Sequence[TestTarget], *, verbose: bool, timings_file: Path | None = None
 ) -> list[str]:
@@ -352,6 +401,10 @@ def _parser() -> argparse.ArgumentParser:
         help="reuse previous module/method timings and save new timings",
     )
     parser.add_argument(
+        "--history-dir", type=Path,
+        help="directory containing shard timing reports from the same prior CI run",
+    )
+    parser.add_argument(
         "--durations",
         type=int,
         default=0,
@@ -381,29 +434,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     # still amortizes interpreter startup across several modules.
     timings = None
     test_timings = None
-    # Shards must agree on membership even when their timing reports differ.
-    if args.shards == 1 and args.timings and args.timings.is_file():
-        try:
-            data = json.loads(args.timings.read_text(encoding="utf-8"))
-            if data["version"] not in (1, 2) or not isinstance(data["modules"], dict):
-                raise ValueError("unrecognized timings format")
-            timings = data["modules"]
-            test_timings = data.get("tests", {}) if data["version"] == 2 else None
-            if test_timings is not None and not isinstance(test_timings, dict):
-                raise ValueError("invalid per-test timings")
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            print(
-                f"warning: cannot read timings ({error}); using estimates",
-                file=sys.stderr,
-            )
+    # Each CI shard downloads the *same* previous-run timing artifacts.
+    # Never use a shard's private, incremental timing file for planning, as
+    # its contents differ from its peers and would change shard membership.
+    if args.history_dir is not None:
+        reports = tuple(args.history_dir.glob("**/test-timings.json"))
+        if reports:
+            timings, test_timings = read_timing_reports(reports)
+            print(f"Using {len(reports)} previous CI timing reports.", flush=True)
+    elif args.shards == 1 and args.timings and args.timings.is_file():
+        timings, test_timings = read_timing_reports((args.timings,))
     try:
         batches = partition_test_files(
             files, args.workers * 4 * args.shards, timings, test_timings
         )
         if args.shards > 1:
-            batches = tuple(sorted(
-                batches, key=lambda batch: batch.estimated_weight, reverse=True
-            ))[args.shard::args.shards]
+            batches = allocate_shards(batches, args.shards)[args.shard]
     except (OSError, SyntaxError, ValueError) as error:
         print(f"error: cannot schedule tests ({error})", file=sys.stderr)
         return 2

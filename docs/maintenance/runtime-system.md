@@ -311,6 +311,31 @@ The imported function's checked implementation identity remains unchanged when
 its private calls are retargeted, so runtime linking still verifies the chosen
 overload. Keep this path covered with both optimized and serialized execution.
 
+A private import contributes checked interfaces and dependency tracking even
+when the consumer does not use its implementations. Bytecode compilation follows
+reachable imported declarations, starting with checked references in the
+consumer and then following provider-qualified runtime links transitively.
+Unrelated functions and objects are excluded; declarations are emitted in their
+original import order. For imported variants, individual case constructors are
+linked only when referenced by the checked program or a reachable provider body;
+case signatures remain available during analysis. Imported ordinary objects keep
+their complete schema metadata, constructors, and destructors, but unreferenced
+methods can be omitted from runtime code. Annotated hooks, multi-methods, trait
+implementations, and extension-backed objects retain their full methods because
+they can dispatch without a source-level call. Source-level aliases, variant
+cases (`Figure.Circle`), and nominal trait evidence can require their enclosing
+object or trait without an explicit constructor call, so runtime linking must
+consider both checked identities and type references.
+
+`public import` keeps its complete runtime prelude for later source-free
+consumers. Dynamically computed runtime type lookups such as
+`lookupRuntimeType?` also retain the complete prelude until reflection has
+explicit schema roots. Dynamic method discovery and checked structural witness
+plans retain full method bodies, since their runtime bindings need not have a
+statically visible method call. The transformation only changes bytecode generation,
+serialization, and runtime initialization, not import diagnostics, semantic
+interfaces, or dependency hashes. Cold import interface analysis remains eager.
+
 Executable provider dependencies are discovered from **checked call bodies** as
 well as type signatures. A public `fetch` function that internally constructs a
 public `Box` still needs the `Box` constructor when a consumer selects only

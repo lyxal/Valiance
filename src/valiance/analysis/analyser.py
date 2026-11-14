@@ -161,6 +161,9 @@ class _AnalysisPrelude:
         Symbol, tuple[Symbol | None, tuple[tuple[Symbol, Symbol], ...]]
     ] = field(default_factory=dict)
     provider_links: dict[str, dict[Symbol, Symbol]] = field(default_factory=dict)
+    _declarations_by_name: dict[Symbol, list[tuple[TypedNode, Symbol]]] = field(
+        default_factory=dict
+    )
 
     def add(self, node: TypedNode) -> None:
         """Add one imported runtime declaration exactly once."""
@@ -182,9 +185,10 @@ class _AnalysisPrelude:
     ) -> Symbol:
         """Hoist one declaration and return its hidden runtime binding."""
         key = (runtime_nominal_name, runtime_type_origins)
-        for existing, existing_source, runtime_name in self.bindings:
-            if (existing == node and existing_source == source_name
-                    and self.binding_origins.get(runtime_name, (None, ())) == key):
+        for existing, runtime_name in self._declarations_by_name.get(source_name, ()):
+            if (existing is node or existing == node) and self.binding_origins.get(
+                runtime_name, (None, ())
+            ) == key:
                 return runtime_name
         index = len(self.bindings)
         runtime_name = Symbol(
@@ -201,6 +205,7 @@ class _AnalysisPrelude:
         ))
         self.bindings.append((node, source_name, runtime_name))
         self.binding_origins[runtime_name] = key
+        self._declarations_by_name.setdefault(source_name, []).append((node, runtime_name))
         return runtime_name
 
     def add_provider_declarations(
@@ -241,6 +246,7 @@ class _AnalysisPrelude:
                     runtime_nominal_name=private_nominal,
                 ))
                 self.bindings.append((typed, name, binding))
+                self._declarations_by_name.setdefault(name, []).append((typed, binding))
         return links
 
 
@@ -344,6 +350,7 @@ class Analyser:
         source_file: Path | None = None,
         lint_registry: LintRegistry | None = None,
         _prelude: _AnalysisPrelude | None = None,
+        _project_lint_settings: tuple[bool, frozenset[str]] | None = None,
         trace=None,
         observer: Callable[[Analyser, ASTNode, BranchSet, BranchSet], None] | None = None,
         recover_declarations: bool = False,
@@ -370,7 +377,14 @@ class Analyser:
         self.lint_findings: list[LintFinding] = []
         self.project_lints_enabled = True
         self.project_disabled_lint_codes: frozenset[str] = frozenset()
-        self._load_project_lint_settings()
+        if _project_lint_settings is None:
+            self._load_project_lint_settings()
+        else:
+            # A nested lexical analyser inherits the already-resolved project
+            # policy; probing the filesystem again would duplicate work.
+            self.project_lints_enabled, self.project_disabled_lint_codes = (
+                _project_lint_settings
+            )
         self.disabled_lint_codes: set[str] | None = set()
         self.attempted_lint_codes: set[str] = set()
         self.file_lint_suppressions: dict[str, ASTNode] = {}
@@ -1016,6 +1030,10 @@ class Analyser:
             source_file=self.source_file,
             lint_registry=self.lint_registry,
             _prelude=self._prelude,
+            _project_lint_settings=(
+                self.project_lints_enabled,
+                self.project_disabled_lint_codes,
+            ),
             trace=self.trace,
             observer=self.observer,
             recover_declarations=self.recover_declarations,
@@ -1035,8 +1053,6 @@ class Analyser:
             for name, candidates in self._private_imported_friendly_elements.items()
         }
         child._imported_trait_impl_sources = self._imported_trait_impl_sources.copy()
-        child.project_lints_enabled = self.project_lints_enabled
-        child.project_disabled_lint_codes = self.project_disabled_lint_codes
         child.disabled_lint_codes = (
             None
             if self.disabled_lint_codes is None

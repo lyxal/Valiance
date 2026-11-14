@@ -92,14 +92,16 @@ class HTTP2MessageLifecycleTests(unittest.TestCase):
 
     def test_invalid_content_length_headers_do_not_terminate_connection(self):
         app = core.App().route('GET', '/ok', lambda _: 'ok')
-        for invalid in ('nonsense', '+' + '1', '9' * 4500):
-            with self.subTest(invalid=invalid[:15]):
+        for lengths in (('nonsense',), ('+1',), ('9' * 4500,), ('1', '2')):
+            with self.subTest(lengths=tuple(value[:15] for value in lengths)):
                 server = self.start(app)
                 sock, conn = self.client(server)
                 conn.config.validate_outbound_headers = False
                 conn.config.normalize_outbound_headers = False
-                conn.send_headers(1, self.headers('/ok', 'POST') +
-                                  [('content-length', invalid)], end_stream=True)
+                fields = self.headers('/ok', 'POST') + [
+                    ('content-length', value) for value in lengths
+                ]
+                conn.send_headers(1, fields, end_stream=True)
                 conn.send_headers(3, self.headers('/ok'), end_stream=True)
                 sock.sendall(conn.data_to_send())
                 self._observe(sock, conn)

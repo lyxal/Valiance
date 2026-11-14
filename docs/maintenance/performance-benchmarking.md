@@ -10,7 +10,8 @@ alternates a target checkout and candidate checkout on the same worker.
 The suite contains deterministic workloads for small-program startup, arithmetic
 reduction, lazy pipelines, vectorisation, guarded classification, text handling,
 a medium record/text transformation, object construction, standard-library
-imports, a real multi-module fixture, nested collections, and recursion.
+imports (including a `std.web` response-construction workload), a real
+multi-module fixture, nested collections, and recursion.
 
 Every workload measures parsing, analysis, compilation, serialization, loading,
 VM execution, and a complete cold pipeline. Reports also contain raw samples,
@@ -18,10 +19,28 @@ median absolute deviation, a Python-only host calibration, result and source
 hashes, bytecode size, recursive instruction count, process peak RSS context,
 and opt-in VM optimization counters.
 
+The unused-import workloads isolate the cost of loading and linking a library
+whose names are not referenced by the program. An unused import should produce
+approximately the same bytecode size as the equivalent import-free program;
+regressions are checked by `tests/test_compiled_modules.py`. A nonzero cold
+analysis cost is still expected because imported interfaces must be validated. Compare their `analyse`,
+`compile`, `serialize`, and `run` stages against `small-startup` rather than
+assuming import resolution is the only overhead. A larger serialized program
+or slower execution reveals eager linking even when semantic analysis improves.
+
 The multi-module workload writes a temporary `main.vlnc` and imported modules.
-Each analysis sample receives a fresh `ModuleLoader`, so the measurement includes
-cold module resolution, parsing, and analysis rather than an accidentally warm
-in-process module cache.
+Ordinary import workloads explicitly reset the process-local source-interface
+cache before each analysis or end-to-end measurement. Merely constructing a fresh
+`ModuleLoader` no longer guarantees a cold import; a previous compilation in the
+same process may already have checked the immutable stdlib interface.
+
+The `stdlib-web-warm-import-analysis` workload intentionally keeps that cache
+warm. Compare it with `stdlib-web-import-analysis` to distinguish repeat
+compilation (for tests, interactive sessions and dev servers) from the first
+compilation of a source-only module in a fresh process. Source fingerprints,
+transitive dependencies, and optional compiled artifacts are checked before a
+cached interface is reused. The source cache is process-local and bounded; it
+is not a replacement for true on-demand interface analysis.
 
 ## Create or inspect one report
 

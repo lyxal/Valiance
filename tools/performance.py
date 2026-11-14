@@ -22,7 +22,7 @@ except ImportError:  # Not available on Windows.
     resource = None
 
 from valiance.analysis import Analyser
-from valiance.modules_system.modules import ModuleLoader
+from valiance.modules_system.modules import ModuleLoader, _PROCESS_SOURCE_INTERFACE_CACHE
 from valiance.parsing import parse
 from valiance.runtime import VirtualMachine, compile_program, dumps, loads
 from valiance.runtime.bytecode import FunctionCode, FunctionSetCode
@@ -41,6 +41,7 @@ class PerformanceWorkload:
     category: str
     source: str
     files: tuple[tuple[str, str], ...] = ()
+    warm_source_interfaces: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +132,27 @@ range(1, 3000) map: fn (n) => Point($n, $n + 1) end | length""",
         "imports",
         """import { std.arithmetic.square, std.arithmetic.cube }
 range(1, 2000) map: fn (n) => square($n) + cube($n) end | sum""",
+    ),
+    PerformanceWorkload(
+        "stdlib-web-unused-import",
+        "imports",
+        "import {std.web}\n42",
+    ),
+    PerformanceWorkload(
+        "stdlib-json-unused-import",
+        "imports",
+        "import {std.json}\n42",
+    ),
+    PerformanceWorkload(
+        "stdlib-web-import-analysis",
+        "imports",
+        'import {std.web}\nweb.Response(body = "ok")',
+    ),
+    PerformanceWorkload(
+        "stdlib-web-warm-import-analysis",
+        "imports",
+        'import {std.web}\nweb.Response(body = "ok")',
+        warm_source_interfaces=True,
     ),
     PerformanceWorkload(
         "multi-module-project",
@@ -238,8 +260,13 @@ def _analyse(
     nodes: list[Any],
     *,
     source_file: Path | None = None,
+    cold_source_interfaces: bool = False,
 ) -> list[Any]:
-    """Analyse parsed nodes with a fresh module cache and reject diagnostics."""
+    """Analyse parsed nodes with explicitly cold or warm source interfaces."""
+    if cold_source_interfaces:
+        # A new ModuleLoader no longer guarantees a cold stdlib analysis:
+        # source-only stdlib interfaces can be shared across loader instances.
+        _PROCESS_SOURCE_INTERFACE_CACHE.clear()
     analyser = Analyser(module_loader=ModuleLoader(), source_file=source_file)
     typed = analyser.analyse(nodes)
     if analyser.diagnostics:
@@ -289,7 +316,10 @@ def benchmark_workload(
 
         parse_measurement, parsed = _measure(lambda: parse(source), runs)
         analysis_measurement, typed = _measure(
-            lambda: _analyse(parsed, source_file=context.source_file), runs
+            lambda: _analyse(
+                parsed, source_file=context.source_file,
+                cold_source_interfaces=not workload.warm_source_interfaces,
+            ), runs
         )
         compile_measurement, program = _measure(lambda: compile_program(typed), runs)
         serialize_measurement, encoded = _measure(lambda: dumps(program), runs)
@@ -304,7 +334,10 @@ def benchmark_workload(
         def end_to_end() -> list[Any]:
             """Run the complete cold compiler and runtime pipeline once."""
             nodes = parse(source)
-            analysed = _analyse(nodes, source_file=context.source_file)
+            analysed = _analyse(
+                nodes, source_file=context.source_file,
+                cold_source_interfaces=not workload.warm_source_interfaces,
+            )
             compiled = compile_program(analysed)
             round_tripped = loads(dumps(compiled))
             return VirtualMachine(output=lambda _value: None).run(round_tripped)

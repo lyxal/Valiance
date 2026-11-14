@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   tests:
@@ -33,9 +34,26 @@ jobs:
         run: uv sync
       - name: Verify regex runtime dependency
         run: uv run --frozen python -c "import regex; import valiance.std.regex"
+      - name: Reuse completed default-branch shard timings
+        # All six shards read the same prior workflow run, so membership remains
+        # deterministic. No history (e.g. first run or fork) is not a failure.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if run_id=$(gh run list --workflow tests.yml --branch "$DEFAULT_BRANCH" \
+              --status success --limit 1 --json databaseId \
+              --jq '.[0].databaseId // empty') && [[ -n "$run_id" ]]; then
+            gh run download "$run_id" --pattern 'unittest-timings-*' \
+              --dir .ci-test-history || echo 'No previous test reports available; using estimates.'
+          else
+            echo 'No previous successful test run available; using estimates.'
+          fi
       - name: Run test suite in parallel and collect timings
         timeout-minutes: 15
-        run: uv run --frozen --with websockets --with wsproto --with websocket-client python -m tools.test_suite --suite ${{ matrix.suite }} --shards 3 --shard ${{ matrix.shard }} --workers 4 --verbose --durations 20 --timings test-timings.json
+        run: uv run --frozen --with websockets --with wsproto --with websocket-client python -m tools.test_suite --suite ${{ matrix.suite }} --shards 3 --shard ${{ matrix.shard }} --workers 4 --verbose --durations 20 --history-dir .ci-test-history --timings test-timings.json
       - name: Upload test timing report
         if: always()
         uses: actions/upload-artifact@v4
@@ -137,8 +155,8 @@ jobs:
 
   multimodule-interaction-shards:
     # Split the *current registry size*, not a hard-coded historical count.
-    # Each candidate runs in a separate bounded worker. One stuck project
-    # cannot conceal unrelated successes or consume the entire campaign.
+    # Batch healthy cases to amortize Python startup. On a timeout/crash,
+    # the campaign bisects the batch to isolate the bad case in its own worker.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
@@ -181,7 +199,7 @@ jobs:
             fi
             if ! uv run --frozen python -m tools.multimodule_interactions \
               $negative_flag --seed 49103 --start "$start" --iterations "$iterations" \
-              --batch-size 1 --batch-timeout 35 \
+              --batch-size 8 --batch-timeout 35 \
               --output "multimodule-${kind}-${SHARD}.json" > /dev/null; then
               failed=1
             fi

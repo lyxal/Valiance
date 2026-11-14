@@ -4,6 +4,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from valiance.analysis import Analyser
 from valiance.main import main_vln
@@ -15,6 +16,358 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_unused_import_does_not_link_runtime_declarations(self):
+        """An unused import keeps its checked interface but contributes no bytecode."""
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "library.vlnc").write_text(
+                "public define answer(value: Int) -> Int => $value + 10\n"
+                "public object Item => public $value:Int end\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse("import {library}\n42"))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertTrue(analyser.runtime_prelude)
+            plain = Analyser().analyse(parse("42"))
+            for optimize in (False, True):
+                with self.subTest(optimize=optimize):
+                    compiled = compile_program(typed, optimize=optimize)
+                    self.assertEqual(
+                        dumps(compiled), dumps(compile_program(plain, optimize=optimize))
+                    )
+                    self.assertEqual(run(loads(dumps(compiled))), [42])
+            # Compiling must not discard the interface needed for later use.
+            self.assertTrue(analyser.runtime_prelude)
+
+    def test_public_import_retains_linked_runtime_surface(self):
+        """Re-exporting an unused name must not strip it from module builds."""
+        from valiance.runtime import compile_program, dumps
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "library.vlnc").write_text(
+                "public define answer(value: Int) -> Int => $value + 10\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse("public import {library}\n42"))
+            self.assertEqual(analyser.diagnostics, [])
+            plain = Analyser().analyse(parse("42"))
+            self.assertGreater(
+                len(dumps(compile_program(typed))),
+                len(dumps(compile_program(plain))),
+            )
+
+    def test_runtime_reflection_can_resolve_an_import_without_static_calls(self):
+        """A string-based lookup is a runtime dependency on imported schemas."""
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(
+            'import {std.web}\n'
+            'unsafe => lookupRuntimeType?("web.Response") end'
+        ))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                result, = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual(result.type_name, "OK")
+                self.assertEqual(result.fields["value"].fields["name"], "web.Response")
+
+    def test_imported_calls_inside_user_functions_keep_provider_closure(self):
+        """Nested and selected calls must not lose their linked implementations."""
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "library.vlnc").write_text(
+                "define helper(value: Int) -> Int => $value + 3\n"
+                "public define answer(value: Int) -> Int => helper($value)\n",
+                encoding="utf-8",
+            )
+            for source in (
+                "import {library}\ndefine \\calculate -> Int => library.answer(4) end\n\\calculate",
+                "import {library.[answer]}\ndefine \\calculate -> Int => answer(4) end\n\\calculate",
+            ):
+                analyser = Analyser(source_file=root / "main.vlnc")
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [], source)
+                for optimize in (False, True):
+                    with self.subTest(source=source, optimize=optimize):
+                        program = compile_program(typed, optimize=optimize)
+                        self.assertGreater(len(dumps(program)), len(dumps(compile_program(Analyser().analyse(parse("7"))))))
+                        self.assertEqual(run(loads(dumps(program))), [7])
+
+    def test_selected_import_links_private_helpers_but_not_unrelated_functions(self):
+        """Only a reachable provider dependency closure is compiled into the caller."""
+        from valiance.runtime import compile_program, dumps, loads, run
+        from valiance.runtime.bytecode import OpCode
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "library.vlnc").write_text(
+                "define helper(n:Int)->Int => $n + 3\n"
+                "public define answer(n:Int)->Int => helper($n)\n"
+                "public define unused(n:Int)->Int => $n * 100\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse("import {library}\nlibrary.answer(4)"))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                with self.subTest(optimize=optimize):
+                    program = compile_program(typed, optimize=optimize)
+                    stored = [
+                        instruction.arg for instruction in program.main.instructions
+                        if instruction.op == OpCode.STORE_VAR
+                    ]
+                    self.assertTrue(any(name.endswith(".answer") for name in stored))
+                    self.assertTrue(any(name.endswith(".helper") for name in stored))
+                    self.assertFalse(any(name.endswith(".unused") for name in stored))
+                    self.assertEqual(run(loads(dumps(program))), [7])
+
+    def test_variant_import_links_only_referenced_case_constructors(self):
+        """A case used through an imported namespace does not link its siblings."""
+        from valiance.runtime import compile_program, dumps, loads, run
+        from valiance.runtime.bytecode import OpCode
+        from valiance.incremental import CompilationCoordinator
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "tokens.vlnc"
+            library.write_text(
+                "public variant Token =>\n  Empty\n  NUMBER = \"Number\"\n  Item => $value:Int end\nend\n",
+                encoding="utf-8",
+            )
+            for layout in ("source", "compiled"):
+                if layout == "compiled":
+                    CompilationCoordinator(root).build_module(
+                        library, library.with_suffix(".vbcm"), module_name="tokens"
+                    )
+                    library.unlink()
+                for import_line, owner in (
+                    ("import {tokens}", "tokens.Token"),
+                    ("import {tokens.[Token as Kind]}", "Kind"),
+                ):
+                    source = import_line + "\n" + owner + r".\NUMBER.value"
+                    analyser = Analyser(source_file=root / "main.vlnc")
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [], source)
+                    for optimize in (False, True):
+                        with self.subTest(layout=layout, source=source, optimize=optimize):
+                            program = compile_program(typed, optimize=optimize)
+                            constructors = {
+                                instruction.arg.type_name
+                                for instruction in program.main.instructions
+                                if instruction.op == OpCode.MAKE_OBJECT_CONSTRUCTOR
+                            }
+                            self.assertTrue(any(name.endswith(".NUMBER") for name in constructors))
+                            self.assertFalse(any(name.endswith(".Empty") for name in constructors))
+                            self.assertFalse(any(name.endswith(".Item") for name in constructors))
+                            self.assertEqual(run(loads(dumps(program))), ["Number"])
+
+    def test_imported_object_keeps_only_used_ordinary_methods(self):
+        """Static method calls retain needed implementations and omit unrelated ones."""
+        from valiance.runtime import compile_program, dumps, loads, run
+        from valiance.runtime.bytecode import OpCode
+        from valiance.incremental import CompilationCoordinator
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "library.vlnc"
+            library.write_text(
+                "public object Item =>\n"
+                "  public $value: Int\n"
+                "  public define read -> Int => $self.value end\n"
+                "  public define unused -> Int => 999 end\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            for layout in ("source", "compiled"):
+                if layout == "compiled":
+                    CompilationCoordinator(root).build_module(
+                        library, library.with_suffix(".vbcm"), module_name="library"
+                    )
+                    library.unlink()
+                for source, expected in (
+                    ("import {library}\nlibrary.Item(3) library.read", 3),
+                    ("import {library}\nlibrary.Item(3)", None),
+                ):
+                    analyser = Analyser(source_file=root / "main.vlnc")
+                    typed = analyser.analyse(parse(source))
+                    self.assertEqual(analyser.diagnostics, [], source)
+                    for optimize in (False, True):
+                        with self.subTest(layout=layout, source=source, optimize=optimize):
+                            program = compile_program(typed, optimize=optimize)
+                            stores = [
+                                str(instruction.arg)
+                                for instruction in program.main.instructions
+                                if instruction.op == OpCode.STORE_VAR
+                            ]
+                            self.assertFalse(any(name.endswith(".unused") for name in stores))
+                            self.assertEqual(
+                                any(name.endswith(".read") for name in stores),
+                                expected is not None,
+                            )
+                            value, = run(loads(dumps(program)))
+                            if expected is None:
+                                self.assertEqual(value.type_name, "library.Item")
+                            else:
+                                self.assertEqual(value, expected)
+
+    def test_dynamic_reflection_keeps_imported_methods(self):
+        """Runtime type lookup keeps the dynamically discoverable method surface."""
+        from valiance.runtime import compile_program
+        from valiance.runtime.bytecode import OpCode
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "library.vlnc").write_text(
+                "public object Item =>\n"
+                "  public $value: Int\n"
+                "  public define hidden -> Int => 17 end\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse(
+                'import {library}\nunsafe => lookupRuntimeType?("library.Item") end'
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+            program = compile_program(typed, optimize=False)
+            stored = [
+                str(instruction.arg) for instruction in program.main.instructions
+                if instruction.op == OpCode.STORE_VAR
+            ]
+            self.assertTrue(any(name.endswith(".hidden") for name in stored))
+
+    def test_used_std_web_import_excludes_unrelated_runtime_definitions(self):
+        """One web object must not pull in hundreds of unused library functions."""
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse('import {std.web}\nweb.Response(body="ok")'))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertGreater(len(analyser.runtime_prelude), 500)
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                program = compile_program(typed, optimize=optimize)
+                serialized = dumps(program)
+                # This checks the executable, not just the analyser's list of
+                # declarations. Leave headroom for normal standard-library growth.
+                self.assertLess(len(serialized), 100_000)
+                response, = run(loads(serialized))
+                self.assertEqual(response.type_name, "web.Response")
+                self.assertEqual(response.fields["body"], "ok")
+
+    def test_unused_std_web_import_does_not_inflate_executable(self):
+        """The biggest standard-library namespace must be free to link when unused."""
+        from valiance.runtime import compile_program, dumps, loads, run
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse("import {std.web}\n42"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertGreater(len(analyser.runtime_prelude), 100)
+        simple = Analyser().analyse(parse("42"))
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                compiled = compile_program(typed, optimize=optimize)
+                self.assertEqual(
+                    dumps(compiled), dumps(compile_program(simple, optimize=optimize))
+                )
+                self.assertEqual(run(loads(dumps(compiled))), [42])
+
+    def test_source_import_hashing_is_deferred_until_requested(self):
+        """Loading source-only interfaces must not compile unused runtime code."""
+        from valiance.runtime import compile_program
+        from valiance.runtime.compiled_module import implementation_hash
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "provider.vlnc"
+            provider.write_text(
+                "public define answer(value: Int) -> Int => $value + 42\n", encoding="utf-8",
+            )
+            loader = ModuleLoader()
+            consumer = root / "main.vlnc"
+            with patch("valiance.runtime.compile_program", wraps=compile_program) as compiler:
+                analyser = Analyser(module_loader=loader, source_file=consumer)
+                typed = analyser.analyse(parse("import {provider}\n42"))
+                self.assertEqual(analyser.diagnostics, [])
+                self.assertEqual(compiler.call_count, 0)
+                self.assertTrue(typed)
+                self.assertEqual(len(loader.dependency_hashes_for(consumer)), 1)
+                self.assertEqual(compiler.call_count, 0)
+
+                dependencies = loader.dependency_implementation_hashes_for(consumer)
+                self.assertEqual(len(dependencies), 1)
+                self.assertEqual(compiler.call_count, 1)
+                self.assertEqual(
+                    loader.dependency_implementation_hashes_for(consumer), dependencies,
+                )
+                self.assertEqual(compiler.call_count, 1)
+
+            # The deferred digest must retain the exact bytecode-hash contract,
+            # not silently switch to a source-text fingerprint.
+            provider_analyser = Analyser(source_file=provider)
+            provider_typed = provider_analyser.analyse(parse(provider.read_text()))
+            self.assertEqual(provider_analyser.diagnostics, [])
+            self.assertEqual(
+                dependencies[0][1], implementation_hash(compile_program(provider_typed)),
+            )
+
+    def test_deferred_implementation_hash_observes_source_invalidation(self):
+        """Reanalysis after an edit must replace both checked code and its hash."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "provider.vlnc"
+            main = root / "main.vlnc"
+            loader = ModuleLoader()
+            provider.write_text("public define answer(value: Int) -> Int => $value + 7\n")
+            first = loader.load(ImportPath(("provider",)), current_file=main)
+            original = loader.implementation_hash_for(first)
+            provider.write_text("public define answer(value: Int) -> Int => $value + 8\n")
+            loader.invalidate({provider})
+            later = loader.load(ImportPath(("provider",)), current_file=main)
+            self.assertNotEqual(loader.implementation_hash_for(later), original)
+
+    def test_import_runtime_rewrite_reuses_unchanged_nodes(self):
+        """Do not copy unchanged checked bodies when linking an imported helper."""
+        from valiance.analysis.import_runtime import _rewrite_imported_self_calls
+        from valiance.asts import Symbol
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse("1 2 +"))
+        self.assertEqual(analyser.diagnostics, [])
+        nodes = tuple(typed)
+        hidden = Symbol("hidden", ("__valiance_import_test",))
+        self.assertIs(
+            _rewrite_imported_self_calls(nodes, Symbol("other"), hidden),
+            nodes,
+        )
+
+        from valiance.asts import ElementNode
+        from valiance.asts.nodes import TypedElementNode
+
+        call = TypedElementNode(ElementNode(Symbol("other")))
+        body = (nodes[0], call)
+        linked = _rewrite_imported_self_calls(body, Symbol("other"), hidden)
+        self.assertIs(linked[0], body[0])
+        self.assertIsNot(linked[1], call)
+        self.assertIsNone(call.runtime_name)
+        self.assertEqual(linked[1].runtime_name, hidden)
+        # An already-qualified call must keep its original provider identity.
+        qualified = TypedElementNode(
+            ElementNode(Symbol("other")), runtime_name=Symbol("provider", ("foreign",))
+        )
+        self.assertIs(
+            _rewrite_imported_self_calls(qualified, Symbol("other"), hidden),
+            qualified,
+        )
+
     def test_variant_case_trait_implementations_survive_imports(self):
         from valiance.incremental import CompilationCoordinator
         from valiance.runtime import compile_program, dumps, loads, run
@@ -1600,6 +1953,32 @@ $f writeLine "World"
             self.assertEqual(
                 tuple(path.name for path in cycle.members), ("a.vlnc", "b.vlnc")
             )
+
+    def test_interface_schema_reuses_registry_across_nested_round_trips(self):
+        """Scan model modules once regardless of the number of persisted records."""
+        from dataclasses import dataclass
+        from unittest.mock import patch
+        from valiance.modules_system.modules import ModuleExports
+        from valiance.runtime import interface_serialization as schema
+
+        records = tuple(ModuleExports(f"module_{index}") for index in range(20))
+        schema._registry.cache_clear()
+        try:
+            with patch.object(schema.importlib, "import_module",
+                              wraps=schema.importlib.import_module) as imports:
+                encoded = schema.dumps_interface(records)
+                self.assertEqual(schema.loads_interface(encoded), records)
+                self.assertEqual(schema.dumps_interface(records), encoded)
+                self.assertEqual(imports.call_count, len(schema._ALLOWED_MODULES))
+
+            @dataclass
+            class UnknownRecord:
+                value: int
+
+            with self.assertRaisesRegex(BytecodeFormatError, "unsupported interface record"):
+                schema.dumps_interface(UnknownRecord(1))
+        finally:
+            schema._registry.cache_clear()
 
     def test_interface_schema_is_canonical_and_not_pickle(self):
         """Encode interfaces deterministically without executable pickle payloads."""

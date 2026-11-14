@@ -283,16 +283,67 @@ class _ImportDeclarations:
                 T.Overload((T.N(owner), *params), definition.function.returns or ()),
             )
 
+    def _imported_dependency_environment(
+        self, dependencies: tuple[TypedNode, ...],
+    ) -> T.Environment:
+        """Build one provider-private scope shared by an import's object surfaces."""
+        # Imported bodies were written in the provider's lexical scope.
+        # Its private dependencies must be available while rebuilding the
+        # callable surface, without becoming imports in the caller.
+        caller = self.env
+        dependency_env = T.Environment(
+            context=caller.context.copy(), parent=caller.parent,
+        )
+        warning_count = len(self.warnings)
+        self.env = dependency_env
+        try:
+            for dependency in dependencies:
+                if isinstance(dependency, TypedImportedObjectNode):
+                    dependency_object = ModuleObject(
+                        dependency.node.name, dependency,
+                    )
+                    self._register_imported_object(
+                        dependency_object, dependency.runtime_name,
+                    )
+                    # Compiled provider metadata records canonical qualified
+                    # declarations (e.g. std.file.Encoding), while an
+                    # imported constructor's checked defaults can use the
+                    # provider-local spelling (file.Encoding). Both names
+                    # must resolve to the *same* private declaration when
+                    # checking that constructor. Never install the alias
+                    # in the consumer's public environment.
+                    canonical = dependency.node.name
+                    if len(canonical.namespace) > 1:
+                        local_name = Symbol(
+                            canonical.text, (canonical.namespace[-1],),
+                        )
+                        self._register_imported_object(
+                            replace(dependency_object, name=local_name),
+                            dependency.runtime_name,
+                        )
+                elif isinstance(dependency, TypedImportedFunctionNode):
+                    self._register_imported_definition(
+                        dependency.node.name, dependency,
+                        dependency.runtime_name,
+                    )
+        finally:
+            self.env = caller
+            del self.warnings[warning_count:]
+        return dependency_env
+
     def _register_imported_object(
         self,
         obj,
         runtime_name: Symbol,
         dependencies: tuple[TypedNode, ...] = (),
+        *, dependency_env: T.Environment | None = None,
     ) -> None:
         """Rebuild an imported surface without replaying its checked-body warnings."""
         warning_count = len(self.warnings)
         try:
-            self._register_imported_object_surface(obj, runtime_name, dependencies)
+            self._register_imported_object_surface(
+                obj, runtime_name, dependencies, dependency_env=dependency_env,
+            )
         finally:
             del self.warnings[warning_count:]
 
@@ -301,49 +352,13 @@ class _ImportDeclarations:
         obj,
         runtime_name: Symbol,
         dependencies: tuple[TypedNode, ...] = (),
+        *, dependency_env: T.Environment | None = None,
     ) -> None:
         """Restore imported declarations and retain their private default-argument scope."""
         if dependencies:
-            # Imported bodies were written in the provider's lexical scope.
-            # Its private dependencies must be available while rebuilding the
-            # callable surface, without becoming imports in the caller.
             caller = self.env
-            dependency_env = T.Environment(
-                context=caller.context.copy(), parent=caller.parent,
-            )
-            self.env = dependency_env
-            try:
-                for dependency in dependencies:
-                    if isinstance(dependency, TypedImportedObjectNode):
-                        dependency_object = ModuleObject(
-                            dependency.node.name, dependency,
-                        )
-                        self._register_imported_object(
-                            dependency_object, dependency.runtime_name,
-                        )
-                        # Compiled provider metadata records canonical qualified
-                        # declarations (e.g. std.file.Encoding), while an
-                        # imported constructor's checked defaults can use the
-                        # provider-local spelling (file.Encoding). Both names
-                        # must resolve to the *same* private declaration when
-                        # checking that constructor. Never install the alias
-                        # in the consumer's public environment.
-                        canonical = dependency.node.name
-                        if len(canonical.namespace) > 1:
-                            local_name = Symbol(
-                                canonical.text, (canonical.namespace[-1],),
-                            )
-                            self._register_imported_object(
-                                replace(dependency_object, name=local_name),
-                                dependency.runtime_name,
-                            )
-                    elif isinstance(dependency, TypedImportedFunctionNode):
-                        self._register_imported_definition(
-                            dependency.node.name, dependency,
-                            dependency.runtime_name,
-                        )
-            finally:
-                self.env = caller
+            if dependency_env is None:
+                dependency_env = self._imported_dependency_environment(dependencies)
             # Defaults can produce private case types, including under a
             # provider-local alias. Share relation facts without exposing names.
             for member, parent in dependency_env.context.variant_members.items():

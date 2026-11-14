@@ -151,6 +151,9 @@ HTML and Markdown display examples immediately beneath each overload.
 
 The reference tests check complete overload coverage and analyse every example.
 Deterministic examples with stack results also execute and compare runtime display.
+Each example gets a fresh analyser and runtime. Within each example-checking
+test, a shared `ModuleLoader` reuses checked interfaces for unchanged library
+sources, avoiding repeated library analysis and hashing for every snippet.
 Interactive input, filesystem mutations, random output, and intentional failures
 use explanatory descriptions instead of fixed stack results. Native boundary
 examples are analysed locally; Windows FFI execution remains in CI.

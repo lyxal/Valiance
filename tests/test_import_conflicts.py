@@ -8,6 +8,46 @@ from valiance.parsing import parse
 
 
 class ImportConflictTests(unittest.TestCase):
+    def test_imported_constructors_share_private_defaults_without_exposing_them(self):
+        from valiance.runtime import compile_program, dumps, loads, run
+        from valiance.vtypes.symbols import Symbol
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "provider.vlnc").write_text('''
+variant Mode => First Second end
+public object A =>
+  $mode: Mode
+  define A(mode: Mode = Mode.\\First) => $self.mode = $mode end
+end
+public object B =>
+  $mode: Mode
+  define B(mode: Mode = Mode.\\Second) => $self.mode = $mode end
+end
+''', encoding="utf-8")
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse('''
+import {provider.[A, B]}
+variant Mode => Local end
+$a = A
+$b = B
+$a.mode | $b.mode
+'''))
+            self.assertEqual(analyser.diagnostics, [])
+            scopes = [
+                analyser.env.default_argument_scopes[(overload.implementation_id, overload)]
+                for name in ("A", "B")
+                for overload in analyser.env.overloads_for(Symbol(name))
+                if any(overload.param_defaults)
+            ]
+            self.assertEqual(len(scopes), 2)
+            self.assertIs(scopes[0], scopes[1])
+            self.assertIsNone(analyser.env.lookup_variant(Symbol("Mode", ("provider",))))
+            for optimize in (False, True):
+                values = run(loads(dumps(compile_program(typed, optimize=optimize))))
+                self.assertEqual([value.type_name for value in values],
+                                 ["provider.Mode.First", "provider.Mode.Second"])
+
     def analyse(self, root: Path, source: str) -> Analyser:
         analyser = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
         analyser.analyse(parse(source))
