@@ -446,6 +446,11 @@ into `Overload.is_multi` after generic constraints and annotation rewrites have
 been applied, then stores the updated overload on the `FunctionOverloadTyping`
 that codegen will compile.
 
+The analyser checks for a unique overload at the intersection of overlapping
+explicit `multi define` declarations. Compiler-generated trait and variant
+methods can share the runtime dispatch flag while following their own
+implementation and override rules.
+
 A `multi` overload must have an already visible non-`multi` fallback overload of
 the same element. Every `multi` parameter must be assignable to the corresponding
 fallback parameter, and return types must match exactly after normalization. This

@@ -417,6 +417,7 @@ class Overload:
         hash=False,
     )
     is_multi: bool = field(default=False, compare=False, hash=False)
+    is_explicit_multimethod: bool = field(default=False, compare=False, hash=False)
     runtime_static_values: tuple[object, ...] = field(
         default=(),
         compare=False,

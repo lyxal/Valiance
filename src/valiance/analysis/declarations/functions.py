@@ -57,7 +57,7 @@ class _FunctionDeclarations:
     """Own declaration operations for this domain."""
 
     def _validate_multimethod_meets(self, nodes: tuple[ASTNode, ...]) -> bool:
-        """Check that overlapping runtime specializations have a unique meet."""
+        """Check that overlapping explicit multimethods have a unique meet."""
         origins = {
             node.name: node for node in nodes
             if isinstance(node, DefineNode) and node.is_multi
@@ -68,12 +68,14 @@ class _FunctionDeclarations:
                 overload.implementation_id: tuple(
                     multimethod_dispatch_type(param) for param in overload.params
                 )
-                for overload in overloads if overload.is_multi
+                for overload in overloads if overload.is_explicit_multimethod
             }
             signatures = tuple(
                 domain for domain in domains.values() if any(param is not None for param in domain)
             )
             for left, right in combinations(signatures, 2):
+                if len(left) != len(right):
+                    continue
                 meet = tuple(
                     self._multimethod_parameter_meet(a, b)
                     for a, b in zip(left, right, strict=True)
@@ -99,7 +101,7 @@ class _FunctionDeclarations:
         self, left: tuple[T.Type | None, ...], right: tuple[T.Type | None, ...],
     ) -> bool:
         """Compare runtime parameter domains componentwise."""
-        return all(
+        return len(left) == len(right) and all(
             b is None or (a is not None and T.subtype(a, b, self.env.context))
             for a, b in zip(left, right, strict=True)
         )
@@ -232,6 +234,7 @@ class _FunctionDeclarations:
             declared_overload = replace(
                 declared_overload,
                 is_multi=node.is_multi,
+                is_explicit_multimethod=node.is_multi,
                 implementation_id=declaration_id(
                     self.source_file, node.location, declared_overload
                 ),
@@ -288,9 +291,12 @@ class _FunctionDeclarations:
             declared_signature_node = replace(declared_signature_node, params=())
         declared_overload = _functions._fully_typed_overload(declared_signature_node)
         if declared_overload is not None:
-            declared_overload = replace(declared_overload, is_multi=node.is_multi, implementation_id=declaration_id(
-                self.source_file, node.location, declared_overload,
-            ))
+            declared_overload = replace(
+                declared_overload,
+                is_multi=node.is_multi,
+                is_explicit_multimethod=node.is_multi,
+                implementation_id=declaration_id(self.source_file, node.location, declared_overload),
+            )
         owned_declarations = self._prescanned_definition_overloads.get(id(node), ())
         declared_identity: str | None = None
         if declared_overload is not None:
@@ -551,7 +557,7 @@ class _FunctionDeclarations:
         if not node.is_multi:
             return overload
 
-        overload = replace(overload, is_multi=True)
+        overload = replace(overload, is_multi=True, is_explicit_multimethod=True)
         if _functions._has_multimethod_fallback(
             overload,
             self.env.overloads_for(name),
