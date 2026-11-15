@@ -55,7 +55,7 @@ _KEYWORDS = frozenset(
         "import",
         "match",
         "move",
-        "multi",
+        "alt",
         "object",
         "private",
         "property",

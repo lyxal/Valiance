@@ -89,7 +89,7 @@ The analyser has already decided:
 - whether a call vectorises;
 - how deeply each argument vectorises;
 - static rank values and hidden numeric `where` results;
-- whether runtime union or multimethod dispatch is permitted;
+- whether runtime union or alternative overload dispatch is permitted;
 - return tags and known collection ranks; and
 - which object-friendly or external element implementation is selected.
 
@@ -147,7 +147,7 @@ The runtime still performs genuinely dynamic work where values matter:
 - checking a checked cast;
 - matching runtime patterns;
 - selecting a branch from an analyser-produced union dispatch plan;
-- selecting a `multi` specialisation when the typed call authorises it;
+- selecting an `alt` specialisation when the typed call authorises it;
 - traversing eager or lazy lists according to a compiled vectorisation plan;
 - handling panics; and
 - retaining, releasing, and cleaning up runtime values.
@@ -732,13 +732,18 @@ original implementation identity.
 The VM matches concrete arguments against those patterns and links the recorded
 implementation identity. It does not rank overloads or choose a more specific return type.
 
-### Multimethod dispatch
+### Alternative Overload Selection
+
+Alternative Overload Selection (AOS) is the language name for the explicit
+multiple-dispatch mechanism enabled by `alt define`. The compiler and runtime
+refer to the mechanism through fields such as `multidispatch` and
+`DispatchKind.MULTIMETHOD`.
 
 A resolved call may set `dispatch_kind=DispatchKind.MULTIMETHOD`. The selected slot is the analysed
-fallback, and the VM may replace it with a compatible `multi` specialisation
+fallback, and the VM may replace it with a compatible `alt` specialisation
 whose runtime object types match.
 
-Without that mode, no multimethod search occurs.
+Without that mode, no alternative overload search occurs.
 
 ### Runtime checks inside a selected implementation
 
@@ -1355,7 +1360,7 @@ after destruction. A real destructor panic stays primary over the contractual
 fault.
 
 An object destructor is linked only under its owner-qualified runtime key
-(`Type::~Type`), never as an ordinary unqualified `~Type` multimethod. Public
+(`Type::~Type`), never as an ordinary unqualified `~Type` overload. Public
 module interfaces carry the checked private lifecycle implementation so
 compiled-only imports construct objects with the same final-release behavior.
 Rebuilding a constructor from an imported trait-implementation witness must
@@ -1871,7 +1876,7 @@ metadata was lost.
 | source stack-function arguments | `_Frame.source_args` | manually slice stack and cycle values |
 | compile an overload set | `FunctionSetCode` | discard all but one body |
 | permit runtime union dispatch | analyser-produced `dispatch_plan` | try bodies until one works |
-| permit runtime multimethod selection | `dispatch_kind=DispatchKind.MULTIMETHOD` on the resolved reference | inspect every overload unconditionally |
+| permit Alternative Overload Selection | `dispatch_kind=DispatchKind.MULTIMETHOD` on the resolved reference | inspect every overload unconditionally |
 | vectorise a resolved call | compiled depths/target ranks | make scalar built-ins map themselves |
 | preserve lazy dependencies | `_bind_lazy_result_owners` and retain/release helpers | capture raw values without ownership |
 | add a value kind | `runtime_values.py` plus VM ownership/type/format paths | define format rules only in `println` |

@@ -3329,26 +3329,26 @@ define[T] get(ind: Number, xs: T+) => swap get
 ```
 
 - Note that normal overload resolution rules still apply.
-# 20. Multimethods
-- Standard overload resolution is static dispatch.
-- The chosen overload is selected solely based on statically known types.
-- But, what if arguments have been upcast to a trait?
-  - `Animal+` says nothing of what animals are there
-  - Mapping over an `Animal+` will apply the function defined for `Animal`.
-- Executing on specialised types would otherwise require pattern matching
-  - Not very extensible though, as the match statement would need to be updated every time a new subtype is added
-- The `multi define` keyword allows a method to be executed at runtime based on the exact runtime type.
-  - Even if static dispatch would choose the supertype overload, a `multi` annotated element would be chosen.
-- A `multi` element must have a "fallback" element defined - one where all parameters are of either the same type or a supertype.
-  - More specifically, if a `multi` element has parameters `(T1, T2, T3, ...)`, then there must be a non-`multi` element with parameters `(U1, U2, U3, ...)` where `T1 <= U1, T2 <= U2, T3 <= U3, ...`
-- Additionally, a `multi` method must return the same type(s) as its fallback element. 
-  - This restriction is what makes this system of multiple dispatch ergonomic. Otherwise the return type of the fallback element would need to be the union of all multimethods, which really isn't practical, and breaks extensibility.
-  - Plus, chances are that if your runtime specialisation needs to return something different to if you just did pattern matching, then you're probably doing something wrong.
-- Which element is considered the fallback is automatically handled by normal overload resolution.
-  - Multimethods are only used at compile time if there is an exact type match. That is, if a multimethod can exactly match static types, the runtime dispatch is skipped. The same overload resolution rules apply.
-  - This should not be surprising, because it's compile time resolution like there wasn't a `multi` to begin with.
-- Canonical example of collisions between asteroids and spaceships
-  - Note that the two objects have been made subtypes of a trait to actually show the multiple dispatch. Otherwise it'd just be normal overload resolution
+# 20. Alternative Overload Selection (AOS)
+
+- Standard overload resolution is static dispatch. It selects an overload solely from the statically known types.
+- What if arguments have been upcast to a trait?
+  - `Animal+` says nothing about which kinds of animals it contains.
+  - Mapping over an `Animal+` applies the overload defined for `Animal`.
+- Without AOS, executing code specialised for each subtype would require pattern matching.
+  - Each new subtype would require updating the match statement.
+- `alt define` declares an alternative overload that can be selected from the actual argument types at runtime. This is a form of multiple dispatch.
+  - Even when static dispatch selects the supertype overload, AOS can choose a matching alternative overload at runtime.
+- An `alt` overload must have an ordinary fallback overload whose parameters are each the same type or a supertype of the corresponding alternative parameter.
+  - If the alternative has parameters `(T1, T2, T3, ...)`, the fallback must have parameters `(U1, U2, U3, ...)` where `T1 <= U1, T2 <= U2, T3 <= U3, ...`.
+- An alternative overload must return the same type or types as its fallback.
+  - This restriction makes AOS extensible. If alternatives could return different types, the fallback would need a union of every alternative's return types and would need updating when a new alternative introduced another return type.
+  - Runtime specialisation serves the same purpose as pattern matching here. Each specialised branch should still satisfy the result contract of the operation.
+- Normal overload resolution chooses the fallback.
+  - Ordinary overload resolution selects an alternative overload at compile time only when its parameter types exactly match the static argument types. An exact match resolves the call directly and skips runtime selection.
+  - When runtime selection finds no applicable alternative, the call uses the statically selected fallback.
+- The collision example uses asteroids and spaceships that are both subtypes of `Collidable`.
+  - Passing them as `Collidable` demonstrates AOS. Passing them with their concrete types known would let ordinary static overload resolution select the overload.
 
 ```
 trait Collidable => end
@@ -3359,14 +3359,14 @@ object Asteroid as Collidable => end
 
 define collide(:Collidable * 2) => "Default collision"
 
-multi define collide(:Asteroid, :Spaceship) => "a/s"
+alt define collide(:Asteroid, :Spaceship) => "a/s"
 
-multi define collide(:Spaceship, :Asteroid) => "s/a"
+alt define collide(:Spaceship, :Asteroid) => "s/a"
  
 
-multi define collide(:Spaceship, :Spaceship) => "s/s"
+alt define collide(:Spaceship, :Spaceship) => "s/s"
 
-multi define collide(:Asteroid, :Asteroid) => "a/a"
+alt define collide(:Asteroid, :Asteroid) => "a/a"
 ```
 
 - Better example is Hutton's razor
@@ -3395,7 +3395,7 @@ object Mul =>
 end
 object Mul as Expr => end
 
-multi define eval(:Mul) =>
+alt define eval(:Mul) =>
   [$.left, $.right] eval | product
 end
 ```

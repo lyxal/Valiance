@@ -166,6 +166,14 @@ class SourceToolsTests(unittest.TestCase):
         self.assertIn("Doubles <code>value</code>.", rendered)
         self.assertIn("src/main.vlnc", rendered)
 
+    def test_documented_alternative_overload_preserves_alt_in_signature(self):
+        source = "#?? Doubles an integer.\nalt define double(value: Int) -> Int => $value 2 *\n"
+
+        definitions = extract_documented_defines(source)
+
+        self.assertEqual(len(definitions), 1)
+        self.assertEqual(definitions[0].signature, "alt define double(value: Int) -> Int")
+
     def test_project_source_files_excludes_generated_and_dependency_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -412,7 +412,7 @@ are checked in separate `object X as Trait` blocks; their checked metadata may
 already be present on the exported object, but code generation still needs the
 corresponding `friendly_definitions` to emit runtime method bindings. Use the
 module-neutral `provider_runtime_object` projection, not a library-specific
-import hook. Runtime multimethod overloads must preserve canonical receiver
+import hook. Alternative overloads must preserve canonical receiver
 dispatch evidence; otherwise identical short names from different providers
 collide. See the multi-provider regressions in
 `tests/test_multimodule_alias_identity_repairs.py`.

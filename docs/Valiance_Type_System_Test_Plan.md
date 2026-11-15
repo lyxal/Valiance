@@ -142,7 +142,7 @@ Implementation status. No Valiance executable or compiler source was provided, a
 
 **Counterexample source:** `src/overloading-polymorphism.md`. **Valiance references:** §4.2; §6.5–6.6; §11.1–11.3; §20; §23.6–23.15.
 
-**Failure hypothesis:** Static overload, trait/generic abstraction, module imports, or runtime multimethods disagree about which implementation is callable or what it returns. **Safety invariant:** Overload choice is deterministic or diagnosed ambiguous; call-site and runtime dispatch respect declared arity, multiplicity, and result contracts.
+**Failure hypothesis:** Static overload, trait/generic abstraction, module imports, or runtime alternative overloads disagree about which implementation is callable or what it returns. **Safety invariant:** Overload choice is deterministic or diagnosed ambiguous; call-site and runtime dispatch respect declared arity, multiplicity, and result contracts.
 
 #### O01 — Specific-over-general (positive)
 
@@ -164,9 +164,9 @@ Implementation status. No Valiance executable or compiler source was provided, a
 
 **Setup:** Construct two overlapping union branches with different recorded overload choices. **Stimulus:** Pass overload-set callable into a union-covered higher-order operation. **Expected oracle:** Reject the callable when overlap could dispatch inconsistently.
 
-#### O06 — Multimethod fallback contract (negative)
+#### O06 — Alternative overload fallback contract (negative)
 
-**Setup:** Declare normal fallback and multi specialization with incompatible return type or multiplicity. **Stimulus:** Attempt to compile and invoke through trait-typed receiver. **Expected oracle:** Reject incompatible specialization; never expose runtime output that violates fallback static type.
+**Setup:** Declare normal fallback and an alternative overload with incompatible return type or multiplicity. **Stimulus:** Attempt to compile and invoke through trait-typed receiver. **Expected oracle:** Reject incompatible specialization; never expose runtime output that violates fallback static type.
 
 #### O07 — Module/import override coherence (metamorphic)
 
@@ -318,9 +318,9 @@ Implementation status. No Valiance executable or compiler source was provided, a
 
 **Setup:** Provide default trait implementation constructing/returning a concrete object; reuse trait in other type. **Stimulus:** Try to satisfy a return-$self requirement via reused default. **Expected oracle:** Reject when default does not return the actual implementer.
 
-#### SELF04 — Multimethod self binding (metamorphic)
+#### SELF04 — Alternative overload self binding (metamorphic)
 
-**Setup:** Combine self-relative return requirement and valid multimethod fallback. **Stimulus:** Compare static direct call with trait-upcast runtime call. **Expected oracle:** Runtime choice never changes promised concrete return or arity.
+**Setup:** Combine self-relative return requirement and valid alternative overload fallback. **Stimulus:** Compare static direct call with trait-upcast runtime call. **Expected oracle:** Runtime choice never changes promised concrete return or arity.
 
 ### C10 — Avoidance of out-of-scope inferred types [P2; Conditional]
 
@@ -404,7 +404,7 @@ Implementation status. No Valiance executable or compiler source was provided, a
 
 **X07 — Native-owner reconstruction guarded [negative].** Setup: Define owning pointer object with ordinary writable field and destructor. Action: Attempt field reconstruction of alias carrying owned pointer. Oracle: Must be rejected or handled by explicit ownership-safe design; spec §27.14 forbids any ordinary writable field on owner.
 
-**X08 — Serialized bytecode preserves type witnesses [metamorphic].** Setup: Compile supported reified union/tag/multimethod examples to bytecode. Action: Run inline/interpreter and compiled/reloaded outputs. Oracle: Same accept/reject and runtime outputs; no evidence erased.
+**X08 — Serialized bytecode preserves type witnesses [metamorphic].** Setup: Compile supported reified union/tag/alternative overload examples to bytecode. Action: Run inline/interpreter and compiled/reloaded outputs. Oracle: Same accept/reject and runtime outputs; no evidence erased.
 
 **X09 — Malformed generic test is a compile diagnostic [negative].** Setup: Use intentionally contradictory rank, generic and variant constraints. Action: Compile in isolation and as module dependency. Oracle: Compiler reports controlled diagnostic; no stack overflow, internal error, or hang.
 
@@ -605,7 +605,7 @@ Mode: **design-confirmation**
 
 **Module/import or scope inference:** R06, C10, C11, C12, R04, R08.
 
-**Multimethod/overload selection:** R04, R03, R06.
+**Alternative overload/overload selection:** R04, R03, R06.
 
 **Concurrency/channel/task handles:** X03, X04, X05, R02, R06.
 

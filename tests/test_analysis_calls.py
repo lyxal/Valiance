@@ -501,8 +501,8 @@ object Cat => end
 object Cat as Animal => end
 
 define f(:Animal, :Animal) -> String => "Animal, Animal"
-multi define f(:Dog, :Animal) -> String => "Dog, Animal"
-multi define f(:Animal, :Cat) -> String => "Animal, Cat"
+alt define f(:Dog, :Animal) -> String => "Dog, Animal"
+alt define f(:Animal, :Cat) -> String => "Animal, Cat"
 '''
         call = r'println f(\Dog, \Cat)'
         for body in ("", call, r'''
@@ -517,7 +517,7 @@ println g(\Dog, \Cat)
 
         analyser = Analyser()
         analyser.analyse(parse(
-            declarations + 'multi define f(:Dog, :Cat) => "Dog, Cat"\n' + call,
+            declarations + 'alt define f(:Dog, :Cat) => "Dog, Cat"\n' + call,
         ))
         self.assertEqual(analyser.diagnostics, [])
 

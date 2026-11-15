@@ -88,7 +88,7 @@ source_cases(InteractionPlanTests, [
     C("TY-017", SIZED + 'define accept(value: Sized | Sized) -> Int => $value size end\nItem(7) accept', [7]),
     C("CA-011", SIZED + 'define widen(value: Sized) -> Sized => $value end\n'
       'define pick(value: Sized) -> Sized => Other(4) end\n'
-      'multi define pick(value: Item) -> Sized => Item(7) end\n'
+      'alt define pick(value: Item) -> Sized => Item(7) end\n'
       'Item(1) widen | pick | match =>\n as item: Item => $item.value\n as _ => -1\nend', [7]),
     C("VS-008", SIZED + 'define merge(a: Sized, b: Sized) -> Sized => Item(($a size) + ($b size)) end\n'
       '$values: Sized+ = [Item(1), Other(2), Item(4)]\n$values reduce: merge | size', [8]),

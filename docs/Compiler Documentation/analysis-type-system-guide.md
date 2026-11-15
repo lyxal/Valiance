@@ -378,7 +378,7 @@ Overload resolution itself belongs in `types.relations`, not in the analyser.
 The analyser owns how overload application transforms branches.
 
 After checking a module's definitions, the analyser checks the visible
-`multi define` overloads in pairs. When their runtime parameter domains
+`alt define` overloads in pairs. When their runtime parameter domains
 overlap, exactly one specialization must have the componentwise greatest
 lower bound of those domains. For example, `(Dog, Animal)` and
 `(Animal, Cat)` require a `(Dog, Cat)` specialization. The check runs even
@@ -427,7 +427,7 @@ calls an `IO` operation, the inferred function type also carries `IO`.
   codegen find the runtime implementation without re-resolving overloads by type
 - optional-parameter defaults copied from `define` declarations on
   `Overload.param_defaults`
-- whether a fallback user-defined call needs runtime multimethod selection,
+- whether a fallback user-defined call needs Alternative Overload Selection,
   stored on `AppliedOverload.multidispatch`
 
 Keep this on typed metadata, not on the raw parser `ElementNode`. Parser AST
@@ -439,27 +439,30 @@ which arguments were named, positional, or `_` placeholders. The analyser uses
 that structure to lower optional defaults only for ECS calls. Ordinary stack
 calls still require the full non-modifier arity.
 
-### Multimethods
+### Alternative Overload Selection
 
-The parser records `multi define` as `DefineNode.is_multi`. Analysis turns that
+Alternative Overload Selection (AOS) is opt-in multiple dispatch on the
+runtime types of the arguments.
+
+The parser records `alt define` as `DefineNode.is_multi`. Analysis turns that
 into `Overload.is_multi` after generic constraints and annotation rewrites have
 been applied, then stores the updated overload on the `FunctionOverloadTyping`
 that codegen will compile.
 
 The analyser checks for a unique overload at the intersection of overlapping
-explicit `multi define` declarations. Compiler-generated trait and variant
+explicit `alt define` declarations. Compiler-generated trait and variant
 methods can share the runtime dispatch flag while following their own
 implementation and override rules.
 
-A `multi` overload must have an already visible non-`multi` fallback overload of
-the same element. Every `multi` parameter must be assignable to the corresponding
+An `alt` overload must have an already visible ordinary fallback overload of
+the same element. Every `alt` parameter must be assignable to the corresponding
 fallback parameter, and return types must match exactly after normalization. This
 validation happens in the analyser with `T.assignable(...)` and `T.same(...)` so
 trait implementations and ordinary subtype rules stay centralized.
 
-Runtime dispatch is decided statically. If normal overload resolution selects a
-`multi` overload exactly, the typed call remains an ordinary resolved call. If it
-selects a non-`multi` fallback with compatible `multi` specialisations,
+Runtime dispatch is decided statically. If normal overload resolution selects an
+`alt` overload exactly, the typed call remains an ordinary resolved call. If it
+selects an ordinary fallback with compatible `alt` specialisations,
 `AppliedOverload.multidispatch` is set so codegen can emit the runtime dispatch
 flag. If no runtime specialisation matches at execution time, the VM calls the
 fallback overload selected by analysis.

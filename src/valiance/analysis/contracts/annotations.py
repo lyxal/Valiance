@@ -334,7 +334,7 @@ def _validate_test_annotation(
             )
         if node.is_multi:
             diagnostics.append(
-                f"@{annotation.name.text} cannot annotate a multi define"
+                f"@{annotation.name.text} cannot annotate a alt define"
             )
         if node.generics:
             diagnostics.append(

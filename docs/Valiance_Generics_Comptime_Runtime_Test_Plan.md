@@ -12,7 +12,7 @@
 2. The generic **unification/combine rules in §16.2 are explicitly marked tentative** by the design. Tests with residual list rank and cross-parameter combination should assert the behavior currently chosen by the implementation and be tagged `[Decision]` if design review has not finalized it; do not hardcode one interpretation as settled language law.
 3. `exact`, `atomic`, and `novec` are **call policies / candidate evidence**, not runtime types (§16.1–16.2, §7.2). `exact` is applied before normal unification; `novec` prevents peeling vectorisation rank. `atomic` enforces scalar evidence without resetting the solved generic.
 4. `where` is a **restricted static evaluator**, *not* arbitrary Zig-style comptime execution (§22). Compile-time cases here test rank/type computations, function signature introspection, and overload rejection via `?`, not arbitrary trait-method execution.
-5. Standard overload resolution is static (§4.2); `multi define` is opt-in runtime specialization (§20). Union-covered overloaded functions can carry precomputed runtime branch plans (§6.5); these tests keep those paths distinct.
+5. Standard overload resolution is static (§4.2); `alt define` is opt-in runtime specialization (§20). Union-covered overloaded functions can carry precomputed runtime branch plans (§6.5); these tests keep those paths distinct.
 6. Types and generics can occur in ranked lists (`+`, `*`, `~`), tuples, records, function values, objects, variants, tags, optionals, results, and type-constrained imports. These interactions are where cross-phase errors arise.
 7. **Do not test shared-state semantics:** §12.8 has been intentionally excluded at the user's direction. There are no tests of `&Object` handles, shared alias mutation, lease rules, or shared-state concurrency.
 
@@ -814,7 +814,7 @@ The following are **not** automatically compiler defects. They need explicit sem
 5. **Generic variance inference through deeply nested function/union/row types:** Core variance rules are defined, but complete higher-order polarity semantics and corner-case normalizations need explicit acceptance tests.
 6. **Variadic tuple pattern matching with multiple repeated segments:** The document permits the pattern, but ambiguous partition resolution is not fully detailed. Add deterministic success/failure rules.
 7. **Generic result signatures involving default optional `None` values:** Exact type inference from absence-only expressions may require expected-type contexts; test whichever inference/defaulting policy the compiler supports.
-8. **Relationship between generic static specialization and `multi` dispatch:** They are two different systems; when both apply to a call, write down and test precedence of exact static specialization versus runtime multimethod dispatch.
+8. **Relationship between generic static specialization and `alt` dispatch:** They are two different systems; when both apply to a call, write down and test precedence of exact static specialization versus runtime alternative overload dispatch.
 9. **Expected rank-zero result from `where`:** Return-rank grammar requires positive ranks; make behavior of a zero-length `shape` tuple explicit (different overload, reject, or carefully typed scalar path).
 
 **Scope reminder:** Shared-state-object semantics in §12.8 are intentionally excluded, as requested.

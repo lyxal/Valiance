@@ -530,7 +530,7 @@ def _definition_signature(definition: DefineNode) -> str:
     if definition.visibility is not None:
         parts.append(str(definition.visibility))
     if definition.is_multi:
-        parts.append("multi")
+        parts.append("alt")
     parts.append("define")
     if definition.generics:
         generics = ", ".join(str(generic) for generic in definition.generics)

@@ -354,7 +354,7 @@ class Parser:
         if self._check(TokenKind.OP) and self._current.value.startswith("#"):
             if self._peek(1).kind is TokenKind.COLON:
                 return (self._tag_overlay(self._current, visibility),)
-        if self._match_ident("multi"):
+        if self._match_ident("alt"):
             is_multi = True
         if self._match_ident("eager"):
             eager = True

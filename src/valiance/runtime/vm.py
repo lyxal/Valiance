@@ -5344,11 +5344,11 @@ class VirtualMachine:
                         runtime_types = tuple(_runtime_type_name(arg) for arg in args)
                         if not matches:
                             raise RuntimeError(
-                                "no multimethod overload matches runtime types "
+                                "no alternative overload matches runtime types "
                                 f"{runtime_types}"
                             )
                         raise RuntimeError(
-                            "ambiguous multimethod call for runtime types "
+                            "ambiguous alternative overload selection for runtime types "
                             f"{runtime_types}"
                         )
                     selected = matches[0]
@@ -8516,7 +8516,7 @@ def _select_multimethod_for_args(
         return matches[0]
     if len(matches) > 1:
         raise RuntimeError(
-            "ambiguous multimethod call for runtime types "
+            "ambiguous alternative overload selection for runtime types "
             f"{tuple(_runtime_type_name(arg) for arg in args)}"
         )
     return fallback

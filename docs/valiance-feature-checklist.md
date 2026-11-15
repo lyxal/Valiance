@@ -523,7 +523,7 @@ Status markers:
 - [x] Support trait types in parameters and casts.
 - [x] Support intersection types requiring multiple traits.
 - [x] Support static dispatch through trait-typed values.
-- [x] Integrate traits with overload resolution and multimethods.
+- [x] Integrate traits with overload resolution and alternative overloads.
 
 ## 30. Variants
 
@@ -672,14 +672,14 @@ Status markers:
 - [x] Generate every required argument-order overload permutation.
 - [x] Apply normal overload resolution to generated permutations.
 
-## 36. Multimethods
+## 36. Alternative Overload Selection
 
-- [x] Parse `multi define`.
+- [x] Parse `alt define`.
 - [x] Register runtime-dispatched overloads.
-- [x] Require a compatible non-multi fallback overload.
-- [x] Require multimethod return signatures to match their fallback.
+- [x] Require a compatible ordinary fallback overload.
+- [x] Require alternative overload return signatures to match their fallback.
 - [x] Select specialisations from exact runtime argument types.
-- [x] Use compile-time dispatch when static types already identify an exact multimethod.
+- [x] Use compile-time dispatch when static types already identify an exact alternative overload.
 - [x] Fall back to normal overload resolution when no runtime specialisation applies.
 - [x] Support multiple runtime-dispatched parameters.
 
@@ -962,7 +962,7 @@ User-defined cast declarations are not part of the current design. Named transfo
 - [x] Provide optional and result helper elements.
 - [~] Provide `or` for extension selection.
 - [x] Provide tag application and removal operations.
-- [x] Provide type inspection required by matching and multimethods.
+- [x] Provide type inspection required by matching and alternative overloads.
 - [x] Provide standard fault, result, option, task, and channel types.
 - [x] Provide the standard traits referenced by the language.
 - [x] Provide the `std` module namespace and module-resolution behavior.

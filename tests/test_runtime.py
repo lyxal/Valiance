@@ -7491,9 +7491,9 @@ object Cat => end
 object Cat as Animal => end
 
 define f(:Animal, :Animal) -> String => "Animal, Animal"
-multi define f(:Dog, :Animal) -> String => "Dog, Animal"
-multi define f(:Dog, :Cat) => "Dog, Cat"
-multi define f(:Animal, :Cat) -> String => "Animal, Cat"
+alt define f(:Dog, :Animal) -> String => "Dog, Animal"
+alt define f(:Dog, :Cat) => "Dog, Cat"
+alt define f(:Animal, :Cat) -> String => "Animal, Cat"
 define g(a: Animal, b: Animal) -> String => f($a, $b) end
 
 f(\Dog, \Cat)
@@ -7512,9 +7512,9 @@ object Dog as Pet => end
 object Dog as Trained => end
 
 define f(:Animal) -> String => "animal"
-multi define f(:Animal & Pet) -> String => "pet"
-multi define f(:Animal & Trained) -> String => "trained"
-multi define f(:Animal & Pet & Trained) -> String => "trained pet"
+alt define f(:Animal & Pet) -> String => "pet"
+alt define f(:Animal & Trained) -> String => "trained"
+alt define f(:Animal & Pet & Trained) -> String => "trained pet"
 define g(a: Animal) -> String => f($a) end
 
 g(\Dog)
@@ -7531,10 +7531,10 @@ object Asteroid as Collidable => end
 
 define asCollidable(value: Collidable) -> Collidable => $value
 define collide(left: Collidable, right: Collidable) -> String => "Default collision"
-multi define collide(left: Asteroid, right: Spaceship) -> String => "a/s"
-multi define collide(left: Spaceship, right: Asteroid) -> String => "s/a"
-multi define collide(left: Spaceship, right: Spaceship) -> String => "s/s"
-multi define collide(left: Asteroid, right: Asteroid) -> String => "a/a"
+alt define collide(left: Asteroid, right: Spaceship) -> String => "a/s"
+alt define collide(left: Spaceship, right: Asteroid) -> String => "s/a"
+alt define collide(left: Spaceship, right: Spaceship) -> String => "s/s"
+alt define collide(left: Asteroid, right: Asteroid) -> String => "a/a"
 
 Asteroid | asCollidable
 Spaceship | asCollidable
@@ -7564,8 +7564,8 @@ object Add as Expr => end
 
 define asExpr(value: Expr) -> Expr => $value
 define eval(value: Expr) -> Number => 0
-multi define eval(value: Val) -> Number => $value.n
-multi define eval(value: Add) -> Number =>
+alt define eval(value: Val) -> Number => $value.n
+alt define eval(value: Add) -> Number =>
   $value.left eval
   $value.right eval
   +
@@ -7577,7 +7577,7 @@ object Mul =>
 end
 object Mul as Expr => end
 
-multi define eval(value: Mul) -> Number =>
+alt define eval(value: Mul) -> Number =>
   $value.left eval
   $value.right eval
   *
@@ -12489,8 +12489,8 @@ choose(1) | choose("x")
 
     def test_multimethod_specializations_and_fallback_survive_round_trip(self):
         declarations = (
-            'multi define choose(a: Circle, b: Square) -> String => "circle-square" end',
-            'multi define choose(a: Square, b: Circle) -> String => "square-circle" end',
+            'alt define choose(a: Circle, b: Square) -> String => "circle-square" end',
+            'alt define choose(a: Square, b: Circle) -> String => "square-circle" end',
         )
         prelude = '''
 trait Shape => end

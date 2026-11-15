@@ -846,7 +846,7 @@ $items | add 10
     def test_vectorized_multimethod_retains_scalar_fallback(self):
         self.assert_executes(self.SHAPES + '''
 define describe(shape: Shape) -> String => "fallback" end
-multi define describe(shape: Shape.Square) -> String => "square" end
+alt define describe(shape: Shape.Square) -> String => "square" end
 $shapes: Shape+ = [Square(2), Rectangle(3, 4), Square(5)]
 describe $shapes
 ''', [['square', 'fallback', 'square']])

@@ -13,10 +13,10 @@ define choose(a: Sized, b: Sized) -> String => "fallback" end
 '''
 
 SPECIALIZATIONS = (
-    'multi define choose(a: Item, b: Item) -> String => "ii" end',
-    'multi define choose(a: Item, b: Other) -> String => "io" end',
-    'multi define choose(a: Other, b: Item) -> String => "oi" end',
-    'multi define choose(a: Other, b: Other) -> String => "oo" end',
+    'alt define choose(a: Item, b: Item) -> String => "ii" end',
+    'alt define choose(a: Item, b: Other) -> String => "io" end',
+    'alt define choose(a: Other, b: Item) -> String => "oi" end',
+    'alt define choose(a: Other, b: Other) -> String => "oo" end',
 )
 MATRIX = '\n'.join(SPECIALIZATIONS) + '\n'
 
@@ -52,11 +52,11 @@ choose(widen(Other(1)), widen(Item(2)))
 choose(widen(Other(1)), widen(Other(2)))
 ''', ["ii", "io", "oi", "oo"]),
     C("MM-005", MULTI_BASE + MATRIX + 'choose(widen(Third(1)), widen(Other(2)))', ["fallback"]),
-    C("MM-006", SIZED + 'multi define choose(value: Item) -> Int => 1 end', reject=("fallback",)),
+    C("MM-006", SIZED + 'alt define choose(value: Item) -> Int => 1 end', reject=("fallback",)),
     C("MM-007", SIZED + 'define choose(value: Other) -> Int => 1 end\n'
-      'multi define choose(value: Item) -> Int => 2 end', reject=("fallback",)),
+      'alt define choose(value: Item) -> Int => 2 end', reject=("fallback",)),
     C("MM-008", SIZED + 'define choose(value: Sized) -> Int => 1 end\n'
-      'multi define choose(value: Item) -> String => "wrong" end', reject=("return",)),
+      'alt define choose(value: Item) -> String => "wrong" end', reject=("return",)),
     C("MM-009", MULTI_BASE + MATRIX + '''
 choose(widen(Item(1)), widen(Other(2)))
 choose(widen(Other(1)), widen(Item(2)))
@@ -70,11 +70,11 @@ choose(widen(Item(1)), widen(Other(2)))
     C("MM-012", MULTI_BASE + MATRIX + 'choose(Other(1), Item(2))', ["oi"]),
     C("MM-013", MULTI_BASE + 'trait Marked => end\nobject Item as Marked => end\n'
       'object Other as Marked => end\n'
-      'multi define choose(a: Item & Marked, b: Other & Marked) -> String => "marked" end\n'
+      'alt define choose(a: Item & Marked, b: Other & Marked) -> String => "marked" end\n'
       'choose(widen(Item(1)), widen(Other(2)))', ["marked"]),
     C("MM-014", SIZED + 'define widen(value: Sized) -> Sized => $value end\n'
       'define select(value: Sized) -> Sized => Other(4) end\n'
-      'multi define select(value: Item) -> Sized => Item(7) end\n'
+      'alt define select(value: Item) -> Sized => Item(7) end\n'
       'Item(1) widen | select | size', [7]),
     C("MM-015", MULTI_BASE + MATRIX + 'define wrapper(a: Item | Other, b: Sized) -> String => choose($a, $b) end\n'
       'wrapper(Item(1), widen(Other(2)))\nwrapper(Other(1), widen(Item(2)))', ["io", "oi"]),
@@ -82,8 +82,8 @@ choose(widen(Item(1)), widen(Other(2)))
       'choose(widen(Item(1)), widen(Item(2)))', ["fallback", "ii"]),
     C("MM-017", MULTI_BASE + MATRIX + 'define choose(value: String, other: String) -> String => "strings" end\n'
       'choose("a", "b")\nchoose(widen(Item(1)), widen(Other(2)))', ["strings", "io"]),
-    C("MM-020", MULTI_BASE + 'multi define choose(a: Item, b: Sized) -> String => "left" end\n'
-      'multi define choose(a: Sized, b: Item) -> String => "right" end\n'
+    C("MM-020", MULTI_BASE + 'alt define choose(a: Item, b: Sized) -> String => "left" end\n'
+      'alt define choose(a: Sized, b: Item) -> String => "right" end\n'
       'choose(widen(Item(1)), widen(Item(2)))', reject=("unique overload at their meet (Item, Item)",)),
 ])
 

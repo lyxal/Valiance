@@ -41,7 +41,7 @@ The runtime implementation is small, but several files must evolve together.
 - `FunctionCode.recursive` marks functions produced from `@recursive`; the VM
   binds `this` to the created function value when this flag is set.
 - `FunctionCode.multi` and `FunctionCode.dispatch_types` mark compiled
-  multimethod bodies and record the exact runtime nominal type names used by VM
+  alternative overload bodies and record the exact runtime nominal type names used by VM
   dispatch.
 - Explicit `RETURN` and `RETURN_SIGNAL` instructions carry the selected return
   count when syntax chooses values directly. Bare returns defer to
@@ -196,7 +196,7 @@ collection-valued stopped parameter is not automatically vectorised again.
   the call should be vectorised.
 - Resolved user-defined fallback calls may carry a static multidispatch flag.
   When present, the VM previews the call arguments and selects the first exact
-  runtime `multi` overload whose dispatch types match, otherwise it calls the
+  runtime `alt` overload whose dispatch types match, otherwise it calls the
   analyser-selected fallback overload.
 - Runtime call errors should include the stack, stack types, and attempted input
   shapes.
@@ -407,12 +407,12 @@ an exact collection parameter is passed alongside another argument that does
 vectorise.
 
 `AppliedOverload.multidispatch` records whether a resolved user-defined call
-should perform runtime multimethod selection. Analysis sets it only when normal
-static overload resolution selected a non-`multi` fallback that has compatible
-`multi` specialisations. If static types already select the exact `multi`
+should perform Alternative Overload Selection. Analysis sets it only when normal
+static overload resolution selected an ordinary fallback that has compatible
+`alt` specialisations. If static types already select the exact `alt`
 overload, codegen emits an ordinary resolved call with no runtime dispatch flag.
 
-An authorized multimethod call that vectorises selects its implementation at
+An authorized alternative overload call that vectorises selects its implementation at
 each scalar leaf. Each leaf checks the compiled specialization types and uses
 the statically selected fallback when none matches. Collection traversal retains
 the recorded vectorisation depths and broadcast parameters.
@@ -829,7 +829,7 @@ numeric results produced by a `where` clause, including solved rank values and
 other compile-time constants; call-site checked built-ins use it for
 execution-plan constants such as `both`/`sequence` group arities.
 
-If a resolved user-defined fallback call needs runtime multimethod selection,
+If a resolved user-defined fallback call needs Alternative Overload Selection,
 set `ResolvedElementReference.multidispatch`. Call-site checked built-ins can
 also set `arity_override` and `consumed_override` to describe the concrete stack
 contract selected by analysis.
@@ -1399,8 +1399,8 @@ These are known constraints of the current runtime/codegen layer:
   are runtime-dispatched.
 - Bounded nominal trait dispatch filters compiled candidates using concrete trait
   projections and serialized generic constraints (portable bytecode version `0x47`).
-- Multimethod runtime dispatch currently matches exact runtime nominal names
-  recorded on compiled `multi` user-defined overloads.
+- Alternative overload runtime dispatch currently matches exact runtime nominal names
+  recorded on compiled `alt` user-defined overloads.
 - Runtime vectorisation length mismatches raise intrinsic, catchable
   `VectorisationFault` values. The type has no user-callable constructor, so user
   code cannot manufacture one through `panic`, and intrinsic raises do not add a

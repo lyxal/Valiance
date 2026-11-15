@@ -50,7 +50,7 @@ object Multiply =>
   $right: Expression
 end
 object Multiply as Expression => end
-multi define evaluate(mul: Multiply) -> Int => evaluate $mul.left * evaluate $mul.right
+alt define evaluate(mul: Multiply) -> Int => evaluate $mul.left * evaluate $mul.right
 println evaluate Add(Multiply(Value 6, Value 7), Value 1)
 """
         for kind in ("scratch-run", "scratch-switch"):

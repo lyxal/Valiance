@@ -116,7 +116,7 @@ CASES = [
       'choose(3)\nchoose("hi")', ['integer', 'general']),
     C('O06', 'object Thing=>$id:Int end\n'
       'define use(x:Thing)->String=>"fallback" end\n'
-      'multi define use(x:Thing)->Int=>3 end\n'
+      'alt define use(x:Thing)->Int=>3 end\n'
       'Thing(1) use', reject=('return',)),
     C('O07', 'import {shapes.name}\n'
       'define name(x:Int)->String=>"local" end\n'

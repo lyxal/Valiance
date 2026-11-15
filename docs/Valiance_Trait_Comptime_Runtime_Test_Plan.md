@@ -7,7 +7,7 @@
 
 ## Design interpretation — important
 
-Valiance is **not** assumed to have a Zig-style unrestricted `comptime` instruction. The design gives `where` clauses a deliberately restricted compile-time evaluator (§22), and otherwise relies on static overload/trait resolution (§4.2, §13) plus runtime execution. Runtime-specialized multiple dispatch is an **opt-in** facility via `multi define` (§20), and overloaded function values can carry a **precomputed union-branch dispatch plan** (§6.5). Trait relationships are **import-controlled behaviour sets** (§23.8–23.14 and “Trait-to-trait behaviour sets,” near line 5,988). These differences drive the cases below.
+Valiance is **not** assumed to have a Zig-style unrestricted `comptime` instruction. The design gives `where` clauses a deliberately restricted compile-time evaluator (§22), and otherwise relies on static overload/trait resolution (§4.2, §13) plus runtime execution. Runtime-specialized multiple dispatch is an **opt-in** facility via `alt define` (§20), and overloaded function values can carry a **precomputed union-branch dispatch plan** (§6.5). Trait relationships are **import-controlled behaviour sets** (§23.8–23.14 and “Trait-to-trait behaviour sets,” near line 5,988). These differences drive the cases below.
 
 The plan deliberately avoids importing Rust-specific assumptions (associated types, coherence/orphan rules, vtables, trait-object ownership, or unrestricted const trait calls) that the document does not establish. Generic trait *parameters*, `$self` return types, anonymous structural traits, and trait-to-trait implication **are** established.
 
@@ -42,7 +42,7 @@ This specification includes **309 individually identified test cases** in **18 s
 | OV | OV-001–022 | 22 | Trait-aware overload specificity |
 | TY | TY-001–017 | 17 | Unions, intersections and ranks |
 | UC | UC-001–015 | 15 | Reified union-branch function plans |
-| MM | MM-001–020 | 20 | Runtime multimethod dispatch |
+| MM | MM-001–020 | 20 | Alternative Overload Selection |
 | IM | IM-001–025 | 25 | Behaviour imports and qualifications |
 | WH | WH-001–018 | 18 | Compile-time `where` evaluation |
 | CA | CA-001–014 | 14 | Casts and pattern matches |
@@ -65,7 +65,7 @@ Start with **TD-002/003**, **DF-001/002/003**, **BL-002/005/007**, **AN-001/002*
 | Invocation | stack call, element-call syntax, `:` when callable | parser/argument-lowering differences |
 | Types | concrete, trait-typed, union, intersection, list, generic | stress distinct matching paths |
 | Visibility | local, imported, qualified, re-exported, block-scoped | behaviour-set evidence |
-| Dispatch | ordinary static, `multi`, union-covered function value | distinct runtime plans |
+| Dispatch | ordinary static, `alt`, union-covered function value | distinct runtime plans |
 | Static evaluator | valid `where`, rejected `where`, overload fallback | comptime execution and solver rollback |
 | Persistence | fresh compile, serialized bytecode if supported, restored bytecode | metadata preservation |
 
@@ -74,7 +74,7 @@ Start with **TD-002/003**, **DF-001/002/003**, **BL-002/005/007**, **AN-001/002*
 - Trait syntax / requirements / inheritance: **§13** (around lines 2,328–2,401).
 - Anonymous traits: **§13.1** (2,402–2,441); generic unification/variance: **§16** (2,562–2,693).
 - Overload specificity/disambiguation: **§4.2** (617–672); function value union dispatch: **§6.5** (851–874).
-- Objects and `$self`: **§12** (1,904–2,328); runtime multimethods: **§20** (3,328–3,398).
+- Objects and `$self`: **§12** (1,904–2,328); Alternative Overload Selection: **§20** (3,328–3,398).
 - Static `where` execution: **§22** (3,558–3,643); imports and conflicts: **§23.8–23.15** (4,050–4,332).
 - Trait-to-trait blanket behaviour sets: addendum near **lines 5,988–6,039**.
 - Traits in containers/casts/matches: **§2**, **§7**, **§10**, **§14**, **§17**, **§25**.
@@ -479,7 +479,7 @@ Start with **TD-002/003**, **DF-001/002/003**, **BL-002/005/007**, **AN-001/002*
 
 
 
-## MM. Runtime multiple dispatch (`multi define`)
+## MM. Alternative Overload Selection (`alt define`)
 
 **Design basis:** §20; §4.2; §13  
 
@@ -487,45 +487,45 @@ Start with **TD-002/003**, **DF-001/002/003**, **BL-002/005/007**, **AN-001/002*
 
 |---|---|---|---|---|
 
-| **MM-001** | P0 | C+R | Exact static subtype matches `multi` | Compile-time selection uses exact subtype overload. |
+| **MM-001** | P0 | C+R | Exact static subtype matches `alt` | Compile-time selection uses exact subtype overload. |
 
-| **MM-002** | P0 | C+R | Trait-upcast argument calls `multi` | Runtime selects overload from exact runtime concrete type. |
+| **MM-002** | P0 | C+R | Trait-upcast argument calls `alt` | Runtime selects overload from exact runtime concrete type. |
 
-| **MM-003** | P0 | C+R | Ordinary non-`multi` trait-upcast call | Stays statically dispatched; runtime concrete type does not override choice. |
+| **MM-003** | P0 | C+R | Ordinary ordinary trait-upcast call | Stays statically dispatched; runtime concrete type does not override choice. |
 
-| **MM-004** | P0 | C+R | Two-argument multi matrix A/A A/B B/A B/B | Every ordered pair selects expected specialization. |
+| **MM-004** | P0 | C+R | Two-argument AOS matrix A/A A/B B/A B/B | Every ordered pair selects expected specialization. |
 
-| **MM-005** | P0 | C+R | Fallback used for unhandled runtime subtype | Broad non-multi fallback runs. |
+| **MM-005** | P0 | C+R | Fallback used for unhandled runtime subtype | Broad ordinary fallback runs. |
 
-| **MM-006** | P0 | C− | Multi declaration without valid non-multi fallback | Reject at compile time. |
+| **MM-006** | P0 | C− | `alt define` declaration without valid ordinary fallback | Reject at compile time. |
 
-| **MM-007** | P0 | C− | Fallback parameters fail to be supertypes | Reject invalid `multi` relationship. |
+| **MM-007** | P0 | C− | Fallback parameters fail to be supertypes | Reject invalid `alt` relationship. |
 
 | **MM-008** | P0 | C− | Specialized return differs from fallback | Reject mismatched return types or multiplicity. |
 
 | **MM-009** | P0 | C+R | Runtime types switch across repeated calls | No cached previous subtype or method-slot mix-up. |
 
-| **MM-010** | P0 | C+R | Multi call in loop over trait-typed list | Per-iteration runtime types determine correct specialization. |
+| **MM-010** | P0 | C+R | AOS call in loop over trait-typed list | Per-iteration runtime types determine correct specialization. |
 
-| **MM-011** | P0 | C+R | Multi call through generic wrapper | Specialization and fallback selection preserved across generic boundary. |
+| **MM-011** | P0 | C+R | AOS call through generic wrapper | Specialization and fallback selection preserved across generic boundary. |
 
-| **MM-012** | P0 | C+R | Multi call with an exact static concrete type | Dynamic path can be elided without changing result. |
+| **MM-012** | P0 | C+R | AOS call with an exact static concrete type | Dynamic path can be elided without changing result. |
 
-| **MM-013** | P1 | C+R | Multi-specific overload has two trait constraints | Runtime predicate checks both argument positions. |
+| **MM-013** | P1 | C+R | Alternative overload has two trait constraints | Runtime predicate checks both argument positions. |
 
-| **MM-014** | P1 | C+R | Multi result passed to trait-constrained element | Output static type equal fallback return, usable by caller. |
+| **MM-014** | P1 | C+R | AOS result passed to trait-constrained element | Output static type equal fallback return, usable by caller. |
 
-| **MM-015** | P1 | C+R | Multi parameter is union of implementer types | Runtime matches correct concrete type or fallback. |
+| **MM-015** | P1 | C+R | Alternative overload parameter is union of implementer types | Runtime matches correct concrete type or fallback. |
 
-| **MM-016** | P1 | C+R | Multimethod with zero/one/multiple applicable specializations | Respect the documented selection rules; never use declaration order. |
+| **MM-016** | P1 | C+R | Alternative overload with zero/one/multiple applicable specializations | Respect the documented selection rules; never use declaration order. |
 
-| **MM-017** | P1 | C+R | Multi and ordinary overload with same element name | Static first-stage resolution and runtime dispatch cooperate correctly. |
+| **MM-017** | P1 | C+R | Alternative and ordinary overload with same element name | Static first-stage resolution and runtime dispatch cooperate correctly. |
 
 | **MM-018** | P1 | P | Permute list order of concrete runtime arguments | Dispatch follows values, not previous call history. |
 
 | **MM-019** | P2 | P | Compile same dispatch matrix under all optimization levels | Identical results and side effect counts. |
 
-| **MM-020** | P2 | C− | Overlapping equally applicable specialized multimethods | [Decision] Specify ambiguity handling before asserting exact error or fallback. |
+| **MM-020** | P2 | C− | Overlapping equally applicable specialized alternative overloads | [Decision] Specify ambiguity handling before asserting exact error or fallback. |
 
 
 
@@ -663,7 +663,7 @@ Start with **TD-002/003**, **DF-001/002/003**, **BL-002/005/007**, **AN-001/002*
 
 | **CA-010** | P1 | C+R | `as?` against trait requiring imported provider | Runtime refinement follows appropriate visible qualified relationship. |
 
-| **CA-011** | P1 | C+R | Matching trait type after runtime multimethod call | Concrete type preserved for later pattern checks. |
+| **CA-011** | P1 | C+R | Matching trait type after runtime alternative overload call | Concrete type preserved for later pattern checks. |
 
 | **CA-012** | P1 | C+R | Repeated cast / match over union of trait implementers | Each branch runtime predicate accurate. |
 
@@ -857,7 +857,7 @@ Start with **TD-002/003**, **DF-001/002/003**, **BL-002/005/007**, **AN-001/002*
 
 | **IN-011** | P1 | P | Reorder trait/import declarations without semantic differences | Same output and diagnostics. |
 
-| **IN-012** | P1 | P | Run multi dispatch after several different concrete calls | No mutable global candidate cache leak. |
+| **IN-012** | P1 | P | Run AOS after several different concrete calls | No mutable global candidate cache leak. |
 
 | **IN-013** | P1 | P | Compile bytecode, reload and execute | Preserve trait nominal identity, chosen impl and union branch plan when persistence supported. |
 
@@ -997,7 +997,7 @@ sumStructurally([1, 2, 3] as[Number+]) #? 6
 
 **Mutations:** use a type whose visible `+` overload has a wrong return type; hide/reveal the overload with imports; build another structural trait requiring `===` as shown in §13.1. Avoid treating nominal `Addable[T]` membership as sufficient for the inline trait unless the structural overload is visible.
 
-### F7. `multi define`: exact runtime type matters only for multi
+### F7. `alt define`: exact runtime type matters for alternative overloads
 
 ```valiance
 trait Collidable => end
@@ -1007,16 +1007,16 @@ object Asteroid => end
 object Asteroid as Collidable => end
 
 define collide(:Collidable, :Collidable) => "default"
-multi define collide(:Asteroid, :Spaceship) => "A-S"
-multi define collide(:Spaceship, :Asteroid) => "S-A"
-multi define collide(:Spaceship, :Spaceship) => "S-S"
-multi define collide(:Asteroid, :Asteroid) => "A-A"
+alt define collide(:Asteroid, :Spaceship) => "A-S"
+alt define collide(:Spaceship, :Asteroid) => "S-A"
+alt define collide(:Spaceship, :Spaceship) => "S-S"
+alt define collide(:Asteroid, :Asteroid) => "A-A"
 
 collide(Asteroid, Spaceship) #? "A-S"
 collide(Spaceship, Asteroid) #? "S-A"
 ```
 
-**Mutations:** upcast both arguments to `Collidable` before the call to force dynamic selection, and compare with a parallel non-`multi` overload set where static `Collidable` must stay the broad overload. Include an unhandled third implementer to exercise `default`.
+**Mutations:** upcast both arguments to `Collidable` before the call to force dynamic selection, and compare with a parallel ordinary overload set where static `Collidable` must stay the broad overload. Include an unhandled third implementer to exercise `default`.
 
 ### F8. Open trait matching versus closed variant matching
 
@@ -1096,7 +1096,7 @@ $task wait #? 42
 |---|---|---|
 | Works only when a different type is compiled first | substitution / solver cache / specialization | GN-005/006; IN-004 |
 | Wrong provider only after import or re-export | behaviour-set visibility / identity | IM-004–015; BL-011–018 |
-| Compile success but wrong `multi` result | runtime type predicates / multimethod lowering | MM-002–012 |
+| Compile success but wrong `alt` result | runtime type predicates / alternative overload lowering | MM-002–012 |
 | Ordinary trait overload changes with runtime subtype | wrong static-vs-dynamic dispatch | MM-003; UC-005 |
 | `where` false predicate spoils later candidate | inference snapshot / candidate rollback | WH-002/016; OV-020 |
 | Works in clean build but not incremental | dependency invalidation | IN-005–009 |
@@ -1113,11 +1113,11 @@ $task wait #? 42
 4. **Mutate successful programs one rule at a time:** delete an `extend` implementation, alter a return type, alter generic arguments, hide a provider import, replace `as[Provider]` with `as[OtherProvider]`, remove a fallback, or change a `where` assertion from true to false. Verify the oracle flips exactly where expected.
 5. **Metamorphic programs:** alpha-renaming, irrelevant declaration additions, unrelated module import insertion, reordering declarations/loads, direct-vs-qualified equivalent calls, static generics wrapper insertion, clean-vs-incremental builds. Compare values, output effects, type inference and diagnostics.
 6. **Bounded stress:** cap generated graph size, recursion/compile budget, and runtime steps; classify compiler timeout or segfault as a failure, not an inconclusive test. Record random seeds to reproduce.
-7. **Backend inspections:** when the compiler exposes typed IR or traces, assert chosen trait ID, provider identity, generic arguments, preselected union branch plan, and `multi` fallback/specialization. These debug assertions make a wrong-result regression much easier to localize.
+7. **Backend inspections:** when the compiler exposes typed IR or traces, assert chosen trait ID, provider identity, generic arguments, preselected union branch plan, and `alt` fallback/specialization. These debug assertions make a wrong-result regression much easier to localize.
 
 ## Coverage and CI gates
 
-- **Pre-merge:** all **P0** cases; P1 cases directly touched by a patch; run a small fixed-seed graph and multimethod matrix; run both non-optimized and optimized execution when both modes exist.
+- **Pre-merge:** all **P0** cases; P1 cases directly touched by a patch; run a small fixed-seed graph and alternative overload matrix; run both non-optimized and optimized execution when both modes exist.
 - **Nightly:** all P0/P1, P2 stress/property tests, module and incremental suites, multiple deterministic seeds, compiler-process recovery.
 - **Release:** full suite plus from-scratch CI build, persisted bytecode/regeneration checks where implemented, randomized order and backend comparison, and a wall-clock timeout budget for cyclic trait resolution.
 - **Test triage:** track bugs separately as parsing, symbol scope, trait evidence, generic inference, overload selection, typed IR, runtime predicate, codegen, static evaluator, module cache, effect/lifetime, and diagnostics.
@@ -1131,7 +1131,7 @@ $task wait #? 42
 1. **Unrestricted compile-time trait-method evaluation:** no such facility is specified. Comptime tests should target `where` and compile-time type/overload/trait reasoning unless a newer implementation document explicitly adds general evaluation.
 2. **Runtime representation of a trait value:** no mandated vtable/fat-pointer ABI appears in the supplied document. Test observables (correct call, cast, copy, destructor, dispatch) rather than assuming table offsets or object layouts.
 3. **Provider identity across redundant imports/re-exports:** the addendum says re-exports retain originating behavior identity internally; tests should confirm path deduplication for the same originating provider. If implementation handles duplicated direct imports differently, explicitly document that rule.
-4. **Overlap resolution among multiple equally specific `multi` specializations:** §20 mandates fallback and return compatibility but does not fully spell out every tie-breaking edge. Decide and test it explicitly.
+4. **Overlap resolution among multiple equally specific `alt` specializations:** §20 mandates fallback and return compatibility but does not fully spell out every tie-breaking edge. Decide and test it explicitly.
 5. **Trait-default collisions across multiple intrinsic ancestors:** where two unrelated parent defaults provide an identically named/signatured element, §13 does not fully define conflict handling. Decide whether explicit override is required or which conflict diagnostic applies.
 6. **Whether `@mustcall` named method obligations can be met through an alias exported as a trait method:** §19.9 keys names to object-friendly methods; do not invent new equivalences. Test only the established object-friendly call path until specified.
 7. **Compiler execution commands / test harness:** the design includes `vln run` and `vln compile` project commands (§24), but this document has not inspected or run your compiler, so expected CLI flags and diagnostic codes are not guessed.

@@ -57,7 +57,7 @@ methods on received values instead of assuming an undocumented wrapper API.
 The specification's examples are blueprints. Fixtures use current parser
 spellings, including `exact`, explicit `fn` callable captures, and call-site
 `@@tupled`. Existing documented overload rules take precedence; unresolved
-multimethod or behavior-provider ambiguity must be diagnosed rather than
+alternative overload or behavior-provider ambiguity must be diagnosed rather than
 resolved by declaration or import order.
 
 ## Invariants exercised by the fixes

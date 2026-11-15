@@ -90,7 +90,7 @@ class _FunctionDeclarations:
                     continue
                 expected = ", ".join(T.show(param) if param is not None else "_" for param in meet)
                 self._diagnose(
-                    f"ambiguous overloads for element '{name}': overlapping multimethods "
+                    f"ambiguous overloads for element '{name}': overlapping alternative overloads "
                     f"require a unique overload at their meet ({expected})",
                     origins.get(name, nodes[-1]),
                 )
@@ -566,7 +566,7 @@ class _FunctionDeclarations:
             return overload
 
         self._diagnose(
-            f"multi define '{name}' requires a non-multi fallback "
+            f"alt define '{name}' requires an ordinary fallback overload "
             "with compatible parameters and identical returns",
             node,
         )
