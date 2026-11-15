@@ -12962,6 +12962,91 @@ Encode an optional with a payload encoder, using null for absence.
 import {std.json} json.encodeOptional(Some(2), fn(value: Int) -> Result[String, ValueError] => json.encode($value) end) | ?!
 ```
 
+### `std.json.get`
+
+Look up an object member. Missing keys and other JSON kinds return None.
+
+**Overloads**
+
+- `public define get(value: Json, key: String) -> Json?`
+
+  **Example**
+
+  ```vlnc
+  import {std.json} json.get(json.load("{\"name\":\"Ada\"}") ?!, "name")
+  ```
+
+- `public define get(value: Json, index: Int) -> Json?`
+
+  Look up a zero-based array position, with negative positions from the end.
+
+  Look up a zero-based array position, with negative positions from the end.
+
+  Out-of-range positions and other JSON kinds return None.
+
+  **Example**
+
+  ```vlnc
+  import {std.json} json.get(json.load("[42]") ?!, 0)
+  ```
+
+
+Look up an object member. Missing keys and other JSON kinds return None.
+
+**Example**
+
+```vlnc
+import {std.json} json.get(json.load("{\"name\":\"Ada\"}") ?!, "name")
+```
+
+### `std.json.load`
+
+Parse strict JSON without supplying a target schema.
+
+**Overloads**
+
+- `public define load(text: String) -> Result[Json, ValueError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.json} json.load("42") | ?!
+  ```
+
+
+Parse strict JSON without supplying a target schema.
+
+Duplicate keys and malformed input return ValueError.
+
+**Example**
+
+```vlnc
+import {std.json} json.load("42") | ?!
+```
+
+### `std.json.stringify`
+
+Serialize a JSON value back to JSON text.
+
+**Overloads**
+
+- `public define stringify(value: Json) -> Result[String, ValueError]`
+
+  **Example**
+
+  ```vlnc
+  import {std.json} json.stringify(json.load("[true,null]") ?!) ?!
+  ```
+
+
+Serialize a JSON value back to JSON text.
+
+**Example**
+
+```vlnc
+import {std.json} json.stringify(json.load("[true,null]") ?!) ?!
+```
+
 ## std.path
 
 ### `std.path.extension`

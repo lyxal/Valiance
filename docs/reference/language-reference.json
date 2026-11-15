@@ -19848,6 +19848,169 @@
     },
     {
       "aliases": [],
+      "category": "Json",
+      "description": [
+        "Look up an object member. Missing keys and other JSON kinds return None."
+      ],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.json} json.get(json.load(\"{\\\"name\\\":\\\"Ada\\\"}\") ?!, \"name\")"
+        }
+      ],
+      "module": "std.json",
+      "name": "get",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Json",
+          "description": [
+            "Look up an object member. Missing keys and other JSON kinds return None."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.json} json.get(json.load(\"{\\\"name\\\":\\\"Ada\\\"}\") ?!, \"name\")"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Look up an object member. Missing keys and other JSON kinds return None."
+        },
+        {
+          "category": "Json",
+          "description": [
+            "Look up a zero-based array position, with negative positions from the end.",
+            "Out-of-range positions and other JSON kinds return None."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.json} json.get(json.load(\"[42]\") ?!, 0)"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Look up a zero-based array position, with negative positions from the end."
+        }
+      ],
+      "overloads": [
+        "public define get(value: Json, key: String) -> Json?",
+        "public define get(value: Json, index: Int) -> Json?"
+      ],
+      "parameters": [],
+      "qualified_name": "std.json.get",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/json.vlnc",
+      "summary": "Look up an object member. Missing keys and other JSON kinds return None."
+    },
+    {
+      "aliases": [],
+      "category": "Json",
+      "description": [
+        "Parse strict JSON without supplying a target schema.",
+        "Duplicate keys and malformed input return ValueError."
+      ],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.json} json.load(\"42\") | ?!"
+        }
+      ],
+      "module": "std.json",
+      "name": "load",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Json",
+          "description": [
+            "Parse strict JSON without supplying a target schema.",
+            "Duplicate keys and malformed input return ValueError."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.json} json.load(\"42\") | ?!"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Parse strict JSON without supplying a target schema."
+        }
+      ],
+      "overloads": [
+        "public define load(text: String) -> Result[Json, ValueError]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.json.load",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/json.vlnc",
+      "summary": "Parse strict JSON without supplying a target schema."
+    },
+    {
+      "aliases": [],
+      "category": "Json",
+      "description": [
+        "Serialize a JSON value back to JSON text."
+      ],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.json} json.stringify(json.load(\"[true,null]\") ?!) ?!"
+        }
+      ],
+      "module": "std.json",
+      "name": "stringify",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Json",
+          "description": [
+            "Serialize a JSON value back to JSON text."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.json} json.stringify(json.load(\"[true,null]\") ?!) ?!"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Serialize a JSON value back to JSON text."
+        }
+      ],
+      "overloads": [
+        "public define stringify(value: Json) -> Result[String, ValueError]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.json.stringify",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/json.vlnc",
+      "summary": "Serialize a JSON value back to JSON text."
+    },
+    {
+      "aliases": [],
       "category": "Paths",
       "description": [],
       "examples": [
