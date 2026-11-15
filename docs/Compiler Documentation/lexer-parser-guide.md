@@ -298,7 +298,7 @@ Current chain-breaking rules:
 - Backslash-prefixed niladic element names break chains and are included.
 - Element call syntax such as `foo(...)` breaks chains.
 - The `:` modifier breaks chains.
-- `|`, newlines, closers, `end`, and `else` terminate or split chains.
+- `|`, statement newlines, closers, `end`, and `else` terminate or split chains.
 
 All-element segments are reversed. A segment ending in a breaker with only
 elements to its left emits the breaker first, then those left elements in
@@ -459,8 +459,12 @@ _comma_expressions(closer)
 _argument_expressions(closer)
 ```
 
-`_comma_expressions` parses zero or more comma-separated chain expressions.
-It is used for collection and tuple literals where empty forms can be valid.
+`_comma_expressions` parses zero or more chain expressions separated by commas
+or line breaks. It is used for list and tuple literals where empty forms can be
+valid. In delimited entry lists, a line starting with an operator or pipe, or
+indented farther than the line where the entry began, continues the current
+entry. A comma explicitly ends the entry before any continuation line.
+Parenthesized grouping treats line breaks as whitespace throughout the chain.
 
 `_argument_expressions` rejects empty argument lists. This enforces the language
 rule that niladic elements must be recognizable without context: use `\nilad`,

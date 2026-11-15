@@ -1890,6 +1890,19 @@ end
 
         self.assertEqual(node.items, ((NumberLiteralNode("1"),),))
 
+    def test_delimited_expression_line_breaks(self):
+        cases = (
+            ("$result = (\n  10\n  * 3\n  + 5\n  / 12\n)", "$result = (10 * 3 + 5 / 12)"),
+            ("[1\n+ 2,\n3\n\n4 +,\n5\n]", "[1 + 2, 3, 4 +, 5]"),
+            ('{"abc",\n"abcddefg"\n  split "d"\n}', '{"abc", "abcddefg" split "d"}'),
+            ("foo(options = [1\n2]\n3\n+ 4)", "foo(options = [1, 2], 3 + 4)"),
+            ("record{first => 1\nsecond => 2}", "record{first => 1, second => 2}"),
+            ("dict{1 => 2\n3 => 4}", "dict{1 => 2, 3 => 4}"),
+        )
+        for multiline, single_line in cases:
+            with self.subTest(source=multiline):
+                self.assertEqual(parse(multiline), parse(single_line))
+
     def test_parses_multiline_list_with_newline_before_closer(self):
         [node] = parse("""[1,
 2

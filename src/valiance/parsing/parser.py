@@ -1704,16 +1704,27 @@ class Parser:
             return _flatten(self._comma_expressions(TokenKind.RPAREN))
         return self._chain_until(_LINE_TERMINATORS)
 
-    def _chain_until(self, terminators: set[TokenKind | str]) -> tuple[ASTNode, ...]:
+    def _chain_until(
+        self, terminators: set[TokenKind | str], *, delimited_entry: bool = False
+    ) -> tuple[ASTNode, ...]:
         """Parse chain until from the current token stream."""
         nodes: list[ASTNode] = []
         segment: list[_ChainPiece] = []
         self._skip_newlines()
-        while not self._at_terminator(terminators):
-            if self._where_clause_depth and self._check(TokenKind.NEWLINE):
-                self._skip_newlines()
-                if self._at_terminator(terminators):
-                    break
+        entry_start = self._current
+        while True:
+            if self._check(TokenKind.NEWLINE):
+                if delimited_entry:
+                    if self._entry_continues(entry_start, terminators):
+                        self._skip_newlines()
+                elif TokenKind.NEWLINE not in terminators and (
+                    self._where_clause_depth
+                    or terminators
+                    & {TokenKind.RPAREN, TokenKind.RBRACKET, TokenKind.RBRACE}
+                ):
+                    self._skip_newlines()
+            if self._at_terminator(terminators):
+                break
             if self._match(TokenKind.PIPE):
                 nodes.extend(
                     self._lower_chain_segment(
@@ -1740,6 +1751,22 @@ class Parser:
             )
         )
         return self._record_boundaries(tuple(nodes))
+
+    def _entry_continues(
+        self, start: Token, terminators: set[TokenKind | str], *, ahead: int = 0
+    ) -> bool:
+        """Distinguish a continuation line from the next delimited entry."""
+        while self._peek(ahead).kind is TokenKind.NEWLINE:
+            ahead += 1
+        following = self._peek(ahead)
+        return (
+            following.kind not in terminators
+            and following.kind is not TokenKind.EOF
+            and (
+                following.kind in {TokenKind.OP, TokenKind.PIPE}
+                or following.column > self._line_start_column(start)
+            )
+        )
 
     def _chain_segment_until(
         self,
@@ -2915,11 +2942,12 @@ class Parser:
         if self._match(closer):
             return ()
         while True:
-            item = self._chain_until({TokenKind.COMMA, TokenKind.NEWLINE, closer})
+            item = self._chain_until(
+                {TokenKind.COMMA, TokenKind.NEWLINE, closer}, delimited_entry=True
+            )
             if not item:
                 self._error("expected expression")
             items.append(item)
-            self._skip_newlines()
             if self._match(closer):
                 return tuple(items)
             self._expect_entry_separator(closer)
@@ -2939,6 +2967,11 @@ class Parser:
     def _call_arguments(self) -> tuple[CallArgument, ...]:
         """Parse call arguments from the current token stream."""
         args: list[CallArgument] = []
+        terminators: set[TokenKind | str] = {
+            TokenKind.COMMA,
+            TokenKind.RPAREN,
+            TokenKind.NEWLINE,
+        }
         self._skip_newlines()
         if self._check(TokenKind.RPAREN):
             self._error("empty argument lists are invalid; use a \\nilad name")
@@ -2948,8 +2981,10 @@ class Parser:
                 self._check(TokenKind.IDENT)
                 and self._current.value == "_"
                 and (
-                    self._peek(1).kind
-                    in {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+                    self._peek(1).kind in terminators
+                    and not self._entry_continues(
+                        self._current, terminators, ahead=1
+                    )
                 )
             ):
                 self._advance()
@@ -2960,14 +2995,14 @@ class Parser:
                 name = Symbol(self._advance().value)
                 self._expect(TokenKind.ASSIGN)
                 value = self._chain_until(
-                    {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+                    terminators, delimited_entry=True
                 )
                 if not value:
                     self._error("expected named argument value")
                 args.append(CallArgument(name, value))
             else:
                 value = self._chain_until(
-                    {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+                    terminators, delimited_entry=True
                 )
                 if not value:
                     self._error("expected argument")
@@ -2979,10 +3014,12 @@ class Parser:
                 if prefix_count and prefix_count < len(value):
                     value = (*value[prefix_count:], *value[:prefix_count])
                 args.append(CallArgument(None, value))
-            self._skip_newlines()
             if self._match(TokenKind.RPAREN):
                 return tuple(args)
             self._expect_entry_separator(TokenKind.RPAREN)
+            self._skip_newlines()
+            if self._match(TokenKind.RPAREN):
+                return tuple(args)
 
     def _element_generic_arguments(
         self, start: Token, *, name: Symbol
@@ -3142,12 +3179,12 @@ class Parser:
             name = self._symbol("expected record field")
             self._expect(TokenKind.FAT_ARROW)
             value = self._chain_until(
-                {TokenKind.COMMA, TokenKind.NEWLINE, TokenKind.RBRACE}
+                {TokenKind.COMMA, TokenKind.NEWLINE, TokenKind.RBRACE},
+                delimited_entry=True,
             )
             if not value:
                 self._error("expected record field value")
             fields.append((name, value))
-            self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(fields)
             self._expect_entry_separator(TokenKind.RBRACE)
@@ -3169,12 +3206,12 @@ class Parser:
                 self._error("expected dictionary key")
             self._expect(TokenKind.FAT_ARROW)
             value = self._chain_until(
-                {TokenKind.COMMA, TokenKind.NEWLINE, TokenKind.RBRACE}
+                {TokenKind.COMMA, TokenKind.NEWLINE, TokenKind.RBRACE},
+                delimited_entry=True,
             )
             if not value:
                 self._error("expected dictionary value")
             entries.append((key, value))
-            self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(entries)
             self._expect_entry_separator(TokenKind.RBRACE)
@@ -3835,7 +3872,11 @@ class Parser:
         return self._current.kind in kinds
 
     def _expect_entry_separator(self, closer: TokenKind) -> None:
-        """Require a comma after an entry, naming the alternative closing token."""
+        """Consume a comma or a line break between delimited entries."""
+        if self._check(TokenKind.NEWLINE):
+            self._skip_newlines()
+            self._match(TokenKind.COMMA)
+            return
         if not self._match(TokenKind.COMMA):
             self._error(
                 f"expected ',' or {closer.value!r}",
