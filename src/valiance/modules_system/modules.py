@@ -1499,7 +1499,14 @@ def _renamed_object(
     )
     renamed_constructors = tuple(
         _qualify_provider_variant_references(
-            _renamed_define_node(definition, owner), variant_names, variant_namespace,
+            _renamed_define_node(
+                definition,
+                Symbol(f"\\{owner.text}", owner.namespace)
+                if definition.name.text.startswith("\\")
+                else owner,
+            ),
+            variant_names,
+            variant_namespace,
         )
         for definition in explicit_constructors
     )

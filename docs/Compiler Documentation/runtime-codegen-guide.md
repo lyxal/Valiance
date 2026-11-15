@@ -86,7 +86,9 @@ The runtime implementation is small, but several files must evolve together.
   `\`-prefixed niladic constructor bindings.
 - `MAKE_OBJECT_CONSTRUCTOR` also carries runtime lifecycle metadata for
   destructors, duplication faults, and `@mustcall` protocol contracts.
-- When an object declares same-name definitions, codegen stores those compiled
+- Explicit object constructors use the object's name with a leading backslash
+  when their caller-visible arity is zero. The hidden receiver does not count
+  toward that arity. Codegen stores the compiled
   initializer functions on the constructor value instead of emitting the
   synthesized field-order constructor. The VM allocates a fresh object,
   supplies it as the initializer's hidden first argument, and validates that

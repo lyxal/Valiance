@@ -429,8 +429,10 @@ class _ImportDeclarations:
                 ))
             if (
                 node.kind == Symbol("object")
-                and not node.fields
-                and not constructor_definitions(node.name, node.definitions)
+                and any(
+                    not overload.params
+                    for overload in self.env.overloads_for(obj.name)
+                )
             ):
                 self._bind_niladic_constructor(obj.name)
             if node.kind == Symbol("variant"):

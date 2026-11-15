@@ -309,7 +309,7 @@ web.accepts(req: Request, mediaType: String) -> #boolean Int | Error.InvalidHead
 Middleware can enrich a request without altering protocol identity:
 
 ```
-web.ContextKey[T] -> ContextKey[T]                          # mints opaque unique key at app construction
+web.\ContextKey[T] -> ContextKey[T]                          # mints opaque unique key at app construction
 web.withContext[T](req: R, key: ContextKey[T], value: T) -> R
 web.context[T](req: Request, key: ContextKey[T]) -> T?
 web.requireContext[T](req: Request, key: ContextKey[T]) -> T | Error.MissingContext
@@ -321,7 +321,7 @@ Create keys **inside an application-building function** so closures can capture 
 
 ```valiance
 public define \buildApp =>
-  $userKey = web.ContextKey[User]
+  $userKey = web.\ContextKey[User]
   $app = web.App
   $app := middleware: fn (req: web.Request) =>
     const $user = authenticateRequest $req ?

@@ -42,8 +42,8 @@ def compiled(source: str, *, serialize: bool = False):
 class PublicWSAPIAndBorrowTests(unittest.TestCase):
     def test_ws01_canonical_generic_mints_two_distinct_keys(self):
         source = '''import {std.web}
-$first = web.ContextKey[String]
-$other = web.ContextKey[String]
+$first = web.\\ContextKey[String]
+$other = web.\\ContextKey[String]
 $req = web.testRequest("GET", "/", web.Headers) ?
 $allowed = web.withContext($req, $first, "member")
 $unused = web.context($allowed, $other)
@@ -60,7 +60,7 @@ web.requireContext($allowed, $first) ?'''
 
     def test_ws01_wrong_key_value_type_is_a_compile_failure(self):
         source = '''import {std.web}
-$key = web.ContextKey[Int]
+$key = web.\\ContextKey[Int]
 $req = web.testRequest("GET", "/", web.Headers) ?
 web.withContext($req, $key, "not an Int")'''
         checker, _ = analyse(source)
@@ -453,7 +453,7 @@ class WSH2CancellationTests(unittest.TestCase):
 
     def test_ws01_ws02_live_h2_valiance_canonical_key_and_borrow(self):
         source = '''import {std.web, std.web.App, std.web.[middleware, websocket]}
-$key = web.ContextKey[String]
+$key = web.\\ContextKey[String]
 $app = App
 $app := middleware: fn(req: web.Request) =>
   web.withContext($req, $key, "h2-authorized")

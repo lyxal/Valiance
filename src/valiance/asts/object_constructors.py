@@ -30,11 +30,11 @@ def constructor_definitions(
     owner: Symbol,
     definitions: tuple[DefineNode, ...],
 ) -> tuple[DefineNode, ...]:
-    """Return definitions whose local name matches the owning object."""
+    """Return definitions named for the owner, including niladic spellings."""
     return tuple(
         definition
         for definition in definitions
-        if definition.name.text == owner.text
+        if definition.name.text.removeprefix("\\") == owner.text
     )
 
 

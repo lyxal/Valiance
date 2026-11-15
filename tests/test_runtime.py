@@ -7939,6 +7939,38 @@ end
 
         self.assertEqual(stack, ["Joe"])
 
+    def test_explicit_niladic_constructor_breaks_the_expression_chain(self):
+        stack = execute(r"""
+object Foo =>
+  define \Foo => end
+end
+\Foo 10 + 20
+""")
+        self.assertEqual(tuple(map(format_runtime_value, stack)), ("Foo{}", "30"))
+
+    def test_executes_imported_explicit_niladic_constructor(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pets.vlnc").write_text(
+                "public object Dog =>\n"
+                "  $age: Int\n"
+                "  define \\Dog => $self.age = 7 end\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            stack = execute(
+                r"""
+import { pets }
+import { pets.[Dog as Pup] }
+pets.\Dog \Pup
+""",
+                root / "main.vlnc",
+            )
+        self.assertEqual(
+            tuple(map(format_runtime_value, stack)),
+            ("pets.Dog{age: 7}", "Pup{age: 7}"),
+        )
+
     def test_executes_niladic_object_constructors(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

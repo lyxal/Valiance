@@ -1358,14 +1358,14 @@ end
         analyser.analyse(parse("""
 object Counter =>
   $value: Number
-  define Counter => $self.value := + 1
+  define \\Counter => $self.value := + 1
 end
 """))
 
         self.assertEqual(
             analyser.diagnostics,
             [
-                "4:21: constructor member 'value' may be read before initialization",
+                "4:22: constructor member 'value' may be read before initialization",
                 "4:3: constructor 'Counter' does not initialize field(s): value",
             ],
         )
@@ -1685,13 +1685,26 @@ end
             analyser.diagnostics,
         )
 
+    def test_explicit_niladic_constructor_requires_prefix(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Foo =>
+  define Foo => end
+end
+Foo 10 + 20
+"""))
+        self.assertIn(
+            "3:3: Foo inferred as nilad, but not named as one",
+            analyser.diagnostics,
+        )
+
     def test_explicit_constructor_arity_mismatch_is_a_diagnostic(self):
         analyser = Analyser(Environment())
 
         analyser.analyse(parse("""
 object Person =>
   $name: String = "unknown"
-  define Person => end
+  define \\Person => end
   define Person(name: String) => $self.name = $name
 end
 """))
@@ -2267,7 +2280,7 @@ end
         constructor.analyse(parse("""
 @mustcall(any = ["Tx"])
 object Tx =>
-  define Tx => end
+  define \\Tx => end
 end
 """))
         self.assertTrue(

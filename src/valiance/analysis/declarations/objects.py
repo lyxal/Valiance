@@ -559,7 +559,7 @@ class _ObjectDeclarations:
             )
 
     def _bind_niladic_constructor(self, name: Symbol) -> None:
-        """Expose a synthesized zero-argument constructor under its niladic name."""
+        """Expose a zero-argument constructor under its niladic name."""
         if name.text.startswith("\\"):
             return
         alias = Symbol(f"\\{name.text}", name.namespace)
@@ -725,6 +725,16 @@ class _ObjectDeclarations:
                     owner.dotted(), definition.location
                 ),
             )
+            if not _functions._validate_define_niladic_name(definition.name, overload):
+                if overload.params:
+                    message = (
+                        f"{definition.name} named as nilad, but inferred as popping "
+                        f"{len(overload.params)} value(s)"
+                    )
+                else:
+                    message = f"{owner} inferred as nilad, but not named as one"
+                self._diagnose(message, definition)
+                continue
             if overload not in self.env.overloads_for(owner):
                 existing = self.env.overloads_for(owner)
                 if existing and len(overload.params) != len(existing[0].params):
@@ -736,6 +746,8 @@ class _ObjectDeclarations:
                     )
                     continue
                 self.env.define_overload(owner, overload)
+                if not overload.params:
+                    self._bind_niladic_constructor(owner)
         return typed_branch
 
     def _register_friendly_definition(

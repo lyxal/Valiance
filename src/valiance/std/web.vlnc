@@ -151,7 +151,7 @@ public object[T] ContextKey =>
   private $token: Int = 0
   private $authenticator: Int = 0
 
-  define ContextKey =>
+  define \ContextKey =>
     $nonce = std.web.nativeContextNonce
     $self.token = $nonce
     $self.authenticator = std.web.nativeContextAuthenticator($nonce)
