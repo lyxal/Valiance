@@ -98,6 +98,10 @@ NodeHandler = Callable[
     BranchSet,
 ]
 
+
+class PendingOverloadDependency(Exception):
+    """An inference probe reached a call that may need an unfinished signature."""
+
 _NODE_HANDLERS: dict[type[ASTNode], NodeHandler] = {}
 
 
@@ -414,6 +418,9 @@ class Analyser:
         self._top_level_declared_variable_names: frozenset[Symbol] = frozenset()
         self._prescanned_definition_overloads: dict[int, list[tuple[Symbol, str]]] = {}
         self._incomplete_recursive_definitions: tuple[DefineNode, ...] = ()
+        self._dependency_probe: (
+            tuple[dict[Symbol, list[T.Overload]], set[tuple[Symbol, int]]] | None
+        ) = None
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
         ] = set()
@@ -603,6 +610,7 @@ class Analyser:
             for definition in definitions:
                 if definition not in early_definitions:
                     self.declarations.prescan_define(definition)
+            definitions = self._order_top_level_definitions(list(definitions), current)
             for definition in self._incomplete_recursive_definitions:
                 self._diagnose(
                     f"recursive element '{definition.name}' must have complete "
@@ -715,13 +723,14 @@ class Analyser:
                 executable.append(node)
         return (
             tuple(setup),
-            self._order_top_level_definitions(definitions),
+            tuple(definitions),
             tuple(executable),
         )
 
     def _order_top_level_definitions(
         self,
         definitions: list[DefineNode],
+        current: BranchSet,
     ) -> tuple[DefineNode, ...]:
         """Infer incomplete acyclic definitions before checking declared bodies.
 
@@ -745,16 +754,18 @@ class Analyser:
                 for index in by_name[name]
             })
 
-        self._incomplete_recursive_definitions = self._incomplete_cycle_members(
-            definitions,
-            dependencies,
-        )
-
         incomplete_indexes = {
             index
             for index, definition in enumerate(definitions)
             if not self._definition_has_complete_contract(definition)
         }
+        recursive = self._incomplete_cycle_members(definitions, dependencies)
+        if recursive:
+            self._refine_overload_dependencies(
+                definitions, dependencies, incomplete_indexes, recursive, current,
+            )
+            recursive = self._incomplete_cycle_members(definitions, dependencies)
+        self._incomplete_recursive_definitions = recursive
         ordered_incomplete: list[int] = []
         complete: set[int] = set()
         visiting: set[int] = set()
@@ -781,6 +792,100 @@ class Analyser:
             definitions[index]
             for index in (*ordered_incomplete, *declared)
         )
+
+    def _refine_overload_dependencies(
+        self,
+        definitions: list[DefineNode],
+        dependencies: list[set[int]],
+        incomplete: set[int],
+        recursive: tuple[DefineNode, ...],
+        current: BranchSet,
+    ) -> None:
+        """Check inferred definitions in isolation while their dependencies settle.
+
+        A probe uses the ordinary analyser for stack effects and argument
+        matching. It may discard an edge only when every reference to that
+        unfinished overload was checked and none could use its parameters.
+        """
+        from copy import deepcopy
+
+        root = self.env
+        while root.parent is not None:
+            root = root.parent
+        memo = {id(self.module_loader): self.module_loader}
+        if root is not self.env:
+            memo[id(root)] = root
+        for observer in (self.trace, self.observer):
+            if observer is not None:
+                memo[id(observer)] = None
+        recursive_ids = {id(definition) for definition in recursive}
+        work = [index for index in incomplete if id(definitions[index]) in recursive_ids]
+        pending: set[int] = set()
+        while work:
+            index = work.pop()
+            if index not in pending:
+                pending.add(index)
+                work.extend(dependencies[index] & incomplete)
+
+        signatures: dict[int, T.Overload] = {}
+        for index in pending:
+            definition = definitions[index]
+            function = definition.function
+            if (
+                definition.annotations or definition.generics or definition.is_multi
+                or definition.attached_tag is not None
+                or function.params is None or function.overloads
+                or function.where_clause or function.annotations
+                or any(param.typ is None or param.default for param in function.params)
+            ):
+                continue
+            resolved = _functions._resolve_function_type_names(
+                replace(function, returns=()), self.env,
+            )
+            signature = _functions._fully_typed_overload(resolved)
+            if signature is not None and not any(
+                _functions._is_call_site_checked_param(param) for param in signature.params
+            ):
+                signatures[index] = signature
+
+        if not signatures:
+            return
+        probe, branches = deepcopy((self, current), memo.copy())
+        while pending:
+            remaining = len(pending)
+            for index in sorted(pending):
+                unresolved = dependencies[index] & pending
+                if unresolved and (
+                    index not in signatures or not unresolved <= signatures.keys()
+                ):
+                    continue
+                trial, initial = deepcopy((probe, branches), memo.copy())
+                by_name = {}
+                for dependency in unresolved:
+                    name = definitions[dependency].name
+                    by_name.setdefault(name, []).append(signatures[dependency])
+                checked = set()
+                trial._dependency_probe = (by_name, checked)
+                diagnostics_before = len(trial.diagnostics)
+                try:
+                    result = trial.analyse_node(initial, definitions[index])
+                except PendingOverloadDependency:
+                    continue
+                if not result or len(trial.diagnostics) != diagnostics_before:
+                    continue
+                references = self._definition_reference_nodes(definitions[index].function)
+                if any(
+                    (node.name, id(node.location)) not in checked
+                    for node in references if node.name in by_name
+                ):
+                    continue
+                dependencies[index].difference_update(unresolved)
+                trial._dependency_probe = None
+                probe, branches = trial, result
+                # Later definitions in this pass see this established overload.
+                pending.remove(index)
+            if len(pending) == remaining:
+                break
 
     @staticmethod
     def _definition_has_complete_contract(definition: DefineNode) -> bool:
@@ -850,13 +955,18 @@ class Analyser:
 
     @staticmethod
     def _definition_element_references(value: object) -> set[Symbol]:
-        """Collect named element references nested inside a definition body."""
-        references: set[Symbol] = set()
+        """Collect element names nested inside a definition body."""
+        return {node.name for node in Analyser._definition_reference_nodes(value)}
+
+    @staticmethod
+    def _definition_reference_nodes(value: object) -> list[ElementNode]:
+        """Collect element references nested inside a definition body."""
+        references: list[ElementNode] = []
 
         def walk(item: object) -> None:
             """Visit AST and helper dataclasses while ignoring scalar metadata."""
             if isinstance(item, ElementNode):
-                references.add(item.name)
+                references.append(item)
             if isinstance(item, ASTNode) or is_dataclass(item):
                 for data_field in fields(item):
                     walk(getattr(item, data_field.name))
@@ -1048,6 +1158,7 @@ class Analyser:
         )
         child._friendly_owners = self._friendly_owners
         child.defer_reflection = self.defer_reflection
+        child._dependency_probe = self._dependency_probe
         child._scope_depth = self._scope_depth + 1
         child._imported_definition_sources = (
             self._imported_definition_sources.copy()

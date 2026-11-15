@@ -31,6 +31,21 @@ class _ElementCalls:
         """Analyse a `ElementNode` node and return the surviving branches."""
         from valiance.asts import TypeArgumentExpression
 
+        if self._dependency_probe is not None:
+            pending, checked = self._dependency_probe
+            if node.name in pending:
+                from ..analyser import PendingOverloadDependency
+
+                if (node.modifier_args or node.generic_args or node.annotations
+                    or node.extension is not None):
+                    raise PendingOverloadDependency
+                signatures = tuple(pending[node.name])
+                sources, _ = self.element_argument_sources(node, branch, signatures, ())
+                if self.element_call_candidates(node, signatures, sources):
+                    raise PendingOverloadDependency
+                # Explicit call normalization can rebuild the node.
+                if node.location is not None:
+                    checked.add((node.name, id(node.location)))
         if any(isinstance(argument, TypeArgumentExpression) for argument in node.generic_args):
             return self._descriptor_conversion(node, branch)
         optional_conversion = node.name.text == "to?"

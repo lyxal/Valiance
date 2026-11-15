@@ -20,6 +20,60 @@ def analyse(source: str):
 class DeclarationOrderingTests(unittest.TestCase):
     """Exercise source-order independent top-level definitions."""
 
+    def test_swapped_arguments_select_a_nonrecursive_overload(self):
+        source = r"""
+trait Collidable =>
+  define collide(other: Collidable) => "*generic explosion*"
+end
+
+object Asteroid => $diameter: Real
+object Asteroid as Collidable => end
+object Spaceship => end
+object Spaceship as Collidable => end
+
+define collide(ship: Spaceship, rock: String) => collide($ship, Asteroid 20)
+define collide(:Spaceship, :Asteroid) => collide swap
+define collide(:Spaceship, :Spaceship) => "Better call spaceship insurance!"
+define collide(:Asteroid, :Spaceship) => "Poor spaceship never stood a chance"
+define collide(l: Asteroid, r: Asteroid) =>
+  if $l.diameter >= $r.diameter => "The left asteroid wins"
+  else => "The right asteroid wins"
+end
+
+collide(\Spaceship, Asteroid 20)
+collide(\Spaceship, "rock")
+$left = [Asteroid 20, \Spaceship, Asteroid 30]
+$right = [\Spaceship, \Spaceship, Asteroid 20]
+($left collide $right)
+"""
+        analyser, typed = analyse(source)
+        self.assertEqual(analyser.diagnostics, [])
+        result = run(compile_program(typed, optimize=False))
+        self.assertEqual(result[0], "Poor spaceship never stood a chance")
+        self.assertEqual(result[1], result[0])
+        self.assertEqual(len(list(result[2])), 3)
+
+    def test_swapped_overloads_that_call_each_other_require_contracts(self):
+        analyser, _typed = analyse("""
+define exchange(:Int | String, :Int | String) => "fallback"
+define exchange(:Int, :String) => exchange swap
+define exchange(:String, :Int) => exchange swap
+""")
+        self.assertEqual(sum(
+            "recursive element 'exchange' must have complete parameter and return signatures"
+            in diagnostic for diagnostic in analyser.diagnostics
+        ), 2)
+
+    def test_untyped_overload_cannot_be_ruled_out_of_a_cycle(self):
+        analyser, _typed = analyse("""
+define exchange(:Int, :String) => exchange swap
+define exchange(left, right) => exchange swap
+""")
+        self.assertEqual(sum(
+            "recursive element 'exchange' must have complete parameter and return signatures"
+            in diagnostic for diagnostic in analyser.diagnostics
+        ), 2)
+
     def test_untyped_definition_is_available_to_earlier_executable_code(self):
         """Infer a self-contained define before analysing an earlier call."""
         analyser, typed = analyse("""

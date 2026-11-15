@@ -1652,7 +1652,11 @@ Top-level declarations are analysed separately from executable statements.
 Type-level declarations are established first, complete function signatures are
 prescanned, and acyclic function dependencies are ordered before their
 consumers. This permits forward calls and forward inference without allowing
-recursive type inference. A recursive group must therefore expose complete
+recursive type inference. When a name-based dependency appears cyclic, the
+analyser can rule out an unfinished overload with fully typed parameters by
+checking the call's argument types, including stack effects such as `swap`.
+Overloads with unresolved parameter types remain possible dependencies.
+A recursive group must expose complete
 parameter and return contracts, either directly or through explicit
 `overload(...)` signatures. Each body is then checked against that published
 contract. Prescanned overloads are tracked by owning definition so equal signatures keep
