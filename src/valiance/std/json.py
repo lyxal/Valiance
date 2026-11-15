@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from dataclasses import replace
 from functools import lru_cache
 from typing import Any
@@ -12,10 +12,20 @@ import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext, RuntimeTypeServices
 from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import (
-    FFIHandleValue, FFIScalarValue, FFIStructValue, LazyList, ObjectValue, RuntimeNumber, TaggedValue,
+    DictValue, FFIHandleValue, FFIScalarValue, FFIStructValue, LazyList, ListValue,
+    ObjectValue, RuntimeNumber, TaggedValue,
 )
 from valiance.std.string import quote_string
 from valiance.vtypes.symbols import Symbol
+
+
+_JSON_PAYLOAD_FIELDS = {
+    "json.Json.Boolean": "value",
+    "json.Json.Number": "value",
+    "json.Json.Text": "value",
+    "json.Json.Array": "items",
+    "json.Json.Object": "members",
+}
 
 
 @stdlib_element(
@@ -141,8 +151,11 @@ def _render_json_value(
         finally:
             visiting.remove(id(value))
     if isinstance(value, ObjectValue):
-        if value.type_name == "None":
+        if value.type_name in ("None", "json.Json.Null"):
             return "null"
+        if (field := _JSON_PAYLOAD_FIELDS.get(value.type_name)) is not None:
+            expected_payload = _json_type("#boolean Int") if value.type_name == "json.Json.Boolean" else None
+            return _render_json_value(value.fields[field], visiting, expected_payload, native_encode)
         if value.type_name == "Some":
             identity = id(value)
             if identity in visiting:
@@ -302,7 +315,7 @@ def _encode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
     try:
         expected = _json_type(args[1])
         return (_render_json_value(args[0], set(), expected, _type_services(ctx).represent_native),)
-    except (ValueError, _JsonEncodingError) as exc:
+    except (ValueError, RecursionError) as exc:
         return (ObjectValue("ValueError", {"message": str(exc)}),)
 
 
@@ -548,17 +561,74 @@ def _json_decode_collection(
 )
 def _decode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse strict JSON into the requested statically checked target schema."""
-    from decimal import Decimal
     try:
         services = _type_services(ctx)
-        decoded = json.loads(args[0], parse_int=Decimal, parse_float=Decimal,
-                             parse_constant=_invalid_json_constant,
-                             object_pairs_hook=_unique_json_pairs)
+        decoded = _parse_json(args[0])
         return (_json_decode_typed(decoded, _json_type(args[1]), services.resolve_constructor,
                                   variants=services.resolve_variant_cases,
                                   native_decode=services.construct_native),)
-    except (ValueError, RecursionError) as exc:
+    except (ValueError, InvalidOperation, RecursionError) as exc:
         return (ObjectValue("ValueError", {"message": str(exc)}),)
+
+
+def _parse_json(text: str) -> Any:
+    return json.loads(text, parse_int=Decimal, parse_float=Decimal,
+                      parse_constant=_invalid_json_constant,
+                      object_pairs_hook=_unique_json_pairs)
+
+
+def _load_value(raw: Any) -> ObjectValue:
+    if raw is None:
+        case, fields = "Null", {}
+    elif isinstance(raw, bool):
+        case = "Boolean"
+        fields = {"value": _json_decode_typed(raw, _json_type("#boolean Int"), None)}
+    elif isinstance(raw, Decimal):
+        case, fields = "Number", {"value": RuntimeNumber(raw)}
+    elif isinstance(raw, str):
+        case, fields = "Text", {"value": raw}
+    elif isinstance(raw, list):
+        case = "Array"
+        fields = {"items": ListValue([_load_value(item) for item in raw], runtime_rank=1)}
+    else:
+        case = "Object"
+        fields = {"members": DictValue((key, _load_value(item)) for key, item in raw.items())}
+    return ObjectValue(f"json.Json.{case}", fields)
+
+
+@stdlib_element(
+    "loadDynamic", (T.String,),
+    (T.Result(T.V("T"), T.N(Symbol("ValueError"))),),
+    param_names=("text",), exported=False,
+)
+def _load_dynamic(args: tuple[Any, ...], _ctx: RuntimeContext) -> tuple[Any, ...]:
+    try:
+        return (_load_value(_parse_json(args[0])),)
+    except (ValueError, InvalidOperation, RecursionError) as exc:
+        return (ObjectValue("ValueError", {"message": str(exc)}),)
+
+
+@stdlib_element(
+    "getDynamic", (T.V("T"), T.U(T.String, T.Int)), (T.optional(T.V("T")),),
+    param_names=("value", "selector"), exported=False,
+)
+def _get_dynamic(args: tuple[Any, ...], _ctx: RuntimeContext) -> tuple[Any, ...]:
+    from valiance.runtime.vm import _duplicate_occurrence
+
+    value, selector = args
+    try:
+        if isinstance(selector, str) and value.type_name == "json.Json.Object":
+            item = value.fields["members"][selector]
+        elif isinstance(selector, RuntimeNumber) and value.type_name == "json.Json.Array":
+            items = value.fields["items"]
+            if not -len(items) <= selector < len(items):
+                return (ObjectValue("None", {}),)
+            item = items[int(selector)]
+        else:
+            return (ObjectValue("None", {}),)
+    except KeyError:
+        return (ObjectValue("None", {}),)
+    return (ObjectValue("Some", {"value": _duplicate_occurrence(item)}, ("json.Json",)),)
 
 
 def _type_services(ctx: RuntimeContext) -> RuntimeTypeServices:

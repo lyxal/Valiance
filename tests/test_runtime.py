@@ -4,6 +4,7 @@ import contextlib
 import io
 import unittest
 from dataclasses import replace, fields, is_dataclass
+from decimal import Decimal
 from unittest.mock import patch
 from builtins import RuntimeError as PythonRuntimeError
 from itertools import count, islice, permutations
@@ -474,6 +475,38 @@ json.encode($infinite | 0 take) ?!
                 'JSON numbers must be real',
             ])
             self.assertEqual(stack[3:], ['[1,2,3]', '[]'])
+
+    def test_json_load_indexes_recursive_values_without_a_schema(self):
+        source = '''
+import {std.json}
+$doc = json.load("{\\"items\\":[null, {\\"price\\":1.234567890123456789}],\\"ok\\":true,\\"name\\":\\"Ada\\"}") ?!
+$items = $doc["items"] ?!
+$last = $items[-1] ?!
+$price = $last["price"] ?!
+$price match =>
+  as number: json.Json.Number => $number.value
+  _ => 0
+end
+$items[0] ?!
+$doc["ok"] ?!
+$doc["name"] ?!
+$doc["missing"]
+$items[2]
+$items["items"]
+$doc[0]
+json.load("{\\"x\\":1,\\"x\\":2}")
+json.load("NaN")
+json.load("[")
+json.stringify($doc) ?!
+'''
+        for stack in self.execute_variants(source):
+            self.assertEqual(stack[0], RuntimeNumber(Decimal("1.234567890123456789")))
+            self.assertEqual([item.type_name.rsplit(".", 1)[-1] for item in stack[1:4]],
+                             ["Null", "Boolean", "Text"])
+            self.assertEqual([item.type_name for item in stack[4:-1]],
+                             ["None"] * 4 + ["ValueError"] * 3)
+            self.assertEqual(stack[-1],
+                             '{"items":[null,{"price":1.234567890123456789}],"ok":true,"name":"Ada"}')
 
     def test_json_decode_reconstructs_nested_typed_objects_and_collections(self):
         source = r'''

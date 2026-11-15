@@ -152,3 +152,39 @@ end
 public define[T] decode(text: String) -> Result[T, ValueError] =>
   std.json.decodeDynamic($text, typeInfo[T].name)
 end
+
+#?? A JSON value with recursively typed arrays and objects.
+#?? Match on a case to read its payload or iterate its members.
+public variant Json =>
+  Null => end
+  Boolean => public $value: #boolean Int end
+  Number => public $value: Real end
+  Text => public $value: String end
+  Array => public $items: Json+ end
+  Object => public $members: Dict[String, Json] end
+end
+
+#?? Parse strict JSON without supplying a target schema.
+#?? Duplicate keys and malformed input return ValueError.
+#?? @example import {std.json} json.load("42") | ?!
+public define load(text: String) -> Result[Json, ValueError] =>
+  std.json.loadDynamic[Json]($text)
+end
+
+@index(Json)
+#?? Look up an object member. Missing keys and other JSON kinds return None.
+public define get(value: Json, key: String) -> Json? =>
+  std.json.getDynamic[Json]($value, $key)
+end
+
+@index(Json)
+#?? Look up a zero-based array position, with negative positions from the end.
+#?? Out-of-range positions and other JSON kinds return None.
+public define get(value: Json, index: Int) -> Json? =>
+  std.json.getDynamic[Json]($value, $index)
+end
+
+#?? Serialize a JSON value back to JSON text.
+public define stringify(value: Json) -> Result[String, ValueError] =>
+  std.json.encodeDynamic($value, typeInfo[Json].name)
+end

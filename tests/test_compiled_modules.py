@@ -526,6 +526,9 @@ json.encode(dict{"children" => range(1, 2) map: fn(n: Int) => Child(true, "hidde
 json.encode((1 unfold (true) -> (n: Int) => $n + 1 end) | 2 take) ?!
 encodeNode(Node(Some(Node(\\None)))) ?!
 json.encode(json.decode[Plain]("{\\\"value\\\":17}") ?!) ?!
+$blob = json.load("[{\\\"value\\\":17}]") ?!
+$entry = $blob[0] ?!
+json.stringify($entry["value"] ?!) ?!
 '''))
             self.assertEqual(analyser.diagnostics, [])
             for optimize in (False, True):
@@ -535,7 +538,7 @@ json.encode(json.decode[Plain]("{\\\"value\\\":17}") ?!) ?!
                     '{"number":42,"values":[true,false]}',
                     '{"children":[{"enabled":true}]}',
                     '{"children":[{"enabled":true},{"enabled":true}]}',
-                    '[1,2]', '{"next":{"next":null}}', '{"value":17}',
+                    '[1,2]', '{"next":{"next":null}}', '{"value":17}', '17',
                 ])
 
     def test_recursive_reflection_specializes_from_source_free_modules(self):

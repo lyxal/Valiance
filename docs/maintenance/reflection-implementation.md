@@ -149,6 +149,22 @@ json.encode(Person("Ada", "secret", true)) | ?!
 # {"name":"Ada","active":true}
 ```
 
+`std.json.load(text)` returns `Result[json.Json, ValueError]`. It accepts any
+JSON root and preserves exact numbers. Index objects by string key and arrays
+by zero-based integer position, with negative positions counted from the end.
+Indexing returns `Json?`. Missing entries and mismatched selector kinds return
+`None`, while a JSON null is a present `Json.Null`. Match on the variant to
+read scalar `value` fields or iterate an array's `items` or an object's
+`members`. Use `json.stringify(value)` to serialize a JSON value.
+
+```valiance
+import {std.json}
+$doc = json.load("{\"users\":[{\"name\":\"Ada\"}]}") ?!
+$users = $doc["users"] ?!
+$first = $users[0] ?!
+json.stringify($first["name"] ?!) ?!
+```
+
 `std.json.decode[T](text)` returns `Result[T, ValueError]`, decoding strict JSON
 into an explicitly selected Valiance type. The decoder supports strings, exact
 numbers, Boolean tags, records, eager lists (including multidimensional lists),
