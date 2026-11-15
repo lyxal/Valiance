@@ -572,12 +572,14 @@ def _decode_dynamic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
 
 
 def _parse_json(text: str) -> Any:
+    """Parse strict JSON with exact decimals and unique object keys."""
     return json.loads(text, parse_int=Decimal, parse_float=Decimal,
                       parse_constant=_invalid_json_constant,
                       object_pairs_hook=_unique_json_pairs)
 
 
 def _load_value(raw: Any) -> ObjectValue:
+    """Wrap each parsed value in its corresponding recursive Json case."""
     if raw is None:
         case, fields = "Null", {}
     elif isinstance(raw, bool):
@@ -602,6 +604,7 @@ def _load_value(raw: Any) -> ObjectValue:
     param_names=("text",), exported=False,
 )
 def _load_dynamic(args: tuple[Any, ...], _ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Decode JSON without a target schema and report parse errors as values."""
     try:
         return (_load_value(_parse_json(args[0])),)
     except (ValueError, InvalidOperation, RecursionError) as exc:
@@ -613,6 +616,7 @@ def _load_dynamic(args: tuple[Any, ...], _ctx: RuntimeContext) -> tuple[Any, ...
     param_names=("value", "selector"), exported=False,
 )
 def _get_dynamic(args: tuple[Any, ...], _ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return an owned optional child for a matching key or array index."""
     from valiance.runtime.vm import _duplicate_occurrence
 
     value, selector = args
