@@ -1,7 +1,7 @@
 """Native backend for std.file's Valiance-defined RAII resources.
 
 The public ReadFile/WriteFile/AppendFile are Valiance objects owning numeric,
-unforgeable-in-practice process-local handles. Destructors invoke nativeClose;
+unforgeable-in-practice process-local handles. Destructors invoke closeHandle;
 all native operations reject closed or invalid handles. No implicit fsync.
 """
 from __future__ import annotations
@@ -11,12 +11,17 @@ from threading import RLock
 from typing import Any
 
 import valiance.vtypes as T
+from valiance.asts import ElementNode
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import ListValue, ObjectValue, RuntimeNumber, TaggedValue, unwrap_runtime_value
 from valiance.std._filesystem_core import Encoding, File
 from valiance.std._filesystem_errors import filesystem_operation, filesystem_effects
 from valiance.std.path import native_path
+
+from valiance.vtypes.symbols import Symbol
+
+_DEFAULT_ENCODING = (ElementNode(Symbol('defaultEncoding', ('std', 'file_do'))),)
 
 _BYTE_TAGS = frozenset({T.DataTag("byte", 1)})
 _BYTE_LIST = T.Tagged(T.AtLeastList(T.Int), *tuple(_BYTE_TAGS))
@@ -59,31 +64,34 @@ def _open(args: tuple[Any, ...], mode: str) -> tuple[Any, ...]:
     return (RuntimeNumber(key),)
 
 
-@stdlib_element('nativeOpenRead', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
-                param_names=('path', 'encoding'))
+@stdlib_element('openRead', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
+                param_names=('path', 'encoding'),
+                param_defaults=(None, _DEFAULT_ENCODING))
 def _open_read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Open a read-only native resource using the supplied Path and Encoding."""
     del ctx
     return _open(args, 'rb')
 
 
-@stdlib_element('nativeOpenWrite', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
-                param_names=('path', 'encoding'))
+@stdlib_element('openWrite', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
+                param_names=('path', 'encoding'),
+                param_defaults=(None, _DEFAULT_ENCODING))
 def _open_write(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Create or truncate a native resource using the supplied Path and Encoding."""
     del ctx
     return _open(args, 'wb')
 
 
-@stdlib_element('nativeOpenAppend', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
-                param_names=('path', 'encoding'))
+@stdlib_element('openAppend', (T.V('PathArg'), T.V('EncodingArg')), (T.Int,),
+                param_names=('path', 'encoding'),
+                param_defaults=(None, _DEFAULT_ENCODING))
 def _open_append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Open a native append resource using the supplied Path and Encoding."""
     del ctx
     return _open(args, 'ab')
 
 
-@stdlib_element('nativeClose', (T.Int,), (), param_names=('handle',))
+@stdlib_element('closeHandle', (T.Int,), (), param_names=('handle',))
 def _close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Remove and close a registered resource if it is still open."""
     del ctx
@@ -94,7 +102,7 @@ def _close(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
-@stdlib_element('nativeFlush', (T.Int,), (), param_names=('handle',))
+@stdlib_element('flushHandle', (T.Int,), (), param_names=('handle',))
 def _flush(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Flush the buffer of a live writable resource without fsync."""
     del ctx
@@ -102,7 +110,7 @@ def _flush(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
-@stdlib_element('nativeReadLine', (T.Int,), (T.optional(T.String),), param_names=('handle',))
+@stdlib_element('readLineHandle', (T.Int,), (T.optional(T.String),), param_names=('handle',))
 def _read_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the next decoded line as Some, or None at end of file."""
     del ctx
@@ -111,21 +119,21 @@ def _read_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             ObjectValue('Some', {'value': line}),)
 
 
-@stdlib_element('nativeReadLines', (T.Int,), (T.ExactList(T.String),), param_names=('handle',))
+@stdlib_element('readLinesHandle', (T.Int,), (T.ExactList(T.String),), param_names=('handle',))
 def _read_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return all remaining decoded lines as a rank-one language list."""
     del ctx
     return (ListValue(_handle(args[0]).read_lines(), runtime_rank=1),)
 
 
-@stdlib_element('nativeReadText', (T.Int,), (T.String,), param_names=('handle',))
+@stdlib_element('readTextHandle', (T.Int,), (T.String,), param_names=('handle',))
 def _read_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return all remaining decoded text from a live resource."""
     del ctx
     return (_handle(args[0]).read_text(),)
 
 
-@stdlib_element('nativeReadBytes', (T.Int, T.Int), (_BYTE_LIST,),
+@stdlib_element('readBytesHandle', (T.Int, T.Int), (_BYTE_LIST,),
                 param_names=('handle', 'count'))
 def _read_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Read exactly the requested byte count and return a byte-tagged language list."""
@@ -133,14 +141,14 @@ def _read_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (TaggedValue(ListValue([RuntimeNumber(b) for b in _handle(args[0]).read_bytes(int(args[1]))], runtime_rank=1), _BYTE_TAGS),)
 
 
-@stdlib_element('nativeReadAllBytes', (T.Int,), (_BYTE_LIST,), param_names=('handle',))
+@stdlib_element('readAllBytesHandle', (T.Int,), (_BYTE_LIST,), param_names=('handle',))
 def _read_all_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return all remaining raw bytes as a byte-tagged language list."""
     del ctx
     return (TaggedValue(ListValue([RuntimeNumber(b) for b in _handle(args[0]).read_all_bytes()], runtime_rank=1), _BYTE_TAGS),)
 
 
-@stdlib_element('nativeWriteText', (T.Int, T.String), (), param_names=('handle','text'))
+@stdlib_element('writeTextHandle', (T.Int, T.String), (), param_names=('handle','text'))
 def _write_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Write text to a live resource using its selected encoding."""
     del ctx
@@ -148,7 +156,7 @@ def _write_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
-@stdlib_element('nativeWriteLine', (T.Int, T.String), (), param_names=('handle','line'))
+@stdlib_element('writeLineHandle', (T.Int, T.String), (), param_names=('handle','line'))
 def _write_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Write text and one encoded LF to a live resource."""
     del ctx
@@ -156,7 +164,7 @@ def _write_line(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
-@stdlib_element('nativeWriteLines', (T.Int, T.AtLeastList(T.String)), (),
+@stdlib_element('writeLinesHandle', (T.Int, T.AtLeastList(T.String)), (),
                 param_names=('handle','lines'))
 def _write_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Write each language-list line with one encoded LF terminator."""
@@ -165,7 +173,7 @@ def _write_lines(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
-@stdlib_element('nativeWriteBytes', (T.Int, _BYTE_LIST), (),
+@stdlib_element('writeBytesHandle', (T.Int, _BYTE_LIST), (),
                 param_names=('handle','bytes'))
 def _write_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Validate byte-tagged values are in range before writing their raw bytes."""
@@ -181,89 +189,89 @@ from dataclasses import replace
 from valiance.elements.documentation import element_documentation
 
 _FILE_DOCS = {
-    'nativeOpenRead': 'Open a sequential native read handle for a Path.',
-    'nativeOpenWrite': 'Create or truncate a sequential native write handle.',
-    'nativeOpenAppend': 'Open a sequential native append handle.',
-    'nativeClose': 'Flush and close a native file handle if still open.',
-    'nativeFlush': 'Flush the language runtime buffer without fsync.',
-    'nativeReadLine': 'Read a line, returning None on end of file.',
-    'nativeReadLines': 'Read all remaining lines.',
-    'nativeReadText': 'Read all remaining decoded text.',
-    'nativeReadBytes': 'Read exactly the requested number of bytes.',
-    'nativeReadAllBytes': 'Read all remaining raw bytes.',
-    'nativeWriteText': 'Write text using the selected encoding.',
-    'nativeWriteLine': 'Write text followed by a single LF newline.',
-    'nativeWriteLines': 'Write lines with LF delimiters.',
-    'nativeWriteBytes': 'Write bytes in the inclusive range 0 to 255.',
+    'openRead': 'Open a sequential native read handle for a Path with UTF-8 as the default encoding.',
+    'openWrite': 'Create or truncate a sequential write handle with UTF-8 as the default encoding.',
+    'openAppend': 'Open a sequential append handle with UTF-8 as the default encoding.',
+    'closeHandle': 'Flush and close a native file handle if still open.',
+    'flushHandle': 'Flush the language runtime buffer without fsync.',
+    'readLineHandle': 'Read a line, returning None on end of file.',
+    'readLinesHandle': 'Read all remaining lines.',
+    'readTextHandle': 'Read all remaining decoded text.',
+    'readBytesHandle': 'Read exactly the requested number of bytes.',
+    'readAllBytesHandle': 'Read all remaining raw bytes.',
+    'writeTextHandle': 'Write text using the selected encoding.',
+    'writeLineHandle': 'Write text followed by a single LF newline.',
+    'writeLinesHandle': 'Write lines with LF delimiters.',
+    'writeBytesHandle': 'Write bytes in the inclusive range 0 to 255.',
 }
 _EXAMPLES = {
-    'nativeOpenWrite': """import {std.file}
+    'openWrite': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeClose""",
-    'nativeOpenAppend': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.closeHandle""",
+    'openAppend': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenAppend(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeClose""",
-    'nativeOpenRead': """import {std.file}
+$handle = file.openAppend(path.Path("example.txt"))
+$handle file.closeHandle""",
+    'openRead': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeClose""",
-    'nativeClose': """import {std.file}
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.closeHandle""",
+    'closeHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeClose""",
-    'nativeFlush': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.closeHandle""",
+    'flushHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeFlush
-$handle file.nativeClose""",
-    'nativeWriteText': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.flushHandle
+$handle file.closeHandle""",
+    'writeTextHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle "hello" file.nativeWriteText
-$handle file.nativeClose""",
-    'nativeWriteLine': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle "hello" file.writeTextHandle
+$handle file.closeHandle""",
+    'writeLineHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle "hello" file.nativeWriteLine
-$handle file.nativeClose""",
-    'nativeWriteLines': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle "hello" file.writeLineHandle
+$handle file.closeHandle""",
+    'writeLinesHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle ["a", "b"] file.nativeWriteLines
-$handle file.nativeClose""",
-    'nativeWriteBytes': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle ["a", "b"] file.writeLinesHandle
+$handle file.closeHandle""",
+    'writeBytesHandle': """import {std.file}
 import {std.path}
 import {std.file.#byte}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle [65 #byte, 66 #byte] file.nativeWriteBytes
-$handle file.nativeClose""",
-    'nativeReadText': """import {std.file}
+$handle = file.openWrite(path.Path("example.txt"))
+$handle [65 #byte, 66 #byte] file.writeBytesHandle
+$handle file.closeHandle""",
+    'readTextHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeReadText
-$handle file.nativeClose""",
-    'nativeReadLine': """import {std.file}
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readTextHandle
+$handle file.closeHandle""",
+    'readLineHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeReadLine
-$handle file.nativeClose""",
-    'nativeReadLines': """import {std.file}
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readLineHandle
+$handle file.closeHandle""",
+    'readLinesHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeReadLines
-$handle file.nativeClose""",
-    'nativeReadBytes': """import {std.file}
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readLinesHandle
+$handle file.closeHandle""",
+    'readBytesHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle 2 file.nativeReadBytes
-$handle file.nativeClose""",
-    'nativeReadAllBytes': """import {std.file}
+$handle = file.openRead(path.Path("example.txt"))
+$handle 2 file.readBytesHandle
+$handle file.closeHandle""",
+    'readAllBytesHandle': """import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\\UTF8)
-$handle file.nativeReadAllBytes
-$handle file.nativeClose""",
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readAllBytesHandle
+$handle file.closeHandle""",
 }
 _EXAMPLE_CONTEXT = (
     'Native read examples require example.txt to exist; native write examples modify it. Close handles after use.'

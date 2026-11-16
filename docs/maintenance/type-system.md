@@ -679,6 +679,15 @@ effects.
 `FunctionType(None, None)` means an unconstrained callable shape rather than a
 niladic function. A niladic function has empty tuples.
 
+A checked anonymous generic function with declared bounds retains an
+`OverloadSetType` even when it has only one signature: `FunctionType` alone
+cannot encode an overload's `GenericConstraint` records. Calling that value
+must solve and check its bounds exactly as a named generic `define` would.
+Higher-order argument contextualization uses the checked overload, not just
+its `FunctionType` stack effect, before adapting it to an expected `Function[...]`
+parameter. Otherwise `fn[T:Number](x:T) -> T` could masquerade as
+`Function[String -> String]`, despite its body being valid only under `T: Number`.
+
 #### Row types
 
 A row type combines a base with required fields:
@@ -1703,8 +1712,11 @@ There is no separate mini type checker for functions.
 
 ### 6. Assemble the callable type
 
-One signature becomes `FunctionType`; multiple signatures become
-`OverloadSetType` with corresponding typed bodies.
+One ordinary signature becomes `FunctionType`; multiple signatures or one
+signature with generic bounds/where-conditions become `OverloadSetType` with
+corresponding typed bodies. Bounds established in the generic function's body
+scope must remain attached to its callable overload, including when an
+anonymous literal is passed to a contextually typed higher-order parameter.
 
 ## Optional-safe field access
 

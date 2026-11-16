@@ -1248,9 +1248,18 @@ def _function_overload_matches_type(
 ) -> bool:
     """Return whether a function overload matches the expected type."""
     typ = T.normalize(overload.typ)
-    return isinstance(typ, T.FunctionType) and (
-        T.same(typ, expected) or T.compatible(typ, expected, ctx)
-    )
+    if not isinstance(typ, T.FunctionType):
+        return False
+    signature = overload.overload
+    if isinstance(signature, T.Overload) and (
+        signature.generic_constraints or signature.where_clause
+    ):
+        # The per-overload FunctionType records only the stack effect. A
+        # generic literal's bounds live on its Overload and must be checked
+        # before contextual typing replaces the literal with the expected
+        # Function[...] signature.
+        return T.compatible(T.Overloads(signature), expected, ctx)
+    return T.same(typ, expected) or T.compatible(typ, expected, ctx)
 
 
 def _show_modifier_counts(overloads: tuple[T.Overload, ...]) -> str:

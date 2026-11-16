@@ -23,45 +23,45 @@ public object ReadFile =>
   private $handle: Int = 0
 
   define ReadFile(path: path.Path, encoding: Encoding = Encoding.\UTF8) =>
-    $self.handle = std.file.nativeOpenRead($path, $encoding)
+    $self.handle = std.file.openRead($path, $encoding)
   end
 
   @returnAll public define readLine =>
-    std.file.nativeReadLine($self.handle)
+    std.file.readLineHandle($self.handle)
     $self
     swap
   end
 
   @returnAll public define readLines =>
-    std.file.nativeReadLines($self.handle)
+    std.file.readLinesHandle($self.handle)
     $self
     swap
   end
 
   @returnAll public define readText =>
-    std.file.nativeReadText($self.handle)
+    std.file.readTextHandle($self.handle)
     $self
     swap
   end
 
   @returnAll public define readBytes(count: Int) =>
-    std.file.nativeReadBytes($self.handle, $count)
+    std.file.readBytesHandle($self.handle, $count)
     $self
     swap
   end
 
   @returnAll public define readAllBytes =>
-    std.file.nativeReadAllBytes($self.handle)
+    std.file.readAllBytesHandle($self.handle)
     $self
     swap
   end
 
   public define close =>
-    std.file.nativeClose($self.handle)
+    std.file.closeHandle($self.handle)
   end
 
   public define ~ReadFile =>
-    std.file.nativeClose($self.handle)
+    std.file.closeHandle($self.handle)
   end
 end
 
@@ -70,35 +70,35 @@ public object WriteFile =>
   private $handle: Int = 0
 
   define WriteFile(path: path.Path, encoding: Encoding = Encoding.\UTF8) =>
-    $self.handle = std.file.nativeOpenWrite($path, $encoding)
+    $self.handle = std.file.openWrite($path, $encoding)
   end
 
   @self public define writeText(text: String) =>
-    std.file.nativeWriteText($self.handle, $text)
+    std.file.writeTextHandle($self.handle, $text)
   end
 
   @self public define writeLine(line: String) =>
-    std.file.nativeWriteLine($self.handle, $line)
+    std.file.writeLineHandle($self.handle, $line)
   end
 
   @self public define writeLines(lines: String+) =>
-    std.file.nativeWriteLines($self.handle, $lines)
+    std.file.writeLinesHandle($self.handle, $lines)
   end
 
   @self public define writeBytes(bytes: #byte+ Int+) =>
-    std.file.nativeWriteBytes($self.handle, $bytes)
+    std.file.writeBytesHandle($self.handle, $bytes)
   end
 
   @self public define flush =>
-    std.file.nativeFlush($self.handle)
+    std.file.flushHandle($self.handle)
   end
 
   public define close =>
-    std.file.nativeClose($self.handle)
+    std.file.closeHandle($self.handle)
   end
 
   public define ~WriteFile =>
-    std.file.nativeClose($self.handle)
+    std.file.closeHandle($self.handle)
   end
 end
 
@@ -107,34 +107,34 @@ public object AppendFile =>
   private $handle: Int = 0
 
   define AppendFile(path: path.Path, encoding: Encoding = Encoding.\UTF8) =>
-    $self.handle = std.file.nativeOpenAppend($path, $encoding)
+    $self.handle = std.file.openAppend($path, $encoding)
   end
 
   @self public define writeText(text: String) =>
-    std.file.nativeWriteText($self.handle, $text)
+    std.file.writeTextHandle($self.handle, $text)
   end
 
   @self public define writeLine(line: String) =>
-    std.file.nativeWriteLine($self.handle, $line)
+    std.file.writeLineHandle($self.handle, $line)
   end
 
   @self public define writeLines(lines: String+) =>
-    std.file.nativeWriteLines($self.handle, $lines)
+    std.file.writeLinesHandle($self.handle, $lines)
   end
 
   @self public define writeBytes(bytes: #byte+ Int+) =>
-    std.file.nativeWriteBytes($self.handle, $bytes)
+    std.file.writeBytesHandle($self.handle, $bytes)
   end
 
   @self public define flush =>
-    std.file.nativeFlush($self.handle)
+    std.file.flushHandle($self.handle)
   end
 
   public define close =>
-    std.file.nativeClose($self.handle)
+    std.file.closeHandle($self.handle)
   end
 
   public define ~AppendFile =>
-    std.file.nativeClose($self.handle)
+    std.file.closeHandle($self.handle)
   end
 end

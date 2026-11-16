@@ -763,7 +763,7 @@ source_cases(GenericsPlanSourceTests, [
     C('OV-015', 'define[T] choose(x:T,y:Int=3)->T=>$x end\n'
       'choose(x="x")', ['x']),
     C('OV-016', 'define[T] choose(x:T,y:Int=3)->T=>$x end\n'
-      '"x" choose', reject=('no overloads',)),
+      '"x" choose', ['x']),
     C('TB-014', 'trait[T] Source => extend read->T end\n'
       'object[T] Box => $value:T end\n'
       'object[T] Box as Source[T] => define read->T=>$self.value end\n'

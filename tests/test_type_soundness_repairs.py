@@ -82,6 +82,67 @@ class TypeSoundnessRepairsTests(TraitPlanTestCase):
             'define[T] readSize(x:T)->Int=>$x size end',
             reject=('no overloads',),
         ))
+    def test_bounded_anonymous_function_rejects_invalid_instantiation(self):
+        source = (
+            '$f = fn[T:Number](x:T) -> Number => $x + 1 end\n'
+        )
+        self.check_case(SourceCase(
+            'anonymous-bound-call-reject',
+            source + '$f("s")',
+            reject=("no overloads for element 'call'",),
+        ))
+        self.check_case(SourceCase(
+            'anonymous-bound-call-execute',
+            source + '$f(3)', [4],
+        ))
+
+    def test_bounded_anonymous_function_cannot_escape_into_unbounded_callback(self):
+        identity = 'fn[T:Number](x:T) -> T => $x end'
+        self.check_case(SourceCase(
+            'anonymous-bound-contextual-callback-reject',
+            'define use(g:Function[String -> String]) -> String => $g("s") end\n'
+            f'use({identity})',
+            reject=("no overloads for element 'use'",),
+        ))
+        self.check_case(SourceCase(
+            'anonymous-bound-variable-assignment-reject',
+            f'$f = {identity}\n$g:Function[String -> String] = $f',
+            reject=('cannot assign',),
+        ))
+        self.check_case(SourceCase(
+            'anonymous-bound-variable-callback-reject',
+            'define use(g:Function[String -> String]) -> String => $g("s") end\n'
+            f'$f = {identity}\nuse($f)',
+            reject=("no overloads for element 'use'",),
+        ))
+        self.check_case(SourceCase(
+            'anonymous-bound-contextual-callback-execute',
+            'define use(g:Function[Int -> Int]) -> Int => $g(2) end\n'
+            f'use({identity})', [2],
+        ))
+        self.check_case(SourceCase(
+            'anonymous-unbounded-callback-still-executes',
+            'define use(g:Function[String -> String]) -> String => $g("s") end\n'
+            'use(fn[T](x:T) -> T => $x end)', ['s'],
+        ))
+
+    def test_anonymous_trait_bound_is_enforced_at_call_site(self):
+        source = (
+            'trait Sized => extend size -> Int end\n'
+            'object Item => $value:Int end\n'
+            'object Item as Sized => define size => $self.value end\n'
+            '$f = fn[T:Sized](x:T) -> Int => $x size end\n'
+        )
+        self.check_case(SourceCase(
+            'anonymous-trait-bound-call-reject',
+            source + '$f("s")',
+            reject=("no overloads for element 'call'",),
+        ))
+        self.check_case(SourceCase(
+            'anonymous-trait-bound-call-execute',
+            source + '$f(Item(5))', [5],
+        ))
+
 
 class ProviderPrivateRuntimeTests(TraitPlanTestCase):
     def test_public_function_can_construct_private_object(self):

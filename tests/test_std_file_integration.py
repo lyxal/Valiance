@@ -40,6 +40,31 @@ class FileLanguageIntegrationTests(unittest.TestCase):
         with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
             self.assertEqual(stream.read(), b'alpha\nbeta\n')
 
+    def test_handle_api_defaults_to_utf8_and_accepts_encoding_override(self):
+        path = self._path()
+        for opener, encoding, content, expected in (
+            ('openWrite', '', 'café', 'café'.encode()),
+            ('openAppend', '', 'β', 'caféβ'.encode()),
+            ('openWrite', ', encoding = file.Encoding.\\UTF16LE', 'β', 'β'.encode('utf-16-le')),
+        ):
+            with self.subTest(opener=opener, encoding=encoding):
+                self._run(f'''
+$handle = file.{opener}(path.Path({path}){encoding})
+file.writeTextHandle($handle, "{content}")
+file.flushHandle($handle)
+file.closeHandle($handle)
+''')
+                with open(os.path.join(self._temp.name, 'data.txt'), 'rb') as stream:
+                    self.assertEqual(stream.read(), expected)
+                values, _ = self._run(f'''
+$handle = file.openRead(path.Path({path}){encoding})
+$text = file.readTextHandle($handle)
+file.closeHandle($handle)
+$text
+''')
+                self.assertEqual(values, ['caféβ' if opener == 'openAppend' else content])
+                self.assertFalse(file_backend._handles)
+
     def test_selected_writer_import_preserves_private_constructor_defaults(self):
         for imports, constructor, path_constructor in (
             ('std.file.WriteFile, std.path.Path', 'WriteFile', 'Path'),
@@ -329,6 +354,10 @@ $f writeLine "World"
             f'file.do.readText(path = path.Path({path}), encoding = file.Encoding.\\UTF16LE)'
         )
         self.assertEqual(result, ['café!'])
+        result, _ = self._run(
+            f'path.Path({path}) file.Encoding.\\UTF16LE file.do.readText'
+        )
+        self.assertEqual(result, ['café!'])
         self.assertFalse(file_backend._handles)
 
     def test_one_shot_line_helpers_accept_optional_encodings(self):
@@ -433,6 +462,7 @@ $f writeLine "World"
     def test_read_lines_maps_complete_tab_separated_rows(self):
         path = self._path()
         readers = (
+            ('std.file.do, std.path.Path', f'do.readLines Path {path}'),
             ('std.file.do, std.path.Path', f'do.readLines(Path {path})'),
             ('std.file, std.path', f'file.do.readLines(path.Path({path}))'),
             ('std.file, std.path',

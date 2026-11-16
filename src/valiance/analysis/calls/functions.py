@@ -227,7 +227,11 @@ class _CallableValues:
             return None
         typ = (
             T.Fn(overloads[0].params, overloads[0].returns, overloads[0].element_tags)
-            if len(overloads) == 1 and not overloads[0].where_clause
+            if (
+                len(overloads) == 1
+                and not overloads[0].where_clause
+                and not overloads[0].generic_constraints
+            )
             else T.Overloads(*overloads)
         )
         return FunctionAnalysis(typ, tuple(typings)), outer
@@ -890,6 +894,11 @@ class _CallableValues:
                 node,
             )
             return {}
+        generic_constraints = _functions._generic_constraints(
+            node.generics,
+            node.generic_variances,
+            node.generic_constraints,
+        )
         for branch in branches:
             if branch.failed:
                 continue
@@ -927,12 +936,15 @@ class _CallableValues:
                 final_element_tags,
                 node,
             )
-            signature = _functions._function_overload(
-                node,
-                params=inputs,
-                returns=returns,
-                where_clause=node.where_clause,
-                element_tags=final_element_tags,
+            signature = _functions._with_generic_constraints(
+                _functions._function_overload(
+                    node,
+                    params=inputs,
+                    returns=returns,
+                    where_clause=node.where_clause,
+                    element_tags=final_element_tags,
+                ),
+                generic_constraints,
             )
             signatures.setdefault(signature, branch.typed_body)
             if self.trace is not None and signatures[signature] == branch.typed_body:

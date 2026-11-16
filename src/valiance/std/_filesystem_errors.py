@@ -57,10 +57,10 @@ _FILESYSTEM_FAULTS = {
 def filesystem_effects(operation: str) -> tuple[T.ElementTag, ...]:
     """Declare native faults that the language cannot infer from Python code."""
     kind = (
-        'open' if operation.startswith(('nativeOpen',)) else
-        'close' if operation.startswith(('nativeClose', 'nativeFlush')) else
-        'read' if operation.startswith(('nativeRead', 'read')) else
-        'write' if operation.startswith(('nativeWrite', 'write', 'append')) else
+        'open' if operation.startswith('open') else
+        'close' if operation.startswith(('close', 'flush')) else
+        'read' if operation.startswith('read') else
+        'write' if operation.startswith(('write', 'append')) else
         'read'
     )
     return tuple(

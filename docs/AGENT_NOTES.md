@@ -232,6 +232,12 @@ function signature. Keep negative tag requirements (`#-infinite`, etc.) on the
 original generic type, not the bound view, when propagating call requirements.
 `define[T] bad(x:T) -> Number => $x + 1 end` must reject at declaration unless
 there is a universal generic `+` overload or an explicit applicable constraint.
+The lexical bound view does not carry itself into a `FunctionType`: an anonymous
+`fn[T:Number]` must retain `Overload.generic_constraints` in its resulting
+`OverloadSetType`. Also check contextual modifier matching in
+`analysis/calls/candidates.py`: each `FunctionOverloadTyping.typ` is only the
+stack-effect view, so matching that view alone silently discards bounds when
+adapting a literal to `Function[String -> String]`.
 
 Optional and Result success have **implicit value representations**: every
 non-`None` value matches `Some[T]` when it matches `T`, and every non-`Err`

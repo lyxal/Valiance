@@ -9623,21 +9623,21 @@ Validate that a byte is an Int in the inclusive range 0 to 255.
 import {std.file.#byte} 65 #byte
 ```
 
-### `std.file.nativeClose`
+### `std.file.closeHandle`
 
 Flush and close a native file handle if still open.
 
 **Overloads**
 
-- `std.file.nativeClose(handle: Int) -> ()`
+- `std.file.closeHandle(handle: Int) -> ()`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9647,27 +9647,27 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeFlush`
+### `std.file.flushHandle`
 
 Flush the language runtime buffer without fsync.
 
 **Overloads**
 
-- `std.file.nativeFlush(handle: Int) -> ()`
+- `std.file.flushHandle(handle: Int) -> ()`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeFlush
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.flushHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9677,27 +9677,27 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeFlush
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.flushHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeOpenAppend`
+### `std.file.openAppend`
 
-Open a sequential native append handle.
+Open a sequential append handle with UTF-8 as the default encoding.
 
 **Overloads**
 
-- `std.file.nativeOpenAppend(path: PathArg, encoding: EncodingArg) -> Int`
+- `std.file.openAppend(path: PathArg, encoding: EncodingArg) -> Int`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenAppend(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openAppend(path.Path("example.txt"))
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9707,26 +9707,26 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenAppend(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openAppend(path.Path("example.txt"))
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeOpenRead`
+### `std.file.openRead`
 
-Open a sequential native read handle for a Path.
+Open a sequential native read handle for a Path with UTF-8 as the default encoding.
 
 **Overloads**
 
-- `std.file.nativeOpenRead(path: PathArg, encoding: EncodingArg) -> Int`
+- `std.file.openRead(path: PathArg, encoding: EncodingArg) -> Int`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9736,26 +9736,26 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeOpenWrite`
+### `std.file.openWrite`
 
-Create or truncate a sequential native write handle.
+Create or truncate a sequential write handle with UTF-8 as the default encoding.
 
 **Overloads**
 
-- `std.file.nativeOpenWrite(path: PathArg, encoding: EncodingArg) -> Int`
+- `std.file.openWrite(path: PathArg, encoding: EncodingArg) -> Int`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9765,27 +9765,27 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeReadAllBytes`
+### `std.file.readAllBytesHandle`
 
 Read all remaining raw bytes.
 
 **Overloads**
 
-- `std.file.nativeReadAllBytes(handle: Int) -> #byte+ Int*`
+- `std.file.readAllBytesHandle(handle: Int) -> #byte+ Int*`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadAllBytes
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readAllBytesHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9795,28 +9795,28 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadAllBytes
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readAllBytesHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeReadBytes`
+### `std.file.readBytesHandle`
 
 Read exactly the requested number of bytes.
 
 **Overloads**
 
-- `std.file.nativeReadBytes(handle: Int, count: Int) -> #byte+ Int*`
+- `std.file.readBytesHandle(handle: Int, count: Int) -> #byte+ Int*`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle 2 file.nativeReadBytes
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle 2 file.readBytesHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9826,28 +9826,28 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle 2 file.nativeReadBytes
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle 2 file.readBytesHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeReadLine`
+### `std.file.readLineHandle`
 
 Read a line, returning None on end of file.
 
 **Overloads**
 
-- `std.file.nativeReadLine(handle: Int) -> String?`
+- `std.file.readLineHandle(handle: Int) -> String?`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadLine
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readLineHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9857,28 +9857,28 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadLine
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readLineHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeReadLines`
+### `std.file.readLinesHandle`
 
 Read all remaining lines.
 
 **Overloads**
 
-- `std.file.nativeReadLines(handle: Int) -> String+`
+- `std.file.readLinesHandle(handle: Int) -> String+`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadLines
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readLinesHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9888,28 +9888,28 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadLines
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readLinesHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeReadText`
+### `std.file.readTextHandle`
 
 Read all remaining decoded text.
 
 **Overloads**
 
-- `std.file.nativeReadText(handle: Int) -> String`
+- `std.file.readTextHandle(handle: Int) -> String`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadText
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readTextHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9919,19 +9919,19 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenRead(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle file.nativeReadText
-$handle file.nativeClose
+$handle = file.openRead(path.Path("example.txt"))
+$handle file.readTextHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeWriteBytes`
+### `std.file.writeBytesHandle`
 
 Write bytes in the inclusive range 0 to 255.
 
 **Overloads**
 
-- `std.file.nativeWriteBytes(handle: Int, bytes: #byte+ Int*) -> ()`
+- `std.file.writeBytesHandle(handle: Int, bytes: #byte+ Int*) -> ()`
 
   **Example**
 
@@ -9939,9 +9939,9 @@ Write bytes in the inclusive range 0 to 255.
   import {std.file}
 import {std.path}
 import {std.file.#byte}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle [65 #byte, 66 #byte] file.nativeWriteBytes
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle [65 #byte, 66 #byte] file.writeBytesHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9952,28 +9952,28 @@ $handle file.nativeClose
 import {std.file}
 import {std.path}
 import {std.file.#byte}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle [65 #byte, 66 #byte] file.nativeWriteBytes
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle [65 #byte, 66 #byte] file.writeBytesHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeWriteLine`
+### `std.file.writeLineHandle`
 
 Write text followed by a single LF newline.
 
 **Overloads**
 
-- `std.file.nativeWriteLine(handle: Int, line: String) -> ()`
+- `std.file.writeLineHandle(handle: Int, line: String) -> ()`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle "hello" file.nativeWriteLine
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle "hello" file.writeLineHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -9983,28 +9983,28 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle "hello" file.nativeWriteLine
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle "hello" file.writeLineHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeWriteLines`
+### `std.file.writeLinesHandle`
 
 Write lines with LF delimiters.
 
 **Overloads**
 
-- `std.file.nativeWriteLines(handle: Int, lines: String*) -> ()`
+- `std.file.writeLinesHandle(handle: Int, lines: String*) -> ()`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle ["a", "b"] file.nativeWriteLines
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle ["a", "b"] file.writeLinesHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -10014,28 +10014,28 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle ["a", "b"] file.nativeWriteLines
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle ["a", "b"] file.writeLinesHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
-### `std.file.nativeWriteText`
+### `std.file.writeTextHandle`
 
 Write text using the selected encoding.
 
 **Overloads**
 
-- `std.file.nativeWriteText(handle: Int, text: String) -> ()`
+- `std.file.writeTextHandle(handle: Int, text: String) -> ()`
 
   **Example**
 
   ```vlnc
   import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle "hello" file.nativeWriteText
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle "hello" file.writeTextHandle
+$handle file.closeHandle
   ```
   Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -10045,9 +10045,9 @@ $handle file.nativeClose
 ```vlnc
 import {std.file}
 import {std.path}
-$handle = file.nativeOpenWrite(path.Path("example.txt"), file.Encoding.\UTF8)
-$handle "hello" file.nativeWriteText
-$handle file.nativeClose
+$handle = file.openWrite(path.Path("example.txt"))
+$handle "hello" file.writeTextHandle
+$handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
@@ -10084,7 +10084,7 @@ Read examples require example.txt to exist; write and append examples modify it.
 
 ### `std.file_do.appendLines`
 
-Append LF-delimited lines using the selected encoding.
+Append LF-delimited lines. The default encoding is UTF-8.
 
 **Overloads**
 
@@ -10111,7 +10111,7 @@ Read examples require example.txt to exist; write and append examples modify it.
 
 ### `std.file_do.appendText`
 
-Append text using the selected encoding and close the file.
+Append text and close the file. The default encoding is UTF-8.
 
 **Overloads**
 
@@ -10165,7 +10165,7 @@ Read examples require example.txt to exist; write and append examples modify it.
 
 ### `std.file_do.readLines`
 
-Read all lines using the selected encoding and close the file.
+Read all lines and close the file. The default encoding is UTF-8.
 
 **Overloads**
 
@@ -10174,9 +10174,8 @@ Read all lines using the selected encoding and close the file.
   **Example**
 
   ```vlnc
-  import {std.file}
-import {std.path}
-file.do.readLines(path.Path("example.txt"), file.Encoding.\UTF8)
+  import {std.file.do, std.path.Path}
+do.readLines Path "example.txt"
   ```
   Read examples require example.txt to exist; write and append examples modify it. The helper closes its handle automatically.
 
@@ -10184,15 +10183,14 @@ file.do.readLines(path.Path("example.txt"), file.Encoding.\UTF8)
 **Example**
 
 ```vlnc
-import {std.file}
-import {std.path}
-file.do.readLines(path.Path("example.txt"), file.Encoding.\UTF8)
+import {std.file.do, std.path.Path}
+do.readLines Path "example.txt"
 ```
 Read examples require example.txt to exist; write and append examples modify it. The helper closes its handle automatically.
 
 ### `std.file_do.readText`
 
-Read an entire file using the selected encoding and close it.
+Read an entire file and close it. The default encoding is UTF-8.
 
 **Overloads**
 
@@ -10248,7 +10246,7 @@ Read examples require example.txt to exist; write and append examples modify it.
 
 ### `std.file_do.writeLines`
 
-Create or replace a file with LF-delimited lines using the selected encoding.
+Create or replace a file with LF-delimited lines. The default encoding is UTF-8.
 
 **Overloads**
 
@@ -10275,7 +10273,7 @@ Read examples require example.txt to exist; write and append examples modify it.
 
 ### `std.file_do.writeText`
 
-Create or replace a file with text in the selected encoding.
+Create or replace a file with text. The default encoding is UTF-8.
 
 **Overloads**
 

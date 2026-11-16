@@ -436,8 +436,10 @@ overload resolution as a workaround.
 
 Raw `ElementNode.call_args` still matters during analysis: ECS calls preserve
 which arguments were named, positional, or `_` placeholders. The analyser uses
-that structure to lower optional defaults only for ECS calls. Ordinary stack
-calls still require the full non-modifier arity.
+that structure to bind explicit arguments. A plain stack call first tries the
+full arity. If no overload matches and all optional parameters follow the
+required parameters, the call can consume just the required stack operands
+and use the declared defaults for the optional parameters.
 
 ### Alternative Overload Selection
 
@@ -1226,8 +1228,13 @@ Function return rules:
 - explicit returns: require the final stack to be assignable to the expected
   return stack
 
-Multiple viable function signatures become an `OverloadSetType`. The typed
-function node keeps per-overload typed bodies so the typed AST remains useful.
+Multiple viable function signatures become an `OverloadSetType`. So does a
+single signature with generic bounds or a where-condition: those contracts live
+on `Overload`, not `FunctionType`, and must survive even after analysis checks the
+body with the generic bound in scope. Contextual callback matching applies the
+full overload contract before adapting a literal to an expected `Function[...]`
+type. The typed function node keeps per-overload typed bodies so the typed AST
+remains useful.
 
 Function types can carry element tags. Effects are accumulated on each analysis
 branch and survive nested control flow, loops, `try`, `match`, collection

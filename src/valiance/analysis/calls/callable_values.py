@@ -811,7 +811,11 @@ def _function_analysis_from_signatures(
         )
         for signature in ordered
     )
-    if len(ordered) == 1 and not ordered[0].where_clause:
+    if (
+        len(ordered) == 1
+        and not ordered[0].where_clause
+        and not ordered[0].generic_constraints
+    ):
         signature = ordered[0]
         typ = T.Fn(signature.params, signature.returns, signature.element_tags)
     else:
@@ -1198,9 +1202,17 @@ def _with_generic_constraints(
     """Compute with generic constraints during static analysis."""
     if not constraints:
         return overload
+    # A function's own bounds are already retained by its checked signature.
+    # Reattaching declaration/owner bounds must not duplicate them.
+    extra = tuple(
+        constraint for constraint in constraints
+        if constraint not in overload.generic_constraints
+    )
+    if not extra:
+        return overload
     return replace(
         overload,
-        generic_constraints=overload.generic_constraints + constraints,
+        generic_constraints=overload.generic_constraints + extra,
     )
 
 

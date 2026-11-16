@@ -75,7 +75,9 @@ $text = file.do.readText(path.Path("notes.txt"))
 Optional encoding can be supplied positionally or by name:
 `file.WriteFile(path.Path("notes.txt"), file.Encoding.\UTF16LE)` or
 `file.WriteFile(path = path.Path("notes.txt"), encoding = file.Encoding.\UTF16LE)`.
-The default encoding is UTF-8 for both stateful resources and `file.do` helpers.
+UTF-8 is the default for the file constructors, the `file.openRead`,
+`file.openWrite`, and `file.openAppend` handle functions, and the `file.do`
+text helpers. Use `file.closeHandle` to release a numeric handle.
 
 ```valiance
 $p = path.Path("utf16.txt")
@@ -84,7 +86,7 @@ $text = file.do.readText($p, encoding = file.Encoding.\UTF16LE)
 $component = path.extension($p)  # Some(Path(".txt"))
 ```
 
-The Valiance-native `file.do` entrypoints carry typed default expressions.
+The handle openers and the `file.do` text helpers share a typed default expression.
 Their internal default expression is evaluated through a private, qualified
 stdlib-native element; the module import bridge resolves this dependency
 without leaking it into the public `file.do` API. Calls with a required

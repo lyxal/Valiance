@@ -14072,11 +14072,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeClose",
+      "name": "closeHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14086,7 +14086,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14097,10 +14097,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeClose(handle: Int) -> ()"
+        "std.file.closeHandle(handle: Int) -> ()"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeClose",
+      "qualified_name": "std.file.closeHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14115,11 +14115,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeFlush\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle file.flushHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeFlush",
+      "name": "flushHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14129,7 +14129,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeFlush\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle file.flushHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14140,10 +14140,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeFlush(handle: Int) -> ()"
+        "std.file.flushHandle(handle: Int) -> ()"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeFlush",
+      "qualified_name": "std.file.flushHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14158,11 +14158,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenAppend(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openAppend(path.Path(\"example.txt\"))\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeOpenAppend",
+      "name": "openAppend",
       "notes": [],
       "overload_documentation": [
         {
@@ -14172,26 +14172,26 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenAppend(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openAppend(path.Path(\"example.txt\"))\n$handle file.closeHandle"
             }
           ],
           "notes": [],
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Open a sequential native append handle."
+          "summary": "Open a sequential append handle with UTF-8 as the default encoding."
         }
       ],
       "overloads": [
-        "std.file.nativeOpenAppend(path: PathArg, encoding: EncodingArg) -> Int"
+        "std.file.openAppend(path: PathArg, encoding: EncodingArg) -> Int"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeOpenAppend",
+      "qualified_name": "std.file.openAppend",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file.py",
-      "summary": "Open a sequential native append handle."
+      "summary": "Open a sequential append handle with UTF-8 as the default encoding."
     },
     {
       "aliases": [],
@@ -14201,11 +14201,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeOpenRead",
+      "name": "openRead",
       "notes": [],
       "overload_documentation": [
         {
@@ -14215,26 +14215,26 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.closeHandle"
             }
           ],
           "notes": [],
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Open a sequential native read handle for a Path."
+          "summary": "Open a sequential native read handle for a Path with UTF-8 as the default encoding."
         }
       ],
       "overloads": [
-        "std.file.nativeOpenRead(path: PathArg, encoding: EncodingArg) -> Int"
+        "std.file.openRead(path: PathArg, encoding: EncodingArg) -> Int"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeOpenRead",
+      "qualified_name": "std.file.openRead",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file.py",
-      "summary": "Open a sequential native read handle for a Path."
+      "summary": "Open a sequential native read handle for a Path with UTF-8 as the default encoding."
     },
     {
       "aliases": [],
@@ -14244,11 +14244,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeOpenWrite",
+      "name": "openWrite",
       "notes": [],
       "overload_documentation": [
         {
@@ -14258,26 +14258,26 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle file.closeHandle"
             }
           ],
           "notes": [],
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Create or truncate a sequential native write handle."
+          "summary": "Create or truncate a sequential write handle with UTF-8 as the default encoding."
         }
       ],
       "overloads": [
-        "std.file.nativeOpenWrite(path: PathArg, encoding: EncodingArg) -> Int"
+        "std.file.openWrite(path: PathArg, encoding: EncodingArg) -> Int"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeOpenWrite",
+      "qualified_name": "std.file.openWrite",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file.py",
-      "summary": "Create or truncate a sequential native write handle."
+      "summary": "Create or truncate a sequential write handle with UTF-8 as the default encoding."
     },
     {
       "aliases": [],
@@ -14287,11 +14287,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadAllBytes\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readAllBytesHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeReadAllBytes",
+      "name": "readAllBytesHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14301,7 +14301,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadAllBytes\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readAllBytesHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14312,10 +14312,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeReadAllBytes(handle: Int) -> #byte+ Int*"
+        "std.file.readAllBytesHandle(handle: Int) -> #byte+ Int*"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeReadAllBytes",
+      "qualified_name": "std.file.readAllBytesHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14330,11 +14330,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle 2 file.nativeReadBytes\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle 2 file.readBytesHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeReadBytes",
+      "name": "readBytesHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14344,7 +14344,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle 2 file.nativeReadBytes\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle 2 file.readBytesHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14355,10 +14355,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeReadBytes(handle: Int, count: Int) -> #byte+ Int*"
+        "std.file.readBytesHandle(handle: Int, count: Int) -> #byte+ Int*"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeReadBytes",
+      "qualified_name": "std.file.readBytesHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14373,11 +14373,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadLine\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readLineHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeReadLine",
+      "name": "readLineHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14387,7 +14387,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadLine\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readLineHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14398,10 +14398,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeReadLine(handle: Int) -> String?"
+        "std.file.readLineHandle(handle: Int) -> String?"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeReadLine",
+      "qualified_name": "std.file.readLineHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14416,11 +14416,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadLines\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readLinesHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeReadLines",
+      "name": "readLinesHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14430,7 +14430,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadLines\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readLinesHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14441,10 +14441,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeReadLines(handle: Int) -> String+"
+        "std.file.readLinesHandle(handle: Int) -> String+"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeReadLines",
+      "qualified_name": "std.file.readLinesHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14459,11 +14459,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadText\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readTextHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeReadText",
+      "name": "readTextHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14473,7 +14473,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenRead(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle file.nativeReadText\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readTextHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14484,10 +14484,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeReadText(handle: Int) -> String"
+        "std.file.readTextHandle(handle: Int) -> String"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeReadText",
+      "qualified_name": "std.file.readTextHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14502,11 +14502,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\nimport {std.file.#byte}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle [65 #byte, 66 #byte] file.nativeWriteBytes\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\nimport {std.file.#byte}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle [65 #byte, 66 #byte] file.writeBytesHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeWriteBytes",
+      "name": "writeBytesHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14516,7 +14516,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\nimport {std.file.#byte}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle [65 #byte, 66 #byte] file.nativeWriteBytes\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\nimport {std.file.#byte}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle [65 #byte, 66 #byte] file.writeBytesHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14527,10 +14527,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeWriteBytes(handle: Int, bytes: #byte+ Int*) -> ()"
+        "std.file.writeBytesHandle(handle: Int, bytes: #byte+ Int*) -> ()"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeWriteBytes",
+      "qualified_name": "std.file.writeBytesHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14545,11 +14545,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle \"hello\" file.nativeWriteLine\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle \"hello\" file.writeLineHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeWriteLine",
+      "name": "writeLineHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14559,7 +14559,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle \"hello\" file.nativeWriteLine\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle \"hello\" file.writeLineHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14570,10 +14570,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeWriteLine(handle: Int, line: String) -> ()"
+        "std.file.writeLineHandle(handle: Int, line: String) -> ()"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeWriteLine",
+      "qualified_name": "std.file.writeLineHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14588,11 +14588,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle [\"a\", \"b\"] file.nativeWriteLines\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle [\"a\", \"b\"] file.writeLinesHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeWriteLines",
+      "name": "writeLinesHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14602,7 +14602,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle [\"a\", \"b\"] file.nativeWriteLines\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle [\"a\", \"b\"] file.writeLinesHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14613,10 +14613,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeWriteLines(handle: Int, lines: String*) -> ()"
+        "std.file.writeLinesHandle(handle: Int, lines: String*) -> ()"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeWriteLines",
+      "qualified_name": "std.file.writeLinesHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14631,11 +14631,11 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle \"hello\" file.nativeWriteText\n$handle file.nativeClose"
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle \"hello\" file.writeTextHandle\n$handle file.closeHandle"
         }
       ],
       "module": "std.file",
-      "name": "nativeWriteText",
+      "name": "writeTextHandle",
       "notes": [],
       "overload_documentation": [
         {
@@ -14645,7 +14645,7 @@
             {
               "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\n$handle = file.nativeOpenWrite(path.Path(\"example.txt\"), file.Encoding.\\UTF8)\n$handle \"hello\" file.nativeWriteText\n$handle file.nativeClose"
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openWrite(path.Path(\"example.txt\"))\n$handle \"hello\" file.writeTextHandle\n$handle file.closeHandle"
             }
           ],
           "notes": [],
@@ -14656,10 +14656,10 @@
         }
       ],
       "overloads": [
-        "std.file.nativeWriteText(handle: Int, text: String) -> ()"
+        "std.file.writeTextHandle(handle: Int, text: String) -> ()"
       ],
       "parameters": [],
-      "qualified_name": "std.file.nativeWriteText",
+      "qualified_name": "std.file.writeTextHandle",
       "returns": null,
       "scope": "standard-library",
       "see_also": [],
@@ -14738,7 +14738,7 @@
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Append LF-delimited lines using the selected encoding."
+          "summary": "Append LF-delimited lines. The default encoding is UTF-8."
         }
       ],
       "overloads": [
@@ -14750,7 +14750,7 @@
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file_do.py",
-      "summary": "Append LF-delimited lines using the selected encoding."
+      "summary": "Append LF-delimited lines. The default encoding is UTF-8."
     },
     {
       "aliases": [],
@@ -14781,7 +14781,7 @@
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Append text using the selected encoding and close the file."
+          "summary": "Append text and close the file. The default encoding is UTF-8."
         }
       ],
       "overloads": [
@@ -14793,7 +14793,7 @@
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file_do.py",
-      "summary": "Append text using the selected encoding and close the file."
+      "summary": "Append text and close the file. The default encoding is UTF-8."
     },
     {
       "aliases": [],
@@ -14846,7 +14846,7 @@
         {
           "description": "Read examples require example.txt to exist; write and append examples modify it. The helper closes its handle automatically.",
           "result": null,
-          "source": "import {std.file}\nimport {std.path}\nfile.do.readLines(path.Path(\"example.txt\"), file.Encoding.\\UTF8)"
+          "source": "import {std.file.do, std.path.Path}\ndo.readLines Path \"example.txt\""
         }
       ],
       "module": "std.file_do",
@@ -14860,14 +14860,14 @@
             {
               "description": "Read examples require example.txt to exist; write and append examples modify it. The helper closes its handle automatically.",
               "result": null,
-              "source": "import {std.file}\nimport {std.path}\nfile.do.readLines(path.Path(\"example.txt\"), file.Encoding.\\UTF8)"
+              "source": "import {std.file.do, std.path.Path}\ndo.readLines Path \"example.txt\""
             }
           ],
           "notes": [],
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Read all lines using the selected encoding and close the file."
+          "summary": "Read all lines and close the file. The default encoding is UTF-8."
         }
       ],
       "overloads": [
@@ -14879,7 +14879,7 @@
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file_do.py",
-      "summary": "Read all lines using the selected encoding and close the file."
+      "summary": "Read all lines and close the file. The default encoding is UTF-8."
     },
     {
       "aliases": [],
@@ -14910,7 +14910,7 @@
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Read an entire file using the selected encoding and close it."
+          "summary": "Read an entire file and close it. The default encoding is UTF-8."
         }
       ],
       "overloads": [
@@ -14922,7 +14922,7 @@
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file_do.py",
-      "summary": "Read an entire file using the selected encoding and close it."
+      "summary": "Read an entire file and close it. The default encoding is UTF-8."
     },
     {
       "aliases": [],
@@ -14996,7 +14996,7 @@
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Create or replace a file with LF-delimited lines using the selected encoding."
+          "summary": "Create or replace a file with LF-delimited lines. The default encoding is UTF-8."
         }
       ],
       "overloads": [
@@ -15008,7 +15008,7 @@
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file_do.py",
-      "summary": "Create or replace a file with LF-delimited lines using the selected encoding."
+      "summary": "Create or replace a file with LF-delimited lines. The default encoding is UTF-8."
     },
     {
       "aliases": [],
@@ -15039,7 +15039,7 @@
           "parameters": [],
           "returns": null,
           "see_also": [],
-          "summary": "Create or replace a file with text in the selected encoding."
+          "summary": "Create or replace a file with text. The default encoding is UTF-8."
         }
       ],
       "overloads": [
@@ -15051,7 +15051,7 @@
       "scope": "standard-library",
       "see_also": [],
       "source_path": "src/valiance/std/file_do.py",
-      "summary": "Create or replace a file with text in the selected encoding."
+      "summary": "Create or replace a file with text. The default encoding is UTF-8."
     },
     {
       "aliases": [],

@@ -14,10 +14,9 @@ from valiance.elements.stdlib_native import stdlib_element
 from valiance.runtime.runtime_values import ListValue, RuntimeNumber, TaggedValue, unwrap_runtime_value
 from valiance.std._filesystem_core import Encoding, File
 from valiance.std._filesystem_errors import filesystem_operation, filesystem_effects
-from valiance.std.file import _encoding, _BYTE_LIST, _BYTE_TAGS
+from valiance.std.file import _encoding, _BYTE_LIST, _BYTE_TAGS, _DEFAULT_ENCODING
 from valiance.std.path import native_path
 from valiance.vtypes.symbols import Symbol
-from valiance.asts import ElementNode
 
 # One-shot path helpers. These use the same backend as the stateful resources
 # but have independent lifetimes; the resource is closed even on failure.
@@ -25,11 +24,10 @@ from valiance.asts import ElementNode
 
 _PATH = T.N(Symbol('Path', ('path',)))
 _ENCODING = T.N(Symbol('Encoding', ('file',)))
-_DEFAULT_ENCODING = (ElementNode(Symbol('nativeDefaultEncoding', ('std', 'file_do'))),)
 
 # A default argument must be a genuine typed Encoding case, even when
 # std.file.do is imported directly (without importing std.file separately).
-@stdlib_element('nativeDefaultEncoding', (), (_ENCODING,), exported=False)
+@stdlib_element('defaultEncoding', (), (_ENCODING,), exported=False)
 def _default_encoding(args, ctx):
     """Construct the UTF-8 language case without requiring a separate file import."""
     del args, ctx
@@ -150,24 +148,23 @@ def _quick_append_bytes(args, ctx):
 
 
 _DO_DOCS = {
-    'nativeDefaultEncoding': 'Get the default UTF-8 encoding for one-shot file helpers.',
-    'readText': 'Read an entire file using the selected encoding and close it.',
-    'readLines': 'Read all lines using the selected encoding and close the file.',
+    'defaultEncoding': 'Get the default UTF-8 encoding for one-shot file helpers.',
+    'readText': 'Read an entire file and close it. The default encoding is UTF-8.',
+    'readLines': 'Read all lines and close the file. The default encoding is UTF-8.',
     'readBytes': 'Read all bytes from a file and close it.',
-    'writeText': 'Create or replace a file with text in the selected encoding.',
-    'writeLines': 'Create or replace a file with LF-delimited lines using the selected encoding.',
+    'writeText': 'Create or replace a file with text. The default encoding is UTF-8.',
+    'writeLines': 'Create or replace a file with LF-delimited lines. The default encoding is UTF-8.',
     'writeBytes': 'Create or replace a file with raw bytes and close it.',
-    'appendText': 'Append text using the selected encoding and close the file.',
-    'appendLines': 'Append LF-delimited lines using the selected encoding.',
+    'appendText': 'Append text and close the file. The default encoding is UTF-8.',
+    'appendLines': 'Append LF-delimited lines. The default encoding is UTF-8.',
     'appendBytes': 'Append raw bytes to a file and close it.',
 }
 _EXAMPLES = {
     'readText': """import {std.file}
 import {std.path}
 file.do.readText(path.Path("example.txt"), file.Encoding.\\UTF8)""",
-    'readLines': """import {std.file}
-import {std.path}
-file.do.readLines(path.Path("example.txt"), file.Encoding.\\UTF8)""",
+    'readLines': '''import {std.file.do, std.path.Path}
+do.readLines Path "example.txt"''',
     'readBytes': """import {std.file}
 import {std.path}
 file.do.readBytes(path.Path("example.txt"))""",
@@ -191,7 +188,7 @@ file.do.appendLines(path.Path("example.txt"), ["a", "b"], file.Encoding.\\UTF8)"
 import {std.path}
 import {std.file.#byte}
 file.do.appendBytes(path.Path("example.txt"), [65 #byte, 66 #byte])""",
-    'nativeDefaultEncoding': """import {std.file}
+    'defaultEncoding': """import {std.file}
 import {std.path}
 file.do.readText(path.Path("example.txt"))""",
 }
@@ -205,7 +202,7 @@ for _fn in tuple(globals().values()):
         _fn.__valiance_native_function__ = replace(
             _definition,
             implementation=filesystem_operation(_definition.implementation),
-            element_tags=(frozenset() if _definition.name.text == 'nativeDefaultEncoding'
+            element_tags=(frozenset() if _definition.name.text == 'defaultEncoding'
                           else frozenset(filesystem_effects(_definition.name.text))),
             documentation=element_documentation(_DO_DOCS[_definition.name.text], category='Files', examples=((_EXAMPLES[_definition.name.text], None, _EXAMPLE_CONTEXT),)),
         )
