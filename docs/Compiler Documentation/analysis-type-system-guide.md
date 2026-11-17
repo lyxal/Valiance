@@ -436,10 +436,9 @@ overload resolution as a workaround.
 
 Raw `ElementNode.call_args` still matters during analysis: ECS calls preserve
 which arguments were named, positional, or `_` placeholders. The analyser uses
-that structure to bind explicit arguments. A plain stack call first tries the
-full arity. If no overload matches and all optional parameters follow the
-required parameters, the call can consume just the required stack operands
-and use the declared defaults for the optional parameters.
+that structure to bind explicit arguments. A plain stack call always requires
+full parameter arity, including parameters with defaults. Explicit call syntax
+can omit optional arguments and use their declared defaults.
 
 ### Alternative Overload Selection
 

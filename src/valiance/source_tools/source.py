@@ -22,7 +22,7 @@ from valiance.asts.nodes import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.vtypes import FunctionType, Type, normalize, show
+from valiance.vtypes import FunctionType, OverloadSetType, Type, normalize, show
 
 
 @dataclass
@@ -66,7 +66,7 @@ def _typed_node_source(node: ASTNode | TypedNode) -> str:
 def _typed_function_source(node: TypedFunctionNode) -> str:
     """Compute typed function source while reconstructing Valiance source."""
     ast = node.node
-    typ = normalize(node.typ) if node.typ is not None else None
+    typ = _source_function_type(node)
     if isinstance(ast, DefineNode) and isinstance(typ, FunctionType):
         variables = _source_type_variables(ast.generics)
         signature = _function_signature(
@@ -98,6 +98,22 @@ def _typed_function_source(node: TypedFunctionNode) -> str:
             f"{_body_source(ast.body)}"
         )
     return _typed_node_source(TypedNode(ast, node.typ))
+
+
+def _source_function_type(node: TypedFunctionNode) -> FunctionType | None:
+    """Find the unique callable signature for source annotation.
+
+    Generic definitions expose an overload set even when they have exactly
+    one signature. Multiple signatures cannot be represented by one annotation.
+    """
+    typ = normalize(node.typ) if node.typ is not None else None
+    if isinstance(typ, FunctionType):
+        return typ
+    if isinstance(typ, OverloadSetType) and len(node.overloads) == 1:
+        candidate = normalize(node.overloads[0].typ)
+        if isinstance(candidate, FunctionType):
+            return candidate
+    return None
 
 
 def _function_signature(
@@ -239,8 +255,8 @@ def _signature_replacements(
         function = ast
     else:
         return []
-    typ = normalize(node.typ) if node.typ is not None else None
-    if not isinstance(typ, FunctionType) or function.location is None:
+    typ = _source_function_type(node)
+    if typ is None or function.location is None:
         return []
 
     params = typ.params or ()

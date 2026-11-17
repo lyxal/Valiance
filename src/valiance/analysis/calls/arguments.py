@@ -21,9 +21,9 @@ from .models import (
 def _has_trailing_defaults(overload: T.Overload) -> bool:
     """True for a required positional prefix followed by optional parameters.
 
-    A call to ``readText(path, encoding=UTF8)`` with one positional value
-    supplies the required path. Defaults before required parameters retain
-    ordinary ECS right-alignment.
+    An explicit call to ``readText(path, encoding=UTF8)`` with one positional
+    argument supplies the required path. Defaults before required parameters
+    retain ordinary ECS right-alignment.
     """
     defaults = overload.param_defaults or ()
     if not defaults or defaults[0] is not None:
@@ -39,20 +39,6 @@ def _has_trailing_defaults(overload: T.Overload) -> bool:
 
 class _CallArguments:
     """Own arguments operations for call planning."""
-
-    def trailing_default_arguments(
-        self,
-        node: ElementNode,
-        branch: AnalysisBranch,
-        overloads: tuple[T.Overload, ...],
-    ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
-        """Supply a trailing default suffix when a plain stack call needs it."""
-        if node.call_args or node.modifier_args:
-            return [], []
-        eligible = tuple(
-            overload for overload in overloads if _has_trailing_defaults(overload)
-        )
-        return self.explicit_element_arguments(node, branch, eligible, ())
 
     def element_argument_sources(
         self,
