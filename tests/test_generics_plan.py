@@ -39,6 +39,14 @@ object[T] Box as Source[T] => define read -> T => $self.value end
 class GenericsPlanSourceTests(TraitPlanTestCase):
     """Real-source semantic tests; each ID can be invoked individually."""
 
+    def test_generic_plain_stack_default_and_full_arity(self):
+        """The omitted trailing default works without overriding a supplied value."""
+        declaration = 'define[T] pick(x:T,y:Int=3)->T,Int=>$x $y end\n'
+        self.check_case(C('OV-016', declaration + '"x" pick', ['x', 3]))
+        self.check_case(C('OV-016', declaration + '"x" 7 pick', ['x', 7]))
+        self.check_case(C('OV-016', declaration + '"x" 7 pick\n"y" pick',
+                          ['x', 7, 'y', 3]))
+
     def test_GD_004(self):
         # A return-only generic must be explicitly instantiated or uniquely
         # determined by a contextual result type; do not choose a default T.

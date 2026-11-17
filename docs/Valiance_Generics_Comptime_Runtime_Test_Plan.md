@@ -180,7 +180,7 @@ The first smoke run should include **GD-001/002/009**, **UN-001/006/007/008/013/
 | **OV-013** | P1 | C+R | `overload(...)` shared body with generic and concrete signatures | Body analyzed once per signature with correct substituted types. |
 | **OV-014** | P1 | C− | Shared overload signature has wrong parameter count or multiplicity | Reject according to overload consistency restrictions. |
 | **OV-015** | P1 | C+R | Generic overload with trailing default ECS argument | Default evaluated/substituted in selected generic context. |
-| **OV-016** | P1 | C− | Same generic overload invoked as plain stack call missing optional ECS argument | Plain stack arity remains fixed; reject. |
+| **OV-016** | P1 | C+R | Generic overload invoked as a plain stack call with an omitted trailing optional argument | Infer generics from the required stack prefix and use the declared default. |
 | **OV-017** | P1 | C+R | Named ECS generic arguments and `_` placeholders | Correct positional filling and unified types. |
 | **OV-018** | P1 | C+R | Imported overload and module-local overload with same visible name | Module-local precedence and built-in escape work as defined. |
 | **OV-019** | P1 | C− | Imported generic overload conflict with indistinguishable signature | Clean conflict or ambiguity diagnostic as specified for imports. |

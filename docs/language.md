@@ -1863,9 +1863,10 @@ function.
 	- That defeats the point of using fixed arity to reason about stack behaviour.
 - However: there is one way to unambiguously specify the arguments to a element: ECS.
 - Using that, `define` allows trailing parameters at the end of an element definition to be given a default value. This makes those parameters optional for ECS calls.
-	- Optional arguments do not change the plain stack arity of the element.
-	- A plain stack call still behaves as though every non-`:` parameter is required.
-	- Optional arguments are supplied only through ECS.
+	- Plain stack calls normally require every non-`:` parameter, including defaults.
+	- Generic elements may use a trailing default suffix in plain stack calls when their required arguments are supplied; generic types are inferred from that prefix.
+	- Native standard-library elements may also expose documented stack forms with defaults.
+	- ECS works for all optional parameters, including those of non-generic elements.
 	- Function arguments can be specified with `:` syntax though.
 		- _ALL_ function arguments must be specified though
 - `= <value>` after a parameter declares the default value

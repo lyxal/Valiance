@@ -41,6 +41,10 @@ class _ElementCalls:
                     raise PendingOverloadDependency
                 signatures = tuple(pending[node.name])
                 sources, _ = self.element_argument_sources(node, branch, signatures, ())
+                if not sources:
+                    sources, _ = self.trailing_default_arguments(
+                        node, branch, signatures,
+                    )
                 if self.element_call_candidates(node, signatures, sources):
                     raise PendingOverloadDependency
                 # Explicit call normalization can rebuild the node.
@@ -113,6 +117,12 @@ class _ElementCalls:
             return BranchSet()
         failure_start = len(self.call_site_failures)
         candidates = self.element_call_candidates(node, overloads, sources)
+        if not candidates:
+            default_sources, default_terminal = self.trailing_default_arguments(
+                node, branch, overloads,
+            )
+            candidates = self.element_call_candidates(node, overloads, default_sources)
+            terminal.extend(default_terminal)
         body_failures = tuple(dict.fromkeys(self.call_site_failures[failure_start:]))
         del self.call_site_failures[failure_start:]
         if _allow_no_match and not candidates:

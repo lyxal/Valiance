@@ -40,6 +40,33 @@ def _has_trailing_defaults(overload: T.Overload) -> bool:
 class _CallArguments:
     """Own arguments operations for call planning."""
 
+    def trailing_default_arguments(
+        self,
+        node: ElementNode,
+        branch: AnalysisBranch,
+        overloads: tuple[T.Overload, ...],
+    ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        """Try a defaulted suffix for polymorphic or native stack calls.
+
+        A generic definition can infer its type arguments from the required
+        stack prefix while evaluating the trailing default. Native standard-
+        library elements also expose documented shorthand stack forms. Plain
+        calls to monomorphic user definitions retain their fixed arity.
+        """
+        if node.call_args or node.modifier_args:
+            return [], []
+        eligible = tuple(
+            overload for overload in overloads
+            if _has_trailing_defaults(overload)
+            and (
+                bool(overload.generic_params)
+                or (overload.implementation_id or "").startswith("native:std.")
+            )
+        )
+        if not eligible:
+            return [], []
+        return self.explicit_element_arguments(node, branch, eligible, ())
+
     def element_argument_sources(
         self,
         node: ElementNode,
