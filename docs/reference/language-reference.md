@@ -2441,7 +2441,7 @@ Apply a callable to every item in a list.
 
   Apply a callable to every item in a list.
 
-  Pure mappings are lazy; mappings whose callable is eager execute immediately and return no list.
+  Pure mappings are lazy; callbacks may accept a value or (zero-based index, value). Eager effect-only mappings execute immediately and return no list.
 
   **Parameters**
 
@@ -2474,11 +2474,37 @@ Apply a callable to every item in a list.
   [2, 4, 6]
   ```
 
+- `map(values: Item+, operation: Function[Int, Item -> Mapped]) -> Mapped+`
+
+  **Example**
+
+  ```vlnc
+  [1, 2, 3] map: double
+  ```
+  Result:
+
+  ```text
+  [2, 4, 6]
+  ```
+
+- `map(values: Item+, operation: Function) -> ()`
+
+  **Example**
+
+  ```vlnc
+  [1, 2, 3] map: double
+  ```
+  Result:
+
+  ```text
+  [2, 4, 6]
+  ```
+
 - `map(values: Item+, operation: Function[ -> Mapped]) -> Mapped+`
 
   Apply a callable to every item in a list.
 
-  Pure mappings are lazy; mappings whose callable is eager execute immediately and return no list.
+  Pure mappings are lazy; callbacks may accept a value or (zero-based index, value). Eager effect-only mappings execute immediately and return no list.
 
   **Parameters**
 
@@ -2502,7 +2528,7 @@ Apply a callable to every item in a list.
 
   Apply a callable to every item in a list.
 
-  Pure mappings are lazy; mappings whose callable is eager execute immediately and return no list.
+  Pure mappings are lazy; callbacks may accept a value or (zero-based index, value). Eager effect-only mappings execute immediately and return no list.
 
   **Parameters**
 
@@ -2519,7 +2545,7 @@ Apply a callable to every item in a list.
   Prints each item on its own line and leaves no list on the stack.
 
 
-Pure mappings are lazy; mappings whose callable is eager execute immediately and return no list.
+Pure mappings are lazy; callbacks may accept a value or (zero-based index, value). Eager effect-only mappings execute immediately and return no list.
 
 **Parameters**
 
@@ -7498,6 +7524,21 @@ Filter a list by a predicate
   [2, 3]
   ```
 
+- `filter(iterable: Item+, predicate: Function[Int, Item -> #boolean Int]) -> Item+`
+
+  **Example**
+
+  ```vlnc
+  [-1, 0, 2, 3] filter: positive?
+  ```
+  Result:
+
+  ```text
+  [2, 3]
+  ```
+
+
+Accepts either a value predicate or an (index, value) predicate; indices are zero-based within the input list.
 
 **Parameters**
 
@@ -12736,6 +12777,299 @@ import {std.html}
 html.withStyle(html.p("Hello"), dict{"color" => "red"})
 ```
 
+## std.iterable
+
+### `std.iterable.filterIterable`
+
+Lazily keep steps whose index and value satisfy a predicate.
+
+**Overloads**
+
+- `public define[I, V, S] filterIterable(source: Iterable[I, V, S], f: Function[I, V -> #boolean Int]) -> Iterable[I, V, S]`
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, filterIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => filterIterable($source, fn(index:Int,value:Int)->#boolean Int => $index>0 end) end
+  ```
+
+- `public define[I, V, S] filterIterable(source: Iterable[I, V, S], f: Function[V -> #boolean Int]) -> Iterable[I, V, S]`
+
+  Lazily keep steps whose values satisfy a predicate.
+
+  Lazily keep steps whose values satisfy a predicate.
+
+  **Parameters**
+
+  - `source` — Traversable source.
+  - `f` — Callback receiving the underlying Value, not an optional SingleView Item.
+
+  **Returns:** An Iterable containing retained source steps with original indices.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, filterIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => filterIterable($source, fn(value:Int)->#boolean Int => $value>0 end) end
+  ```
+
+- `public define[I, V, S, Item] filterIterable(source: Iterable[I, V, S] & SingleView[I, V, Item], f: Function[Item -> #boolean Int]) -> Iterable[I, V, S] & SingleView[I, V, Item]`
+
+  Filter on the projected SingleView item while preserving its unary view.
+
+  Filter on the projected SingleView item while preserving its unary view.
+
+  **Parameters**
+
+  - `source` — An Iterable with a correlated SingleView.
+  - `f` — Predicate receiving its projected item.
+
+  **Returns:** A lazy Iterable with the original indices and SingleView projection.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, SingleView, filterIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> Iterable[Int,Int,Int]&SingleView[Int,Int,String] => filterIterable($source, fn(item:String)->#boolean Int => $item=="4" end) end
+  ```
+
+
+Lazily keep steps whose index and value satisfy a predicate.
+
+Indices are not renumbered when earlier steps are rejected.
+
+**Parameters**
+
+- `source` — Traversable source.
+- `f` — Callback receiving (index, value).
+
+**Returns:** An Iterable containing retained source steps.
+
+**Example**
+
+```vlnc
+import {std.iterable.[Iterable, filterIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => filterIterable($source, fn(index:Int,value:Int)->#boolean Int => $index>0 end) end
+```
+
+### `std.iterable.foldIterable`
+
+Consume an Iterable eagerly, folding each indexed value into an accumulator.
+
+**Overloads**
+
+- `public define[I, V, S, Acc] foldIterable(source: Iterable[I, V, S], seed: Acc, f: Function[Acc, I, V -> Acc]) -> Acc`
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, foldIterable]} fn(source: Iterable[Int,Int,Int]) -> Int => foldIterable($source, 0, fn(total:Int,index:Int,value:Int)->Int => $total+$index+$value end) end
+  ```
+
+- `public define[I, V, S, Acc] foldIterable(source: Iterable[I, V, S], seed: Acc, f: Function[Acc, V -> Acc]) -> Acc`
+
+  Consume an Iterable eagerly, folding its unprojected values into an accumulator.
+
+  Consume an Iterable eagerly, folding its unprojected values into an accumulator.
+
+  **Parameters**
+
+  - `source` — Traversable source.
+  - `seed` — Initial accumulator returned unchanged for an empty source.
+  - `f` — Callback receiving accumulator and underlying Value.
+
+  **Returns:** Final accumulator.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, foldIterable]} fn(source: Iterable[Int,Int,Int]) -> Int => foldIterable($source, 0, fn(total:Int,value:Int)->Int => $total+$value end) end
+  ```
+
+- `public define[I, V, S, Item, Acc] foldIterable(source: Iterable[I, V, S] & SingleView[I, V, Item], seed: Acc, f: Function[Acc, Item -> Acc]) -> Acc`
+
+  Consume the projected SingleView items of an Iterable into an accumulator.
+
+  Consume the projected SingleView items of an Iterable into an accumulator.
+
+  **Parameters**
+
+  - `source` — Traversable source with matching SingleView evidence.
+  - `seed` — Initial accumulator returned unchanged for an empty source.
+  - `f` — Callback receiving accumulator and projected Item.
+
+  **Returns:** Final accumulator.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, SingleView, foldIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> Int => foldIterable($source, 0, fn(total:Int,item:String)->Int => $total+1 end) end
+  ```
+
+
+Consume an Iterable eagerly, folding each indexed value into an accumulator.
+
+Source indices are preserved, including after a filterIterable adapter.
+
+**Parameters**
+
+- `source` — Traversable source.
+- `seed` — Initial accumulator returned unchanged for an empty source.
+- `f` — Callback receiving accumulator, index and source value.
+
+**Returns:** Final accumulator.
+
+**Example**
+
+```vlnc
+import {std.iterable.[Iterable, foldIterable]} fn(source: Iterable[Int,Int,Int]) -> Int => foldIterable($source, 0, fn(total:Int,index:Int,value:Int)->Int => $total+$index+$value end) end
+```
+
+### `std.iterable.mapIterable`
+
+Lazily transform the indexed values of an Iterable, preserving source indices.
+
+**Overloads**
+
+- `public define[I, V, S, U] mapIterable(source: Iterable[I, V, S], f: Function[I, V -> U]) -> Iterable[I, U, S]`
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, mapIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(index:Int,value:Int)->Int => $value+$index end) end
+  ```
+
+- `public define[I, V, S, U] mapIterable(source: Iterable[I, V, S], f: Function[V -> U]) -> Iterable[I, U, S]`
+
+  Lazily transform the values of an Iterable without requesting indices.
+
+  Lazily transform the values of an Iterable without requesting indices.
+
+  **Parameters**
+
+  - `source` — Traversable source.
+  - `f` — Callback receiving the source value (not its SingleView projection).
+
+  **Returns:** An Iterable indexed by the source index and valued by U.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, mapIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(value:Int)->Int => $value+1 end) end
+  ```
+
+- `public define[I, V, S, Item, U] mapIterable(source: Iterable[I, V, S] & SingleView[I, V, Item], f: Function[Item -> U]) -> Iterable[I, U, S]`
+
+  Map the default SingleView item, when a matching projection is available.
+
+  Map the default SingleView item, when a matching projection is available.
+
+  **Parameters**
+
+  - `source` — An Iterable with a correlated SingleView.
+  - `f` — Callback receiving its projected item.
+
+  **Returns:** A lazy Iterable with the original indices and mapped values.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, SingleView, mapIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(item:String)->Int => 1 end) end
+  ```
+
+
+Lazily transform the indexed values of an Iterable, preserving source indices.
+
+The callback is evaluated only when advance is consumed.
+
+**Parameters**
+
+- `source` — Traversable source.
+- `f` — Callback receiving (index, value).
+
+**Returns:** An Iterable indexed by the source index and valued by U.
+
+**Example**
+
+```vlnc
+import {std.iterable.[Iterable, mapIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(index:Int,value:Int)->Int => $value+$index end) end
+```
+
+### `std.iterable.reduceIterable`
+
+Eagerly reduce the indexed values of a non-empty Iterable.
+
+**Overloads**
+
+- `public define[I, V, S] reduceIterable(source: Iterable[I, V, S], f: Function[V, I, V -> V]) -> V?`
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, reduceIterable]} fn(source: Iterable[Int,Int,Int]) -> Int? => reduceIterable($source, fn(total:Int,index:Int,value:Int)->Int => $total+$index+$value end) end
+  ```
+
+- `public define[I, V, S] reduceIterable(source: Iterable[I, V, S], f: Function[V, V -> V]) -> V?`
+
+  Eagerly reduce the values of a non-empty Iterable.
+
+  Eagerly reduce the values of a non-empty Iterable.
+
+  The first value initializes the accumulator without invoking the callback.
+
+  **Parameters**
+
+  - `source` — Traversable source.
+  - `f` — Callback receiving the accumulator and next underlying Value.
+
+  **Returns:** Some(reduced value), or None for an empty source.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, reduceIterable]} fn(source: Iterable[Int,Int,Int]) -> Int? => reduceIterable($source, fn(total:Int,value:Int)->Int => $total+$value end) end
+  ```
+
+- `public define[I, V, S, Item] reduceIterable(source: Iterable[I, V, S] & SingleView[I, V, Item], f: Function[Item, Item -> Item]) -> Item?`
+
+  Eagerly reduce the projected items of an Iterable with SingleView evidence.
+
+  Eagerly reduce the projected items of an Iterable with SingleView evidence.
+
+  The first projected Item initializes the accumulator. Projection is called
+
+  once per source step, including the first, and only during consumption.
+
+  **Parameters**
+
+  - `source` — Traversable source with a correlated SingleView.
+  - `f` — Callback receiving the accumulated and next projected Item.
+
+  **Returns:** Some(reduced Item), or None when no items were produced.
+
+  **Example**
+
+  ```vlnc
+  import {std.iterable.[Iterable, SingleView, reduceIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> String? => reduceIterable($source, fn(a:String,b:String)->String => $a+$b end) end
+  ```
+
+
+Eagerly reduce the indexed values of a non-empty Iterable.
+
+The first indexed value initializes the accumulator; the callback visits
+
+each subsequent (index, value). Empty sources return None, not a default.
+
+**Parameters**
+
+- `source` — Traversable source.
+- `f` — Callback receiving the accumulator and the next (index, value).
+
+**Returns:** Some(reduced value), or None for an empty source.
+
+**Example**
+
+```vlnc
+import {std.iterable.[Iterable, reduceIterable]} fn(source: Iterable[Int,Int,Int]) -> Int? => reduceIterable($source, fn(total:Int,index:Int,value:Int)->Int => $total+$index+$value end) end
+```
+
 ## std.json
 
 ### `std.json.decode`
@@ -13043,6 +13377,41 @@ Serialize a JSON value back to JSON text.
 
 ```vlnc
 import {std.json} json.stringify(json.load("[true,null]") ?!) ?!
+```
+
+## std.json_iterable
+
+### `std.json_iterable.memberView`
+
+Adapt a matched JSON object case to indexed member traversal.
+
+**Overloads**
+
+- `public define memberView(value: json.Json.Object) -> iterable.Iterable[String, json.Json, {{String, json.Json}+, Int, Int}] & iterable.SingleView[String, json.Json, String]`
+
+  **Example**
+
+  ```vlnc
+  import {std.json, std.iterable, std.json_iterable} fn(value: json.Json.Object) => json_iterable.memberView($value) end
+  ```
+
+
+Adapt a matched JSON object case to indexed member traversal.
+
+The traversal cursor snapshots members once and preserves dictionary order.
+
+Unary traversal yields keys; binary traversal yields (key, Json).
+
+**Parameters**
+
+- `value` — A Json.Object case, not a general Json variant.
+
+**Returns:** A replayable Iterable with projected member keys.
+
+**Example**
+
+```vlnc
+import {std.json, std.iterable, std.json_iterable} fn(value: json.Json.Object) => json_iterable.memberView($value) end
 ```
 
 ## std.path
