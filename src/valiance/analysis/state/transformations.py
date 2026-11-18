@@ -408,10 +408,14 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             tuple(_refine_typed_body(body, old, new) for body in typed_node.bodies),
         )
     if isinstance(typed_node, TypedForNode):
-        return TypedForNode(
-            typed_node.node,
-            typ,
-            _refine_typed_body(typed_node.body, old, new),
+        return replace(
+            typed_node,
+            typ=typ,
+            body=_refine_typed_body(typed_node.body, old, new),
+            trait_calls=tuple(
+                cast(TypedElementNode, _refine_typed_node(call, old, new))
+                for call in typed_node.trait_calls
+            ),
         )
     if isinstance(typed_node, TypedUnfoldNode):
         function = typed_node.function

@@ -41,6 +41,7 @@ from valiance.runtime import (
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
+    IterableForeachReference,
     FunctionSetCode,
     Instruction,
     ObjectConstructorReference,
@@ -72,6 +73,30 @@ class _RenameProgramPass:
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_trait_foreach_calls_are_traversed_by_optimizer(self):
+        method = lambda name, params: FunctionCode(
+            tuple(Instruction(OpCode.LOAD_VAR, param) for param in params)
+            + (Instruction(OpCode.CALL_RESOLVED_ELEMENT,
+                           ResolvedElementReference(name, "checked")),
+               Instruction(OpCode.RETURN)),
+            params=params, name=f"foreach.{name}", cycle_params=True,
+            return_count=1,
+        )
+        plan = IterableForeachReference(
+            FunctionCode((Instruction(OpCode.RETURN),),
+                         params=("item",), name="foreach.body"),
+            method("initial", ("source",)),
+            method("advance", ("source", "state")),
+            method("single", ("source", "index", "value")),
+        )
+        program = Program(FunctionCode((Instruction(OpCode.FOREACH, plan),), name="main"))
+        recording = _RecordingPass([])
+        recording.optimize(program)
+        self.assertEqual(set(recording.seen), {
+            "main", "foreach.body", "foreach.initial",
+            "foreach.advance", "foreach.single",
+        })
+
     def test_guarded_numeric_opcode_matches_generic_and_round_trips(self):
         """Only numeric overloads with unmodified contracts receive this opcode."""
         for operation in ("+", "-", "*"):
@@ -116,7 +141,7 @@ class OptimizerTests(unittest.TestCase):
         """New binaries signal their format, but previous bytecode remains readable."""
         from valiance.runtime.serialization import BYTECODE_VERSION
 
-        self.assertEqual(BYTECODE_VERSION, 0x49)
+        self.assertEqual(BYTECODE_VERSION, 0x4A)
         old_style = Program(FunctionCode((
             Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
             Instruction(OpCode.RETURN),
@@ -127,6 +152,9 @@ class OptimizerTests(unittest.TestCase):
         old_bytes = bytearray(dumps(old_style))
         old_bytes[len(b"VLNCBC")] = 0x48
         self.assertEqual(loads(bytes(old_bytes)), old_style)
+        prior_bytes = bytearray(dumps(old_style))
+        prior_bytes[len(b"VLNCBC")] = 0x49
+        self.assertEqual(loads(bytes(prior_bytes)), old_style)
         from valiance.runtime.serialization import MAGIC_PREFIX, _Writer
 
         for version in (0x43, 0x44, 0x45, 0x46, 0x47):

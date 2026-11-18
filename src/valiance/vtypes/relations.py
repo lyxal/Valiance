@@ -459,13 +459,20 @@ def implementation_pattern_evidence(
     target = normalize(target)
     if not isinstance(source, NominalType) or not isinstance(target, NominalType):
         return ()
+    # A qualified symbol can denote either a behaviour-set selector
+    # (`as[provider.Trait]`) or an ordinary imported nominal trait alias
+    # (`lib.Trait`). Aliases have a recorded declaration origin and must
+    # retain their qualified identity when matching trait implementations;
+    # erasing that name would turn a valid `lib.Iterable` implementation into
+    # an unrelated unqualified `Iterable` requirement.
+    imported_alias = target.name in ctx.nominal_origins
     requested_provider = (
-        Symbol(target.name.namespace[-1]) if target.name.namespace else None
+        Symbol(target.name.namespace[-1])
+        if target.name.namespace and not imported_alias else None
     )
     unqualified_target = (
         NominalType(Symbol(target.name.text), target.args)
-        if target.name.namespace
-        else target
+        if target.name.namespace and not imported_alias else target
     )
     results: set[ImplementationEvidence] = set()
     for provider in (
@@ -1531,6 +1538,47 @@ def _solve(
             constraints.clear()
             constraints.update(matches[0])
             return True
+        if isinstance(p, IntersectionType):
+            # An intersection consisting solely of distinct, as-yet unknown
+            # generic variables does not tell us how to partition the actual
+            # evidence into those variables. In particular, ``T & U`` cannot
+            # infer T and U positionally from ``Shape & Vehicle``.
+            unknown_parts = tuple(normalize(item) for item in p.items)
+            if (len(unknown_parts) > 1
+                    and all(isinstance(item, VarType) for item in unknown_parts)
+                    and len({type_var_key(item) for item in unknown_parts}) > 1
+                    and any(type_var_key(item) not in constraints
+                            for item in unknown_parts)):
+                return False
+            # Every requirement contributes evidence to the *same* generic
+            # substitution.  In particular, an Iterable & SingleView pattern
+            # must correlate its index/value parameters, rather than solving
+            # each trait independently against an unrelated witness.
+            saved = {key: list(values) for key, values in constraints.items()}
+            for requirement in p.items:
+                if not rec(requirement, a):
+                    constraints.clear()
+                    constraints.update(saved)
+                    return False
+            return True
+        if isinstance(a, IntersectionType):
+            # An intersection value may be passed to a parameter requiring any
+            # one of its constituents.  Infer generics from the unique matching
+            # projection; do not choose an ambiguous trait instantiation.
+            matches: list[dict[TypeVarKey, list[Type]]] = []
+            saved = {key: list(values) for key, values in constraints.items()}
+            for constituent in a.items:
+                if rec(p, constituent):
+                    match = {key: list(values) for key, values in constraints.items()}
+                    if match not in matches:
+                        matches.append(match)
+                constraints.clear()
+                constraints.update(saved)
+            if len(matches) != 1:
+                return False
+            constraints.clear()
+            constraints.update(matches[0])
+            return True
         if isinstance(p, NominalType) and isinstance(a, RowType):
             return rec(p, a.base)
         if isinstance(p, NominalType) and isinstance(a, NominalType):
@@ -1551,6 +1599,34 @@ def _solve(
                 if len(matching) == 1:
                     return rec(p, matching[0])
                 if matching:
+                    return False
+                # An imported callable can mention a provider-qualified public
+                # trait even when that trait was not selected as a source name.
+                # The implementation may retain its original unqualified
+                # trait pattern. Match the *checked provider evidence* before
+                # projecting its generic arguments into the requested spelling.
+                requested_provider = (
+                    Symbol(p.name.namespace[-1])
+                    if p.name.namespace and p.name not in ctx.nominal_origins
+                    else None
+                )
+                permitted = (
+                    ctx.trait_provider_aliases.get(requested_provider, {requested_provider})
+                    if requested_provider is not None else None
+                )
+                projections = {
+                    NominalType(p.name, reached.args)
+                    for reached in implementation_reachable_traits(a, ctx)
+                    if reached.name.text == p.name.text
+                    and len(reached.args) == len(p.args)
+                    and any(
+                        permitted is None or evidence.provider in permitted
+                        for evidence in implementation_pattern_evidence(a, reached, ctx)
+                    )
+                }
+                if len(projections) == 1:
+                    return rec(p, next(iter(projections)))
+                if projections:
                     return False
             if p.name == RESULT and len(p.args) == 2:
                 if a.name == OK and len(a.args) == 1:
@@ -3233,8 +3309,14 @@ def _match_specificity(
         if (
             _same_nominal_family(argument, parameter)
             and not isinstance(argument, FFINamedType)
-            and (ctx.implements(argument.name, parameter.name)
-                 or ctx.variant_members.get(argument.name) == parameter.name)
+            and (
+                ctx.implements(argument.name, parameter.name)
+                or ctx.variant_members.get(argument.name) == parameter.name
+                or (
+                    parameter.name in ctx.nominal_origins
+                    and len(implementation_pattern_evidence(argument, parameter, ctx)) == 1
+                )
+            )
         ):
             return Specificity.TRAIT
     if (

@@ -100,8 +100,20 @@ class BuiltinLintRuleTests(unittest.TestCase):
         """An unread index binding is removable."""
         self.assertIn(
             "unused-loop-index",
-            self._codes("[1, 2] foreach (n, index) => $n 1 + end"),
+            self._codes("[1, 2] foreach (index, n) => $n 1 + end"),
         )
+
+    def test_indexed_list_lints_refactor_values_not_positions(self) -> None:
+        values = self._codes(
+            "$total = 0\n[4, 5, 6] foreach (index, value) => "
+            "$total := + $value end"
+        )
+        positions = self._codes(
+            "$total = 0\n[4, 5, 6] foreach (index, value) => "
+            "$total := + $index end"
+        )
+        self.assertIn("prefer-sum", values)
+        self.assertNotIn("prefer-sum", positions)
 
     def test_dictionary_foreach_does_not_suggest_list_operations(self) -> None:
         """Dictionary values are not list indices or vectorisation inputs."""

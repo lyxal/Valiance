@@ -1507,6 +1507,35 @@ def _import_node(
         for visible, origin in self.env.context.nominal_origins.items():
             visible_by_origin.setdefault(origin, []).append(visible)
 
+        # Translate public nominal references in imported callable signatures
+        # to the selected alias, or to the provider's canonical identity when
+        # the nominal itself was not imported. The latter is crucial for a
+        # selective function import: `foldIterable` must accept an object that
+        # provides `std.iterable.Iterable` even when the caller did not import
+        # `Iterable` as a source-visible name. Merely retaining bare `Iterable`
+        # would instead refer to an unrelated caller-local declaration.
+        # Canonical references do not register or expose the nominal name in
+        # the caller's environment; ordinary explicit imports still control
+        # visibility of the trait declaration and its methods.
+        selected_public_nominals = {}
+        for exported in exports.public_objects():
+            origin = exported.origin or Symbol(
+                exported.name.text, tuple(exports.module_name.split('.'))
+            )
+            selected = next(
+                (
+                    obj.name for obj in objects
+                    if obj.origin == origin
+                    or (obj.origin is None and obj.name == exported.name)
+                ), None
+            )
+            already_visible = visible_by_origin.get(origin, ())
+            selected_public_nominals[exported.name] = (
+                selected
+                or (sorted(already_visible, key=lambda item: item.dotted())[0]
+                    if already_visible else origin)
+            )
+
         def selected_nominals(definition):
             """Map a provider's private nominal spellings to visible aliases."""
             substitutions = {}
@@ -1566,7 +1595,11 @@ def _import_node(
                         definition.typed,
                         runtime_name,
                         call_site_dependencies,
-                        {**private_nominals, **selected_nominals(definition)},
+                        {
+                            **private_nominals,
+                            **selected_nominals(definition),
+                            **selected_public_nominals,
+                        },
                     )
                 except ValueError as exc:
                     self._diagnose(

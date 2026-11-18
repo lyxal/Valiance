@@ -1,3 +1,20 @@
+# Contextual callback arity and overloaded list functions
+
+A colon modifier with no explicit parameter row (for example `map: double`,
+`map: * 2`, or `filter: positive?`) is reanalysed against every candidate
+higher-order callable signature. Adding `(Int, T)` overloads to functions
+that already accept `(T)` therefore creates *two* seemingly exact candidates,
+even though existing shorthand calls were unary. The ordinary call selector
+prefers the smaller contextual callable input row only when candidates agree
+on their non-callback input, output, effects and dispatch shape. Explicit
+`fn (index: Int, item: T)` parameters remain authoritative and select the
+indexed overload. When changing modifier typing or overload selection, test
+both the original unary shorthands and explicitly indexed callbacks, including
+optimized and serialized execution. Stateful lazy pipeline stages must create
+their index counter in `LazyPipelineStage.build()`, not capture a shared counter
+when the pipeline is assembled; earlier filtering changes the later stage's
+incoming indices.
+
 # Native standard-library overloads and object optional defaults
 
 For native functions with the same exported name, `stdlib_native.runtime_stdlib_elements` must retain *every* overload and implementation identity in the VM catalogue, not overwrite earlier entries. The analyser already accepts multiple native overloads but that alone does not guarantee runtime linking. Native overloaded signatures should keep the same consumed-input arity under Valiance's uniform-arity rule. A variant case's nominal `Symbol` has the case name as `text` and the enclosing variant in `namespace` (e.g., `Symbol('GetRequest', ('web', 'Request'))`), not a dotted case name in `text`.
@@ -522,3 +539,103 @@ a new panic. Panics that cross function frames can also carry an owned
 occurrence while the callee frame is unwound; ensure catch-all handlers that
 do not bind the object release that transported ownership. Low-level `to?`
 handlers continue to use two-field entries and catch-and-continue semantics.
+
+# Custom traversal trait call argument order
+
+A `foreach` over an abstract `Iterable[I,V,S]` is analysed against named-trait
+`extend advance(state: S)` with the receiver at the end of the abstract call
+stack. Object-friendly methods in runtime `FunctionCode` have `self` first.
+The `IterableForeachReference` wrapper in the compiler deliberately pushes
+`source, state` for VM invocation while retaining the separately analysed,
+checked trait call reference. Do not change all nominal-trait VM dispatch
+argument order to compensate for this: nominal calls may be backed by either
+single-function or overloaded-function values, and ordinary user calls have
+their own ABI. `TypedForNode.trait_calls` must also survive type refinements
+and every nested bytecode visitor must enter all method wrappers.
+
+
+When writing generic `Iterable` adapters in `std.iterable`, use stack syntax
+`$state $source advance` to invoke a trait-typed `advance` method, rather than
+assuming object receiver syntax has the same overload layout. Generic adapter
+factories store both their source and callback after returning; constructor
+arguments that are borrowed accesses must be materialized into owned field
+occurrences before the caller frame is unwound. Check serialization and the
+interface round-trip as well as direct execution: the import-prelude linker
+must handle typed-node tuples, not only analyser lists.
+
+Variant-member trait implementations need consistent **visible subject and target
+spellings** when imported. `_import_variant_case_implementations` must qualify
+both `Shape.Circle[T]` and `Drawable[T]` for `import {shapes}` or
+`import {shapes as figures}`. Qualifying only the case leaves a valid
+`figures.Drawable[Int]` parameter without matching trait evidence. Preserve
+the canonical implementation provider independently of those aliases, and
+test namespace, selected, and source-free imports together; a different
+provider's same-named `Drawable` must not match.
+
+For the public API, `import {std.iterable.[Iterable, mapIterable,
+filterIterable]}` makes the trait names visible. Explicitly importing those
+callables as `map` and `filter` merges native list overloads only if their
+input/output arities agree and their input domains are disjoint. An imported
+`inc(Int)` must shadow, not ambiguously merge with, a native `inc(Int)`.
+Ordinary user definitions still shadow built-ins. Selecting only `mapIterable` or `foldIterable` must also work
+with a provider-qualified `Iterable` returned from another module: imported
+callable signatures should map unselected public nominals to their canonical
+origins without adding source-visible trait declarations. Keep that distinction
+in selective-import tests, including a caller-local trait with a colliding
+name and compiled/serialized execution. An `Iterable`-typed parameter supplies only its underlying `Value`;
+more-specific projected overloads require an explicit matching `SingleView`
+intersection. Generic solving of an intersection must correlate type-variable
+evidence from every constituent and project an intersection argument to a
+unique compatible constituent when calling a trait method. Otherwise the
+methods cannot resolve from a stored `Iterable & SingleView` field, or two
+unrelated source implementations can appear to share a projection. Confirm
+both the projected/unprojected same-type overload priority and negative
+mismatched index/value cases. Namespace-only imports and selected nominal aliases resolve public trait
+witnesses through the declared provider identity. When extending import
+logic, rewrite imported callable types to the *selected* public nominal aliases
+and distinguish a namespaced nominal from a provider-qualified behaviour-set
+selector in `implementation_pattern_evidence`. Test alias variants with
+serialized execution, not just unqualified selective imports. In overload
+ranking, a qualified imported trait must rank as a trait match when backed by
+unique implementation evidence; leaving it as `EXACT_GENERIC` causes a plain
+`Iterable` overload to beat an otherwise more-specific `Iterable & SingleView`
+overload when `Value` and `Item` share the same type.
+
+# Forwarded callable arguments have one owner of consumption
+
+When the native `call` element forwards inputs to a Valiance callback, the
+callback's invocation owns their consumption. Do not run ordinary builtin
+argument finalization on those same forwarded inputs afterward: a projection
+returning an object from an adapter field may then produce a destroyed object
+or an invalid refcount. `_finish_delegated_callable` handles resolved and dynamic
+`call` paths by removing consumed stack operands, releasing only a consumed
+callable occurrence, and leaving the forwarded inputs to the callback. Test
+object-valued callbacks with returned borrowed fields under optimization,
+interface round-trip, and bytecode serialization; numeric callbacks alone will
+not catch this ownership error.
+
+# Replacing a variable with the same owned object
+
+A VM variable can receive a newly owned occurrence that points to the exact
+same `ObjectValue` as the slot it replaces (for example, a fold callback
+returning its accumulator unchanged). In `STORE_VAR`, pointer identity does
+not imply that the incoming occurrence and the existing slot share ownership:
+an `ObjectValue` with multiple live references can have an independently owned
+callback result even when `existing is stored`. In contrast, a `ListValue` or
+`DictValue` reconstructed in place may have only one owned occurrence; dropping
+it would invalidate subsequent borrowed collection operations. Keep the
+same-identity release limited to owned nominal objects with an additional
+reference, and regression-test both object-valued generic callbacks and
+in-place collection updates (including the Brainfuck fundamental programs).
+Numeric accumulators cannot expose this leak.
+
+# Optional standard-library module dependencies
+
+Adding `import {std.iterable}` to the core `std.json` source would give all
+`std.json` users a new runtime/interface dependency, including unrelated
+`std.web` bundles. Source-free standard-module tests with a custom `std_root`
+can also fail if the new dependency is not available. For optional traversal
+of JSON objects, keep the adapter in `std.json_iterable` and return a checked
+trait intersection from its factory, so namespace imports do not require a
+second direct import of the private adapter object. When changing core stdlib
+imports, check both linked bytecode sizes and source-free module loading.

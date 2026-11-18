@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
+    IterableForeachReference,
     FunctionCode,
     FunctionSetCode,
     FunctionSpecializationReference,
@@ -833,6 +834,17 @@ def _map_nested_functions(
     """Apply ``transform`` to every function-code payload inside ``value``."""
     if isinstance(value, FunctionCode):
         return transform(value)
+    if isinstance(value, IterableForeachReference):
+        parts = tuple(
+            _map_nested_functions(part, transform)
+            for part in (value.body, value.initial, value.advance, value.single)
+        )
+        if all(
+            updated is original
+            for updated, original in zip(parts, (value.body, value.initial, value.advance, value.single), strict=True)
+        ):
+            return value
+        return replace(value, body=parts[0], initial=parts[1], advance=parts[2], single=parts[3])
     if isinstance(value, FunctionSpecializationReference):
         overloads = tuple(
             (
@@ -913,7 +925,11 @@ def _collect_bound_names(function: FunctionCode) -> set[str]:
 
 def _collect_bound_names_from_value(value: object, names: set[str]) -> None:
     """Add bound names from nested bytecode payloads to ``names``."""
-    if isinstance(value, FunctionSpecializationReference):
+    if isinstance(value, IterableForeachReference):
+        for code in (value.body, value.initial, value.advance, value.single):
+            if code is not None:
+                names.update(_collect_bound_names(code))
+    elif isinstance(value, FunctionSpecializationReference):
         for _, _, code, _ in value.overloads:
             if code is not None:
                 names.update(_collect_bound_names(code))

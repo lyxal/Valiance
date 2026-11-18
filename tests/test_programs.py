@@ -679,7 +679,7 @@ define[T: trait => extend ===(T, T) -> #boolean Number] find(
   haystack: T+,
   needle: T
 ) =>
-  $haystack foreach (item, ind) =>
+  $haystack foreach (ind, item) =>
     if ($item === $needle) => return $ind
   end
 end
@@ -713,7 +713,7 @@ end
 
 $stack: Int+ = []
 
-$instructions foreach (instr, i) =>
+$instructions foreach (i, instr) =>
   $instr.cmd match =>
     "[" =>
       $stack := append $i

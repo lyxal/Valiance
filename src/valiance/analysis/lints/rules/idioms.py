@@ -69,7 +69,7 @@ def prefer_filter(context: NodeLintContext):
     if not isinstance(conditional, IfNode) or conditional.else_branch:
         return ()
     branch = conditional.then_branch
-    if not _contains_name(branch, node.variable):
+    if not _contains_name(branch, node.second_variable or node.first_variable):
         return ()
     if not any(
         isinstance(item, ElementNode) and item.name in {Symbol("append"), Symbol("wrap")}
@@ -202,7 +202,7 @@ def _simple_sum_body(node: ForNode) -> bool:
     return (
         len(writes) == 1
         and len(additions) == 1
-        and _contains_name(node.body, node.variable)
+        and _contains_name(node.body, node.second_variable or node.first_variable)
         and _contains_name(node.body, writes[0].name)
     )
 

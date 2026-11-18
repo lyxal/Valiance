@@ -34,7 +34,7 @@ def test_called_parameter_infers_call_site_checked_function() -> None:
     analyser, typed = _analyse(
         """
 define find(xs, fun) =>
-  $xs foreach (x, i) =>
+  $xs foreach (i, x) =>
     if ($fun($x)) => return $i
   end
   -1

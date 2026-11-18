@@ -2,7 +2,7 @@ define[T: trait => extend ===(T, T) -> #boolean Number] find(
   haystack: T+,
   needle: T
 ) =>
-  $haystack foreach (item, ind) =>
+  $haystack foreach (ind, item) =>
     if ($item === $needle) => return $ind
   end
 end

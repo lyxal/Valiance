@@ -31,16 +31,19 @@ def register(registry: LintRegistry) -> None:
 def unused_foreach_index(context: NodeLintContext):
     """Report a named foreach index that is not read by the loop body."""
     node = context.node
-    if not isinstance(node, ForNode) or node.index_variable is None:
+    if not isinstance(node, ForNode) or node.second_variable is None:
         return ()
-    if context.branch.stack and T.collection_item_type(context.branch.top) is None:
+    # Native lists bind the index first; the second name is the value.
+    # Restrict this rule to list-like sources, for which the input
+    # position is statically known even before loop analysis.
+    if not context.branch.stack or T.collection_item_type(context.branch.top) is None:
         return ()
-    if _reads_name(node.body, node.index_variable):
+    if _reads_name(node.body, node.first_variable):
         return ()
     return (
         finding(
             "unused-loop-index",
-            f"foreach index '${node.index_variable}' is never read; remove it from "
+            f"foreach index '${node.first_variable}' is never read; remove it from "
             "the loop binding",
             node,
         ),

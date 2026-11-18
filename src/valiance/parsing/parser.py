@@ -1367,15 +1367,15 @@ class Parser:
     def _foreach(self, start: Token) -> ForNode:
         """Parse foreach from the current token stream."""
         self._expect(TokenKind.LPAREN)
-        variable = self._symbol("expected foreach variable")
-        index_variable = None
+        first_variable = self._symbol("expected first foreach binding")
+        second_variable = None
         if self._match(TokenKind.COMMA):
-            index_variable = self._symbol("expected foreach index variable")
+            second_variable = self._symbol("expected second foreach binding")
         self._expect(TokenKind.RPAREN)
         self._expect(TokenKind.FAT_ARROW)
         return ForNode(
-            variable,
-            index_variable,
+            first_variable,
+            second_variable,
             self._body(),
             location=_loc(start),
         )

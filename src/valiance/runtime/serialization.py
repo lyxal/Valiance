@@ -22,6 +22,7 @@ from valiance.runtime.bytecode import (
     ReflectionFieldReference,
     ReflectionFieldsReference,
     ReflectionForeachReference,
+    IterableForeachReference,
     DispatchKind,
     VectorExtensionReference,
 )
@@ -40,7 +41,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x49  # Optional named-fault binding in TRY_BEGIN entries.
+BYTECODE_VERSION = 0x4A  # Checked IterableForeachReference payload.
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -149,6 +150,7 @@ _REFLECTION_FIELDS_REFERENCE = 0x12
 _REFLECTION_FOREACH_REFERENCE = 0x13
 _FUNCTION_SPECIALIZATION_REFERENCE = 0x14
 _RANK_VARIABLE = 0x15
+_ITERABLE_FOREACH_REFERENCE = 0x16
 
 
 def _validate_occurrence_effects(
@@ -203,7 +205,7 @@ def loads(data: bytes) -> Program:
         if prefix != MAGIC_PREFIX:
             raise BytecodeFormatError("invalid Valiance bytecode magic")
         version = reader.u8()
-        if version not in (0x43, 0x44, 0x45, 0x46, 0x47, 0x48, BYTECODE_VERSION):
+        if version not in (0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, BYTECODE_VERSION):
             raise BytecodeFormatError(
                 f"unsupported Valiance bytecode version {version}; "
                 f"expected 0x43 through {BYTECODE_VERSION}"
@@ -331,6 +333,8 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                 _validate_reflection_fields(argument)
         if op is OpCode.FOREACH and isinstance(argument, ReflectionForeachReference):
             _validate_reflection_foreach(argument)
+        if op is OpCode.FOREACH and isinstance(argument, IterableForeachReference):
+            _validate_iterable_foreach(argument)
         if op is OpCode.FOREACH and isinstance(argument, tuple) and argument and argument[0] == "reflection_choices":
             if len(argument) != 2 or not isinstance(argument[1], tuple) or not argument[1]:
                 raise BytecodeFormatError("invalid reflective iteration choices")
@@ -534,6 +538,45 @@ def _validate_reflection_foreach(value: ReflectionForeachReference) -> None:
         raise BytecodeFormatError("invalid reflective foreach metadata")
 
 
+def _validate_iterable_foreach(value: IterableForeachReference) -> None:
+    """Check that a protocol traversal contains complete, statically linked calls."""
+    if (not isinstance(value.body, FunctionCode)
+            or not isinstance(value.initial, FunctionCode)
+            or not isinstance(value.advance, FunctionCode)
+            or value.single is not None and not isinstance(value.single, FunctionCode)
+            or type(value.has_index) is not bool
+            or type(value.completion_count) is not int or value.completion_count < 1
+            or len(value.body.params) != 1 + int(value.has_index)
+            or value.initial.params != ("source",)
+            or value.advance.params != ("source", "state")
+            or value.single is not None and value.single.params != ("source", "index", "value")
+            or value.has_index and value.single is not None):
+        raise BytecodeFormatError("invalid trait foreach call plans")
+    for name, method in (("initial", value.initial), ("advance", value.advance), ("single", value.single)):
+        if method is None:
+            continue
+        call = method.instructions[-2].arg if len(method.instructions) >= 2 else None
+        if (method.return_count != 1 or not method.cycle_params
+                or len(method.instructions) != len(method.params) + 2
+                or any(ins.op is not OpCode.LOAD_VAR
+                       for ins in method.instructions[:len(method.params)])
+                or tuple(ins.arg for ins in method.instructions[:len(method.params)])
+                   not in (method.params, (*method.params[1:], method.params[0]))
+                or method.instructions[-2].op is not OpCode.CALL_RESOLVED_ELEMENT
+                or not isinstance(call, ResolvedElementReference)
+                # Imported checked methods retain the owner-qualified runtime
+                # spelling (e.g. `json.Json.Object::advance`) alongside their
+                # implementation ID; only the protocol method suffix is fixed.
+                or call.name.rsplit("::", 1)[-1] != name
+                or (call.arity_override is not None
+                    and call.arity_override != len(method.params))
+                or (call.implementation_id is None
+                    and not call.dispatch_kind & (
+                        DispatchKind.NOMINAL_TRAIT | DispatchKind.TRAIT_WITNESS))
+                or method.instructions[-1].op is not OpCode.RETURN):
+            raise BytecodeFormatError("trait foreach method must be a checked element call")
+
+
 def _validate_function_specialization(reference: FunctionSpecializationReference) -> None:
     """Require complete, uniquely linked executable union specializations."""
     if (not isinstance(reference.overloads, tuple) or not reference.overloads
@@ -577,6 +620,11 @@ def _validate_nested_concurrency_values(value: object) -> None:
         _validate_reflection_foreach(value)
         for body in value.bodies:
             _validate_concurrency_bytecode(body)
+    elif isinstance(value, IterableForeachReference):
+        _validate_iterable_foreach(value)
+        for code in (value.body, value.initial, value.advance, value.single):
+            if code is not None:
+                _validate_concurrency_bytecode(code)
     elif isinstance(value, FunctionCode):
         _validate_concurrency_bytecode(value)
     elif isinstance(value, FunctionSetCode):
@@ -755,6 +803,15 @@ class _Writer:
             self.u8(_REFLECTION_FOREACH_REFERENCE)
             self.value(value.layout)
             self.value(value.bodies)
+            self.bool(value.has_index)
+            self.u32(value.completion_count)
+        elif isinstance(value, IterableForeachReference):
+            _validate_iterable_foreach(value)
+            self.u8(_ITERABLE_FOREACH_REFERENCE)
+            self.value(value.body)
+            self.value(value.initial)
+            self.value(value.advance)
+            self.value(value.single)
             self.bool(value.has_index)
             self.u32(value.completion_count)
         else:
@@ -1129,6 +1186,13 @@ class _Reader:
         if tag == _REFLECTION_FOREACH_REFERENCE:
             reference = ReflectionForeachReference(self.value(), self.value(), self.bool(), self.u32())
             _validate_reflection_foreach(reference)
+            return reference
+        if tag == _ITERABLE_FOREACH_REFERENCE:
+            reference = IterableForeachReference(
+                self.value(), self.value(), self.value(), self.value(),
+                self.bool(), self.u32(),
+            )
+            _validate_iterable_foreach(reference)
             return reference
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
 

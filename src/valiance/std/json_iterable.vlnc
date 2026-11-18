@@ -1,0 +1,38 @@
+import {std.json}
+import {std.iterable}
+
+#? An explicit, replayable traversal view of a JSON object case.
+#? The base json.Json variant does not promise object member traversal.
+object JsonMembers =>
+  $source: json.Json.Object
+end
+
+object JsonMembers as iterable.Iterable[String, json.Json, {{String,json.Json}+,Int,Int}] =>
+  define initial -> {{String,json.Json}+,Int,Int} =>
+    $pairs: {String,json.Json}+ = []
+    $self.source.members foreach(key,value) =>
+      $pairs := append($pairs, {$key,$value})
+    end
+    {$pairs, 0, length($pairs)}
+  end
+  define advance(state: {{String,json.Json}+,Int,Int}) -> {String,json.Json,{{String,json.Json}+,Int,Int}}? =>
+    $pairs = $state[0]
+    $position = $state[1]
+    if ($position >= $state[2]) => return \None end
+    $pair = $pairs[$position]
+    Some({$pair[0], $pair[1], {$pairs, $position+1, $state[2]}})
+  end
+end
+object JsonMembers as iterable.SingleView[String,json.Json,String] =>
+  define single(index: String, value: json.Json) -> String => $index
+end
+
+#?? Adapt a matched JSON object case to indexed member traversal.
+#?? The traversal cursor snapshots members once and preserves dictionary order.
+#?? Unary traversal yields keys; binary traversal yields (key, Json).
+#?? @param value A Json.Object case, not a general Json variant.
+#?? @returns A replayable Iterable with projected member keys.
+#?? @example import {std.json, std.iterable, std.json_iterable} fn(value: json.Json.Object) => json_iterable.memberView($value) end
+public define memberView(value: json.Json.Object) -> iterable.Iterable[String,json.Json,{{String,json.Json}+,Int,Int}]&iterable.SingleView[String,json.Json,String] =>
+  JsonMembers($value)
+end

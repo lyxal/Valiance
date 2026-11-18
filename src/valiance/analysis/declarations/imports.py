@@ -234,7 +234,7 @@ class _ImportDeclarations:
                         else overload.call_site_body
                     ),
                 )
-            self.env.define_overload(name, overload)
+            self.env.define_overload(name, overload, imported=True)
             if dependencies and overload.call_site_body is not None and overload.implementation_id is not None:
                 self.env.call_site_dependencies[overload.implementation_id] = dependencies
             self.env.bind_runtime_name(

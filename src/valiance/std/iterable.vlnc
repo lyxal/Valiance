@@ -1,0 +1,303 @@
+#? Lazy higher-order adapters for the user-defined traversal protocol.
+#? Import chosen operations and traits selectively or via the std.iterable namespace.
+
+public trait[I,V,S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I,V,S}?
+end
+public trait[I,V,Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+public object[I,V,S,U] Mapped =>
+  $source: Iterable[I,V,S]
+  $mapper: Function[I,V -> U]
+end
+object[I,V,S,U] Mapped as Iterable[I,U,S] =>
+  define initial -> S => $self.source initial
+  define advance(state: S) -> {I,U,S}? =>
+    $step = $state $self.source advance
+    $triple = $step ?
+    $callback = $self.mapper
+    Some({$triple[0], $callback($triple[0],$triple[1]), $triple[2]})
+  end
+end
+public object[I,V,S] Filtered =>
+  $source: Iterable[I,V,S]
+  $predicate: Function[I,V -> #boolean Int]
+end
+object[I,V,S] Filtered as Iterable[I,V,S] =>
+  define initial -> S => $self.source initial
+  define advance(state: S) -> {I,V,S}? =>
+    $cursor = $state
+    while (true) =>
+      $step = $cursor $self.source advance
+      $triple = $step ?
+      $cursor := $triple[2]
+      $predicate = $self.predicate
+      if ($predicate($triple[0],$triple[1])) =>
+        return Some({$triple[0], $triple[1], $cursor})
+      end
+    end
+    \None
+  end
+end
+#?? Lazily transform the indexed values of an Iterable, preserving source indices.
+#?? The callback is evaluated only when advance is consumed.
+#?? @param source Traversable source.
+#?? @param f Callback receiving (index, value).
+#?? @returns An Iterable indexed by the source index and valued by U.
+#?? @example import {std.iterable.[Iterable, mapIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(index:Int,value:Int)->Int => $value+$index end) end
+public define[I,V,S,U] mapIterable(source: Iterable[I,V,S], f: Function[I,V -> U]) -> Iterable[I,U,S] =>
+  Mapped($source,$f)
+end
+#?? Lazily transform the values of an Iterable without requesting indices.
+#?? @param source Traversable source.
+#?? @param f Callback receiving the source value (not its SingleView projection).
+#?? @returns An Iterable indexed by the source index and valued by U.
+#?? @example import {std.iterable.[Iterable, mapIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(value:Int)->Int => $value+1 end) end
+public define[I,V,S,U] mapIterable(source: Iterable[I,V,S], f: Function[V -> U]) -> Iterable[I,U,S] =>
+  $callback = $f
+  Mapped($source,fn(index:I,value:V) -> U => $callback($value) end)
+end
+#?? Lazily keep steps whose index and value satisfy a predicate.
+#?? Indices are not renumbered when earlier steps are rejected.
+#?? @param source Traversable source.
+#?? @param f Callback receiving (index, value).
+#?? @returns An Iterable containing retained source steps.
+#?? @example import {std.iterable.[Iterable, filterIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => filterIterable($source, fn(index:Int,value:Int)->#boolean Int => $index>0 end) end
+public define[I,V,S] filterIterable(source: Iterable[I,V,S], f: Function[I,V -> #boolean Int]) -> Iterable[I,V,S] =>
+  Filtered($source,$f)
+end
+#?? Lazily keep steps whose values satisfy a predicate.
+#?? @param source Traversable source.
+#?? @param f Callback receiving the underlying Value, not an optional SingleView Item.
+#?? @returns An Iterable containing retained source steps with original indices.
+#?? @example import {std.iterable.[Iterable, filterIterable]} fn(source: Iterable[Int,Int,Int]) -> Iterable[Int,Int,Int] => filterIterable($source, fn(value:Int)->#boolean Int => $value>0 end) end
+public define[I,V,S] filterIterable(source: Iterable[I,V,S], f: Function[V -> #boolean Int]) -> Iterable[I,V,S] =>
+  $callback = $f
+  Filtered($source,fn(index:I,value:V) -> #boolean Int => $callback($value) end)
+end
+
+#? Projected adaptation over an Iterable carrying a matching SingleView witness.
+public object[I,V,S,Item,U] ProjectedMapped =>
+  $source: Iterable[I,V,S]&SingleView[I,V,Item]
+  $mapper: Function[Item -> U]
+end
+object[I,V,S,Item,U] ProjectedMapped as Iterable[I,U,S] =>
+  define initial -> S => $self.source initial
+  define advance(state: S) -> {I,U,S}? =>
+    $step = $state $self.source advance
+    $triple = $step ?
+    $view = $self.source
+    $projected = $triple[0] $triple[1] $view single
+    $callback = $self.mapper
+    Some({$triple[0], $callback($projected), $triple[2]})
+  end
+end
+public object[I,V,S,Item] ProjectedFiltered =>
+  $source: Iterable[I,V,S]&SingleView[I,V,Item]
+  $predicate: Function[Item -> #boolean Int]
+end
+object[I,V,S,Item] ProjectedFiltered as Iterable[I,V,S] =>
+  define initial -> S => $self.source initial
+  define advance(state: S) -> {I,V,S}? =>
+    $cursor = $state
+    while (true) =>
+      $step = $cursor $self.source advance
+      $triple = $step ?
+      $cursor := $triple[2]
+      $view = $self.source
+      $predicate = $self.predicate
+      if ($predicate($triple[0] $triple[1] $view single)) =>
+        return Some({$triple[0], $triple[1], $cursor})
+      end
+    end
+    \None
+  end
+end
+object[I,V,S,Item] ProjectedFiltered as SingleView[I,V,Item] =>
+  define single(index: I, value: V) -> Item =>
+    $index $value $self.source single
+  end
+end
+#?? Map the default SingleView item, when a matching projection is available.
+#?? @param source An Iterable with a correlated SingleView.
+#?? @param f Callback receiving its projected item.
+#?? @returns A lazy Iterable with the original indices and mapped values.
+#?? @example import {std.iterable.[Iterable, SingleView, mapIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> Iterable[Int,Int,Int] => mapIterable($source, fn(item:String)->Int => 1 end) end
+public define[I,V,S,Item,U] mapIterable(source: Iterable[I,V,S]&SingleView[I,V,Item], f: Function[Item -> U]) -> Iterable[I,U,S] =>
+  ProjectedMapped($source, $f)
+end
+
+#?? Filter on the projected SingleView item while preserving its unary view.
+#?? @param source An Iterable with a correlated SingleView.
+#?? @param f Predicate receiving its projected item.
+#?? @returns A lazy Iterable with the original indices and SingleView projection.
+#?? @example import {std.iterable.[Iterable, SingleView, filterIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> Iterable[Int,Int,Int]&SingleView[Int,Int,String] => filterIterable($source, fn(item:String)->#boolean Int => $item=="4" end) end
+public define[I,V,S,Item] filterIterable(source: Iterable[I,V,S]&SingleView[I,V,Item], f: Function[Item -> #boolean Int]) -> Iterable[I,V,S]&SingleView[I,V,Item] =>
+  ProjectedFiltered($source, $f)
+end
+
+#?? Consume an Iterable eagerly, folding each indexed value into an accumulator.
+#?? Source indices are preserved, including after a filterIterable adapter.
+#?? @param source Traversable source.
+#?? @param seed Initial accumulator returned unchanged for an empty source.
+#?? @param f Callback receiving accumulator, index and source value.
+#?? @returns Final accumulator.
+#?? @example import {std.iterable.[Iterable, foldIterable]} fn(source: Iterable[Int,Int,Int]) -> Int => foldIterable($source, 0, fn(total:Int,index:Int,value:Int)->Int => $total+$index+$value end) end
+public define[I,V,S,Acc] foldIterable(source: Iterable[I,V,S], seed: Acc, f: Function[Acc,I,V -> Acc]) -> Acc =>
+  $result = $seed
+  $cursor = $source initial
+  while (true) =>
+    $step = $cursor $source advance
+    $step match =>
+      as :None => break
+      _ =>
+        $triple = $step ?!
+        $cursor = $triple[2]
+        $callback = $f
+        $result = $callback($result, $triple[0], $triple[1])
+    end
+  end
+  $result
+end
+
+#?? Consume an Iterable eagerly, folding its unprojected values into an accumulator.
+#?? @param source Traversable source.
+#?? @param seed Initial accumulator returned unchanged for an empty source.
+#?? @param f Callback receiving accumulator and underlying Value.
+#?? @returns Final accumulator.
+#?? @example import {std.iterable.[Iterable, foldIterable]} fn(source: Iterable[Int,Int,Int]) -> Int => foldIterable($source, 0, fn(total:Int,value:Int)->Int => $total+$value end) end
+public define[I,V,S,Acc] foldIterable(source: Iterable[I,V,S], seed: Acc, f: Function[Acc,V -> Acc]) -> Acc =>
+  $result = $seed
+  $cursor = $source initial
+  while (true) =>
+    $step = $cursor $source advance
+    $step match =>
+      as :None => break
+      _ =>
+        $triple = $step ?!
+        $cursor = $triple[2]
+        $callback = $f
+        $result = $callback($result, $triple[1])
+    end
+  end
+  $result
+end
+
+#?? Consume the projected SingleView items of an Iterable into an accumulator.
+#?? @param source Traversable source with matching SingleView evidence.
+#?? @param seed Initial accumulator returned unchanged for an empty source.
+#?? @param f Callback receiving accumulator and projected Item.
+#?? @returns Final accumulator.
+#?? @example import {std.iterable.[Iterable, SingleView, foldIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> Int => foldIterable($source, 0, fn(total:Int,item:String)->Int => $total+1 end) end
+public define[I,V,S,Item,Acc] foldIterable(source: Iterable[I,V,S]&SingleView[I,V,Item], seed: Acc, f: Function[Acc,Item -> Acc]) -> Acc =>
+  $result = $seed
+  $cursor = $source initial
+  while (true) =>
+    $step = $cursor $source advance
+    $step match =>
+      as :None => break
+      _ =>
+        $triple = $step ?!
+        $cursor = $triple[2]
+        $callback = $f
+        $item = $triple[0] $triple[1] $source single
+        $result = $callback($result, $item)
+    end
+  end
+  $result
+end
+
+#?? Eagerly reduce the indexed values of a non-empty Iterable.
+#?? The first indexed value initializes the accumulator; the callback visits
+#?? each subsequent (index, value). Empty sources return None, not a default.
+#?? @param source Traversable source.
+#?? @param f Callback receiving the accumulator and the next (index, value).
+#?? @returns Some(reduced value), or None for an empty source.
+#?? @example import {std.iterable.[Iterable, reduceIterable]} fn(source: Iterable[Int,Int,Int]) -> Int? => reduceIterable($source, fn(total:Int,index:Int,value:Int)->Int => $total+$index+$value end) end
+public define[I,V,S] reduceIterable(source: Iterable[I,V,S], f: Function[V,I,V -> V]) -> V? =>
+  $cursor = $source initial
+  $first = $cursor $source advance
+  $first match =>
+    as :None => return \None
+    _ =>
+      $triple = $first ?!
+      $result = $triple[1]
+      $cursor = $triple[2]
+      while (true) =>
+        $step = $cursor $source advance
+        $step match =>
+          as :None => break
+          _ =>
+            $triple = $step ?!
+            $cursor = $triple[2]
+            $callback = $f
+            $result = $callback($result, $triple[0], $triple[1])
+        end
+      end
+      Some($result)
+  end
+end
+
+#?? Eagerly reduce the values of a non-empty Iterable.
+#?? The first value initializes the accumulator without invoking the callback.
+#?? @param source Traversable source.
+#?? @param f Callback receiving the accumulator and next underlying Value.
+#?? @returns Some(reduced value), or None for an empty source.
+#?? @example import {std.iterable.[Iterable, reduceIterable]} fn(source: Iterable[Int,Int,Int]) -> Int? => reduceIterable($source, fn(total:Int,value:Int)->Int => $total+$value end) end
+public define[I,V,S] reduceIterable(source: Iterable[I,V,S], f: Function[V,V -> V]) -> V? =>
+  $cursor = $source initial
+  $first = $cursor $source advance
+  $first match =>
+    as :None => return \None
+    _ =>
+      $triple = $first ?!
+      $result = $triple[1]
+      $cursor = $triple[2]
+      while (true) =>
+        $step = $cursor $source advance
+        $step match =>
+          as :None => break
+          _ =>
+            $triple = $step ?!
+            $cursor = $triple[2]
+            $callback = $f
+            $result = $callback($result, $triple[1])
+        end
+      end
+      Some($result)
+  end
+end
+
+#?? Eagerly reduce the projected items of an Iterable with SingleView evidence.
+#?? The first projected Item initializes the accumulator. Projection is called
+#?? once per source step, including the first, and only during consumption.
+#?? @param source Traversable source with a correlated SingleView.
+#?? @param f Callback receiving the accumulated and next projected Item.
+#?? @returns Some(reduced Item), or None when no items were produced.
+#?? @example import {std.iterable.[Iterable, SingleView, reduceIterable]} fn(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) -> String? => reduceIterable($source, fn(a:String,b:String)->String => $a+$b end) end
+public define[I,V,S,Item] reduceIterable(source: Iterable[I,V,S]&SingleView[I,V,Item], f: Function[Item,Item -> Item]) -> Item? =>
+  $cursor = $source initial
+  $first = $cursor $source advance
+  $first match =>
+    as :None => return \None
+    _ =>
+      $triple = $first ?!
+      $result = $triple[0] $triple[1] $source single
+      $cursor = $triple[2]
+      while (true) =>
+        $step = $cursor $source advance
+        $step match =>
+          as :None => break
+          _ =>
+            $triple = $step ?!
+            $cursor = $triple[2]
+            $callback = $f
+            $item = $triple[0] $triple[1] $source single
+            $result = $callback($result, $item)
+        end
+      end
+      Some($result)
+  end
+end

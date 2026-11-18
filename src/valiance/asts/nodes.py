@@ -241,9 +241,11 @@ class TypedMatchNode(TypedNode):
 
 @dataclass(frozen=True, slots=True)
 class TypedForNode(TypedNode):
-    """A typed foreach loop retaining its analysed body."""
+    """A typed foreach loop retaining its analysed body and checked traversal calls."""
 
     body: tuple[ASTNode | TypedNode, ...] = ()
+    # Empty for native collections; otherwise initial, advance and optional single.
+    trait_calls: tuple[TypedElementNode, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -782,8 +784,8 @@ class AtNode(ASTNode):
 class ForNode(ASTNode):
     """A foreach loop whose break-result stack is inferred."""
 
-    variable: Symbol
-    index_variable: Symbol | None = None
+    first_variable: Symbol
+    second_variable: Symbol | None = None
     body: tuple[ASTNode, ...] = ()
 
 

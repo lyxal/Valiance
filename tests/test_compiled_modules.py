@@ -416,6 +416,47 @@ end
                         self.assertEqual(analyser.diagnostics, [])
                         self.assertEqual(run(loads(dumps(compile_program(typed)))), [8, 12])
 
+    def test_namespaced_variant_trait_evidence_keeps_provider_identity(self):
+        """An imported case must not implement a same-named foreign trait."""
+        from valiance.incremental import CompilationCoordinator
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shapes = root / "shapes.vlnc"
+            shapes.write_text(
+                "public trait[T] Drawable => extend draw -> T end\n"
+                "public variant[T] Shape =>\n"
+                "  Circle => $radius: T end\n"
+                "  Circle as Drawable[T] => define draw => $self.radius end\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            (root / "other.vlnc").write_text(
+                "public trait[T] Drawable => extend draw -> T end\n",
+                encoding="utf-8",
+            )
+            for layout in ("source", "compiled"):
+                if layout == "compiled":
+                    CompilationCoordinator(root).build_module(
+                        shapes, shapes.with_suffix(".vbcm"), module_name="shapes"
+                    )
+                    shapes.unlink()
+                for name in ("shapes", "figures"):
+                    with self.subTest(layout=layout, namespace=name):
+                        imported = "shapes" if name == "shapes" else "shapes as figures"
+                        source = (
+                            f"import {{{imported}, other}}\n"
+                            "define render(value: other.Drawable[Int]) -> Int => "
+                            "$value draw end\n"
+                            f"render({name}.Shape.Circle(8))\n"
+                        )
+                        analyser = Analyser(source_file=root / "main.vlnc")
+                        analyser.analyse(parse(source))
+                        self.assertTrue(
+                            any("no overloads" in error for error in analyser.diagnostics),
+                            analyser.diagnostics,
+                        )
+
     def test_compact_variant_cases_survive_source_free_alias_imports(self):
         from valiance.incremental import CompilationCoordinator
         from valiance.runtime import compile_program, dumps, loads, run

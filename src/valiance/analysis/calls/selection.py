@@ -91,6 +91,8 @@ class _CallSelection:
             )
         )
         winners = self._prefer_strict_declared_subtype(winners)
+        winners = self._prefer_minimal_stacked_callable_arity(winners)
+        winners = self._prefer_minimal_contextual_modifier_arity(winners)
         winners = self._prefer_latest_equal_winners(winners)
         if not winners:
             provider_ambiguity = self._overload_provider_ambiguity(
@@ -253,6 +255,112 @@ class _CallSelection:
                 other is not item and narrower(other, item)
                 for other in winners
             )
+        )
+
+    @staticmethod
+    def _prefer_minimal_stacked_callable_arity(
+        winners: tuple[CallCandidate, ...],
+    ) -> tuple[CallCandidate, ...]:
+        """Prefer the shorter callback when stack callbacks are contextually inferred.
+
+        Function literals supplied on the value stack, such as ``map fn =>``
+        and ``map fn (item) =>``, can be specialized to each candidate's
+        callback signature. If *only* the callback input count differs, keep
+        the unary legacy interpretation rather than reporting ambiguity. This
+        does not change a call with an explicitly two-parameter callback:
+        that source is only valid for the corresponding candidate.
+        """
+        if len(winners) < 2 or any(candidate.modifiers for candidate in winners):
+            return winners
+
+        def contract(candidate: CallCandidate):
+            """Return the non-callback signature and callback input counts."""
+            callbacks = tuple(
+                (index, T.normalize(param))
+                for index, param in enumerate(candidate.applied.params)
+                if isinstance(T.normalize(param), T.FunctionType)
+            )
+            if not callbacks or any(fn.params is None for _, fn in callbacks):
+                return None
+            positions = frozenset(index for index, _ in callbacks)
+            return (
+                positions,
+                tuple(param for index, param in enumerate(candidate.applied.params)
+                      if index not in positions),
+                tuple(arg for index, arg in enumerate(candidate.source_arguments)
+                      if index not in positions),
+                candidate.applied.actual_returns,
+                candidate.applied.vectorised_depths,
+                candidate.dispatch_priority,
+                candidate.call_arg_order,
+                sum(len(fn.params) for _, fn in callbacks),
+            )
+
+        signatures = tuple(contract(candidate) for candidate in winners)
+        if any(signature is None for signature in signatures):
+            return winners
+        common = signatures[0][:-1]
+        if any(signature[:-1] != common for signature in signatures[1:]):
+            return winners
+        minimum = min(signature[-1] for signature in signatures)
+        return tuple(candidate for candidate, signature in zip(winners, signatures, strict=True)
+                     if signature[-1] == minimum)
+
+    @staticmethod
+    def _prefer_minimal_contextual_modifier_arity(
+        winners: tuple[CallCandidate, ...],
+    ) -> tuple[CallCandidate, ...]:
+        """Preserve unary shorthand semantics across callback-arity overloads.
+
+        A ``:`` shorthand with no declared parameter row is deliberately
+        reanalysed for each contextual callable signature. When several
+        overloads only differ in how many context inputs are supplied, that
+        reanalysis must not turn a formerly unary expression such as
+        ``map: double`` into a new, ambiguous binary callback. An explicit
+        ``fn (index, item)`` declares its arity and is never narrowed here.
+        """
+        if len(winners) < 2 or not all(
+            candidate.modifiers
+            and all(
+                isinstance(modifier.typed_node.node, FunctionNode)
+                and modifier.typed_node.node.contextual_signature
+                and modifier.typed_node.node.params is None
+                and isinstance(T.normalize(modifier.typ), T.FunctionType)
+                and T.normalize(modifier.typ).params is not None
+                for modifier in candidate.modifiers
+            )
+            for candidate in winners
+        ):
+            return winners
+
+        def equivalent_noncallbacks(candidate: CallCandidate) -> tuple[object, ...]:
+            """Compare the invocation contract without contextual callables."""
+            return (
+                candidate.branch,
+                tuple(
+                    (actual, expected)
+                    for actual, expected in zip(
+                        candidate.source_arguments, candidate.applied.params, strict=True
+                    )
+                    if not isinstance(T.normalize(expected), T.FunctionType)
+                ),
+                candidate.applied.actual_returns,
+                candidate.applied.vectorised_depths,
+                candidate.dispatch_priority,
+                len(candidate.modifiers),
+            )
+
+        reference = equivalent_noncallbacks(winners[0])
+        if any(equivalent_noncallbacks(candidate) != reference for candidate in winners[1:]):
+            return winners
+        arities = tuple(
+            sum(len(T.normalize(modifier.typ).params) for modifier in candidate.modifiers)
+            for candidate in winners
+        )
+        shortest = min(arities)
+        return tuple(
+            candidate for candidate, arity in zip(winners, arities, strict=True)
+            if arity == shortest
         )
 
     @staticmethod

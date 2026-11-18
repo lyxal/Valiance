@@ -145,7 +145,7 @@ end
     def test_foreach_cycles_value_and_index_inputs(self):
         stack = execute("""
 $total: Int = 0
-[4, 5, 6] foreach (item, index) =>
+[4, 5, 6] foreach (index, item) =>
   $total := +
   $total := +
 end
@@ -179,7 +179,7 @@ end
 
     def test_foreach_index_and_value_bindings_do_not_escape_scope(self):
         analyser, _typed = analyse("""
-[10] foreach (item, index) =>
+[10] foreach (index, item) =>
   $item $index pop pop
 end
 $item

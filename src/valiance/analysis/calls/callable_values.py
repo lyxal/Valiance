@@ -575,9 +575,9 @@ def _top_level_capture_reads_in_nodes(
             )
             continue
         if isinstance(node, ForNode):
-            loop_bound = bound | {node.variable}
-            if node.index_variable is not None:
-                loop_bound = loop_bound | {node.index_variable}
+            loop_bound = bound | {node.first_variable}
+            if node.second_variable is not None:
+                loop_bound = loop_bound | {node.second_variable}
             reads.extend(
                 _top_level_capture_reads_in_nodes(node.body, visible, loop_bound)
             )

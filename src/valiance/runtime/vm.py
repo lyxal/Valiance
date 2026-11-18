@@ -41,6 +41,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
     ReflectionForeachReference,
+    IterableForeachReference,
     FunctionSpecializationReference,
     DispatchKind,
     VectorExtensionReference,
@@ -3900,11 +3901,21 @@ class VirtualMachine:
                                 stored = _store_value(existing, value, self)
                             else:
                                 stored = value
+                            # A callback can return another owned occurrence of
+                            # the same nominal object.  Drop the former slot in
+                            # that case, but keep an in-place reconstructed
+                            # collection alive when it has no extra owner.
                             if (
                                 existing is not None
                                 and not same_owner
-                                and existing is not stored
                                 and _needs_release(existing)
+                                and (
+                                    existing is not stored
+                                    or (
+                                        isinstance(stored, ObjectValue)
+                                        and stored.refcount > 1
+                                    )
+                                )
                             ):
                                 _release_value(existing, self)
                             target[instruction.arg] = stored
@@ -5831,6 +5842,9 @@ class VirtualMachine:
         if isinstance(config, ReflectionForeachReference):
             self._reflective_foreach(frame, config)
             return
+        if isinstance(config, IterableForeachReference):
+            self._iterable_foreach(frame, config)
+            return
         body_code, has_index, completion_count = config
         occurrence = _source_args(frame, 1, "foreach")[0]
         iterable = _accessed_value(occurrence)
@@ -5838,12 +5852,24 @@ class VirtualMachine:
         captured.update(_closure_locals(frame) or {})
         error = None
         try:
-            if not is_list_like(iterable) and not isinstance(iterable, DictValue):
-                raise RuntimeError("foreach requires a list or dictionary value")
+            if not is_list_like(iterable) and not isinstance(iterable, (DictValue, tuple)):
+                raise RuntimeError("foreach requires a list, dictionary or tuple value")
             body = FunctionValue(body_code, captured)
-            entries = iterable.items() if isinstance(iterable, DictValue) else (
-                (item, RuntimeNumber(index)) for index, item in enumerate(iterable)
-            )
+            if isinstance(iterable, DictValue):
+                entries = iterable.items()
+            elif isinstance(iterable, tuple):
+                if has_index:
+                    entries = (
+                        (RuntimeNumber(index), item)
+                        for index, item in enumerate(iterable)
+                    )
+                else:
+                    entries = ((item, None) for item in iterable)
+            else:
+                entries = (
+                    (RuntimeNumber(index), item) if has_index else (item, None)
+                    for index, item in enumerate(iterable)
+                )
             for item, second in entries:
                 args = [_BorrowedValue(item) if _needs_release(item) else item]
                 if has_index:
@@ -5864,6 +5890,94 @@ class VirtualMachine:
         finally:
             _sync_captured_globals(frame, captured)
             cleanup_error = _release_runtime_occurrences((occurrence,), self, error)
+            if cleanup_error is not None and cleanup_error is not error:
+                raise cleanup_error
+
+    def _iterable_foreach(self, frame: _Frame, config: IterableForeachReference) -> None:
+        """Run checked protocol calls through the ordinary VM activation scheduler."""
+        occurrence = _source_args(frame, 1, "trait-backed foreach")[0]
+        source = _accessed_value(occurrence)
+        captured = dict(frame.globals)
+        captured.update(_closure_locals(frame) or {})
+        body = FunctionValue(config.body, captured)
+        initial = FunctionValue(config.initial, captured)
+        advance = FunctionValue(config.advance, captured)
+        single = FunctionValue(config.single, captured) if config.single else None
+        state = None
+        has_state = False
+        error = None
+        try:
+            def borrowed(value):
+                """Pass retained traversal values without transferring ownership."""
+                return _BorrowedValue(value) if _needs_release(value) else value
+
+            def invoke(function, arguments):
+                """Invoke a checked protocol method and require one result."""
+                results = self.call(function, [borrowed(arg) for arg in arguments],
+                                    isolate_captures=False)
+                if len(results) != 1:
+                    _release_runtime_occurrences(results, self)
+                    raise RuntimeError("Iterable protocol methods must return one value")
+                return results[0]
+
+            state = invoke(initial, (source,))
+            has_state = True
+            while True:
+                step = invoke(advance, (source, state))
+                if (isinstance(step, ObjectValue)
+                        and step.type_name.rsplit(".", 1)[-1] == "None"):
+                    _release_value(step, self)
+                    break
+                if (not isinstance(step, ObjectValue)
+                        or step.type_name.rsplit(".", 1)[-1] != "Some"
+                        or not isinstance(step.fields.get("value"), tuple)
+                        or len(step.fields["value"]) != 3):
+                    _release_value(step, self)
+                    raise RuntimeError("Iterable.advance must return Some({index,value,state}) or None")
+                index, value, next_state = step.fields["value"]
+                # Move the triple out of this temporary optional wrapper: the
+                # loop owns its cursor, and the current body borrows its items.
+                if step.refcount == 1:
+                    step.fields["value"] = ()
+                else:
+                    index = _duplicate_occurrence(index)
+                    value = _duplicate_occurrence(value)
+                    next_state = _duplicate_occurrence(next_state)
+                _release_value(step, self)
+                old_state = state
+                state = next_state
+                try:
+                    if single is not None:
+                        item = invoke(single, (source, index, value))
+                        args = (item,)
+                    elif config.has_index:
+                        args = (index, value)
+                    else:
+                        args = (value,)
+                    try:
+                        outputs = self.call(body, [borrowed(arg) for arg in args],
+                                            isolate_captures=False)
+                        _release_runtime_occurrences(outputs, self)
+                    except _LoopBreak as signal:
+                        frame.stack.extend(_materialize_access(item) for item in signal.values)
+                        return
+                    except _FunctionReturn as signal:
+                        raise _FunctionReturn(tuple(_materialize_access(item) for item in signal.values))
+                    finally:
+                        if single is not None:
+                            _release_value(item, self)
+                finally:
+                    _release_runtime_occurrences((index, value), self)
+                    if old_state is not state:
+                        _release_value(old_state, self)
+            frame.stack.extend(ObjectValue("None", {}) for _ in range(config.completion_count))
+        except BaseException as failure:
+            error = failure
+            raise
+        finally:
+            _sync_captured_globals(frame, captured)
+            cleanup = (occurrence, state) if has_state else (occurrence,)
+            cleanup_error = _release_runtime_occurrences(cleanup, self, error)
             if cleanup_error is not None and cleanup_error is not error:
                 raise cleanup_error
 
@@ -8643,6 +8757,39 @@ def _dynamic_callable_arity(value: Any) -> int | None:
     return None
 
 
+def _finish_delegated_callable(
+    frame: _Frame,
+    arguments: tuple[Any, ...],
+    consumed_count: int,
+    results: tuple[Any, ...],
+    vm: VirtualMachine,
+    next_cycle_index: int,
+    next_cycle_stack_remaining: int,
+) -> None:
+    """Complete `call`: a callback, not the forwarding builtin, owns its inputs.
+
+    Function invocation already releases transferred arguments and owns its
+    results.  Releasing those arguments again as ordinary builtin inputs can
+    destroy a value still referenced by an enclosing object.  The callable
+    occurrence itself is not forwarded as a callback argument and remains the
+    forwarding operation's responsibility.
+    """
+    if consumed_count:
+        transferred = frame.stack[-consumed_count:]
+        del frame.stack[-consumed_count:]
+        last_argument = _accessed_value(arguments[-1])
+        callable_argument = (
+            arguments[-1]
+            if isinstance(last_argument, (FunctionValue, OverloadedFunctionValue))
+            else arguments[0]
+        )
+        if any(item is callable_argument for item in transferred):
+            _release_value(callable_argument, vm)
+    frame.cycle_index = next_cycle_index
+    frame.cycle_stack_remaining = next_cycle_stack_remaining
+    frame.stack.extend(results)
+
+
 def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
     """Invoke builtin during VM execution."""
     if callee.element.name.text == "call" and frame.stack:
@@ -8669,18 +8816,10 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                         f"element '{callee.element.name}'",
                         args,
                     ) from exc
-                result = _bind_lazy_result_owners(args, result)
-                result = _borrow_builtin_results(args, result)
-                _finalize_builtin_result_ownership(args, result, consumed=args[-stack_count:] if stack_count else ())
-                if stack_count:
-                    _release_stack_tail(
-                        frame.stack,
-                        stack_count,
-                        callee.context.call.__self__,
-                    )
-                frame.cycle_index = next_cycle_index
-                frame.cycle_stack_remaining = next_cycle_stack_remaining
-                frame.stack.extend(result)
+                _finish_delegated_callable(
+                    frame, args, stack_count, result, callee.context.call.__self__,
+                    next_cycle_index, next_cycle_stack_remaining,
+                )
                 return
     for overload in callee.candidates:
         arity = len(overload.signature.params)
@@ -8732,6 +8871,12 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                 f"element '{callee.element.name}'",
                 args,
             ) from exc
+        if callee.element.name.text == "call":
+            _finish_delegated_callable(
+                frame, args, stack_count, result, callee.context.call.__self__,
+                next_cycle_index, next_cycle_stack_remaining,
+            )
+            return
         if overload.ownership_trivial:
             if stack_count:
                 del frame.stack[-stack_count:]
@@ -8796,8 +8941,12 @@ def _call_object_constructor(
         args = tuple(_readonly_access(_borrow_named_access(arg)) for arg in args[:cycle_count]) + args[cycle_count:]
         frame.stack.extend(_vectorize_object_constructor(callee, initializer, args, frame, vm, reference))
     else:
+        # A constructor owns its stored fields.  Implicit/named arguments can
+        # be temporary accesses into a caller frame; retain those occurrences
+        # before transferring them into persistent object storage.
+        owned_args = tuple(_materialize_access(arg) for arg in args)
         type_args = () if reference is None else reference.type_args
-        frame.stack.append(_construct_object(callee, initializer, args, vm, type_args))
+        frame.stack.append(_construct_object(callee, initializer, owned_args, vm, type_args))
 
 
 def _vectorize_object_constructor(
@@ -9292,6 +9441,12 @@ def _call_resolved_builtin(
             f"element '{callee.element.name}'",
             args,
         ) from exc
+    if callee.element.name.text == "call":
+        _finish_delegated_callable(
+            frame, args, consumed_count, result, context.call.__self__,
+            next_cycle_index, next_cycle_stack_remaining,
+        )
+        return
     if overload.ownership_trivial:
         if consumed_count:
             del frame.stack[-consumed_count:]

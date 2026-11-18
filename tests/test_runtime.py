@@ -3377,6 +3377,93 @@ print $resource.value
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_assigning_an_owned_object_back_to_its_slot_releases_old_occurrence(self):
+        source = r'''
+object Token => $label:String end
+define identity(item:Token) -> Token => $item end
+define store(value:Token) -> Token =>
+  $stored = $value
+  $stored = identity($stored)
+  $stored = $stored
+  $stored
+end
+store(Token("alive"))
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    [value] = run(loads(dumps(program)) if serialized else program)
+                    self.assertIsInstance(value, ObjectValue)
+                    self.assertFalse(value.destroyed)
+                    self.assertEqual(value.fields["label"], "alive")
+                    self.assertEqual(value.refcount, 1)
+
+    def test_tuple_foreach_uses_elements_for_unary_and_position_first_for_binary(self):
+        cases = (
+            ("{7, 8, 9} foreach (value) => break $value end", [RuntimeNumber(7)]),
+            ("{7, 8, 9} foreach (index, value) => break {$index, $value} end",
+             [(RuntimeNumber(0), RuntimeNumber(7))]),
+            ('{"label", 8} foreach (index, value) => break {$index, $value} end',
+             [(RuntimeNumber(0), "label")]),
+            ("{} foreach (item) => $item end", [ObjectValue("None", {})]),
+            ("{} foreach (index, value) => break $index end", [ObjectValue("None", {})]),
+            ("$total = 0\n{7, 8, 9} foreach (index, value) => "
+             "$total := $total + $index * 10 + $value end\n$total",
+             [RuntimeNumber(909)]),
+        )
+        for source, expected in cases:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [], source)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(source=source, optimize=optimize,
+                                      serialized=serialized):
+                        self.assertEqual(run(loads(dumps(program)) if serialized else program),
+                                         expected)
+
+    def test_tuple_foreach_nested_loops_and_enclosing_return(self):
+        cases = (
+            (
+                "$total = 0\n"
+                "{7, 8} foreach (index, item) =>\n"
+                "  {3, 4} foreach (j, other) =>\n"
+                "    $total := $total + $item * $other\n"
+                "  end\n"
+                "end\n$total",
+                [RuntimeNumber(1472)],
+            ),
+            (
+                "define extract(dummy: Int) -> Int =>\n"
+                "  {4, 5, 6} foreach (position, item) =>\n"
+                "    if ($position == 1) => return $item end\n"
+                "  end\n  0\nend\nextract(0)",
+                [RuntimeNumber(5)],
+            ),
+        )
+        for source, expected in cases:
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [], source)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(program), expected)
+                self.assertEqual(run(loads(dumps(program))), expected)
+
+    def test_tuple_foreach_uses_index_first_list_and_key_first_dictionary_bindings(self):
+        for source, expected in (
+            ("[7, 8] foreach (index, value) => break {$value, $index} end",
+             [(RuntimeNumber(7), RuntimeNumber(0))]),
+            ('dict{"a" => 7} foreach (key, value) => break {$key, $value} end',
+             [("a", RuntimeNumber(7))]),
+        ):
+            self.assertEqual(execute(source), expected)
+
     def test_static_function_call_cache_revalidates_mutated_closure_code(self):
         source = """\
 define plusOne(n: Int) -> Int => $n 1 + end
@@ -4813,6 +4900,118 @@ fn (cells: Int+) -> Int => $cells[0] end
                 RuntimeNumber(2),
             ],
         )
+
+    def test_callback_call_transfers_object_argument_once(self):
+        source = r'''
+object Token => $label: String end
+object Holder => $item: Token end
+define probe(holder: Holder) -> Token =>
+  $callback = fn(item: Token) -> #boolean Int => true end
+  $callback($holder.item)
+  $holder.item
+end
+probe(Holder(Token("kept")))
+'''
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        for optimize in (False, True):
+            compiled = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    values = run(loads(dumps(compiled)) if serialized else compiled)
+                    token = values[-1]
+                    self.assertIsInstance(token, ObjectValue)
+                    self.assertEqual(token.fields["label"], "kept")
+                    self.assertFalse(token.destroyed)
+                    self.assertEqual(token.refcount, 1)
+
+    def test_indexed_map_and_filter_use_the_current_list_position(self):
+        mapped = execute(
+            "range(5, 8) "
+            "filter: fn (index: Int, value: Int) => $index != 1 end | "
+            "map: fn (index: Int, value: Int) => $index * 10 + $value end"
+        )[0]
+
+        self.assertIsInstance(mapped, PlannedLazyList)
+        self.assertEqual(
+            tuple(stage.name for stage in mapped.stages),
+            ("filter-indexed", "map-indexed"),
+        )
+        expected = [RuntimeNumber(n) for n in (5, 17, 28)]
+        self.assertEqual(list(mapped), expected)
+        self.assertEqual(list(mapped), expected)
+
+    def test_indexed_filter_counts_rejected_items_at_the_same_stage(self):
+        filtered = execute(
+            "range(1, 7) filter: fn (index: Int, value: Int) "
+            "=> $index % 3 == 0 end"
+        )[0]
+        self.assertEqual(list(filtered), [RuntimeNumber(1), RuntimeNumber(4), RuntimeNumber(7)])
+
+    def test_indexed_map_preserves_nested_list_rank(self):
+        result = execute(
+            "[[10, 20], [30, 40]] map: "
+            "fn (index: Int, value: Int) => $value + $index end"
+        )[0]
+        self.assertEqual(
+            result,
+            [[RuntimeNumber(10), RuntimeNumber(21)],
+             [RuntimeNumber(30), RuntimeNumber(41)]],
+        )
+
+    def test_indexed_map_filter_compiled_and_serialized_parity(self):
+        source = (
+            "range(1, 8) "
+            "filter: fn (index: Int, value: Int) => $index % 2 == 0 end | "
+            "map: fn (index: Int, value: Int) => $value + $index end | sum"
+        )
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                compiled = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(compiled), [RuntimeNumber(22)])
+                self.assertEqual(run(loads(dumps(compiled))), [RuntimeNumber(22)])
+
+    def test_indexed_overloads_keep_existing_colon_shorthands_unary(self):
+        self.assertEqual(
+            list(execute("[1, 2, 3] map: double")[0]),
+            [RuntimeNumber(2), RuntimeNumber(4), RuntimeNumber(6)],
+        )
+        self.assertEqual(
+            list(execute("[1, 2, 3] map: * 2")[0]),
+            [RuntimeNumber(2), RuntimeNumber(4), RuntimeNumber(6)],
+        )
+        self.assertEqual(
+            list(execute("[-1, 0, 2] filter: positive?")[0]),
+            [RuntimeNumber(2)],
+        )
+
+    def test_indexed_eager_effect_map_runs_immediately(self):
+        source = (
+            "eager define log(index: Int, value: Int) -> => "
+            "println($index * 10 + $value)\n"
+            "[3, 5, 7] map: log"
+        )
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+                program = loads(dumps(compile_program(typed, optimize=optimize)))
+                output = []
+                self.assertEqual(run(program, output=output.append), [])
+                self.assertEqual(output, ["3\n", "15\n", "27\n"])
+
+    def test_empty_indexed_map_filter_do_not_invoke_callbacks(self):
+        source = (
+            "[] as[Int+] "
+            "map: fn (index: Int, value: Int) => $value + $index end | "
+            "filter: fn (index: Int, value: Int) => $index == 0 end | length"
+        )
+        self.assertEqual(execute(source), [RuntimeNumber(0)])
 
     def test_map_filter_sum_executes_one_fused_pipeline(self):
         result = execute(
@@ -6456,7 +6655,7 @@ define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   xs: T+,
   x: T exact
 ) -> Int? =>
-  $xs foreach (item, pos) =>
+  $xs foreach (pos, item) =>
     if ($item == $x) => return $pos
   end
   \\None
@@ -6473,7 +6672,7 @@ define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   xs: T+,
   x: T exact
 ) -> Int? =>
-  $xs foreach (item, pos) =>
+  $xs foreach (pos, item) =>
     if ($item == $x) => return $pos
   end
   \\None
@@ -8114,6 +8313,45 @@ Foo(10) Foo::get
             )
 
         self.assertEqual(stack, [RuntimeNumber("15"), RuntimeNumber("10")])
+
+    def test_custom_iterable_foreach_across_imported_trait_implementations(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "traversal.vlnc").write_text(r'''
+public trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+public trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+''', encoding="utf-8")
+            (root / "count.vlnc").write_text(r'''
+import {traversal.Iterable, traversal.SingleView}
+public object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  public define initial -> Int => 0
+  public define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None
+    end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  public define single(index: Int, value: Int) -> String => $index to[String]
+end
+''', encoding="utf-8")
+            source = ("import {count.Count}\n"
+                      "Count(3) foreach (index, value) => break {$index, $value} end\n"
+                      "Count(3) foreach (item) => break $item end")
+            main = root / "main.vlnc"
+            self.assertEqual(execute(source, main), [(0, 10), "0"])
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(loads(dumps(program))), [(0, 10), "0"])
 
     def test_executes_direct_imported_trait_impl_friendly_element(self):
         with TemporaryDirectory() as tmp:

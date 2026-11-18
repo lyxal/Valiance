@@ -19,7 +19,7 @@ end
 
 $stack: Int+ = []
 
-$instructions foreach (instr, i) =>
+$instructions foreach (i, instr) =>
   $instr.cmd match =>
     "[" =>
       $stack := append $i

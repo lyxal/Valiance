@@ -354,6 +354,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "filter": element_documentation(
         "Filter a list by a predicate",
+        description="Accepts either a value predicate or an (index, value) predicate; indices are zero-based within the input list.",
         parameters=(
             ("iterable", "The list to filter"),
             ("predicate", "Callable that returns true for items to keep"),
@@ -450,7 +451,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "map": element_documentation(
         "Apply a callable to every item in a list.",
-        description="Pure mappings are lazy; mappings whose callable is eager execute immediately and return no list.",
+        description="Pure mappings are lazy; callbacks may accept a value or (zero-based index, value). Eager effect-only mappings execute immediately and return no list.",
         parameters=(
             ("values", "Input list."),
             ("operation", "Callable applied to each item."),
@@ -1666,6 +1667,28 @@ def _eager_map_call_site(call_params: tuple[T.Type, ...], ctx: T.Context | None 
     return None
 
 
+def _eager_indexed_map_call_site(
+    call_params: tuple[T.Type, ...], ctx: T.Context | None = None
+) -> T.Overload | None:
+    """Accept an eager effect-only callback consuming (index, item)."""
+    if len(call_params) != 2:
+        return None
+    list_type, function_type = call_params
+    item_type = T.collection_item_type(list_type)
+    if item_type is None:
+        return None
+    for application in _callable_applications(function_type, (T.Int, item_type), ctx):
+        if application.returns or EAGER_TAG not in application.concrete_type.element_tags:
+            continue
+        return T.Overload(
+            (list_type, application.concrete_type),
+            (),
+            call_site_body=0,
+            element_tags=frozenset((EAGER_TAG,)),
+        )
+    return None
+
+
 @builtin("both", (T.Fn(),), call_site=_both_call_site)
 def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Apply one callable to two statically sized argument groups."""
@@ -2576,6 +2599,42 @@ def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @builtin(
+    "filter",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.Fn((T.Int, T.TypeVariable("Item")), (T.Boolean,)),
+    ),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _filter_indexed(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Filter a list using a predicate of (zero-based index, item)."""
+    values, predicate = args
+    prepared = ctx.prepare_call(predicate, 2, 1) if ctx.prepare_call is not None else None
+
+    def test(index: RuntimeNumber, item: Any) -> bool:
+        """Evaluate the indexed predicate through its prepared call plan."""
+        outcome = (
+            prepared.invoke2(index, item)
+            if prepared is not None
+            else tuple(ctx.call(predicate, [index, item]))
+        )
+        return bool(unwrap_runtime_value(outcome[0]))
+
+    source_rank = runtime_collection_rank(values)
+    if _callable_has_element_tag(predicate, "Eager"):
+        return (
+            ListValue(
+                (item for i, item in enumerate(values) if test(RuntimeNumber(i), item)),
+                runtime_rank=source_rank,
+            ),
+        )
+    stage = LazyPipelineStage.indexed_filtering(test)
+    if isinstance(values, PlannedLazyList):
+        return (values.append_stage(stage),)
+    return (PlannedLazyList(values, (stage,), runtime_rank=source_rank),)
+
+
+@builtin(
     "first",
     (T.ExactList(T.TypeVariable("Item")),),
     (T.TypeVariable("Item"),),
@@ -2896,6 +2955,105 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if isinstance(args[0], PlannedLazyList):
         return (args[0].append_stage(LazyPipelineStage.mapping(map_item)),)
     return (PlannedLazyList(args[0], (LazyPipelineStage.mapping(map_item),)),)
+
+
+@builtin(
+    "map",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.Fn((T.Int, T.TypeVariable("Item")), (T.TypeVariable("Mapped"),)),
+    ),
+    (T.ExactList(T.TypeVariable("Mapped")),),
+)
+def _map_indexed(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Map list items with a zero-based index at the callback's traversal depth."""
+    values, function = args
+    prepared = ctx.prepare_call(function, 2, 1) if ctx.prepare_call is not None else None
+
+    def map_item(index: RuntimeNumber, item: Any) -> Any:
+        """Apply the callback and return its single mapped value."""
+        mapped = (
+            prepared.invoke2(index, item)
+            if prepared is not None
+            else tuple(ctx.call(function, [index, item]))
+        )
+        return mapped[0]
+
+    target_rank = (
+        prepared.parameter_ranks[1]
+        if prepared is not None and len(prepared.parameter_ranks) >= 2
+        else None
+    )
+    source_rank = runtime_collection_rank(values)
+    if (
+        target_rank is not None
+        and isinstance(values, list)
+        and source_rank - 1 > target_rank
+    ):
+        traversal_depth = source_rank - 1 - target_rank
+
+        def map_nested(value: Any, depth: int) -> Any:
+            """Map nested list leaves without recursion or shape loss."""
+            frames = [[iter(value), [], depth]]
+            while frames:
+                iterator, items, level = frames[-1]
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    result = ListValue(items, runtime_rank=level)
+                    result._tag_free = all(
+                        not hasattr(child, "tags")
+                        and (not isinstance(child, ListValue) or child._tag_free is True)
+                        for child in result
+                    )
+                    frames.pop()
+                    if not frames:
+                        return result
+                    frames[-1][1].append(result)
+                    continue
+                if level == 1:
+                    items.append(map_item(RuntimeNumber(len(items)), item))
+                else:
+                    frames.append([iter(item), [], level - 1])
+            raise AssertionError("nested indexed map traversal did not complete")
+
+        result = ListValue(
+            (map_nested(item, traversal_depth) for item in values),
+            runtime_rank=source_rank - target_rank,
+        )
+        result._tag_free = all(
+            not hasattr(item, "tags")
+            and (not isinstance(item, ListValue) or item._tag_free is True)
+            for item in result
+        )
+        return (result,)
+
+    if _callable_has_element_tag(function, "Eager"):
+        return ([map_item(RuntimeNumber(i), item) for i, item in enumerate(values)],)
+    stage = LazyPipelineStage.indexed_mapping(map_item)
+    if isinstance(values, PlannedLazyList):
+        return (values.append_stage(stage),)
+    return (PlannedLazyList(values, (stage,), runtime_rank=source_rank),)
+
+
+@builtin(
+    "map",
+    (T.ExactList(T.TypeVariable("Item")), T.Fn()),
+    (),
+    call_site=_eager_indexed_map_call_site,
+    element_tags=(EAGER_TAG,),
+)
+def _map_eager_indexed_effect(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    """Execute an effect-only binary indexed mapper immediately."""
+    prepared = _prepared_runtime_call(ctx, args[1], 2)
+    for index, item in enumerate(args[0]):
+        if prepared is not None:
+            prepared(RuntimeNumber(index), item)
+        else:
+            ctx.call(args[1], [RuntimeNumber(index), item])
+    return ()
 
 
 @builtin(

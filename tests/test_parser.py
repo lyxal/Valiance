@@ -1770,14 +1770,14 @@ end
     def test_rejects_foreach_break_return_annotations(self):
         with self.assertRaises(ParseError):
             parse(
-                '[1, 2] foreach (item, index) -> Int, String => '
+                '[1, 2] foreach (index, item) -> Int, String => '
                 'break ($item, "done") end'
             )
 
     def test_parses_function_literal_and_foreach_break(self):
         program = parse("""
 fn (:Number) => +
-$xs foreach (x, i) =>
+$xs foreach (i, x) =>
   if ($x == 3) => break ($x, $i)
 end
 """)
@@ -1785,8 +1785,8 @@ end
         self.assertIsInstance(program[0], FunctionNode)
         self.assertIsInstance(program[2], ForNode)
         loop = program[2]
-        self.assertEqual(loop.variable, Symbol("x"))
-        self.assertEqual(loop.index_variable, Symbol("i"))
+        self.assertEqual(loop.first_variable, Symbol("i"))
+        self.assertEqual(loop.second_variable, Symbol("x"))
         self.assertIsInstance(loop.body[0], IfNode)
         self.assertIsInstance(loop.body[0].then_branch[0], BreakNode)
 

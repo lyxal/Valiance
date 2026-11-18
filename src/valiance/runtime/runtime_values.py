@@ -138,6 +138,44 @@ class LazyPipelineStage:
         )
 
     @staticmethod
+    def indexed_mapping(operation: Callable[[Any, Any], Any]) -> LazyPipelineStage:
+        """Map with a zero-based index of each item entering this stage."""
+
+        def build() -> Callable[[Any], tuple[bool, Any, bool]]:
+            """Give each lazy traversal a fresh index counter."""
+            index = 0
+
+            def apply(value: Any) -> tuple[bool, Any, bool]:
+                """Consume the next stage-local index with this input."""
+                nonlocal index
+                current = RuntimeNumber(index)
+                index += 1
+                return True, operation(current, value), False
+
+            return apply
+
+        return LazyPipelineStage("map-indexed", build)
+
+    @staticmethod
+    def indexed_filtering(predicate: Callable[[Any, Any], bool]) -> LazyPipelineStage:
+        """Filter with indices assigned before this stage drops any items."""
+
+        def build() -> Callable[[Any], tuple[bool, Any, bool]]:
+            """Give each lazy traversal a fresh index counter."""
+            index = 0
+
+            def apply(value: Any) -> tuple[bool, Any, bool]:
+                """Consume the next stage-local index with this input."""
+                nonlocal index
+                current = RuntimeNumber(index)
+                index += 1
+                return bool(predicate(current, value)), value, False
+
+            return apply
+
+        return LazyPipelineStage("filter-indexed", build)
+
+    @staticmethod
     def dropping(count: int) -> LazyPipelineStage:
         """Build a stateful stage that discards a fixed input prefix."""
         if count < 0:

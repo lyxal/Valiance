@@ -14,6 +14,7 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    IterableForeachReference,
     IndexOperationSpec,
     IndexSelectorSpec,
     Instruction,
@@ -28,6 +29,57 @@ from valiance.runtime.serialization import MAGIC
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_iterable_foreach_payload_round_trip_and_validation(self):
+        def method(name, params):
+            return FunctionCode(
+                tuple(Instruction(OpCode.LOAD_VAR, param) for param in params)
+                + (Instruction(OpCode.CALL_RESOLVED_ELEMENT,
+                               ResolvedElementReference(name, "checked")),
+                   Instruction(OpCode.RETURN)),
+                params=params, name=f"foreach.{name}",
+                cycle_params=True, return_count=1, occurrence_effects=(None,),
+            )
+        config = IterableForeachReference(
+            FunctionCode((Instruction(OpCode.RETURN),),
+                         params=("index", "value"), cycle_params=True),
+            method("initial", ("source",)),
+            method("advance", ("source", "state")),
+            has_index=True,
+        )
+        program = Program(FunctionCode((Instruction(OpCode.FOREACH, config),), name="main"))
+        self.assertEqual(loads(dumps(program)), program)
+        # Imported variant-case methods carry qualified runtime spellings but
+        # remain statically bound by their checked implementation identities.
+        qualified = replace(config, initial=replace(config.initial, instructions=(
+            Instruction(OpCode.LOAD_VAR, "source"),
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT,
+                        ResolvedElementReference("json.Json.Object::initial", "checked")),
+            Instruction(OpCode.RETURN),
+        )))
+        linked = Program(FunctionCode((Instruction(OpCode.FOREACH, qualified),), name="main"))
+        self.assertEqual(loads(dumps(linked)), linked)
+        invalid = (
+            replace(config, body=replace(config.body, params=("item",))),
+            replace(config, advance=replace(config.advance, params=("state",))),
+            replace(config, advance=replace(config.advance, return_count=None)),
+            replace(config, advance=replace(config.advance, instructions=(
+                Instruction(OpCode.LOAD_VAR, "state"),
+                Instruction(OpCode.LOAD_VAR, "source"),
+                Instruction(OpCode.CALL_RESOLVED_ELEMENT,
+                            ResolvedElementReference("incorrect", "checked")),
+                Instruction(OpCode.RETURN),
+            ))),
+            replace(config, initial=replace(config.initial, instructions=(
+                Instruction(OpCode.LOAD_VAR, "source"),
+                Instruction(OpCode.CALL_RESOLVED_ELEMENT,
+                            ResolvedElementReference("initial")),
+                Instruction(OpCode.RETURN),
+            ))),
+        )
+        for malformed in invalid:
+            with self.subTest(config=malformed), self.assertRaises(BytecodeFormatError):
+                dumps(Program(FunctionCode((Instruction(OpCode.FOREACH, malformed),))))
+
     def test_runtime_rejects_positional_constructor_metadata(self):
         for payload in (("Example", (), (), (), ()), ("Example", (), (), (), (), None)):
             with self.subTest(payload=payload):

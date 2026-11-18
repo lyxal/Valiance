@@ -14,12 +14,17 @@ from valiance.asts import (
     FunctionNode,
     FunctionParam,
     TypedForNode,
+    TypedElementNode,
     TypedReflectiveForNode,
     TypedFunctionNode,
     TypedUnfoldNode,
     UnfoldNode,
 )
-from valiance.asts.nodes import ForNode, GetVariableNode
+from valiance.asts.nodes import ElementNode, ForNode, GetVariableNode
+from valiance.vtypes.relations import (
+    implementation_pattern_evidence,
+    implementation_reachable_traits,
+)
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
 
@@ -33,15 +38,16 @@ from ..support import analysis_utils as _utils
 def _loop_iterable_requirement(
     iterable_type: T.Type,
     outputs: _core.BranchSet,
+    *, item_position: int = 0,
 ) -> T.Type | None:
-    """Lift negative loop-item tag requirements onto the iterable input."""
+    """Lift negative loop-value tag requirements onto the iterable input."""
     if T.collection_item_type(iterable_type) is None:
         return None
     absent_tags: set[T.DataTag] = set()
     for output in outputs:
-        if not output.cycle_params:
+        if len(output.cycle_params) <= item_position:
             continue
-        item = T.normalize(output.cycle_params[0])
+        item = T.normalize(output.cycle_params[item_position])
         if not isinstance(item, T.TaggedType):
             continue
         absent_tags.update(
@@ -121,6 +127,18 @@ def _for_node(
             self, node, branch, iterable_type, dictionary_type.args[0], consumes_stack_iterable,
             second_type=dictionary_type.args[1],
         )
+    # Fixed and variadic tuples have positional element types, not list ranks.
+    # A heterogeneous tuple is traversed with the union of its item types;
+    # in a two-binding tuple loop the position precedes the item.
+    if isinstance(dictionary_type, (T.TupleType, T.VariadicTupleType)):
+        tuple_types = (
+            dictionary_type.params if isinstance(dictionary_type, T.TupleType)
+            else tuple(item.typ for item in dictionary_type.items)
+        )
+        return _analyse_for_item(
+            self, node, branch, iterable_type, T.U(*tuple_types),
+            consumes_stack_iterable, second_type=T.Int, index_first=True,
+        )
     item_type = T.collection_item_type(iterable_type)
     if not item_type:
         source = branch.typed_body[-1].node if branch.typed_body else None
@@ -139,6 +157,11 @@ def _for_node(
             )
             iterable_type = inferred_iterable
         else:
+            trait_loop = _analyse_trait_foreach(
+                self, node, branch, iterable_type, consumes_stack_iterable,
+            )
+            if trait_loop is not None:
+                return trait_loop
             self._diagnose(
                 "for loop iterable must actually be iterable. "
                 f"Got {T.show(iterable_type)}",
@@ -146,20 +169,162 @@ def _for_node(
             )
             return _core.BranchSet()
 
-    return _analyse_for_item(self, node, branch, iterable_type, item_type, consumes_stack_iterable)
+    return _analyse_for_item(
+        self, node, branch, iterable_type, item_type, consumes_stack_iterable,
+        second_type=T.Int, index_first=True,
+    )
+
+
+def _checked_traversal_call(
+    self: _core.Analyser, node: ForNode, branch: _core.AnalysisBranch,
+    method: str, arguments: tuple[T.Type, ...], returns: T.Type,
+) -> TypedElementNode | None:
+    """Select an ordinary element call with the actual protocol argument stack."""
+    from valiance.asts.nodes import TypedElementNode
+    call = ElementNode(Symbol(method), location=node.location)
+    scoped = branch.with_stack(T.TypeStack(arguments))
+    outputs = self.analyse_from(scoped, (call,))
+    if len(outputs.branches) != 1:
+        self._diagnose(f"Iterable protocol method '{method}' is not uniquely applicable", node)
+        return None
+    typed = outputs.branches[0].typed_body[-1]
+    if (not isinstance(typed, TypedElementNode)
+            or typed.overload is None
+            or (typed.implementation_id is None
+                and not typed.overload.overload.is_multi
+                and not typed.overload.overload.is_structural_requirement)
+            or len(typed.overload.params) != len(arguments)
+            or typed.overload.vectorised
+            or any(not T.subtype(actual, expected, self.env.context)
+                   for actual, expected in zip(arguments, typed.overload.params, strict=True))
+            or len(typed.overload.actual_returns) != 1
+            or not T.subtype(typed.overload.actual_returns[0], returns, self.env.context)):
+        self._diagnose(
+            f"Iterable protocol method '{method}' must accept "
+            f"({', '.join(map(T.show, arguments))}) and return {T.show(returns)}",
+            node,
+        )
+        return None
+    return typed
+
+
+def _is_traversal_protocol_trait(
+    self: _core.Analyser, trait: T.NominalType, protocol: str,
+) -> bool:
+    """Recognize the protocol declaration through its visible import alias.
+
+    An unqualified local trait remains valid for source-level protocol tests.
+    A qualified import must be linked by its provider origin instead of its
+    local namespace spelling (which can be renamed by the importer).
+    """
+    if trait.name == Symbol(protocol):
+        return True
+    return self.env.context.nominal_origins.get(trait.name) == Symbol(
+        protocol, ("std", "iterable"),
+    )
+
+
+def _analyse_trait_foreach(
+    self: _core.Analyser, node: ForNode, branch: _core.AnalysisBranch,
+    source: T.Type, consumes_stack_iterable: bool,
+) -> _core.BranchSet | None:
+    """Use a unique visible trait witness, never a runtime method-name probe."""
+    normalized = T.normalize(source)
+    components = (
+        normalized.items if isinstance(normalized, T.IntersectionType)
+        else (normalized,)
+    )
+    reachable: list[T.NominalType] = []
+    for component in components:
+        if isinstance(component, T.NominalType):
+            reachable.append(component)
+            reachable.extend(implementation_reachable_traits(component, self.env.context))
+    candidates = tuple(dict.fromkeys(
+        trait for trait in reachable
+        if _is_traversal_protocol_trait(self, trait, "Iterable") and len(trait.args) == 3
+    ))
+    if not candidates:
+        return None
+    evidence_required = isinstance(normalized, T.NominalType) and normalized not in candidates
+    if len(candidates) != 1 or (evidence_required and len(implementation_pattern_evidence(
+        normalized, candidates[0], self.env.context,
+    )) != 1):
+        self._diagnose(f"ambiguous Iterable witness for {T.show(source)}", node)
+        return _core.BranchSet()
+    index_type, value_type, state_type = candidates[0].args
+    receiver_last = normalized == candidates[0] or (
+        isinstance(normalized, T.IntersectionType)
+        and candidates[0] in normalized.items
+    )
+    step_type = T.U(T.NoneType(), T.N(
+        Symbol("Some"), T.TupleType((index_type, value_type, state_type)),
+    ))
+    initial = _checked_traversal_call(self, node, branch, "initial", (source,), state_type)
+    advance = _checked_traversal_call(
+        self, node, branch, "advance",
+        (state_type, source) if receiver_last else (source, state_type), step_type,
+    )
+    if initial is None or advance is None:
+        return _core.BranchSet()
+    calls = (initial, advance)
+    item_type = value_type
+    if node.second_variable is None:
+        projections = tuple(dict.fromkeys(
+            trait for trait in reachable
+            if _is_traversal_protocol_trait(self, trait, "SingleView") and len(trait.args) == 3
+        ))
+        matching = tuple(
+            trait for trait in projections
+            if T.same(trait.args[0], index_type) and T.same(trait.args[1], value_type)
+        )
+        if len(matching) > 1 or (projections and not matching):
+            self._diagnose(f"incompatible or ambiguous SingleView witness for {T.show(source)}", node)
+            return _core.BranchSet()
+        if matching:
+            projection_evidence_required = (
+                isinstance(normalized, T.NominalType) and normalized not in matching
+            )
+            if projection_evidence_required and len(implementation_pattern_evidence(
+                normalized, matching[0], self.env.context,
+            )) != 1:
+                self._diagnose(f"ambiguous SingleView witness for {T.show(source)}", node)
+                return _core.BranchSet()
+            item_type = matching[0].args[2]
+            projection = _checked_traversal_call(
+                self, node, branch, "single",
+                ((index_type, value_type, source) if receiver_last
+                 else (source, index_type, value_type)), item_type,
+            )
+            if projection is None:
+                return _core.BranchSet()
+            calls += (projection,)
+    # Protocol calls execute as part of the loop, even if the body is empty.
+    # Their declared effects must be visible to enclosing function analysis.
+    branch = branch.with_element_tags(
+        tag for call in calls for tag in call.overload.element_tags
+    )
+    return _analyse_for_item(
+        self, node, branch, source, item_type, consumes_stack_iterable,
+        second_type=index_type, index_first=node.second_variable is not None,
+        trait_calls=calls,
+    )
 
 
 def _analyse_for_item(
     self: _core.Analyser, node: ForNode, branch: _core.AnalysisBranch,
     iterable_type: T.Type, item_type: T.Type, consumes_stack_iterable: bool,
     *, nonempty: bool = False, second_type: T.Type = T.Int,
+    index_first: bool = False,
+    trait_calls: tuple[TypedElementNode, ...] = (),
 ) -> _core.BranchSet:
     """Check one iteration contract using the ordinary loop stack and variable rules."""
     body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
     body_branch = branch.with_stack(body_stack)
     cycle_params = (item_type,)
-    if node.index_variable is not None:
-        cycle_params = (item_type, second_type)
+    if node.second_variable is not None:
+        cycle_params = (
+            (second_type, item_type) if index_first else (item_type, second_type)
+        )
     body_branch = replace(
         body_branch,
         input_mode=_core.InputMode.CYCLE_EXPLICIT_PARAMS,
@@ -169,18 +334,23 @@ def _analyse_for_item(
         cycle_from_top=True,
     )
     body_branch = body_branch.with_variables(
-        body_branch.variables.with_block_local(node.variable, item_type)
+        body_branch.variables.with_block_local(node.first_variable, cycle_params[0])
     )
-    if node.index_variable is not None:
+    if node.second_variable is not None:
         body_branch = body_branch.with_variables(
-            body_branch.variables.with_block_local(node.index_variable, second_type)
+            body_branch.variables.with_block_local(node.second_variable, cycle_params[1])
         )
 
     body_outputs = self.analyse_from(body_branch, node.body)
     if not body_outputs:
         return _core.BranchSet()
 
-    refined_iterable = _loop_iterable_requirement(iterable_type, body_outputs)
+    # The item is the second binder for indexed lists, tuples and custom
+    # iterables, but the first binder for dictionaries and unary loops.
+    value_is_second = node.second_variable is not None and index_first
+    refined_iterable = _loop_iterable_requirement(
+        iterable_type, body_outputs, item_position=1 if value_is_second else 0,
+    )
     if refined_iterable is not None:
         source = branch.typed_body[-1].node if branch.typed_body else None
         if isinstance(source, GetVariableNode) and source.name in branch.input_names:
@@ -197,7 +367,7 @@ def _analyse_for_item(
             )
 
     refined_item_type = _utils._loop_variable_output_type(
-        node.variable,
+        node.second_variable if value_is_second else node.first_variable,
         body_outputs,
         self.env.context,
     )
@@ -217,8 +387,8 @@ def _analyse_for_item(
     break_types = tuple(output.break_type for output in break_outputs)
     result_type = _utils._loop_break_result_type(break_types)
     result_types = (result_type,)
-    loop_locals = (node.variable,) + (
-        (node.index_variable,) if node.index_variable is not None else ()
+    loop_locals = (node.first_variable,) + (
+        (node.second_variable,) if node.second_variable is not None else ()
     )
     variables = _utils._merge_loop_variables(
         body_branch.variables,
@@ -234,6 +404,7 @@ def _analyse_for_item(
             len(body_branch.typed_body),
             node.body,
         ),
+        trait_calls=trait_calls,
     )
     body_element_tags = frozenset(
         tag for output in body_outputs for tag in output.element_tags

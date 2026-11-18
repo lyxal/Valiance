@@ -697,6 +697,46 @@ define \\f<Read, Write> => 1
         self.assertIsInstance(modifier, TypedFunctionNode)
         self.assertEqual(modifier.typ, Fn((Int,), (Number,)))
 
+    def test_indexed_list_map_and_filter_have_checked_binary_callbacks(self):
+        source = (
+            "[3, 5] map: fn (index: Int, value: Int) => $index + $value end | "
+            "filter: fn (index: Int, value: Int) => $index < $value end"
+        )
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+        maps_and_filters = [
+            node for node in typed if isinstance(node, TypedElementNode)
+            and str(node.node.name) in ("map", "filter")
+        ]
+        self.assertEqual(len(maps_and_filters), 2)
+        self.assertEqual(
+            [node.modifier_args[0].typ for node in maps_and_filters],
+            [Fn((Int, Int), (Int,)), Fn((Int, Int), (T.Boolean,))],
+        )
+
+    def test_contextual_colon_shorthands_prefer_the_existing_unary_arity(self):
+        for source in (
+            "[1, 2, 3] map: double",
+            "[1, 2, 3] map: +",
+            "[1, 2, 3] map: * 2",
+            "[1, 2, 3] filter: positive?",
+        ):
+            with self.subTest(source=source):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertFalse(analyser.diagnostics, analyser.diagnostics)
+                self.assertEqual(
+                    len(typed[-1].modifier_args[0].typ.params), 1,
+                )
+
+    def test_indexed_map_rejects_callback_with_incompatible_value_type(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            '[1, 2] map: fn (index: Int, value: String) => $value end'
+        ))
+        self.assertTrue(analyser.diagnostics)
+
     def test_colon_context_sets_modifier_signature_before_inference(self):
         typed = analyse(parse("[1, 2, 3] map: +"))
 
@@ -5517,6 +5557,19 @@ define f(value: #left #right Number) -> Number => $value
         overload = analyser.env.overloads_for(Symbol("insideAForLoop"))[0]
         self.assertEqual(show(overload.params[0]), "#-infinite+ Number+2")
 
+    def test_negative_tag_requirement_propagates_through_indexed_foreach_value(self):
+        analyser = Analyser()
+        analyser.analyse(parse(
+            "define insideIndexedLoop(nss: Number++) =>\n"
+            "  $nss foreach (index, ns) =>\n"
+            "    length $ns\n"
+            "  end\n"
+            "end"
+        ))
+        self.assertEqual(analyser.diagnostics, [])
+        overload = analyser.env.overloads_for(Symbol("insideIndexedLoop"))[0]
+        self.assertEqual(show(overload.params[0]), "#-infinite+ Number+2")
+
     def test_negative_tag_requirement_propagates_through_list_selection(self):
         analyser = Analyser()
 
@@ -5599,7 +5652,7 @@ define f(value: #left #right Number) -> Number => $value
             BranchSet((AnalysisBranch(stack=TypeStack((C(ListExactType, Number),))),)),
             (
                 ForNode(
-                    variable=ITEM,
+                    first_variable=ITEM,
                     body=(GetVariableNode(ITEM),),
                 ),
             ),
@@ -5617,7 +5670,7 @@ define f(value: #left #right Number) -> Number => $value
             BranchSet((AnalysisBranch(stack=TypeStack((C(ListExactType, Number),))),)),
             (
                 ForNode(
-                    variable=ITEM,
+                    first_variable=ITEM,
                     body=(BreakNode(values=(GetVariableNode(ITEM),)),),
                 ),
             ),
@@ -5742,7 +5795,7 @@ end
             BranchSet((AnalysisBranch(stack=TypeStack((C(ListExactType, Number),))),)),
             (
                 ForNode(
-                    variable=ITEM,
+                    first_variable=ITEM,
                     body=(
                         IfNode(
                             condition=(ElementNode(COND),),
@@ -7513,6 +7566,19 @@ end
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TupleForeachAnalysisTests(unittest.TestCase):
+    def test_mixed_tuple_items_have_union_type(self):
+        analyser = Analyser()
+        analyser.analyse(parse('''{"label", 8} foreach (index, value) => $value + 1 end'''))
+        self.assertTrue(any("Int | String" in issue and "no overloads" in issue
+                            for issue in analyser.diagnostics), analyser.diagnostics)
+
+    def test_tuple_position_is_an_integer(self):
+        analyser = Analyser()
+        analyser.analyse(parse("{7, 8} foreach (index, value) => $index + 1 end"))
+        self.assertEqual(analyser.diagnostics, [])
 
 
 class ForeachRefactoringLintTests(unittest.TestCase):

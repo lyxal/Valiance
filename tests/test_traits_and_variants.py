@@ -9,8 +9,9 @@ import unittest
 import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.runtime import compile_program, dumps, loads, run
+from valiance.runtime import RuntimeError as ValianceRuntimeError, compile_program, dumps, loads, run
 from valiance.runtime.interface_serialization import dumps_interface, loads_interface
+from valiance.runtime.runtime_values import BorrowedValue, ObjectValue
 
 
 class SemanticTestCase(unittest.TestCase):
@@ -40,6 +41,971 @@ class SemanticTestCase(unittest.TestCase):
 
 
 class TraitSemanticTests(SemanticTestCase):
+    def test_imported_generic_map_alias_preserves_explicit_native_list_escape(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable as map]}
+object Count => $limit: Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+[2,3] *::map: fn(n:Int)->Int => $n*2 end
+  foreach(item) => break $item end
+map(Count(2), fn(item:Int)->Int => $item+1 end)
+  foreach(item) => break $item end
+''', [4, 11])
+
+    def test_imported_iterable_aliases_share_native_map_and_filter_overloads(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable as map, filterIterable as filter]}
+object Count => $limit: Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+[2,3] map: fn(n:Int)->Int => $n*2 end
+  foreach(item) => break $item end
+[2,3] filter: fn(n:Int)->#boolean Int => $n==3 end
+  foreach(item) => break $item end
+map(Count(2), fn(item:Int)->Int => $item+1 end)
+  foreach(item) => break $item end
+filter(Count(2), fn(item:Int)->#boolean Int => $item>10 end)
+  foreach(item) => break $item end
+''', [4, 3, 11, 11])
+
+    def test_native_list_foreach_index_precedes_value_and_retains_unary_value(self):
+        self.assert_executes(r'''
+[7, 8] foreach (index, value) => break {$index, $value} end
+[7, 8] foreach (item) => break $item end
+[7, 8] foreach (index, value) =>
+  if ($index == 1) => break $value end
+end
+''', [(0, 7), 7, 8])
+
+    def test_json_object_member_view_adapts_to_generic_traversal(self):
+        self.assert_executes(r'''
+import {std.json}
+import {std.iterable}
+import {std.json_iterable}
+$empty = json.load("{}") ?!
+$empty match =>
+  as obj: json.Json.Object =>
+    json_iterable.memberView($obj) foreach(key) => break $key end
+  _ => "not object"
+end
+$doc = json.load("{\"first\":1,\"second\":2}") ?!
+$doc match =>
+  as obj: json.Json.Object =>
+    $view = json_iterable.memberView($obj)
+    $view foreach(key) => break $key end
+    $view foreach(key,value) => break {$key, json.stringify($value) ?!} end
+    iterable.filterIterable($view, fn(key:String)->#boolean Int => $key=="second" end)
+      foreach(key) => break $key end
+    iterable.mapIterable($view,
+      fn(key:String,value:json.Json)->String => $key+"="+(json.stringify($value) ?!) end)
+      foreach(index,value) => break {$index,$value} end
+    iterable.foldIterable($view, "", fn(acc:String,key:String)->String => $acc+$key end)
+  _ => "not object" "not object" "not object" "not object" "not object"
+end
+''', [ObjectValue("None", {}), "first", ("first", "1"), "second",
+     ("first", "first=1"), "firstsecond"])
+
+    def test_selective_iterable_functions_use_provider_evidence_without_trait_import(self):
+        # Importing a function does not import its nominal parameter types as
+        # source-visible names, but must keep those types' canonical identity.
+        self.assert_executes(r'''
+import {std.json, std.json_iterable}
+import {std.iterable.[mapIterable as transform, filterIterable, foldIterable, reduceIterable]}
+$doc = json.load("{\"first\":1,\"second\":2}") ?!
+$doc match =>
+  as obj: json.Json.Object =>
+    $view = json_iterable.memberView($obj)
+    $selected = filterIterable($view,
+      fn(key:String)->#boolean Int => $key=="second" end)
+    $mapped = transform($selected, fn(key:String)->String => $key+"!" end)
+    foldIterable($mapped, "", fn(acc:String,item:String)->String => $acc+$item end)
+    reduceIterable($selected, fn(acc:String,key:String)->String => $acc+$key end) ?!
+    foldIterable($view, "", fn(acc:String,key:String)->String => $acc+$key end)
+  _ => "not object" "not object" "not object"
+end
+''', ["second!", "second", "firstsecond"])
+
+    def test_callable_import_reuses_trait_alias_from_earlier_import(self):
+        self.assert_executes(r'''
+import {std.json, std.json_iterable}
+import {std.iterable.[Iterable as Flow, SingleView as Projection]}
+import {std.iterable.[mapIterable]}
+$doc = json.load("{\"key\":1}") ?!
+$doc match =>
+  as obj: json.Json.Object =>
+    $view = json_iterable.memberView($obj)
+    $mapped: Flow[String,String,{{String,json.Json}+,Int,Int}] =
+      mapIterable($view, fn(key:String)->String => $key end)
+    $mapped foreach(item) => break $item end
+  _ => "not object"
+end
+''', ["key"])
+
+    def test_selective_callable_import_does_not_expose_or_conflate_traits(self):
+        self.assert_rejected(r'''
+import {std.iterable.[foldIterable]}
+fn(source: Iterable[Int,Int,Int]) -> Int => 0 end
+''', "undefined type 'Iterable'")
+        self.assert_rejected(r'''
+import {std.iterable.[foldIterable]}
+trait[I,V,S] Iterable =>
+  extend initial -> S
+  extend advance(state:S) -> {I,V,S}?
+end
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state,$state+1})
+    else => \None end
+  end
+end
+foldIterable(Count(2),0,fn(total:Int,value:Int)->Int=>$total+$value end)
+''', "no overloads for element 'foldIterable'")
+
+    def test_json_member_view_requires_a_matched_object_case(self):
+        self.assert_rejected(r'''
+import {std.json}
+import {std.json_iterable}
+json_iterable.memberView(json.load("[]") ?!)
+''', "no overloads")
+
+    def test_json_variant_base_is_not_automatically_iterable(self):
+        self.assert_rejected(r'''
+import {std.json}
+$doc = json.load("[1,2]") ?!
+$doc foreach(item) => break $item end
+''', "for loop iterable must actually be iterable")
+
+    def test_namespaced_iterable_import_resolves_generic_and_projected_calls(self):
+        self.assert_executes(r'''
+import {std.iterable}
+object Count => $limit: Int end
+object Count as iterable.Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int,Int,Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+object Count as iterable.SingleView[Int,Int,String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+define total(source: iterable.Iterable[Int,Int,Int]) -> Int =>
+  iterable.foldIterable($source, 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+end
+Count(3) foreach (item) => break $item end
+Count(3) foreach (index,value) => break {$index,$value} end
+iterable.mapIterable(Count(3), fn(item:String)->Int => 4 end)
+  foreach (item) => break $item end
+iterable.filterIterable(Count(4), fn(item:String)->#boolean Int => $item=="2" end)
+  foreach (item) => break $item end
+iterable.foldIterable(Count(3), "", fn(acc:String,item:String)->String => $acc+$item end)
+total(Count(3))
+''', ["0", (0, 10), 4, "2", "012", 33])
+
+    def test_renamed_namespace_and_selected_trait_aliases_retain_identity(self):
+        self.assert_executes(r'''
+import {std.iterable as it}
+object Count => $limit:Int end
+object Count as it.Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+it.filterIterable(Count(3), fn(index:Int,value:Int)->#boolean Int => $index>0 end)
+  foreach (index,value) => break {$index,$value} end
+it.foldIterable(Count(3), 0, fn(acc:Int,index:Int,value:Int)->Int => $acc+$index end)
+''', [(1, 11), 3])
+        self.assert_executes(r'''
+import {std.iterable.[Iterable as Flow, SingleView as Projection, mapIterable, foldIterable]}
+object Count => $limit:Int end
+object Count as Flow[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+object Count as Projection[Int,Int,String] =>
+  define single(index:Int,value:Int)->String => $index to[String]
+end
+Count(3) foreach (item) => break $item end
+mapIterable(Count(3), fn(item:String)->Int => 7 end)
+  foreach (item) => break $item end
+foldIterable(Count(3),"",fn(acc:String,item:String)->String => $acc+$item end)
+''', ["0", 7, "012"])
+
+    def test_std_iterable_lazy_map_and_filter_unary_and_indexed(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable, filterIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+mapIterable(Count(3), fn(value: Int) -> String => $value to[String] end)
+  foreach (index, value) => break {$index, $value} end
+mapIterable(Count(3), fn(index: Int, value: Int) -> String => $index to[String] end)
+  foreach (item) => break $item end
+filterIterable(Count(4), fn(value: Int) -> #boolean Int => $value > 11 end)
+  foreach (index, value) => break {$index, $value} end
+filterIterable(Count(4), fn(index: Int, value: Int) -> #boolean Int => $index >= 2 end)
+  foreach (index, value) => break {$index, $value} end
+''', [(0, "10"), "0", (2, 12), (2, 12)])
+
+    def test_std_iterable_adapters_compose_retain_indices_and_handle_empty(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable, filterIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+$empty = mapIterable(Count(0), fn(value: Int) -> Int => $value + 1 end)
+$empty foreach (value) => break $value end
+$none = filterIterable(Count(3), fn(value: Int) -> #boolean Int => $value > 100 end)
+$none foreach (item) => break $item end
+$chained = mapIterable(
+  filterIterable(Count(4), fn(value: Int) -> #boolean Int => $value > 11 end),
+  fn(index: Int, value: Int) -> String => $index to[String] end
+)
+$chained foreach (index, value) => break {$index, $value} end
+$chained foreach (index, value) => break {$index, $value} end
+''', [ObjectValue("None", {}), ObjectValue("None", {}), (2, "2"), (2, "2")])
+
+    def test_std_iterable_adapter_uses_value_not_optional_source_single_view(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, mapIterable, filterIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+Count(3) foreach (item) => break $item end
+mapIterable(Count(3), fn(value: Int) -> Int => $value + 1 end)
+  foreach (item) => break $item end
+filterIterable(Count(3), fn(value: Int) -> #boolean Int => $value > 10 end)
+  foreach (item) => break $item end
+''', ["0", 11, 11])
+
+    def test_std_iterable_projected_map_and_filter_keep_original_indices(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, mapIterable, filterIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+mapIterable(Count(4), fn(key: String) -> String => $key end)
+  foreach (index, value) => break {$index, $value} end
+filterIterable(Count(4), fn(key: String) -> #boolean Int => $key == "2" end)
+  foreach (key) => break $key end
+filterIterable(Count(4), fn(key: String) -> #boolean Int => $key == "2" end)
+  foreach (index, value) => break {$index, $value} end
+mapIterable(Count(4), fn(value: Int) -> Int => $value end)
+  foreach (item) => break $item end
+filterIterable(Count(4), fn(value: Int) -> #boolean Int => $value > 11 end)
+  foreach (item) => break $item end
+''', [(0, "0"), "2", (2, 12), 10, 12])
+
+    def test_std_iterable_projected_overload_wins_for_same_item_type(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, mapIterable, filterIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+object Count as SingleView[Int, Int, Int] =>
+  define single(index: Int, value: Int) -> Int => $index + 100
+end
+mapIterable(Count(3), fn(item: Int) -> Int => $item * 2 end)
+  foreach (item) => break $item end
+filterIterable(Count(3), fn(item: Int) -> #boolean Int => $item > 100 end)
+  foreach (item) => break $item end
+''', [200, 101])
+
+    def test_std_iterable_projected_adapters_compose_and_keep_evidence(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, mapIterable, filterIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+define selected(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) =>
+  $filtered = filterIterable($source, fn(item: String) -> #boolean Int => $item != "0" end)
+  $filtered foreach (item) => break $item end
+end
+define mapped(source: Iterable[Int,Int,Int]&SingleView[Int,Int,String]) =>
+  mapIterable(filterIterable($source, fn(item: String) -> #boolean Int => $item != "0" end),
+              fn(item: String) -> String => $item end)
+end
+selected(Count(3))
+mapped(Count(3)) foreach (index, value) => break {$index, $value} end
+mapped(Count(3)) foreach (index, value) => break {$index, $value} end
+''', ["1", (1, "1"), (1, "1")])
+
+    def test_std_iterable_projected_object_items_keep_exactly_one_owner(self):
+        source = r'''
+import {std.iterable.[Iterable, SingleView, mapIterable, filterIterable]}
+object Token => $label: String end
+object Holder => $token: Token end
+object Holder as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int,Int,Int}? =>
+    if ($state == 0) => Some({0,10,1}) else => \None end
+  end
+end
+object Holder as SingleView[Int,Int,Token] =>
+  define single(index: Int, value: Int) -> Token => $self.token
+end
+mapIterable(Holder(Token("mapped")), fn(token:Token)->Token=>$token end)
+  foreach (item) => break $item end
+filterIterable(Holder(Token("filtered")), fn(token:Token)->#boolean Int=>$token.label=="filtered" end)
+  foreach (item) => break $item end
+'''
+        typed = self.analyse(source)
+        restored = loads_interface(dumps_interface(tuple(typed)))
+        for optimize in (False, True):
+            for nodes in (typed, restored):
+                compiled = compile_program(nodes, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(optimize=optimize, interface=nodes is restored,
+                                      serialized=serialized):
+                        values = run(loads(dumps(compiled)) if serialized else compiled)
+                        self.assertEqual([item.fields["label"] for item in values],
+                                         ["mapped", "filtered"])
+                        for item in values:
+                            self.assertIsInstance(item, ObjectValue)
+                            self.assertNotIsInstance(item, BorrowedValue)
+                            self.assertFalse(item.destroyed)
+                            self.assertEqual(item.refcount, 1)
+
+    def test_std_iterable_projected_factory_requires_matching_trait_evidence(self):
+        self.assert_rejected(r'''
+import {std.iterable.[Iterable, SingleView, mapIterable]}
+object Mismatch => $limit: Int end
+object Mismatch as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None end
+  end
+end
+object Mismatch as SingleView[String, Int, String] =>
+  define single(index: String, value: Int) -> String => $index
+end
+mapIterable(Mismatch(3), fn(item: String) -> Int => 1 end)
+''', "mapIterable")
+
+    def test_std_iterable_fold_unary_indexed_empty_and_lazy_composition(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable, filterIterable, foldIterable]}
+object Count => $limit: Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {Int,Int,Int}? =>
+    if ($state < $self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+foldIterable(Count(3), 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+foldIterable(Count(3), 0, fn(acc:Int,index:Int,value:Int)->Int => $acc+$index end)
+foldIterable(Count(0), 42, fn(acc:Int,value:Int)->Int => $acc+$value end)
+foldIterable(filterIterable(Count(4), fn(index:Int,value:Int)->#boolean Int => $index>=2 end),
+  0, fn(acc:Int,index:Int,value:Int)->Int => $acc+($index*100)+$value end)
+foldIterable(mapIterable(Count(3), fn(index:Int,value:Int)->Int => $value+$index end),
+  0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+foldIterable(Count(3), 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+''', [33, 3, 42, 525, 36, 33])
+
+    def test_std_iterable_fold_supports_noninteger_indices(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, foldIterable]}
+object Named => $limit:Int end
+object Named as Iterable[String,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {String,Int,Int}? =>
+    if ($state < $self.limit) => Some({"k"+($state to[String]),$state+5,$state+1})
+    else => \None end
+  end
+end
+foldIterable(Named(3), "", fn(acc:String,key:String,value:Int)->String => $acc+$key end)
+foldIterable(Named(3), 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+''', ["k0k1k2", 18])
+
+    def test_std_iterable_fold_uses_explicit_single_view_evidence(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, foldIterable]}
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {Int,Int,Int}? =>
+    if ($state < $self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+object Count as SingleView[Int,Int,Int] =>
+  define single(index:Int,value:Int) -> Int => $index+100
+end
+define onlyValues(source: Iterable[Int,Int,Int]) -> Int =>
+  foldIterable($source, 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+end
+foldIterable(Count(3), 0, fn(acc:Int,item:Int)->Int => $acc+$item end)
+foldIterable(Count(3), 0, fn(acc:Int,index:Int,value:Int)->Int => $acc+$value+$index end)
+onlyValues(Count(3))
+''', [303, 36, 33])
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, filterIterable, foldIterable]}
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {Int,Int,Int}? =>
+    if ($state < $self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+object Count as SingleView[Int,Int,String] =>
+  define single(index:Int,value:Int) -> String => $index to[String]
+end
+$filtered = filterIterable(Count(4), fn(item:String)->#boolean Int => $item != "0" end)
+foldIterable($filtered, "", fn(acc:String,item:String)->String => $acc+$item end)
+foldIterable(Count(4), 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+''', ["123", 46])
+
+    def test_std_iterable_fold_rejects_unmatched_source_and_callback(self):
+        self.assert_rejected(r'''
+import {std.iterable.[Iterable, foldIterable]}
+object Unrelated => $value:Int end
+foldIterable(Unrelated(5), 0, fn(acc:Int,value:Int)->Int => $acc+$value end)
+''', "foldIterable")
+        self.assert_rejected(r'''
+import {std.iterable.[Iterable, foldIterable]}
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {Int,Int,Int}? => \None
+end
+foldIterable(Count(5), 0, fn(acc:Int,value:String)->Int => $acc end)
+''', "foldIterable")
+
+    def test_std_iterable_fold_object_accumulator_retains_one_owner(self):
+        source = r'''
+import {std.iterable.[Iterable, foldIterable]}
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {Int,Int,Int}? =>
+    if ($state < $self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+object Token => $label:String end
+foldIterable(Count(3), Token("same"), fn(acc:Token,value:Int)->Token => $acc end)
+foldIterable(Count(2), Token("changed"), fn(acc:Token,value:Int)->Token => Token($acc.label+"!") end)
+foldIterable(Count(0), Token("empty"), fn(acc:Token,value:Int)->Token => Token("unexpected") end)
+'''
+        typed = self.analyse(source)
+        restored = loads_interface(dumps_interface(tuple(typed)))
+        for optimize in (False, True):
+            for nodes in (typed, restored):
+                program = compile_program(nodes, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(optimize=optimize, interface=nodes is restored,
+                                      serialized=serialized):
+                        values = run(loads(dumps(program)) if serialized else program)
+                        self.assertEqual([value.fields["label"] for value in values],
+                                         ["same", "changed!!", "empty"])
+                        for value in values:
+                            self.assertIsInstance(value, ObjectValue)
+                            self.assertNotIsInstance(value, BorrowedValue)
+                            self.assertFalse(value.destroyed)
+                            self.assertEqual(value.refcount, 1)
+
+    def test_namespaced_projected_overloads_win_when_item_equals_value_type(self):
+        self.assert_executes(r'''
+import {std.iterable as it}
+object Count => $limit:Int end
+object Count as it.Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+object Count as it.SingleView[Int,Int,Int] =>
+  define single(index:Int,value:Int)->Int => $index+100
+end
+it.mapIterable(Count(3),fn(item:Int)->Int => $item end)
+  foreach (item) => break $item end
+it.filterIterable(Count(3),fn(item:Int)->#boolean Int => $item>100 end)
+  foreach (item) => break $item end
+it.foldIterable(Count(3),0,fn(total:Int,item:Int)->Int => $total+$item end)
+it.reduceIterable(Count(3),fn(acc:Int,item:Int)->Int => $acc+$item end) ?!
+''', [100, 101, 303, 303])
+
+    def test_std_iterable_reduce_empty_single_indexed_and_composed(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable, filterIterable, reduceIterable]}
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+reduceIterable(Count(0),fn(acc:Int,value:Int)->Int => $acc+$value end)
+reduceIterable(Count(1),fn(acc:Int,value:Int)->Int => $acc+$value end) ?!
+reduceIterable(Count(3),fn(acc:Int,value:Int)->Int => $acc+$value end) ?!
+reduceIterable(Count(3),fn(acc:Int,index:Int,value:Int)->Int => $acc+$index+$value end) ?!
+reduceIterable(filterIterable(Count(4),fn(index:Int,value:Int)->#boolean Int => $index>=2 end),
+  fn(acc:Int,value:Int)->Int => $acc+$value end) ?!
+reduceIterable(mapIterable(Count(3),fn(index:Int,value:Int)->Int => $value+$index end),
+  fn(acc:Int,value:Int)->Int => $acc+$value end) ?!
+reduceIterable(Count(2),fn(acc:Int,value:Int)->Int => $acc+$value end) match =>
+  as :Some(value) => $value
+  as :None => -1
+end
+''', [ObjectValue("None", {}), 10, 33, 36, 25, 36, 21])
+
+    def test_std_iterable_reduce_preserves_indices_and_projected_evidence(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, SingleView, reduceIterable]}
+object Keyed => $count:Int end
+object Keyed as Iterable[String,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int) -> {String,Int,Int}? =>
+    if ($state<$self.count) =>
+      Some({"k"+($state to[String]), $state+10, $state+1})
+    else => \None end
+  end
+end
+reduceIterable(Keyed(3), fn(acc:Int,index:String,value:Int)->Int =>
+  $acc+$value
+end) ?!
+''', [33])
+        self.assert_executes(r'''
+import {std.iterable as it}
+object Count => $limit:Int end
+object Count as it.Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? =>
+    if ($state<$self.limit) => Some({$state,$state+10,$state+1})
+    else => \None end
+  end
+end
+object Count as it.SingleView[Int,Int,Int] =>
+  define single(index:Int,value:Int)->Int => $index+100
+end
+define plain(source:it.Iterable[Int,Int,Int])->Int? =>
+  it.reduceIterable($source, fn(acc:Int,value:Int)->Int => $acc+$value end)
+end
+it.reduceIterable(Count(3), fn(acc:Int,item:Int)->Int => $acc+$item end) ?!
+it.reduceIterable(Count(3), fn(acc:Int,index:Int,value:Int)->Int => $acc+$index+$value end) ?!
+plain(Count(3)) ?!
+''', [303, 36, 33])
+
+    def test_std_iterable_reduce_rejects_invalid_source_or_callback(self):
+        self.assert_rejected(r'''
+import {std.iterable.[Iterable, reduceIterable]}
+object Data => $value:Int end
+reduceIterable(Data(3), fn(acc:Int,value:Int)->Int => $acc+$value end)
+''', "reduceIterable")
+        self.assert_rejected(r'''
+import {std.iterable.[Iterable, reduceIterable]}
+object Count => $limit:Int end
+object Count as Iterable[Int,Int,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Int,Int}? => \None
+end
+reduceIterable(Count(3), fn(acc:Int,value:String)->Int => $acc end)
+''', "reduceIterable")
+
+    def test_std_iterable_reduce_returns_owned_object_accumulator(self):
+        source = r'''
+import {std.iterable.[Iterable, reduceIterable]}
+object Token => $label:String end
+object Count => $limit:Int end
+object Count as Iterable[Int,Token,Int] =>
+  define initial -> Int => 0
+  define advance(state:Int)->{Int,Token,Int}? =>
+    if ($state<$self.limit) => Some({$state,Token($state to[String]),$state+1})
+    else => \None end
+  end
+end
+reduceIterable(Count(3),fn(acc:Token,value:Token)->Token => $acc end)
+reduceIterable(Count(2),fn(acc:Token,value:Token)->Token => Token($acc.label+$value.label) end)
+'''
+        typed = self.analyse(source)
+        restored = loads_interface(dumps_interface(tuple(typed)))
+        for optimize in (False, True):
+            for nodes in (typed, restored):
+                program = compile_program(nodes, optimize=optimize)
+                for serialized in (False, True):
+                    with self.subTest(optimize=optimize, interface=nodes is restored,
+                                      serialized=serialized):
+                        results = run(loads(dumps(program)) if serialized else program)
+                        self.assertEqual([item.fields["value"].fields["label"]
+                                          for item in results], ["0", "01"])
+                        for maybe in results:
+                            token = maybe.fields["value"]
+                            self.assertIsInstance(token, ObjectValue)
+                            self.assertNotIsInstance(token, BorrowedValue)
+                            self.assertFalse(token.destroyed)
+                            self.assertEqual(token.refcount, 1)
+
+    def test_std_iterable_exports_do_not_shadow_native_list_overloads(self):
+        self.assert_executes(r'''
+import {std.iterable.[Iterable, mapIterable, filterIterable]}
+$mapped = [1, 2, 3] map: double
+$mapped foreach (value) => break $value end
+$filtered = [1, 2, 3] filter: fn(value: Int) -> #boolean Int => $value > 1 end
+$filtered foreach (value) => break $value end
+''', [2, 2])
+
+    def test_constructor_retains_borrowed_object_field_across_return(self):
+        source = r'''
+object Item => $label: String end
+object Envelope => $item: Item end
+define wrap(item: Item) -> Envelope => Envelope($item) end
+wrap(Item("live"))
+'''
+        typed = self.analyse(source)
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    executable = loads(dumps(program)) if serialized else program
+                    envelope, = run(executable)
+                    item = envelope.fields["item"]
+                    self.assertIsInstance(item, ObjectValue)
+                    self.assertNotIsInstance(item, BorrowedValue)
+                    self.assertEqual(item.fields["label"], "live")
+                    self.assertFalse(item.destroyed)
+                    self.assertEqual(item.refcount, 1)
+
+    def test_std_iterable_rejects_non_iterable_source(self):
+        self.assert_rejected(r'''
+import {std.iterable.[Iterable, mapIterable]}
+object NotIterable => $value: Int end
+mapIterable(NotIterable(1), fn(value: Int) -> Int => $value + 1 end)
+''', "mapIterable")
+
+    def test_iterable_and_single_view_protocol_signatures_are_valid(self):
+        # Protocol methods are ordinary statically checked trait methods.
+        # foreach integration is a separate capability, not inferred from names.
+        self.assert_executes(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None
+    end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+Count(3) initial
+Count(3) advance(0) ?!
+Count(3) single(2, 12)
+''', [0, (0, 10, 1), "2"])
+
+    def test_iterable_cursor_type_and_noninteger_index_are_independent(self):
+        self.assert_executes(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+object Keyed => $seed: Int end
+object Keyed as Iterable[String, Int, Int] =>
+  define initial -> Int => $self.seed
+  define advance(state: Int) -> {String, Int, Int}? =>
+    if ($state == 0) => Some({"key", 8, 1})
+    else => \None
+    end
+  end
+end
+object Keyed as SingleView[String, Int, String] =>
+  define single(index: String, value: Int) -> String => $index
+end
+Keyed(0) initial
+Keyed(0) advance(0) ?!
+Keyed(0) single("hello", 7)
+''''', [0, ("key", 8, 1), "hello"])
+
+    def test_iterable_protocol_rejects_incompatible_step_signature(self):
+        self.assert_rejected(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+object Bad => end
+object Bad as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> String => "invalid"
+end
+''''', "does not satisfy required signature")
+
+    def test_custom_iterable_foreach_unary_binary_projection_and_empty(self):
+        self.assert_executes(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None
+    end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+Count(3) foreach (index, value) => break {$index, $value} end
+Count(3) foreach (item) => break $item end
+Count(0) foreach (item) => $item end
+Count(0) foreach (index, value) => $value end
+''', [(0, 10), "0", ObjectValue("None", {})])
+
+    def test_custom_iterable_index_need_not_be_the_cursor_type(self):
+        self.assert_executes(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+object Keyed => $seed: Int end
+object Keyed as Iterable[String, Int, Int] =>
+  define initial -> Int => $self.seed
+  define advance(state: Int) -> {String, Int, Int}? =>
+    if ($state == 0) => Some({"hello", 15, 1})
+    else => \None
+    end
+  end
+end
+Keyed(0) foreach (index, value) => break {$index, $value} end
+Keyed(0) foreach (item) => break $item end
+''', [("hello", 15), 15])
+
+    def test_trait_typed_foreach_does_not_infer_unstated_single_view(self):
+        self.assert_executes(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None
+    end
+  end
+end
+object Count as SingleView[Int, Int, String] =>
+  define single(index: Int, value: Int) -> String => $index to[String]
+end
+define view(thing: Iterable[Int, Int, Int]) =>
+  $thing foreach (item) => break $item end
+end
+define keys(thing: Iterable[Int, Int, Int]) =>
+  $thing foreach (index, value) => break {$index, $value} end
+end
+define[I, V, S] first(thing: Iterable[I, V, S]) =>
+  $thing foreach (index, value) => break $value end
+end
+define projected(thing: Iterable[Int, Int, Int]&SingleView[Int, Int, String]) =>
+  $thing foreach (item) => break $item end
+end
+view(Count(2))
+keys(Count(2))
+first(Count(2))
+projected(Count(2))
+Count(2) foreach (item) => break $item end
+''', [10, (0, 10), 10, "0", "0"])
+
+    def test_custom_iterable_break_return_and_nested_loop(self):
+        self.assert_executes(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? =>
+    if ($state < $self.limit) => Some({$state, $state + 10, $state + 1})
+    else => \None
+    end
+  end
+end
+define find(n: Int) =>
+  Count($n) foreach (index, value) =>
+    if ($index == 1) => return $value end
+  end
+  0
+end
+find(3)
+$total = 0
+Count(2) foreach (index, value) =>
+  Count(2) foreach (other, data) =>
+    $total := $total + $value + $data
+  end
+end
+$total
+''', [11, 84])
+
+    def test_object_cursor_state_and_returned_item_are_owned(self):
+        source = r'''
+trait[I,V,S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I,V,S}?
+end
+object Cursor => $pos: Int end
+object Item => $label: String end
+object Items => $count: Int end
+object Items as Iterable[String, Item, Cursor] =>
+  define initial -> Cursor => Cursor(0)
+  define advance(state: Cursor) -> {String, Item, Cursor}? =>
+    if ($state.pos < $self.count) =>
+      Some({"key", Item("alive"), Cursor($state.pos + 1)})
+    else => \None
+    end
+  end
+end
+Items(3) foreach (index, value) => break $value end
+'''
+        typed = self.analyse(source)
+        for optimize in (False, True):
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    program = compile_program(typed, optimize=optimize)
+                    result = run(loads(dumps(program)) if serialized else program)
+                    self.assertEqual(result, [ObjectValue("Item", {"label": "alive"})])
+                    self.assertFalse(result[0].destroyed)
+                    self.assertEqual(result[0].refcount, 1)
+
+    def test_iterable_advance_panic_is_propagated(self):
+        source = r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S)<Panic[RuntimeFault]> -> {I, V, S}?
+end
+object Fails => $n: Int end
+object Fails as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int)<Panic[RuntimeFault]> -> {Int, Int, Int}? =>
+    if ($state < 1) => Some({$state, $state + 10, $state + 1})
+    else => RuntimeFault("iteration fault") panic
+    end
+  end
+end
+Fails(3) foreach (item) => $item end
+'''
+        typed = self.analyse(source)
+        for optimize in (False, True):
+            for serialized in (False, True):
+                with self.subTest(optimize=optimize, serialized=serialized):
+                    program = compile_program(typed, optimize=optimize)
+                    executable = loads(dumps(program)) if serialized else program
+                    with self.assertRaisesRegex(ValianceRuntimeError, "iteration fault"):
+                        run(executable)
+
+    def test_single_view_does_not_make_an_object_iterable(self):
+        self.assert_rejected(r'''
+trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+object Lonely => $seed: Int end
+object Lonely as SingleView[Int, Int, Int] =>
+  define single(index: Int, value: Int) -> Int => $value
+end
+Lonely(0) foreach (item) => $item end
+''', "must actually be iterable")
+
+    def test_incompatible_single_view_rejected_for_unary_iteration(self):
+        self.assert_rejected(r'''
+trait[I, V, S] Iterable =>
+  extend initial -> S
+  extend advance(state: S) -> {I, V, S}?
+end
+trait[I, V, Item] SingleView =>
+  extend single(index: I, value: V) -> Item
+end
+object Count => $limit: Int end
+object Count as Iterable[Int, Int, Int] =>
+  define initial -> Int => 0
+  define advance(state: Int) -> {Int, Int, Int}? => \None
+end
+object Count as SingleView[String, Int, String] =>
+  define single(index: String, value: Int) -> String => $index
+end
+Count(2) foreach (item) => $item end
+''', "incompatible or ambiguous SingleView")
+
     def test_variant_implementation_target_diagnostic(self):
         for target in ("Entry", "Entry[Int]"):
             with self.subTest(target=target):

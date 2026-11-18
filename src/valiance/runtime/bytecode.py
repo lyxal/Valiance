@@ -331,6 +331,18 @@ class ReflectionForeachReference:
 
 
 @dataclass(frozen=True, slots=True)
+class IterableForeachReference:
+    """Statically selected, normal VM calls for immutable cursor traversal."""
+
+    body: FunctionCode
+    initial: FunctionCode
+    advance: FunctionCode
+    single: FunctionCode | None = None
+    has_index: bool = False
+    completion_count: int = 1
+
+
+@dataclass(frozen=True, slots=True)
 class ExtensionRuleReference:
     """Compiled substitution rule for one present/missing argument pattern."""
 

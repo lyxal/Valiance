@@ -1073,6 +1073,14 @@ binding receives the key. Unlike a list loop, the second binding receives the
 value rather than an integer index. Both entries are borrowed from the retained
 dictionary during each callback, preserving copy-on-write and ownership rules.
 
+Fixed and variadic tuples also use the native `FOREACH` instruction rather than
+trait dispatch. Their one-binding form supplies each element; two bindings
+supply `(position, element)` in that order, with a zero-based integer position.
+The analyser uses the union of possible tuple element types for the body, and
+the VM borrows individual elements from the retained tuple occurrence. List
+loops instead supply `(index, element)` for two bindings, while a one-binding
+list loop still supplies the element. The native VM order matches analysis.
+
 Nested loop bodies compile as `FunctionCode`. Internal exceptions `_LoopBreak`
 and `_FunctionReturn` carry values across the nested Python call boundary.
 They are VM implementation signals, not user-visible faults.
@@ -1247,6 +1255,21 @@ inner map must keep its callback alive until that map is released.
 
 Stack operations are therefore not merely Python `append` and `pop`. A semantic
 copy may increase ownership; a consumed stack tail must release its values.
+The `call` built-in is a forwarding boundary: its callback invocation already
+consumes and releases the forwarded arguments. Both resolved and dynamic VM
+paths must remove the corresponding caller-stack occurrences **without**
+releasing those arguments a second time. The callable's own consumed occurrence
+is still released by the forwarding builtin. This distinction matters for
+callbacks receiving objects borrowed from persistent fields, particularly when
+the callback returns the same object.
+When assigning a callback result back into a local, nominal object identity
+alone does not identify the owned occurrence: an object with a separately
+retained callback result can be the very same Python `ObjectValue` as the old
+slot. `STORE_VAR` releases the old slot when that nominal object still has an
+additional reference. This does not apply to containers reconstructed in place:
+they can legitimately return the identical `ListValue` or `DictValue` with one
+owner, so releasing that container would invalidate its new binding.
+
 The VM first checks whether a consumed tail contains any ownership-bearing value
 and skips the recursive release walk for scalar-only tails. `ListValue` and
 `DictValue` also carry container reference counts. Ordinary loads increment the
@@ -2896,3 +2919,16 @@ Regular-expression syntax is largely compatible with Python `re`, although
 patterns depending on engine-specific behaviour should be tested against the
 `regex` engine. The timeout bounds *an individual operation*, not a sequence
 of calls made by a running Valiance program.
+
+### Compiled custom `foreach` traversal
+
+`IterableForeachReference` is a checked `FOREACH` payload holding the ordinary
+loop body and compiled `initial`, `advance`, optional `single` method-call
+wrappers. The wrappers contain resolved element references; runtime execution
+uses the existing VM user-call scheduler, not a separate method-name lookup.
+The receiver is loaded first for the concrete object-method ABI, even though
+nominal-trait `extend` signatures are checked with the receiver last. The VM
+holds one source occurrence and an evolving state, validates optional triple
+steps, and releases intermediate values through completion or early exit.
+The serializer and optimizer traverse all embedded functions. See
+[the traversal protocol](iterable-protocol.md).

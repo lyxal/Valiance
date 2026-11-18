@@ -264,6 +264,13 @@ while each runtime descriptor retains its actual field type. Private metadata is
 included. Every metadata operation on `Fields[Owner]`/`Field[Owner]` checks the
 lexical transitive ownership gate; a descriptor carries no unsafe authority.
 
+Tuple `foreach` is also separate from ranked list collection inference: the
+analyser joins the declared element types of fixed and variadic tuple types into
+a union for the loop body. Binary tuple loops bind an `Int` position first and
+the union-valued element second. The VM traverses the tuple directly, without
+introducing a generic list rank. Native two-binding list iteration uses
+`(index, value)`, independently of tuple and custom traversal implementations.
+
 `Fields[Owner]` is a distinct heterogeneous collection, not a list. For a concrete
 owner, `foreach` checks a separate callback body for every declared field in order.
 An internal structural refinement of `Field[Owner]` supplies exact `Type[T]`
@@ -1252,14 +1259,34 @@ tag matches rank below generic type matches. A missing positive tag makes the
 candidate inapplicable, regardless of its declaration order. The first
 applicable category in `_match_specificity(...)` wins.
 
-Positive-tag user definitions at a compatible input arity extend the built-in
-candidate set instead of hiding it. This lets an untagged value select the
-ordinary built-in while a tagged value selects the more specific extension
-(e.g. `length` vs `length(:#Vec2 Real+)`). Different-arity declarations still
-shadow built-ins, as overload sets retain a fixed input count; ordinary
-untagged user declarations also keep lexical shadowing. Typed calls retain
-their selected intrinsic implementation identity across runtime source-name
-rebinding, so dispatch does not change after the overload was resolved.
+When a generic trait is imported under a namespace or a selected alias, its
+provider declaration identity participates in trait-evidence matching and
+specificity. `Count` implementing `it.Iterable[I,V,S]` matches an imported
+`it.Iterable[I,V,S]` parameter at **trait** specificity, not at a misleading
+generic-exact rank. A compatible `it.Iterable & it.SingleView` requirement
+therefore outranks the plain `it.Iterable` overload when both callbacks have
+the same type. Provider-qualified behaviour-set selectors such as
+`as[provider.Trait]` remain distinct from imported nominal type aliases.
+
+Selective callable imports also retain the canonical origins of *unselected*
+public nominal types in their signatures. For example, importing only
+`std.iterable.[foldIterable]` must still allow `foldIterable` to consume a
+`std.iterable.Iterable` returned by another module, without silently making
+`Iterable` a locally visible type name. A caller-local trait of the same name
+must not satisfy the imported function's constraint. Explicitly importing the
+trait still controls its source-level name and method visibility.
+
+Positive-tag user definitions at compatible input arity extend the built-in
+candidate set, letting their more-specific tagged form win while untagged
+inputs still choose the built-in (for example, `length` and a tagged `length`).
+Explicitly imported aliases also extend native overloads when their
+input/output arities match **and** their input domains are disjoint. For example,
+`import {std.iterable.[mapIterable as map]}` makes native list `map` and generic
+iterable `map` available through the same static selector. An imported
+`inc(Int)` instead shadows a native `inc(Int)` rather than creating an ambiguous
+call. Ordinary untagged user declarations retain lexical shadowing, and
+incompatible input arities cannot be merged. Selected calls retain their
+intrinsic implementation identities even after runtime source-name rebinding.
 
 ### Step 10: calculate automatic vectorisation
 
@@ -2475,3 +2502,15 @@ Sibling expressions do not count toward nesting depth, so wide tuple and
 dictionary literals remain supported. Literal-branch Cartesian products are
 constructed iteratively with `itertools.product` rather than recursively over
 one frame per item.
+
+### Iterable protocol evidence in `foreach`
+
+For custom objects, `foreach` resolves a unique visible `Iterable[Index, Value,
+State]` implementation from nominal trait evidence, checks its ordinary
+`initial` and `advance` methods, and records resolved call plans in
+`TypedForNode`. Unary loops optionally select a compatible
+`SingleView[Index, Value, Item]` to project the values; binary loops always
+bind `Index` then `Value`. Generic consumers use only their declared trait
+evidence, never extra implementations inferred from a concrete argument.
+Native lists, dictionaries, tuples and reflective fields bypass this fallback.
+See [the traversal protocol](iterable-protocol.md).

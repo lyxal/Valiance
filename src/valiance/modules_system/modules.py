@@ -1355,9 +1355,10 @@ def _import_variant_case_implementations(
     }
     case_names = {name: _namespaced_symbol(member.name, names[parent])
                   for name, (parent, member) in cases.items()}
-    # Namespaced trait evidence uses the original trait name and provider.
-    # Bytecode projections use the qualified runtime trait spelling.
-    renames = {**case_names, **(names if runtime or namespace is None else {})}
+    # The imported case and its implemented trait must use the same visible
+    # nominal spellings. In particular, a namespace import exposes
+    # ``alias.Drawable``, not an unrelated unqualified ``Drawable``.
+    renames = {**case_names, **names}
     selected = []
     for item in exports.trait_implementations:
         if not (item.owned and item.public and item.object_name in cases):

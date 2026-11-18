@@ -118,6 +118,7 @@ from valiance.asts.object_constructors import (
 from valiance.runtime.bytecode import (
     ReflectionFieldsReference,
     ReflectionForeachReference,
+    IterableForeachReference,
     ReflectionFieldReference,
     ExtensionRuleReference,
     FunctionCode,
@@ -1913,9 +1914,9 @@ class _Compiler:
 
     def foreach_node(self, node: ForNode, typed_node: TypedNode | None) -> None:
         """Lower a foreach loop and its break-result handling."""
-        params = (FunctionParam(node.variable),)
-        if node.index_variable is not None:
-            params += (FunctionParam(node.index_variable),)
+        params = (FunctionParam(node.first_variable),)
+        if node.second_variable is not None:
+            params += (FunctionParam(node.second_variable),)
         if isinstance(typed_node, TypedReflectiveForNode):
             bodies = tuple(_Compiler(
                 break_as_signal=True, return_as_signal=True, break_result_count=None,
@@ -1930,7 +1931,7 @@ class _Compiler:
             for layout in layouts:
                 count = len(layout.fields)
                 plans.append(ReflectionForeachReference(
-                    _reflection_fields_reference(layout), bodies[offset:offset + count], node.index_variable is not None,
+                    _reflection_fields_reference(layout), bodies[offset:offset + count], node.second_variable is not None,
                     max(1, _max_break_values(node.body)) if count else 1,
                 ))
                 offset += count
@@ -1964,9 +1965,38 @@ class _Compiler:
                 return_as_signal=True,
             )
         completion_count = max(1, _max_break_values(node.body))
+        if isinstance(typed_node, TypedForNode) and typed_node.trait_calls:
+            calls = tuple(self._resolved_element_reference(call) for call in typed_node.trait_calls)
+            if (len(calls) not in (2, 3) or any(call is None for call in calls)
+                    or (node.second_variable is not None and len(calls) != 2)):
+                raise CompileError("trait-backed foreach is missing checked method calls")
+
+            def method_call(name: str, ref: ResolvedElementReference,
+                            args: tuple[str, ...]) -> FunctionCode:
+                """Wrap one checked traversal method with its VM call ABI."""
+                # Trait signatures place the receiver last in analysis; the
+                # selected concrete method uses the VM's receiver-first ABI.
+                # This wrapper is the checked bridge between those contracts.
+                return FunctionCode(
+                    tuple(Instruction(OpCode.LOAD_VAR, arg) for arg in args)
+                    + (Instruction(OpCode.CALL_RESOLVED_ELEMENT, ref),
+                       Instruction(OpCode.RETURN)),
+                    params=args, name=f"foreach.{name}", cycle_params=True,
+                    return_count=1, occurrence_effects=(None,),
+                )
+
+            self.emit(OpCode.FOREACH, IterableForeachReference(
+                body_code,
+                method_call("initial", calls[0], ("source",)),
+                method_call("advance", calls[1], ("source", "state")),
+                method_call("single", calls[2], ("source", "index", "value"))
+                if len(calls) == 3 else None,
+                node.second_variable is not None, completion_count,
+            ))
+            return
         self.emit(
             OpCode.FOREACH,
-            (body_code, 1 if node.index_variable else 0, completion_count),
+            (body_code, 1 if node.second_variable else 0, completion_count),
         )
 
     def match_node(self, node: MatchNode, typed_node: TypedNode | None) -> None:
@@ -2421,6 +2451,9 @@ def _with_reachable_import_prelude(nodes: list[TypedNode]) -> list[TypedNode]:
     reachable variant cases and ordinary methods. Dynamic reflection and public
     re-exports conservatively retain the entire prelude.
     """
+    # Interface round trips may supply a tuple even when the analyser supplied
+    # a list; import prelude trimming must preserve concatenation semantics.
+    nodes = list(nodes)
     prefix_size = 0
     for item in nodes:
         if isinstance(item, (TypedImportedFunctionNode, TypedImportedObjectNode)):

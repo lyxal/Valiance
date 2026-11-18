@@ -93,7 +93,8 @@ def lint_stateless_foreach_as_fold(context: NodeLintContext):
         return ()
     if len(assignments) != 1:
         return ()
-    if not _reads_variable(node.body, node.variable):
+    item_name = node.second_variable or node.first_variable
+    if not _reads_variable(node.body, item_name):
         return ()
 
     typed_loops = tuple(_typed_loops(context.outputs))
@@ -122,7 +123,7 @@ def _is_simple_sum(
             isinstance(item, ElementNode) and item.name == Symbol("+")
             for item in node.body
         ) == 1
-        and _reads_variable(node.body, node.variable)
+        and _reads_variable(node.body, node.second_variable or node.first_variable)
         and _reads_variable(node.body, assignments[0].name)
     )
 

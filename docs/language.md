@@ -231,6 +231,12 @@ $instructions[$i].jump = $open
 - `sum` adds a numeric list and returns zero for an empty list.
 - `reshape shape` reshapes a finite value using a non-empty list or tuple of dimensions; tuple length determines the exact result rank.
 - `map` accepts strings as character sequences. It also accepts a niladic callable; in that overload the callable is invoked once per input item and the item itself is ignored. This supports constructions such as `range(1, 100) | map: randbit`.
+- List `map` and `filter` also accept callbacks of `(index: Int, value: T)`, in addition to their existing unary callbacks. The index is zero-based, measured at the list level passed to that callback. In a lazy pipeline, it counts items entering that stage, including items rejected by that stage, and is reset for a later stage after upstream filtering. Indexed `map` preserves the list's ordinary rank-aware traversal; indexed `filter` operates on the items of its input list.
+
+```
+[5, 6, 7] map: fn (i: Int, n: Int) => $n + $i end   #? [5, 7, 9]
+[5, 6, 7] filter: fn (i: Int, n: Int) => $i != 1 end #? [5, 7]
+```
 
 ```
 [0] overtake 5                 #? [0, 0, 0, 0, 0]
@@ -1575,10 +1581,10 @@ else => println("No match")
 	- `if/else/else if` is invalid
 
 ## 10.5. `foreach`
-- A `foreach` loop iterates over items in a list and applies code to each item.
+- A `foreach` loop traverses a list, dictionary, tuple, reflective `Fields` value, or a user-defined object with a visible `Iterable` trait implementation.
 - A `foreach` loop returns `None` if it executed to completion, otherwise it returns whatever was included in the break value.
 	- If multiple values are returned by a `break`, `None` is returned for each value if the loop executes to completion
-- The iterable used in the foreach loop is popped from the stack. Note that it must be a list type. It is a compile error to foreach an atomic value
+- The collection used in the foreach loop is popped from the stack. It is a compile error to `foreach` an unsupported atomic value.
 
 ```
 foreach (<variable name>) =>
@@ -1586,10 +1592,17 @@ foreach (<variable name>) =>
 end
 ```
 
-- `variable name` can be either one name or two names. One name means just the iteration variable. Two names means iteration variable and index.
+- `variable name` can be one or two names. The bindings depend on the collection:
+  - List: `foreach (item)` or `foreach (index, item)`. Two-binding list indices are zero-based and precede values.
+  - Dictionary: `foreach (key)` or `foreach (key, value)`, in insertion order.
+  - Tuple: `foreach (item)` or `foreach (position, item)`; positions begin at zero. A tuple containing unlike types gives its item binding a union type.
+  - Reflective `Fields`: `foreach (field)` or `foreach (field, index)`; reflective access rules still apply.
+  - Custom `Iterable[Index, Value, State]`: `foreach (item)` binds `Value`, while `foreach (index, value)` binds `Index` and `Value`. With a matching `SingleView[Index, Value, Item]` trait, unary iteration instead binds projected `Item` values.
+- For JSON object members, import `std.json_iterable` and match `json.Json.Object` before passing the case to `json_iterable.memberView`. The resulting trait-typed view supports `(key, Json)` bindings and a unary `String` key projection, without adding traversal to every `json.Json` value or a new compiler special case.
 - `code` inside a `foreach` loop can write to variables in the parent scope.
-- The input for each loop iteration is the item or `index, item` if index is specified.
-- These inputs will cycle.
+- The bound values are the cyclic inputs to each body evaluation.
+- User-defined traversal invokes `initial` once and then `advance(state)` until it returns `None`; each `Some({index, value, nextState})` yields a step. The cursor state need not be the public index, and `SingleView` does not make a non-iterable object iterable. A function constrained only by `Iterable` cannot assume an optional `SingleView`. See [the traversal protocol](maintenance/iterable-protocol.md) for executable trait signatures and examples.
+- For custom iterable values, `std.iterable` supplies lazy `mapIterable` and `filterIterable` with unary-value and indexed-value callbacks. When `SingleView` evidence is visible, more-specific unary overloads operate on projected `Item` instead. Projected mapping yields mapped values with original indices; projected filtering retains both original indices and the source's unary `SingleView` projection. `foldIterable` consumes a custom iterable eagerly with an explicit seed; `reduceIterable` consumes a non-empty iterable without a seed, returning `None` for empty input and `Some(result)` otherwise. Both support value-only, indexed, or projected callbacks. These operations preserve native list `map`/`filter`/`fold` behaviour: importing `mapIterable as map` or `filterIterable as filter` extends matching-arity native overload sets rather than hiding them. Import the operations and required traits selectively from `std.iterable`, or import the module as a namespace (for example, `import {std.iterable as it}` and use `it.Iterable`, `it.mapIterable`, `it.foldIterable`, and `it.reduceIterable`).
   
 #### 10.5.1. Suppressing lint advice
 
@@ -1620,7 +1633,7 @@ do not hide errors or ordinary warnings.
 - If there are multiple breaks in a loop with differing multiplicities, then the breaks with fewer values will be padded with `None`s
 ```
 define find(ns: Number+, number: Number) -> Number? =>
-  $ns foreach (n, ind) =>
+  $ns foreach (ind, n) =>
     if ($n == $number) => break $ind
   end
 end
@@ -1808,7 +1821,7 @@ at (_) => getOrElse(0)
 - Functions need to be called, whereas elements are called immediately
 - `define` allows for custom elements to be defined, ready to be used just like any other element.
 - If an element already exists, `define` adds a new module-scoped overload to the element. Note that module-scope overloads overwrite imported and built-in element overloads.
-  - Use `*::<element>` to explicitly access the built-in overloads when a user-defined element shadows them, for example `*::Some(1)` or `1 2 *::+`.
+  - Use `*::<element>` to explicitly access built-in overloads when a user-defined element shadows them, for example `*::Some(1)` or `1 2 *::+`. Explicitly imported callable aliases with matching input/output arities and disjoint input domains join built-in overload sets; overlapping imported overloads still shadow the built-ins.
   - Otherwise, a new element is created.
 - Syntax:
 
@@ -2385,7 +2398,7 @@ define[T: trait => extend ===(T, T) -> #boolean Number] find(
   haystack: T+,
   needle: T
 ) =>
-  $haystack foreach (item, ind) =>
+  $haystack foreach (ind, item) =>
     if ($item === $needle) => return $ind
   end
 end

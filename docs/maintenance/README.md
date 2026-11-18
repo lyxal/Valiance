@@ -44,6 +44,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   [collection indexing and deferred faults](collection-indexing-and-faults.md),
   [runtime invariants and numerical boundaries](runtime-invariants-and-numerics.md),
   and [source and bytecode boundaries](source-boundary-correctness.md).
+- [User-defined traversal protocol](iterable-protocol.md) documents the
+  checked `Iterable`/`SingleView` implementation for custom `foreach`, including
+  its compiler/VM contract. Native collection traversal remains specialized.
 - [Understanding the type system](type-system.md) gives a human-first mental
   model of type relations, generic solving, overload application, and branch
   analysis, with traced examples and an API decision table.
@@ -78,6 +81,8 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   FIFO gate, resumable activation cleanup, and no-new-bytecode integration.
 - [Shared State user guide](../concurrency-state.md) explains the public
   `std.concurrency.State[T]` API, stack effects, and callback restrictions.
+- [Lazy custom-iterable adapters](../../src/valiance/std/iterable.vlnc) provide indexed and unary `mapIterable`/`filterIterable`, plus eager `foldIterable`/`reduceIterable` over the [user-defined traversal protocol](iterable-protocol.md), with executable acceptance cases in `tests/test_traits_and_variants.py`.
+- [JSON iterable member view](../../src/valiance/std/json_iterable.vlnc) adapts a matched `std.json.Json.Object` to the same checked `Iterable`/`SingleView` protocol without importing generic traversal into core JSON; see the [protocol guide](iterable-protocol.md#opt-in-json-object-member-traversal).
 - [Understanding the runtime and code generator](runtime-system.md) follows
   typed nodes through bytecode, frames, calls, vectorisation, ownership, panics,
   serialization, and VM debugging.

@@ -212,6 +212,8 @@ class Environment:
     overloads: dict[Symbol, list[Overload]] = field(
         default_factory=dict[Symbol, list[Overload]]
     )
+    # Imported callable aliases may extend native overloads with disjoint input domains.
+    builtin_extensions: set[Symbol] = field(default_factory=set)
     object_friendly_overloads: dict[Symbol, set[str]] = field(
         default_factory=dict[Symbol, set[str]]
     )
@@ -634,8 +636,9 @@ class Environment:
         overload: Overload,
         *,
         object_friendly: bool = False,
+        imported: bool = False,
     ) -> None:
-        """Append one overload to a named overload set."""
+        """Append a candidate; imported aliases join compatible native overloads."""
         self.validate_protocol_provider(name, overload)
         candidates = self.overloads.setdefault(name, [])
         inherited = (
@@ -675,6 +678,40 @@ class Environment:
                 )
         overload = replace(overload, implementation_id=overload_implementation_id(overload))
         candidates.append(overload)
+        if imported:
+            inherited = self._inherited_builtin_overloads(name)
+            # The public import extends native candidates only when every
+            # imported input domain is disjoint from every native one. When a
+            # provider also defines inc(Int), for example, merging it with
+            # native inc(Int) would create an ambiguity where the import used
+            # to select that provider. This is a type-based rule, not a list
+            # of specially recognized function names.
+            from .relations import compatible
+            def disjoint(left: Overload, right: Overload) -> bool:
+                """Check for incompatible argument types in one input position."""
+                return any(
+                    not compatible(a, b, self.context)
+                    and not compatible(b, a, self.context)
+                    for a, b in zip(left.params, right.params, strict=True)
+                )
+            if inherited and all(
+                len(native.params) == len(candidate.params)
+                and (
+                    _is_call_site_checked(native)
+                    or _is_call_site_checked(candidate)
+                    or len(native.returns) == len(candidate.returns)
+                )
+                and disjoint(native, candidate)
+                for native in inherited
+                for candidate in candidates
+            ):
+                self.builtin_extensions.add(name)
+            else:
+                self.builtin_extensions.discard(name)
+        else:
+            # An ordinary untagged definition in the same scope must not
+            # inherit the extension policy of a preceding import alias.
+            self.builtin_extensions.discard(name)
         if object_friendly:
             self.object_friendly_overloads.setdefault(name, set()).add(overload.implementation_id)
         self.context.define_structural_overload(name, overload)
@@ -746,10 +783,10 @@ class Environment:
         local = tuple(self.overloads.get(name, ()))
         if not local:
             return self.parent.overloads_for(name) if self.parent is not None else ()
-        # Explicit positive-tag overloads extend the built-in overload set:
-        # their untagged inputs must still resolve to the built-in. Ordinary
-        # declarations retain lexical shadowing of built-ins and other users.
-        if any(
+        # Imported callable aliases of matching arity participate in the native
+        # overload set. A plain user declaration still follows lexical shadowing.
+        # This is an explicit import property, not a map/filter name exception.
+        if name in self.builtin_extensions or any(
             _has_positive_data_tag(param)
             for overload in local
             for param in overload.params

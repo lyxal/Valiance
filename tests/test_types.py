@@ -1370,6 +1370,20 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertFalse(assignable(Foo, target))
         self.assertFalse(assignable(source, Row(Foo, Field(BAR, String))))
 
+    def test_intersection_generic_evidence_correlates_trait_parameters(self):
+        iterable = Symbol("IterProbe")
+        view = Symbol("ViewProbe")
+        pattern = I(N(iterable, V("I"), V("Value")), N(view, V("I"), V("Item")))
+        matching = I(N(iterable, Int, Int), N(view, Int, String))
+        mismatching = I(N(iterable, Int, Int), N(view, String, String))
+
+        self.assertEqual(_solve(N(iterable, V("I"), V("Value")), matching)["I"], [Int])
+        result = apply_overload(Overload((pattern,), (V("Item"),)), (matching,))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.substitution["I"], Int)
+        self.assertEqual(result.substitution["Item"], String)
+        self.assertIsNone(apply_overload(Overload((pattern,), (V("Item"),)), (mismatching,)))
+
     def test_row_type_solves_base_and_field_generics(self):
         constraints = _solve(
             Row(V("T"), Field(BAR, V("U"))),
@@ -2252,6 +2266,56 @@ class OverloadResolutionMatrixTests(unittest.TestCase):
         ordinary_shadow = builtin.child_scope()
         ordinary_shadow.define_overload(name, T.Overload((T.Real,), (T.Int,)))
         self.assertEqual(ordinary_shadow.overloads_for(name), tuple(ordinary_shadow.overloads[name]))
+
+    def test_explicit_callable_import_extends_matching_arity_native_overloads(self):
+        from valiance.elements.builtins import default_environment
+        from valiance.vtypes.symbols import Symbol
+
+        root = default_environment()
+        name = Symbol("length")
+        native = root.overloads_for(name)
+        imported = T.Overload((T.Real,), (T.Int,))
+        env = root.child_scope()
+        env.define_overload(name, imported, imported=True)
+        selected_import = env.overloads[name][0]
+        self.assertEqual(env.overloads_for(name), (*native, selected_import))
+        self.assertEqual(env.overloads_for(Symbol("*::length")), native)
+        # A later user scope keeps lexical shadowing; only an explicit import
+        # and compatible input arity enables this extension.
+        nested = env.child_scope()
+        local = T.Overload((T.String,), (T.Int,))
+        nested.define_overload(name, local)
+        self.assertEqual(nested.overloads_for(name), tuple(nested.overloads[name]))
+        other = root.child_scope()
+        other.define_overload(name, imported)
+        self.assertEqual(other.overloads_for(name), tuple(other.overloads[name]))
+        different_arity = root.child_scope()
+        different_arity.define_overload(
+            name, T.Overload((T.Real, T.Real), (T.Int,)), imported=True,
+        )
+        self.assertEqual(
+            different_arity.overloads_for(name),
+            tuple(different_arity.overloads[name]),
+        )
+
+        overlapping = root.child_scope()
+        inc_name = Symbol("inc")
+        overlapping.define_overload(
+            inc_name, T.Overload((T.Int,), (T.Int,)), imported=True,
+        )
+        self.assertEqual(
+            overlapping.overloads_for(inc_name),
+            tuple(overlapping.overloads[inc_name]),
+        )
+
+        different_results = root.child_scope()
+        different_results.define_overload(
+            name, T.Overload((T.Real,), (T.Int, T.Int)), imported=True,
+        )
+        self.assertEqual(
+            different_results.overloads_for(name),
+            tuple(different_results.overloads[name]),
+        )
 
     def test_different_arity_tagged_definition_shadows_builtin_without_merging(self):
         from valiance.elements.builtins import default_environment

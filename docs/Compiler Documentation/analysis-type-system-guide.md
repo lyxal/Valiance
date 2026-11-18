@@ -397,8 +397,12 @@ When updating stack state after a call, use `actual_returns`.
 Overload lookup is scope-sensitive. `Analyser()` creates a child environment
 whose parent is the built-in environment. `Environment.overloads_for(name)`
 returns local/user overloads when any are present; otherwise it falls back to
-the parent environment. This means user-defined elements shadow built-ins
-instead of merging with them.
+the parent environment. Ordinary user-defined elements shadow built-ins;
+explicitly imported callable aliases can merge input/output-arity-compatible
+native overloads when their input domains are disjoint; positive-tag
+extensions use their separate tagged-specificity rule. An import overlapping
+native input domains shadows the built-ins rather than causing ambiguity.
+The selector still uses checked type evidence and a unique implementation.
 
 Use the `*::element` spelling to explicitly request the parent built-in
 overloads. For example, `Some(1)` can call a user-defined `Some`, while
