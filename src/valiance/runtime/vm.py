@@ -3047,6 +3047,7 @@ class VirtualMachine:
             registration = self.scheduler.register_external(lambda: None, waitable=True)
 
             def completed(_future: Future[Any]) -> None:
+                """Publish one external I/O completion through the owning scheduler."""
                 self.scheduler.enqueue_external_completion(registration.fire)
 
             operation.future.add_done_callback(completed)
@@ -3074,6 +3075,7 @@ class VirtualMachine:
         def completed(_future: Future[Any]) -> None:
             """Never manipulate VM values on the transport thread."""
             def publish() -> None:
+                """Wake the awaiting activation once the native completion has been recorded."""
                 if state.abandoned or not registration.active:
                     return
                 try:

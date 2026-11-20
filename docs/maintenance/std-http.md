@@ -376,3 +376,37 @@ Python 3.14 verification is explicitly deferred to the maintainer.
 ## Stable-release gates and upgraded libcurl policy
 
 See [std-http-go-live.md](std-http-go-live.md) for the enforced minimum 8.23.0 native dependency, checksum-verified source build, controlled rollout, rollback, and fail-closed independent attestation requirements. The previous 7.68 minimum for the underlying libcurl API is not the supported security baseline for a production std.http release. Local tests using `VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL=1` never qualify as release evidence.
+
+## Commit-time CI versus release qualification
+
+The production runtime **rejects libcurl older than 8.23.0**. Some hosted CI
+images ship older versions; their version is not evidence of a compatible
+shipping binary. Do not weaken `_validate_libcurl_version` to make those
+hosted-image tests pass.
+
+- `.github/workflows/tests.yml` uses
+  `VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL=1` **only** in its ordinary
+  language/standard-library regression-test job. This is never production
+  qualification and must not be copied into a shipped executable.
+- `.github/workflows/std-http-qualification.yml` runs bounded portable
+  API/compile-policy regressions on Linux, macOS and Windows, plus local
+  network/HTTP/2 tests on Linux using the same explicit test-only override.
+  Those reports record that the native dependency is **not** production
+  qualified. Platform-specific *native* qualification remains separate.
+- The same workflow's pinned-libcurl security, fuzzing, sanitizer and load
+  jobs run only on `workflow_dispatch`. They use a verified libcurl build and
+  **must not** set `VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL`.
+- `.github/workflows/std-http-overnight.yml` has only `workflow_dispatch`:
+  **there is no push, PR or cron trigger for the 12-hour endurance run**.
+  A release maintainer must start it deliberately on a configured self-hosted
+  runner. No 12/24-hour soak is part of a normal commit's test pipeline.
+- The independent stable-release evidence gate keeps its native provenance,
+  security-review, extended-endurance and platform requirements. Passing
+  ordinary commit tests is not a substitute for those signoffs.
+
+`tests/test_std_http_ci_workflows.py` checks these trigger and override
+boundaries to protect against accidental CI regressions. To reproduce the
+local development-test environment with an older libcurl, run the bounded
+qualification with the explicit override and record that its native
+qualification status is false. To certify a release, select and verify a
+shipping libcurl >=8.23.0 instead; never use the override.

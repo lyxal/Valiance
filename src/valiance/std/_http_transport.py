@@ -70,6 +70,7 @@ _BODY_HEADERS = frozenset((
 
 
 def _origin(url: str) -> tuple[str, str, int]:
+    """Normalize a URL into the origin used for redirect and credential policy checks."""
     parsed = urlsplit(url)
     return parsed.scheme, parsed.hostname or "", parsed.port or (443 if parsed.scheme == "https" else 80)
 
@@ -134,6 +135,7 @@ _UNSAFE_V6_TRANSITIONS = tuple(ipaddress.IPv6Network(value) for value in (
 
 
 def _is_public_destination(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Reject non-public network destinations selected by a native socket callback."""
     return (ip.is_global and not (isinstance(ip, ipaddress.IPv6Address) and
                                   any(ip in network for network in _UNSAFE_V6_TRANSITIONS)))
 
@@ -183,6 +185,7 @@ def _libcurl_version_supported(version_num: int) -> bool:
 
 
 def _validate_libcurl_version(version_num: int) -> None:
+    """Enforce the minimum supported secure libcurl release unless explicitly in development mode."""
     if _libcurl_version_supported(version_num):
         return
     # Only tests and *explicitly untrusted* development may opt out. The
@@ -227,6 +230,7 @@ def _curl_library_name() -> str:
 
 
 def _curl() -> C.CDLL:
+    """Load and configure the selected native libcurl library and its function signatures."""
     global _CURL_LIB
     with _CURL_LOCK:
         if _CURL_LIB is not None:
@@ -301,6 +305,7 @@ class _ProcessBufferBudget:
     """
 
     def __init__(self, maximum: int = 64 * 1024 * 1024) -> None:
+        """Initialize the process-wide response queue capacity controller."""
         self.maximum = maximum
         self.used = 0
         self.peak = 0
@@ -308,6 +313,7 @@ class _ProcessBufferBudget:
         self._clients: weakref.WeakSet[_BufferBudget] = weakref.WeakSet()
 
     def register(self, client: _BufferBudget) -> None:
+        """Register a client's response buffer budget with the global allocator."""
         with self._lock:
             self._clients.add(client)
 
@@ -324,6 +330,7 @@ class _BufferBudget:
     """
 
     def __init__(self, maximum: int, on_release: Callable[[], None]) -> None:
+        """Create one client response budget and its wakeup state."""
         self.maximum = maximum
         self._on_release = on_release
         self._lock = threading.Lock()
@@ -335,6 +342,7 @@ class _BufferBudget:
         _PROCESS_BUFFER_BUDGET.register(self)
 
     def reserve(self, size: int) -> bool:
+        """Reserve response-queue bytes while respecting client and process-wide limits."""
         with self._lock:
             if size > self.maximum - self.used:
                 self._local_waiting = True
@@ -351,6 +359,7 @@ class _BufferBudget:
             return True
 
     def _wake_if_waiting(self) -> None:
+        """Wake paused transfers when previously reserved response capacity becomes available."""
         with self._lock:
             if self._wake_pending or not (self._local_waiting or self._global_waiting):
                 return
@@ -359,6 +368,7 @@ class _BufferBudget:
         self._on_release()
 
     def release(self, size: int) -> None:
+        """Return consumed or abandoned response bytes to the global and client budgets."""
         if not size:
             return
         with self._lock:
@@ -375,6 +385,7 @@ class _BufferBudget:
             client._wake_if_waiting()
 
     def mark_wake_processed(self) -> None:
+        """Clear the pending budget wakeup once the reactor has processed it."""
         with self._lock:
             self._wake_pending = False
             self._local_waiting = False
@@ -385,6 +396,7 @@ class ResponseBody:
     """Single-reader, manually closeable, bounded response stream."""
 
     def __init__(self, reactor: _Reactor, identifier: int, budget: int, shared: _BufferBudget) -> None:
+        """Create a single-reader stream with a bounded queue and terminal transfer state."""
         self._reactor = reactor
         self._identifier = identifier
         self._budget = budget
@@ -424,6 +436,7 @@ class ResponseBody:
         return True
 
     def _finish(self, error: BaseException | None = None) -> None:
+        """Publish EOF or a transport error, waking any awaiting body reader."""
         pending: Future[bytes | None] | None = None
         with self._lock:
             if self._closed or self._eof:
@@ -516,6 +529,7 @@ class ResponseBody:
         pending_pump = False
 
         def consume(read: Future[bytes | None]) -> bool:
+            """Accumulate a body chunk within the configured maximum complete-body size."""
             try:
                 item = read.result()
                 if item is None:
@@ -535,10 +549,12 @@ class ResponseBody:
                 return False
 
         def on_ready(read: Future[bytes | None]) -> None:
+            """Continue consumption after an asynchronous chunk-read future completes."""
             if consume(read):
                 pump()
 
         def pump() -> None:
+            """Drain immediately available chunks without recursive callback growth."""
             nonlocal pumping, pending_pump
             with gate:
                 if pumping:
@@ -570,6 +586,7 @@ class ResponseBody:
                     pump()
 
         def on_result_done(completed: Future[bytes]) -> None:
+            """Close or cancel the body stream when aggregate consumption ends."""
             if completed.cancelled():
                 self.close()
 
@@ -582,12 +599,14 @@ class ResponseBody:
         # final Python reference must return any unread queue reservations.
         # The reactor still holds active bodies; their lifetime is controlled
         # by explicit close, cancellation, or the transfer deadline.
+        """Release unread queued bytes when the response body is finalized."""
         try:
             self.close()
         except BaseException:
             pass  # Best effort during interpreter shutdown/partial construction.
 
     def bytes(self, limit: int) -> bytes:
+        """Read the remaining body completely using the bounded synchronous adapter."""
         if type(limit) is not int or limit < 0:
             raise ValueError("body limit must be a nonnegative integer")
         accumulated = bytearray()
@@ -608,6 +627,7 @@ class Response:
 
     @property
     def status(self) -> int:
+        """Expose the final HTTP status from immutable response metadata."""
         return self.metadata.status
 
 
@@ -615,12 +635,14 @@ class _TransferFuture(Future[Response]):
     """Cancelling a pending send also cancels its underlying libcurl handle."""
 
     def __init__(self, reactor: _Reactor, identifier: int) -> None:
+        """Bind a pending native transfer future to its cancellation hook."""
         super().__init__()
         self._reactor = reactor
         self._identifier = identifier
         self.submitted_at = monotonic()
 
     def cancel(self) -> bool:
+        """Forward cancellation to the owning reactor instead of only the result future."""
         if not super().cancel():
             return False
         self._reactor._command(("cancel", self._identifier, None))
@@ -629,6 +651,7 @@ class _TransferFuture(Future[Response]):
 
 class _Transfer:
     def __init__(self, reactor: _Reactor, key: int, request: Request, future: Future[Response]) -> None:
+        """Initialize one transfer's callbacks, leases, deadlines, and response metadata."""
         self.key = key
         self.request = request
         self.acquisition_started = getattr(future, "submitted_at", monotonic())
@@ -677,6 +700,7 @@ def _write_idle_expired(config: ClientConfig, transfer: _Transfer, now: float) -
 
 class _Reactor:
     def __init__(self, config: ClientConfig) -> None:
+        """Initialize libcurl multi state, reactor commands, and connection-policy limits."""
         self.config = config
         self.lib = _curl()
         if (config.connection_acquire_timeout_ms is not None and
@@ -705,18 +729,22 @@ class _Reactor:
         self._thread.start()
 
     def _wake_budget(self) -> None:
+        """Notify the reactor that response buffering can resume a paused transfer."""
         self._command(("resume_budget", 0, None))
 
     def _set_multi(self, key: int, value: int) -> None:
+        """Apply and check an option on the libcurl multi connection pool."""
         if self.lib.curl_multi_setopt(self.multi, key, C.c_long(value)) != 0:
             raise HttpError(ErrorKind.UNSUPPORTED, "required libcurl multi feature unavailable", "startup")
 
     def _set_easy(self, easy: int, name: str, argument: object) -> None:
+        """Apply and check an option on an individual libcurl easy handle."""
         result = self.lib.curl_easy_setopt(easy, _OPTIONS[name], argument)
         if result:
             raise HttpError(ErrorKind.UNSUPPORTED, f"libcurl rejected {name}", "setup")
 
     def _command(self, action: tuple[str, int, object]) -> None:
+        """Queue one reactor operation and wake the transport event loop."""
         operation = action[0]
         # Lifecycle commands must never be starved behind a full admission queue.
         if operation != "send":
@@ -737,6 +765,7 @@ class _Reactor:
             self.lib.curl_multi_wakeup(self.multi)
 
     def send(self, request: Request, on_finish: Callable[[], None] | None = None) -> Future[Response]:
+        """Admit and enqueue one validated outbound request for cooperative execution."""
         closed_future: Future[Response] | None = None
         with self._lock:
             if self._closed:
@@ -766,6 +795,7 @@ class _Reactor:
                         upload_reserved = True
                     if buffered_reserved:
                         def finish_with_budget_release() -> None:
+                            """Return reserved upload capacity after a transfer reaches terminal state."""
                             _PROCESS_UPLOAD_BUDGET.release(buffered_reserved)
                             if original_finish is not None:
                                 original_finish()
@@ -796,6 +826,7 @@ class _Reactor:
         return promise
 
     def close(self) -> None:
+        """Shut down command admission, active transfers, and owned native resources."""
         with self._lock:
             if self._closed:
                 return
@@ -826,6 +857,7 @@ class _Reactor:
         return transfer.connection_acquired
 
     def _prepare(self, transfer: _Transfer) -> None:
+        """Initialize the native request handle and its upload, header, and body callbacks."""
         if self.config.require_https and urlsplit(transfer.request.url).scheme != 'https':
             raise HttpError(ErrorKind.INVALID_REQUEST, "HTTPS is required by client policy", "policy")
         if self.config.allowed_origins is not None and _origin(transfer.request.url) not in {
@@ -844,6 +876,7 @@ class _Reactor:
         transfer.easy = easy
 
         def opt_string(name: str, value: str) -> None:
+            """Store a native option string for the easy handle's lifetime."""
             encoded = value.encode("utf-8")
             transfer.buffer_refs.append(encoded)
             self._set_easy(easy, name, C.c_char_p(encoded))
@@ -870,6 +903,7 @@ class _Reactor:
 
             def open_socket(_userdata: int, _purpose: int,
                             address: C.POINTER(_CurlSockAddr)) -> int:
+                """Reject blocked destination IPs before allowing libcurl to open a socket."""
                 try:
                     info = address.contents
                     if not 16 <= info.addrlen <= 128:
@@ -913,6 +947,7 @@ class _Reactor:
                     -1 if body.expected_bytes is None else body.expected_bytes))
 
                 def on_upload(buffer: int, size: int, nmemb: int, _userdata: int) -> int:
+                    """Read upload data from an owned stream, pausing when the producer has no bytes."""
                     try:
                         payload = body.read_native(size * nmemb)
                         if payload is None:
@@ -939,6 +974,7 @@ class _Reactor:
         if self.config.write_idle_timeout_ms is not None and transfer.request.body is not None:
             def on_progress(_userdata: int, _download_total: int, _download_now: int,
                             upload_total: int, upload_now: int) -> int:
+                """Enforce connection and transfer deadlines using monotonic network progress."""
                 if upload_now > transfer.upload_sent:
                     transfer.upload_sent = upload_now
                     transfer.upload_progress_started = True
@@ -972,6 +1008,7 @@ class _Reactor:
             self._set_easy(easy, "HTTPHEADER", C.c_void_p(transfer.headers))
 
         def on_header(data: int, size: int, nmemb: int, _userdata: int) -> int:
+            """Validate response framing and headers before publishing final metadata."""
             length = size * nmemb
             try:
                 transfer.received_header_bytes += length
@@ -1042,6 +1079,7 @@ class _Reactor:
             return length
 
         def on_data(data: int, size: int, nmemb: int, _userdata: int) -> int:
+            """Queue bounded response chunks or pause the transport on backpressure."""
             length = size * nmemb
             try:
                 if transfer.received_bytes + length > self.config.max_body_bytes:
@@ -1069,6 +1107,7 @@ class _Reactor:
         self._by_easy[easy] = transfer.key
 
     def _remove(self, transfer: _Transfer, error: BaseException | None = None) -> None:
+        """Terminate one transfer and detach its native handle from the multi reactor."""
         if transfer.completed:
             return
         transfer.completed = True
@@ -1087,6 +1126,7 @@ class _Reactor:
             transfer.on_finish = None
 
     def _cleanup_easy(self, transfer: _Transfer) -> None:
+        """Release callback references and native easy-handle allocations safely."""
         if transfer.easy:
             self._by_easy.pop(transfer.easy, None)
             self.lib.curl_multi_remove_handle(self.multi, transfer.easy)
@@ -1101,6 +1141,7 @@ class _Reactor:
         transfer.buffer_refs.clear()
 
     def _follow_redirect(self, transfer: _Transfer) -> None:
+        """Validate and prepare an allowed redirect, including credential and body policy."""
         request = transfer.redirect_to
         assert request is not None
         if isinstance(transfer.request.body, (UploadPipe, MultipartUpload)):
@@ -1130,6 +1171,7 @@ class _Reactor:
             self._remove(transfer, exc)
 
     def _perform(self) -> None:
+        """Drive ready libcurl sockets and translate completed native operations."""
         running = C.c_int()
         while True:
             rc = self.lib.curl_multi_perform(self.multi, C.byref(running))
@@ -1206,6 +1248,7 @@ class _Reactor:
                 on_finish()
 
     def _run(self) -> None:
+        """Own the transport event loop until shutdown, publishing failures on exit."""
         try:
             while True:
                 while True:
@@ -1328,10 +1371,12 @@ class Client:
     """Shareable reference to one bounded libcurl multi connection pool."""
 
     def __init__(self, config: ClientConfig | None = None) -> None:
+        """Open one reusable HTTP client with its immutable configuration snapshot."""
         self.config = config if config is not None else ClientConfig()
         self._reactor = _Reactor(self.config)
 
     def send_async(self, request: Request, on_finish: Callable[[], None] | None = None) -> Future[Response]:
+        """Submit a request to the reactor and return a cancellation-aware future."""
         return self._reactor.send(request, on_finish)
 
     def send(self, request: Request) -> Response:
@@ -1339,10 +1384,13 @@ class Client:
         return self.send_async(request).result()
 
     def close(self) -> None:
+        """Close client admission and release its owned transport resources."""
         self._reactor.close()
 
     def __enter__(self) -> Client:
+        """Return this client for use with a context-managed lifetime."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the client when leaving a context-managed lifetime."""
         self.close()

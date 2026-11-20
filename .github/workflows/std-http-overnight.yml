@@ -1,3 +1,5 @@
+# Intentionally NOT triggered by pushes, PRs, or cron. This 12-hour
+# qualification runs only when a maintainer dispatches it on a prepared runner.
 name: std.http overnight release endurance (manual, self-hosted)
 
 on:

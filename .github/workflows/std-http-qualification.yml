@@ -1,4 +1,4 @@
-name: std.http qualification (Python 3.14)
+name: std.http regression and manual release qualification (Python 3.14)
 
 on:
   workflow_dispatch:
@@ -75,6 +75,12 @@ on:
 
 jobs:
   qualification:
+    # Fast, cross-platform regression checking only. Hosted images can ship
+    # libcurl older than our production minimum. The override is limited to
+    # THIS test job and MUST NOT be used for native/release qualification.
+    # All production paths still enforce the secure native dependency floor.
+    env:
+      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -90,45 +96,39 @@ jobs:
         run: |
           uv python install 3.14
           uv sync --python 3.14 --locked
-      - name: Run bounded HTTP and regression qualification
+      - name: Portable API, dependency-policy and documentation regressions
         shell: bash
         run: |
           uv run --python 3.14 --frozen --with "cryptography>=44" python tools/qualify_std_http.py \
-            --timeout-seconds 360 --report std-http-qualification.json
-      - name: Profile native HTTP resource recovery
+            --suite tests.test_std_http_dependency_policy \
+            --suite tests.test_std_http_reference_examples \
+            --suite tests.test_std_http_ci_workflows \
+            --timeout-seconds 180 --report std-http-portable-regression.json
+      - name: Linux native-transport integration regressions (development only)
+        # Windows/macOS native transport qualification requires a verified
+        # packaged libcurl; never pretend host image libraries satisfy that.
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          uv run --python 3.14 --frozen --with "psutil>=5.9" python tools/profile_std_http_resources.py \
-            --clients-per-batch 45 --batches 3 --report std-http-resource-profile.json
-      - name: Run offline malformed-protocol mutation campaign
-        shell: bash
-        run: |
-          uv run --python 3.14 --frozen python tools/fuzz_std_http_protocol.py \
-            --seed 20261120 --count 1800 --report std-http-protocol-fuzz.json
-      - name: Run bounded concurrent-client throughput and lifetime soak
-        shell: bash
-        run: |
-          uv run --python 3.14 --frozen --with "psutil>=5.9" python tools/soak_std_http.py \
-            --duration-seconds 15 --concurrency 32 --report std-http-soak.json
-      - name: Inspect libcurl and TLS dependencies
-        shell: bash
-        run: |
-          uv run --python 3.14 --frozen python tools/check_std_http_native.py \
-            --report std-http-native-dependencies.json
-      - name: Upload local-platform evidence
+          uv run --python 3.14 --frozen --with "cryptography>=44" python tools/qualify_std_http.py \
+            --suite tests.test_std_http \
+            --suite tests.test_std_http_http2 \
+            --suite tests.test_std_http_security_audit \
+            --timeout-seconds 180 --report std-http-linux-transport-regression.json
+      - name: Upload non-release regression evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: std-http-qualification-${{ matrix.os }}
+          name: std-http-regression-${{ matrix.os }}
           path: |
-            std-http-qualification.json
-            std-http-resource-profile.json
-            std-http-native-dependencies.json
-            std-http-protocol-fuzz.json
-            std-http-soak.json
-          if-no-files-found: warn
+            std-http-portable-regression.json
+            std-http-linux-transport-regression.json
+          if-no-files-found: error
 
   linux-native-and-security-validation:
+    # Native source builds, fuzzing, and 90-second soaks are manually
+    # dispatched release-validation work, never run on every push or PR.
+    if: github.event_name == 'workflow_dispatch'
     # This separate, evidence-gated Linux campaign does not replace the
     # platform matrix above or an externally instrumented libcurl/TLS build.
     runs-on: ubuntu-latest
@@ -151,10 +151,9 @@ jobs:
           python tools/build_std_http_libcurl.py \
             --prefix "$RUNNER_TEMP/valiance-curl-8.23" \
             --report std-http-evidence/curl-build.json
-          CURL_LIB="$RUNNER_TEMP/valiance-curl-8.23/lib/libcurl.so"
-          if [ ! -f "$CURL_LIB" ]; then
-            CURL_LIB="$(find "$RUNNER_TEMP/valiance-curl-8.23" -name libcurl.so -type f -o -name libcurl.so -type l | head -n 1)"
-          fi
+          # Use the inspected source-build output rather than assuming
+          # a platform-specific install library directory.
+          CURL_LIB="$(python -c 'import json; print(json.load(open("std-http-evidence/curl-build.json"))["library"])')"
           test -n "$CURL_LIB" && test -f "$CURL_LIB"
           echo "VALIANCE_LIBCURL_PATH=$CURL_LIB" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$(dirname "$CURL_LIB"):${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
@@ -211,6 +210,8 @@ jobs:
           if-no-files-found: warn
 
   linux-instrumented-libcurl-bindings:
+    # Instrumented source builds are manually triggered, not commit checks.
+    if: github.event_name == 'workflow_dispatch'
     # Separate security experiment: libcurl itself is ASan/UBSan-instrumented.
     # This still does NOT prove the TLS/nghttp2 dependency stack has been
     # instrumented. That requires separately instrumented native libraries.

@@ -1,0 +1,107 @@
+{
+  "project": "Valiance",
+  "scope": "Full core and standard-library unittest inventory excluding terminal/Textual modules",
+  "source_archive": "Valiance-std-http-ci-fixes.zip",
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux",
+    "libcurl_mode": "development-only legacy libcurl bypass for HTTP tests; production minimum unchanged"
+  },
+  "modules": {
+    "core_total": 111,
+    "core_excluded": [
+      "tests/test_terminal_editor.py"
+    ],
+    "core_tested": 110,
+    "standard_library_total": 66,
+    "standard_library_tested": 66,
+    "total_tested": 176
+  },
+  "tests": {
+    "unique_discovered_and_executed": 4757,
+    "core": {
+      "executed": 3901,
+      "passed_after_remediation": 3863,
+      "existing_skips": 38
+    },
+    "standard_library": {
+      "executed": 856,
+      "passed": 856,
+      "existing_skips": 0
+    },
+    "total_passed_after_remediation": 4719,
+    "existing_skips": 38,
+    "unresolved_test_failures": 0,
+    "unresolved_timeouts": 0
+  },
+  "initial_campaign": {
+    "core": {
+      "completed_tests": 3154,
+      "passed_batches": 22,
+      "failed_batches": 1,
+      "timed_out_batches": 1
+    },
+    "standard_library": {
+      "completed_tests": 728,
+      "passed_batches": 11,
+      "failed_batches": 0,
+      "timed_out_batches": 1
+    }
+  },
+  "resolved": [
+    {
+      "issue": "Missing internal Python function documentation",
+      "finding": "143 undocumented HTTP/runtime methods and callbacks",
+      "resolution": "Added 143 meaningful function docstrings across eight source files",
+      "verification": "Standalone documentation coverage test passed; 145-test post-change regression passed"
+    },
+    {
+      "issue": "Core worker batch exceeded 240-second deadline under parallel load",
+      "resolution": "Reran all five disjoint selections separately",
+      "result": {
+        "tests_passed": 747,
+        "failures": 0,
+        "timeouts": 0
+      }
+    },
+    {
+      "issue": "Standard-library worker batch exceeded 240-second deadline under parallel load",
+      "resolution": "Reran all five disjoint selections separately",
+      "result": {
+        "tests_passed": 128,
+        "failures": 0,
+        "timeouts": 0
+      }
+    }
+  ],
+  "existing_skip_explanations": [
+    "34 tests skipped in core main CLI test batch (deferred REPL/project creation)",
+    "1 REPL documentation concurrency test deliberately skipped",
+    "1 Windows CRT-specific test skipped on Linux",
+    "2 unsupported alias-language scenarios skipped as not applicable"
+  ],
+  "post_change_verification": {
+    "tests_passed": 145,
+    "test_modules": [
+      "test_docstring_coverage.py",
+      "test_reference_docs.py",
+      "test_std_http.py",
+      "test_std_http_http2.py",
+      "test_std_http_security_audit.py",
+      "test_concurrency_vm_suspension.py"
+    ],
+    "additional_test_runner_unit_tests": 23
+  },
+  "limitations": [
+    "Python 3.14 and Windows/macOS qualification are outside this local run",
+    "The 38 existing unittest skips are not counted as passes",
+    "Results combine the initial full inventory with isolated completion of timed-out batches; this is not a single uninterrupted successful run"
+  ],
+  "artifacts": {
+    "full_core_evidence": "full-core-test-evidence.json",
+    "full_stdlib_evidence": "full-stdlib-test-evidence.json",
+    "core_retries": "language-core-retry-evidence.json",
+    "stdlib_retries": "standard-library-retry-evidence.json",
+    "postchange_log": "postfix-regression.log"
+  }
+}

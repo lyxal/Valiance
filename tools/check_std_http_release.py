@@ -35,6 +35,7 @@ REQUIRED_SUITES = frozenset((
     'tests.test_std_http_archive',
     'tests.test_std_http_instrumented_policy',
     'tests.test_std_http_reference_examples',
+    'tests.test_std_http_ci_workflows',
 ))
 REQUIRED_FILES = {
     'qualification': 'qualification.json',

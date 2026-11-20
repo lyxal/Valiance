@@ -24,6 +24,7 @@ _MAX_OUTBOUND_BYTES = 8192
 
 
 def _public_suffix_checker():
+    """Load an optional public-suffix checker for cookie domain validation."""
     name = ctypes.util.find_library('psl')
     if name is None:
         return None
@@ -55,17 +56,20 @@ class _Cookie:
 
 
 def _path_match(current: str, cookie_path: str) -> bool:
+    """Check whether a request path falls within a cookie's allowed path scope."""
     return current == cookie_path or (current.startswith(cookie_path) and
                                      (cookie_path.endswith('/') or current[len(cookie_path):].startswith('/')))
 
 
 def _default_path(path: str) -> str:
+    """Derive the default cookie path from the URL that set the cookie."""
     if not path.startswith('/') or path.count('/') < 2:
         return '/'
     return path.rsplit('/', 1)[0]
 
 
 def _is_ip(host: str) -> bool:
+    """Detect literal IP addresses, which cannot accept domain cookies."""
     try:
         ipaddress.ip_address(host)
         return True
@@ -77,11 +81,13 @@ class CookieJar:
     """A single owner's opt-in cookie store, never shared between clients."""
 
     def __init__(self) -> None:
+        """Initialize an independent client-scoped cookie store and expiration policy."""
         self._items: dict[tuple[str, str, str], _Cookie] = {}
         self._sequence = 0
         self._is_public_suffix = _public_suffix_checker()
 
     def _prune(self, now: float) -> None:
+        """Remove expired cookies before selecting or updating cookie state."""
         for key, cookie in tuple(self._items.items()):
             if cookie.expires is not None and cookie.expires <= now:
                 del self._items[key]
@@ -177,6 +183,7 @@ class CookieJar:
         return True
 
     def outbound(self, url: str) -> str | None:
+        """Select request cookies using domain, path, expiry, and Secure restrictions."""
         parsed = urlsplit(url)
         if parsed.hostname is None:
             return None
@@ -206,5 +213,6 @@ class CookieJar:
         return wire or None
 
     def __len__(self) -> int:
+        """Return the count of currently stored client cookies."""
         self._prune(time())
         return len(self._items)

@@ -29,12 +29,14 @@ class _ProcessUploadBudget:
     """
 
     def __init__(self, maximum: int = 64 * 1024 * 1024) -> None:
+        """Initialize the process-wide limit and lock protecting upload capacity reservations."""
         self.maximum = maximum
         self.used = 0
         self.peak = 0
         self._lock = Lock()
 
     def reserve(self, amount: int) -> None:
+        """Atomically reserve queued and pending upload capacity or reject an over-limit request."""
         if amount < 0:
             raise ValueError("negative HTTP upload reservation")
         with self._lock:
@@ -45,6 +47,7 @@ class _ProcessUploadBudget:
             self.peak = max(self.peak, self.used)
 
     def release(self, amount: int) -> None:
+        """Release a previously reserved upload budget, detecting accounting underflow."""
         with self._lock:
             if amount < 0 or amount > self.used:
                 raise RuntimeError("HTTP process upload budget underflow")
@@ -58,6 +61,7 @@ class UploadPipe:
     """One writer, one claimed transport reader, with strictly bounded queues."""
 
     def __init__(self, capacity: int, expected_bytes: int | None = None) -> None:
+        """Set up a bounded single-producer queue and reserve its maximum retained bytes."""
         if type(capacity) is not int or capacity < 1:
             raise HttpError(ErrorKind.INVALID_CONFIG, "upload capacity must be positive", "upload")
         if expected_bytes is not None and (type(expected_bytes) is not int or expected_bytes < 0):
@@ -94,6 +98,7 @@ class UploadPipe:
             self._finalizer = callback
 
     def _maybe_finalize(self) -> None:
+        """Finalize the pipe exactly once when its transport or both endpoints are released."""
         callback = None
         with self._lock:
             if (not self._finalized and
@@ -108,6 +113,7 @@ class UploadPipe:
             callback()
 
     def reserve(self) -> None:
+        """Claim the upload source for exactly one outbound transfer."""
         with self._lock:
             if self._failure is not None:
                 raise self._failure
@@ -116,12 +122,14 @@ class UploadPipe:
             self._claimed = True
 
     def attach(self, wake: Callable[[], None]) -> None:
+        """Register the transport wakeup used when new upload data becomes available."""
         with self._lock:
             if not self._claimed or self._wake is not None:
                 raise HttpError(ErrorKind.CLOSED, "upload source is not reserved for this transfer", "upload")
             self._wake = wake
 
     def write_async(self, data: bytes) -> Future[int]:
+        """Accept one upload chunk or return a future that awaits bounded queue capacity."""
         future: Future[int] = Future()
         wake: Callable[[], None] | None = None
         with self._lock:
@@ -153,6 +161,7 @@ class UploadPipe:
         return future
 
     def finish(self) -> None:
+        """Mark producer EOF, validating any declared upload length and waking the reactor."""
         wake: Callable[[], None] | None = None
         with self._lock:
             if self._failure is not None:
@@ -205,6 +214,7 @@ class UploadPipe:
         return result
 
     def abort(self, error: BaseException | None = None) -> None:
+        """Fail the upload, reject a pending producer write, and wake a paused transfer."""
         wake: Callable[[], None] | None = None
         pending: Future[int] | None = None
         with self._lock:
@@ -225,6 +235,7 @@ class UploadPipe:
             wake()
 
     def release_writer(self) -> None:
+        """Release writer ownership and abort an unfinished stream when abandoned."""
         with self._lock:
             self._writer_released = True
             finished = self._finished
@@ -233,6 +244,7 @@ class UploadPipe:
         self._maybe_finalize()
 
     def release_source(self) -> None:
+        """Release source ownership and abandon unclaimed uploads safely."""
         with self._lock:
             self._source_released = True
             claimed = self._claimed
@@ -241,6 +253,7 @@ class UploadPipe:
         self._maybe_finalize()
 
     def release_transfer(self, error: BaseException | None = None) -> None:
+        """Release the transport's lease and finalize the upload's reserved capacity."""
         with self._lock:
             self._transfer_done = True
             self._wake = None
@@ -249,6 +262,7 @@ class UploadPipe:
 
     @property
     def releasable(self) -> bool:
+        """Report whether ownership and transfer state permit final resource release."""
         with self._lock:
             return (self._transfer_done or
                     (not self._claimed and self._writer_released and
@@ -264,6 +278,7 @@ class MultipartUpload:
     """
 
     def __init__(self, segments: tuple[bytes | UploadPipe, ...]) -> None:
+        """Build multipart framing around buffered fields and exclusively owned stream sources."""
         sources = tuple(item for item in segments if isinstance(item, UploadPipe))
         if len({id(source) for source in sources}) != len(sources):
             raise HttpError(ErrorKind.INVALID_REQUEST,
@@ -282,6 +297,7 @@ class MultipartUpload:
                                         for item in segments))
 
     def reserve(self) -> None:
+        """Reserve multipart source leases and framing capacity for one transfer."""
         if self._reserved or self._released:
             raise HttpError(ErrorKind.CLOSED, "multipart stream has already been sent", "upload")
         # Charge the generated multipart framing and buffered fields before
@@ -304,6 +320,7 @@ class MultipartUpload:
         self._reserved = True
 
     def attach(self, wake: Callable[[], None]) -> None:
+        """Connect every streamed multipart part to a reactor wakeup callback."""
         if not self._reserved or self._attached or self._released:
             raise HttpError(ErrorKind.CLOSED, "multipart stream is not reserved", "upload")
         self._attached = True
@@ -311,6 +328,7 @@ class MultipartUpload:
             source.attach(wake)
 
     def read_native(self, maximum: int) -> bytes | None:
+        """Supply the next multipart framing or source bytes to the native upload callback."""
         if maximum <= 0:
             return b''
         while self._index < len(self._segments):
@@ -329,6 +347,7 @@ class MultipartUpload:
         return b''
 
     def release_transfer(self, error: BaseException | None = None) -> None:
+        """Release the multipart transport's leases after success, cancellation, or failure."""
         if self._released:
             return
         self._released = True

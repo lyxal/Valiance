@@ -30,6 +30,7 @@ class HttpError(Exception):
     stage: str = "request"
 
     def __str__(self) -> str:
+        """Render an HTTP error with its structured category and safe diagnostic message."""
         return f"{self.kind.value} ({self.stage}): {self.message}"
 
 

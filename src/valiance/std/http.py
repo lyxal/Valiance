@@ -76,6 +76,7 @@ _HTTP_DOCS = {
 
 
 def _nominal(name: str) -> T.Type:
+    """Resolve an HTTP nominal type name in the Valiance type registry."""
     return T.N(Symbol(name, ("http",)))
 
 
@@ -118,12 +119,14 @@ class _ClientEntry:
     closed: bool = False
 
     def lease(self) -> None:
+        """Retain a client lease while an accepted transfer is outstanding."""
         with _RESOURCE_LOCK:
             if self.closed:
                 raise HttpError(ErrorKind.CLOSED, "client is closed", "admission")
             self.active += 1
 
     def release(self) -> None:
+        """Release an active client lease, closing a client marked for shutdown if last."""
         should_close = False
         with _RESOURCE_LOCK:
             self.active -= 1
@@ -134,6 +137,7 @@ class _ClientEntry:
             self.client.close()
 
     def close(self) -> None:
+        """Stop accepting new requests and close the transport after active leases finish."""
         with _RESOURCE_LOCK:
             self.closed = True
             should_close = self.active == 0
@@ -147,6 +151,7 @@ def _vm(ctx: RuntimeContext) -> Any:
 
 
 def _default(ctx: RuntimeContext) -> _ClientEntry:
+    """Find or create the default HTTP client attached to the executing VM."""
     vm = _vm(ctx)
     entry = getattr(vm, "_http_default_client", None)
     if entry is None or entry.closed:
@@ -156,6 +161,7 @@ def _default(ctx: RuntimeContext) -> _ClientEntry:
 
 
 def _error(exc: BaseException) -> ObjectValue:
+    """Translate native and validation errors into a structured Valiance HTTP error value."""
     if isinstance(exc, HttpValueError):
         kind = "InvalidRequest"
     elif isinstance(exc, HttpError):
@@ -178,6 +184,7 @@ def _error(exc: BaseException) -> ObjectValue:
 
 
 def _optional(value: Any) -> Any | None:
+    """Unwrap a Valiance optional payload or return None for the empty variant."""
     if isinstance(value, ObjectValue) and value.type_name == "None":
         return None
     if isinstance(value, ObjectValue) and value.type_name == "Some":
@@ -186,16 +193,19 @@ def _optional(value: Any) -> Any | None:
 
 
 def _bool_option(value: Any) -> bool:
+    """Decode an optional Valiance Boolean into a native policy flag."""
     unwrapped = _optional(value)
     return False if unwrapped is None else bool(unwrapped)
 
 
 def _bytes_value(blob: bytes) -> TaggedValue:
+    """Wrap native bytes as the existing tagged Valiance byte-list representation."""
     return TaggedValue(ListValue([RuntimeNumber(n) for n in blob], runtime_rank=1),
                        frozenset({_BYTE_TAG}))
 
 
 def _bytes_raw(value: Any) -> bytes:
+    """Validate and convert a Valiance byte collection into native bytes."""
     if isinstance(value, TaggedValue):
         value = value.value
     try:
@@ -205,6 +215,7 @@ def _bytes_raw(value: Any) -> bytes:
 
 
 def _headers_raw(value: Any) -> core.Headers:
+    """Decode an HTTP header object while preserving ordering and repeated fields."""
     value = _optional(value)
     if value is None:
         return core.Headers()
@@ -220,6 +231,7 @@ def _headers_raw(value: Any) -> core.Headers:
 
 
 def _headers_value(value: core.Headers) -> ObjectValue:
+    """Wrap native HTTP headers as a Valiance runtime object."""
     names = ListValue([name for name, _ in value.pairs], runtime_rank=1)
     values = ListValue([item for _, item in value.pairs], runtime_rank=1)
     return ObjectValue("http.Headers", {
@@ -229,6 +241,7 @@ def _headers_value(value: core.Headers) -> ObjectValue:
 
 
 def _form_fields(value: Any) -> tuple[tuple[str, str], ...]:
+    """Extract ordered URL-encoded form fields from Valiance values."""
     try:
         if not isinstance(value, (tuple, list, ListValue)):
             raise HttpValueError("expected a list of FormField values")
@@ -243,6 +256,7 @@ def _form_fields(value: Any) -> tuple[tuple[str, str], ...]:
 
 
 def _multipart_parts(value: Any) -> tuple[core.MultipartPart, ...]:
+    """Validate multipart fields and file parts from Valiance objects."""
     if not isinstance(value, (tuple, list, ListValue)):
         raise HttpValueError("expected multipart parts")
     parts = []
@@ -267,6 +281,7 @@ def _multipart_parts(value: Any) -> tuple[core.MultipartPart, ...]:
 
 
 def _request_raw(value: Any) -> core.Request:
+    """Decode and validate a Valiance request into the transport-independent request model."""
     if not isinstance(value, ObjectValue) or value.type_name != "http.Request":
         raise HttpValueError("expected HTTP Request")
     body = _optional(value.fields["body"])
@@ -303,6 +318,7 @@ def _request_raw(value: Any) -> core.Request:
 
 
 def _response_value(response: transport.Response, vm: Any) -> ObjectValue:
+    """Register and wrap a response body with VM-owned resource tracking."""
     with _RESOURCE_LOCK:
         token = next(_IDS)
         _BODIES[token] = response.body
@@ -318,6 +334,7 @@ def _response_value(response: transport.Response, vm: Any) -> ObjectValue:
 
 
 def _transfer(entry: _ClientEntry, request: core.Request, vm: Any) -> tuple[Any, ...]:
+    """Create a scheduler-compatible external operation while retaining the client's lease."""
     entry.lease()
     try:
         future = entry.client.send_async(request, on_finish=entry.release)
@@ -331,6 +348,7 @@ def _transfer(entry: _ClientEntry, request: core.Request, vm: Any) -> tuple[Any,
 
 
 def _client_config(value: ObjectValue) -> core.ClientConfig:
+    """Decode validated Valiance client configuration into immutable native options."""
     if not isinstance(value, ObjectValue) or value.type_name != "http.ClientConfig":
         raise HttpValueError("expected HTTP ClientConfig")
     fields = value.fields
@@ -366,6 +384,7 @@ def _client_config(value: ObjectValue) -> core.ClientConfig:
 
 
 def _register_client(entry: _ClientEntry, ctx: RuntimeContext) -> int:
+    """Register a native client token and its VM shutdown ownership."""
     with _RESOURCE_LOCK:
         token = next(_IDS)
         _CLIENTS[token] = entry
@@ -398,6 +417,7 @@ def _configured_client(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any,
 
 @stdlib_element("nativeCloseClient", (T.Int,), (), exported=False)
 def _close_client(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Close a registered Valiance client token without double-freeing active leases."""
     del ctx
     with _RESOURCE_LOCK:
         entry = _CLIENTS.pop(int(args[0]), None)
@@ -409,6 +429,7 @@ def _close_client(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
 @stdlib_element("emptyHeaders", (), (_HEADERS,),
                 documentation=_HTTP_DOCS["emptyHeaders"])
 def _empty_headers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Construct the empty ordered HTTP header collection for Valiance callers."""
     del args, ctx
     return (_headers_value(core.Headers()),)
 
@@ -417,6 +438,7 @@ def _empty_headers(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
                 param_names=("headers", "name", "value"),
                 documentation=_HTTP_DOCS["withHeader"])
 def _with_header(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return headers with an additional validated field or an error result."""
     del ctx
     try:
         return (_headers_value(_headers_raw(args[0]).append(args[1], args[2])),)
@@ -428,6 +450,7 @@ def _with_header(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=("headers", "name"),
                 documentation=_HTTP_DOCS["headerValues"])
 def _header_values(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Expose every case-insensitive value of a header field to Valiance."""
     del ctx
     return (ListValue(list(_headers_raw(args[0]).values(args[1])), runtime_rank=1),)
 
@@ -436,6 +459,7 @@ def _header_values(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
                 (T.Result(T.String, _ERROR),), param_names=("url", "fields"),
                 documentation=_HTTP_DOCS["withQuery"])
 def _with_query(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Append encoded query parameters to a validated URL for Valiance callers."""
     del ctx
     try:
         return (core.url_with_query(args[0], _form_fields(args[1])),)
@@ -447,6 +471,7 @@ def _with_query(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=("client", "request"),
                 documentation=_HTTP_DOCS["send"])
 def _send(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Dispatch a Valiance request through its explicitly owned HTTP client."""
     try:
         client, request = args
         token = int(client.fields["token"])
@@ -461,6 +486,7 @@ def _send(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 def _default_request(ctx: RuntimeContext, method: str, url: str,
                      body: bytes | None = None, headers: core.Headers | None = None) -> tuple[Any, ...]:
+    """Send one request through the VM-scoped default client and error contract."""
     try:
         return _transfer(_default(ctx), core.Request(method, url, headers or core.Headers(), body), _vm(ctx))
     except (HttpValueError, HttpError) as exc:
@@ -470,18 +496,21 @@ def _default_request(ctx: RuntimeContext, method: str, url: str,
 @stdlib_element("get", (T.String,), (_RESULT_RESPONSE,), param_names=("url",), element_tags=_IO,
                 documentation=_HTTP_DOCS["get"])
 def _get(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a GET request through the VM-managed default HTTP client."""
     return _default_request(ctx, "GET", args[0])
 
 
 @stdlib_element("head", (T.String,), (_RESULT_RESPONSE,), param_names=("url",), element_tags=_IO,
                 documentation=_HTTP_DOCS["head"])
 def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a HEAD request through the VM-managed default HTTP client."""
     return _default_request(ctx, "HEAD", args[0])
 
 
 @stdlib_element("delete", (T.String,), (_RESULT_RESPONSE,), param_names=("url",), element_tags=_IO,
                 documentation=_HTTP_DOCS["delete"])
 def _delete(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a DELETE request through the VM-managed default HTTP client."""
     return _default_request(ctx, "DELETE", args[0])
 
 
@@ -489,6 +518,7 @@ def _delete(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=("url", "text"), element_tags=_IO,
                 documentation=_HTTP_DOCS["post"])
 def _post(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a UTF-8 text POST request through the VM-managed default HTTP client."""
     return _default_request(ctx, "POST", args[0], args[1].encode("utf-8"),
                             core.Headers((("Content-Type", "text/plain; charset=utf-8"),)))
 
@@ -497,6 +527,7 @@ def _post(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=("url", "text"), element_tags=_IO,
                 documentation=_HTTP_DOCS["put"])
 def _put(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a UTF-8 text PUT request through the VM-managed default HTTP client."""
     return _default_request(ctx, "PUT", args[0], args[1].encode("utf-8"),
                             core.Headers((("Content-Type", "text/plain; charset=utf-8"),)))
 
@@ -505,6 +536,7 @@ def _put(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 param_names=("url", "text"), element_tags=_IO,
                 documentation=_HTTP_DOCS["patch"])
 def _patch(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Send a UTF-8 text PATCH request through the VM-managed default HTTP client."""
     return _default_request(ctx, "PATCH", args[0], args[1].encode("utf-8"),
                             core.Headers((("Content-Type", "text/plain; charset=utf-8"),)))
 
@@ -535,6 +567,7 @@ def shutdown_vm(vm: Any) -> None:
 
 
 def _upload_source(token: Any) -> UploadPipe:
+    """Resolve an upload source token to its exclusively owned native pipe."""
     with _RESOURCE_LOCK:
         pipe = _UPLOADS.get(int(token))
     if pipe is None:
@@ -543,6 +576,7 @@ def _upload_source(token: Any) -> UploadPipe:
 
 
 def _release_upload(token: int) -> None:
+    """Release an upload registration after both endpoints or its transfer finish."""
     with _RESOURCE_LOCK:
         pipe = _UPLOADS.get(token)
         if pipe is not None and pipe.releasable:
@@ -564,6 +598,7 @@ def _prune_upload_tokens(vm: Any) -> None:
 
 
 def _close_body_registration(token: int, vm: Any) -> None:
+    """Drop a response-body token from VM ownership after closure."""
     with _RESOURCE_LOCK:
         body = _BODIES.pop(token, None)
     if body is not None:
@@ -575,6 +610,7 @@ def _close_body_registration(token: int, vm: Any) -> None:
 @stdlib_element("nativeUploadPipe", (T.Int, T.optional(T.Int)),
                 (T.Result(_UPLOAD_PAIR, _ERROR),), exported=False)
 def _new_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Allocate a bounded upload pipe and register both of its Valiance endpoints."""
     try:
         pipe = UploadPipe(int(args[0]), None if _optional(args[1]) is None else int(_optional(args[1])))
         with _RESOURCE_LOCK:
@@ -596,6 +632,7 @@ def _new_upload(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @stdlib_element("nativeWriteUpload", (T.Int, _BYTES),
                 (T.Result(T.Int, _ERROR),), exported=False, element_tags=_IO)
 def _upload_write(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Schedule a bounded asynchronous write through the upload producer."""
     del ctx
     try:
         pipe = _upload_source(args[0])
@@ -611,6 +648,7 @@ def _upload_write(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
 @stdlib_element("nativeFinishUpload", (T.Int,),
                 (T.Result(T.Int, _ERROR),), exported=False)
 def _upload_finish(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Mark EOF for an upload writer and validate declared length."""
     del ctx
     try:
         _upload_source(args[0]).finish()
@@ -621,6 +659,7 @@ def _upload_finish(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
 
 @stdlib_element("nativeDropUploadWriter", (T.Int,), (), exported=False)
 def _upload_drop_writer(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Release the writer endpoint, aborting unfinished uploads safely."""
     del ctx
     token = int(args[0])
     with _RESOURCE_LOCK:
@@ -632,6 +671,7 @@ def _upload_drop_writer(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any
 
 @stdlib_element("nativeDropUploadSource", (T.Int,), (), exported=False)
 def _upload_drop_source(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Release the source endpoint and any abandoned transfer resources."""
     del ctx
     token = int(args[0])
     with _RESOURCE_LOCK:
@@ -643,11 +683,13 @@ def _upload_drop_source(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any
 
 @stdlib_element("nativeCloseBody", (T.Int,), (), exported=False)
 def _close_body(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Close a Valiance response-body token and release its queued bytes."""
     _close_body_registration(int(args[0]), _vm(ctx))
     return ()
 
 
 def _body(token: Any) -> transport.ResponseBody:
+    """Extract the single-use response body handle from a Valiance response."""
     with _RESOURCE_LOCK:
         body = _BODIES.get(int(token))
     if body is None:
@@ -657,6 +699,7 @@ def _body(token: Any) -> transport.ResponseBody:
 
 @stdlib_element("nativeRead", (T.Int,), (_RESULT_READ,), exported=False, element_tags=_IO)
 def _read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Schedule one incremental, cancellation-aware response-body read."""
     del ctx
     try:
         body = _body(args[0])
@@ -672,6 +715,7 @@ def _read(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @stdlib_element("nativeReadAll", (T.Int, T.Int), (_RESULT_BYTES,), exported=False, element_tags=_IO)
 def _read_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Collect remaining response bytes up to a bounded maximum."""
     try:
         body = _body(args[0])
         size = int(args[1])
@@ -679,10 +723,12 @@ def _read_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         vm = _vm(ctx)
 
         def complete(blob: bytes) -> tuple[Any, ...]:
+            """Convert collected bytes into the requested Valiance body result."""
             _close_body_registration(token, vm)
             return (_bytes_value(blob),)
 
         def fail(exc: BaseException) -> tuple[Any, ...]:
+            """Translate aggregate-read failures into an HTTP result error."""
             _close_body_registration(token, vm)
             return (_error(exc),)
 
@@ -696,11 +742,13 @@ def _read_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _decode_error(exc: BaseException) -> ObjectValue:
+    """Map malformed text or JSON data into the public decode-error variant."""
     return ObjectValue("http.Error.Decode", {"message": str(exc)},
                        runtime_type=_ERROR_RUNTIME)
 
 
 def _consume_response(args: tuple[Any, ...], limit: int | None = None) -> tuple[transport.ResponseBody, int]:
+    """Take response-body ownership for one complete-body operation."""
     response = args[0]
     if not isinstance(response, ObjectValue) or response.type_name != "http.Response":
         raise HttpValueError("expected HTTP Response")
@@ -715,6 +763,7 @@ def _consume_response(args: tuple[Any, ...], limit: int | None = None) -> tuple[
 def _read_body_all(args: tuple[Any, ...], ctx: RuntimeContext,
                    decode: str | None = None, limit: int | None = None,
                    typename: str | None = None) -> tuple[Any, ...]:
+    """Schedule bounded body aggregation from an owned Valiance response."""
     try:
         body, budget = _consume_response(args, limit)
         token = int(args[0].fields["body"].fields["token"])
@@ -722,6 +771,7 @@ def _read_body_all(args: tuple[Any, ...], ctx: RuntimeContext,
         future = body.collect_async(budget)
 
         def complete(blob: bytes) -> tuple[Any, ...]:
+            """Convert the completed response bytes into their requested decoding form."""
             _close_body_registration(token, vm)
             if decode is None:
                 return (_bytes_value(blob),)
@@ -745,6 +795,7 @@ def _read_body_all(args: tuple[Any, ...], ctx: RuntimeContext,
                 return (_decode_error(exc),)
 
         def fail(exc: BaseException) -> tuple[Any, ...]:
+            """Return a structured error when response aggregation fails."""
             _close_body_registration(token, vm)
             return (_error(exc),)
 
@@ -758,6 +809,7 @@ def _read_body_all(args: tuple[Any, ...], ctx: RuntimeContext,
                 param_names=("response",),
                 documentation=_HTTP_DOCS["bytes"])
 def _response_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Consume a response into tagged Valiance bytes with a size cap."""
     return _read_body_all(args, ctx)
 
 
@@ -765,6 +817,7 @@ def _response_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
                 param_names=("response",),
                 documentation=_HTTP_DOCS["text"])
 def _response_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Consume a response into strictly decoded UTF-8 text."""
     return _read_body_all(args, ctx, decode="text")
 
 
@@ -772,6 +825,7 @@ def _response_text(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
                 param_names=("response",),
                 documentation=_HTTP_DOCS["json"])
 def _response_json(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Consume a response into the existing dynamic std.json.Json model."""
     return _read_body_all(args, ctx, decode="json")
 
 
@@ -780,4 +834,5 @@ def _response_json(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
 @stdlib_element("nativeJsonAs", (_RESPONSE, T.String),
                 (T.Result(T.V("T"), _ERROR),), exported=False, element_tags=_IO)
 def _response_json_as(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Consume and type-check JSON using Valiance's existing typed decoder."""
     return _read_body_all(args, ctx, decode="typed", typename=args[1])

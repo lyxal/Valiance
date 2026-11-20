@@ -69,6 +69,7 @@ def validate_url(url: str) -> str:
 
 
 def _validate_header(name: str, value: str) -> tuple[str, str]:
+    """Validate one HTTP field name and value against header-injection rules."""
     if not isinstance(name, str) or not _TOKEN.fullmatch(name):
         raise HttpValueError("HTTP header name must be an ASCII token")
     if not isinstance(value, str) or _BAD_CONTROL.search(value):
@@ -87,21 +88,26 @@ class Headers:
     pairs: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
+        """Normalize the immutable ordered collection while retaining duplicate header fields."""
         object.__setattr__(self, "pairs", tuple(_validate_header(*pair) for pair in self.pairs))
 
     def values(self, name: str) -> tuple[str, ...]:
+        """Return all case-insensitive matches without collapsing repeated HTTP fields."""
         return tuple(value for key, value in self.pairs if key.casefold() == name.casefold())
 
     def one(self, name: str) -> str | None:
+        """Return a unique header value, rejecting ambiguous repeated values."""
         values = self.values(name)
         if len(values) > 1:
             raise HttpValueError(f"ambiguous repeated header {name!r}")
         return values[0] if values else None
 
     def append(self, name: str, value: str) -> Headers:
+        """Return a new collection with an additional validated header pair."""
         return Headers((*self.pairs, _validate_header(name, value)))
 
     def replace(self, name: str, value: str) -> Headers:
+        """Return a new collection replacing all values of the named field."""
         return Headers(tuple(pair for pair in self.pairs if pair[0].casefold() != name.casefold()) + (_validate_header(name, value),))
 
 
@@ -136,6 +142,7 @@ class ClientConfig:
     ca_bundle: str | None = None
 
     def __post_init__(self) -> None:
+        """Reject invalid client limits and contradictory security or redirect policies."""
         for name in ("max_connections", "max_connections_per_origin", "max_pending", "body_buffer_bytes", "max_client_buffer_bytes", "max_response_header_bytes", "max_response_header_fields", "max_body_bytes", "max_buffered_upload_bytes", "connect_timeout_ms", "total_timeout_ms"):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
@@ -186,6 +193,7 @@ class Request:
     body: bytes | StreamingUpload | None = None
 
     def __post_init__(self) -> None:
+        """Validate the request method, URL, headers, and declared body length."""
         object.__setattr__(self, "method", validate_method(self.method))
         object.__setattr__(self, "url", validate_url(self.url))
         if not isinstance(self.headers, Headers):
@@ -255,6 +263,7 @@ def _disposition_value(value: str) -> str:
 
 
 def _multipart_boundary(boundary: str | None) -> str:
+    """Choose or validate a safe multipart MIME boundary token."""
     if boundary is None:
         boundary = 'valiance-' + token_hex(18)
     if not isinstance(boundary, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,70}', boundary):

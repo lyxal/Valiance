@@ -23,6 +23,7 @@ class ExternalOperation:
     abort: Callable[[], None]
 
     def resolve(self) -> tuple[Any, ...]:
+        """Convert the native future's terminal value or exception into VM stack results."""
         try:
             result = self.future.result()
         except BaseException as exc:
