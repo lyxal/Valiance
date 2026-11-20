@@ -14461,6 +14461,49 @@
         {
           "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
           "result": null,
+          "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$chunk = file.readChunkHandle($handle, 65536)\n$handle file.closeHandle\n$chunk"
+        }
+      ],
+      "module": "std.file",
+      "name": "readChunkHandle",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Files",
+          "description": [],
+          "examples": [
+            {
+              "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
+              "result": null,
+              "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$chunk = file.readChunkHandle($handle, 65536)\n$handle file.closeHandle\n$chunk"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Read a bounded chunk with Some bytes, or None at EOF."
+        }
+      ],
+      "overloads": [
+        "std.file.readChunkHandle(handle: Int, count: Int) -> #byte+ Int*?"
+      ],
+      "parameters": [],
+      "qualified_name": "std.file.readChunkHandle",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/file.py",
+      "summary": "Read a bounded chunk with Some bytes, or None at EOF."
+    },
+    {
+      "aliases": [],
+      "category": "Files",
+      "description": [],
+      "examples": [
+        {
+          "description": "Native read examples require example.txt to exist; native write examples modify it. Close handles after use.",
+          "result": null,
           "source": "import {std.file}\nimport {std.path}\n$handle = file.openRead(path.Path(\"example.txt\"))\n$handle file.readLineHandle\n$handle file.closeHandle"
         }
       ],
@@ -19515,6 +19558,775 @@
       "see_also": [],
       "source_path": "src/valiance/std/html.py",
       "summary": "Add validated inline CSS properties to an existing element."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\n$response = http.get(\"https://example.org/\") ?\nhttp.bytes($response) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "bytes",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\n$response = http.get(\"https://example.org/\") ?\nhttp.bytes($response) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Consume a response as bounded complete binary data."
+        }
+      ],
+      "overloads": [
+        "std.http.bytes(response: http.Response) -> Result[#byte+ Int*, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.bytes",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Consume a response as bounded complete binary data."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.delete(\"https://example.org/item\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "delete",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.delete(\"https://example.org/item\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send DELETE using a VM-lifetime-managed default client."
+        }
+      ],
+      "overloads": [
+        "std.http.delete(url: String) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.delete",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send DELETE using a VM-lifetime-managed default client."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.emptyHeaders"
+        }
+      ],
+      "module": "std.http",
+      "name": "emptyHeaders",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.emptyHeaders"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Create an empty ordered HTTP header collection."
+        }
+      ],
+      "overloads": [
+        "std.http.emptyHeaders() -> http.Headers"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.emptyHeaders",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Create an empty ordered HTTP header collection."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.get(\"https://example.org/\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "get",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.get(\"https://example.org/\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send GET using a VM-lifetime-managed default client."
+        }
+      ],
+      "overloads": [
+        "std.http.get(url: String) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.get",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send GET using a VM-lifetime-managed default client."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.head(\"https://example.org/\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "head",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.head(\"https://example.org/\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send HEAD using a VM-lifetime-managed default client."
+        }
+      ],
+      "overloads": [
+        "std.http.head(url: String) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.head",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send HEAD using a VM-lifetime-managed default client."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.headerValues(http.emptyHeaders, \"Set-Cookie\")"
+        }
+      ],
+      "module": "std.http",
+      "name": "headerValues",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.headerValues(http.emptyHeaders, \"Set-Cookie\")"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Look up all values of a case-insensitive HTTP field."
+        }
+      ],
+      "overloads": [
+        "std.http.headerValues(headers: http.Headers, name: String) -> String*"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.headerValues",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Look up all values of a case-insensitive HTTP field."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\n$response = http.get(\"https://example.org/data\") ?\nhttp.json($response) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "json",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\n$response = http.get(\"https://example.org/data\") ?\nhttp.json($response) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Consume a response as the dynamic std.json.Json hierarchy."
+        }
+      ],
+      "overloads": [
+        "std.http.json(response: http.Response) -> Result[json.Json, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.json",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Consume a response as the dynamic std.json.Json hierarchy."
+    },
+    {
+      "aliases": [],
+      "category": "Http",
+      "description": [
+        "Consume a JSON response and decode it to a checked Valiance type.",
+        "Uses std.json.decode[T] rules; response ownership is consumed once."
+      ],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http} http.jsonAs[Int](http.get(\"https://example.org/data\") ?) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "jsonAs",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Http",
+          "description": [
+            "Consume a JSON response and decode it to a checked Valiance type.",
+            "Uses std.json.decode[T] rules; response ownership is consumed once."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http} http.jsonAs[Int](http.get(\"https://example.org/data\") ?) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Final HTTP response whose body contains JSON.",
+              "name": "response"
+            }
+          ],
+          "returns": "A checked typed value or an HTTP transport/decoding error.",
+          "see_also": [],
+          "summary": "Consume a JSON response and decode it to a checked Valiance type."
+        }
+      ],
+      "overloads": [
+        "public define[T] jsonAs(response: Response) -> Result[T, Error]"
+      ],
+      "parameters": [
+        {
+          "description": "Final HTTP response whose body contains JSON.",
+          "name": "response"
+        }
+      ],
+      "qualified_name": "std.http.jsonAs",
+      "returns": "A checked typed value or an HTTP transport/decoding error.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.vlnc",
+      "summary": "Consume a JSON response and decode it to a checked Valiance type."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.openClient(http.ClientConfig) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "openClient",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.openClient(http.ClientConfig) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Create a configured shareable HTTP client."
+        }
+      ],
+      "overloads": [
+        "std.http.openClient(config: http.ClientConfig) -> Result[http.Client, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.openClient",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Create a configured shareable HTTP client."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.patch(\"https://example.org/item\", \"hello\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "patch",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.patch(\"https://example.org/item\", \"hello\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send UTF-8 text in a PATCH request."
+        }
+      ],
+      "overloads": [
+        "std.http.patch(url: String, text: String) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.patch",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send UTF-8 text in a PATCH request."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.post(\"https://example.org/item\", \"hello\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "post",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.post(\"https://example.org/item\", \"hello\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send UTF-8 text in a POST request."
+        }
+      ],
+      "overloads": [
+        "std.http.post(url: String, text: String) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.post",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send UTF-8 text in a POST request."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.put(\"https://example.org/item\", \"hello\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "put",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.put(\"https://example.org/item\", \"hello\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send UTF-8 text in a PUT request."
+        }
+      ],
+      "overloads": [
+        "std.http.put(url: String, text: String) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.put",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send UTF-8 text in a PUT request."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\n$client = http.Client\nhttp.send($client, http.Request(\"GET\", \"https://example.org/\")) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "send",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\n$client = http.Client\nhttp.send($client, http.Request(\"GET\", \"https://example.org/\")) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Send a validated request through a shareable client."
+        }
+      ],
+      "overloads": [
+        "std.http.send(client: http.Client, request: http.Request) -> Result[http.Response, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.send",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Send a validated request through a shareable client."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\n$response = http.get(\"https://example.org/\") ?\nhttp.text($response) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "text",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\n$response = http.get(\"https://example.org/\") ?\nhttp.text($response) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Consume a response as bounded, strictly decoded UTF-8 text."
+        }
+      ],
+      "overloads": [
+        "std.http.text(response: http.Response) -> Result[String, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.text",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Consume a response as bounded, strictly decoded UTF-8 text."
+    },
+    {
+      "aliases": [],
+      "category": "Http",
+      "description": [
+        "Create a bounded single-producer/single-consumer streaming upload pipe."
+      ],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http} http.uploadPipe(capacity=4096) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "uploadPipe",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "Http",
+          "description": [
+            "Create a bounded single-producer/single-consumer streaming upload pipe."
+          ],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http} http.uploadPipe(capacity=4096) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [
+            {
+              "description": "Optional total payload size; None uses streaming transfer framing.",
+              "name": "expectedBytes"
+            },
+            {
+              "description": "Maximum buffered upload bytes before the producer suspends.",
+              "name": "capacity"
+            }
+          ],
+          "returns": "Exclusive writer and source endpoints or a validation error.",
+          "see_also": [],
+          "summary": "Create a bounded single-producer/single-consumer streaming upload pipe."
+        }
+      ],
+      "overloads": [
+        "public define uploadPipe(expectedBytes: Int? = …, capacity: Int = …)"
+      ],
+      "parameters": [
+        {
+          "description": "Optional total payload size; None uses streaming transfer framing.",
+          "name": "expectedBytes"
+        },
+        {
+          "description": "Maximum buffered upload bytes before the producer suspends.",
+          "name": "capacity"
+        }
+      ],
+      "qualified_name": "std.http.uploadPipe",
+      "returns": "Exclusive writer and source endpoints or a validation error.",
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.vlnc",
+      "summary": "Create a bounded single-producer/single-consumer streaming upload pipe."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.withHeader(http.emptyHeaders, \"X-Test\", \"yes\") ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "withHeader",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.withHeader(http.emptyHeaders, \"X-Test\", \"yes\") ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Append an HTTP field without deleting repeated values."
+        }
+      ],
+      "overloads": [
+        "std.http.withHeader(headers: http.Headers, name: String, value: String) -> Result[http.Headers, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.withHeader",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Append an HTTP field without deleting repeated values."
+    },
+    {
+      "aliases": [],
+      "category": "HTTP",
+      "description": [],
+      "examples": [
+        {
+          "description": null,
+          "result": null,
+          "source": "import {std.http}\nhttp.withQuery(\"https://example.org/\", [http.FormField(\"page\", \"1\")]) ?"
+        }
+      ],
+      "module": "std.http",
+      "name": "withQuery",
+      "notes": [],
+      "overload_documentation": [
+        {
+          "category": "HTTP",
+          "description": [],
+          "examples": [
+            {
+              "description": null,
+              "result": null,
+              "source": "import {std.http}\nhttp.withQuery(\"https://example.org/\", [http.FormField(\"page\", \"1\")]) ?"
+            }
+          ],
+          "notes": [],
+          "parameters": [],
+          "returns": null,
+          "see_also": [],
+          "summary": "Append ordered query parameters to a validated HTTP URL."
+        }
+      ],
+      "overloads": [
+        "std.http.withQuery(url: String, fields: http.FormField*) -> Result[String, http.Error]"
+      ],
+      "parameters": [],
+      "qualified_name": "std.http.withQuery",
+      "returns": null,
+      "scope": "standard-library",
+      "see_also": [],
+      "source_path": "src/valiance/std/http.py",
+      "summary": "Append ordered query parameters to a validated HTTP URL."
     },
     {
       "aliases": [],

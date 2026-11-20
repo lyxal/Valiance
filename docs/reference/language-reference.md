@@ -9873,6 +9873,39 @@ $handle file.closeHandle
 ```
 Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
 
+### `std.file.readChunkHandle`
+
+Read a bounded chunk with Some bytes, or None at EOF.
+
+**Overloads**
+
+- `std.file.readChunkHandle(handle: Int, count: Int) -> #byte+ Int*?`
+
+  **Example**
+
+  ```vlnc
+  import {std.file}
+import {std.path}
+$handle = file.openRead(path.Path("example.txt"))
+$chunk = file.readChunkHandle($handle, 65536)
+$handle file.closeHandle
+$chunk
+  ```
+  Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
+
+
+**Example**
+
+```vlnc
+import {std.file}
+import {std.path}
+$handle = file.openRead(path.Path("example.txt"))
+$chunk = file.readChunkHandle($handle, 65536)
+$handle file.closeHandle
+$chunk
+```
+Native read examples require example.txt to exist; native write examples modify it. Close handles after use.
+
 ### `std.file.readLineHandle`
 
 Read a line, returning None on end of file.
@@ -12775,6 +12808,422 @@ html.withStyle(html.p("Hello"), dict{"color" => "red"})
 ```vlnc
 import {std.html}
 html.withStyle(html.p("Hello"), dict{"color" => "red"})
+```
+
+## std.http
+
+### `std.http.bytes`
+
+Consume a response as bounded complete binary data.
+
+**Overloads**
+
+- `std.http.bytes(response: http.Response) -> Result[#byte+ Int*, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+$response = http.get("https://example.org/") ?
+http.bytes($response) ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+$response = http.get("https://example.org/") ?
+http.bytes($response) ?
+```
+
+### `std.http.delete`
+
+Send DELETE using a VM-lifetime-managed default client.
+
+**Overloads**
+
+- `std.http.delete(url: String) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.delete("https://example.org/item") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.delete("https://example.org/item") ?
+```
+
+### `std.http.emptyHeaders`
+
+Create an empty ordered HTTP header collection.
+
+**Overloads**
+
+- `std.http.emptyHeaders() -> http.Headers`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.emptyHeaders
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.emptyHeaders
+```
+
+### `std.http.get`
+
+Send GET using a VM-lifetime-managed default client.
+
+**Overloads**
+
+- `std.http.get(url: String) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.get("https://example.org/") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.get("https://example.org/") ?
+```
+
+### `std.http.head`
+
+Send HEAD using a VM-lifetime-managed default client.
+
+**Overloads**
+
+- `std.http.head(url: String) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.head("https://example.org/") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.head("https://example.org/") ?
+```
+
+### `std.http.headerValues`
+
+Look up all values of a case-insensitive HTTP field.
+
+**Overloads**
+
+- `std.http.headerValues(headers: http.Headers, name: String) -> String*`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.headerValues(http.emptyHeaders, "Set-Cookie")
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.headerValues(http.emptyHeaders, "Set-Cookie")
+```
+
+### `std.http.json`
+
+Consume a response as the dynamic std.json.Json hierarchy.
+
+**Overloads**
+
+- `std.http.json(response: http.Response) -> Result[json.Json, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+$response = http.get("https://example.org/data") ?
+http.json($response) ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+$response = http.get("https://example.org/data") ?
+http.json($response) ?
+```
+
+### `std.http.jsonAs`
+
+Consume a JSON response and decode it to a checked Valiance type.
+
+**Overloads**
+
+- `public define[T] jsonAs(response: Response) -> Result[T, Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http} http.jsonAs[Int](http.get("https://example.org/data") ?) ?
+  ```
+
+
+Consume a JSON response and decode it to a checked Valiance type.
+
+Uses std.json.decode[T] rules; response ownership is consumed once.
+
+**Parameters**
+
+- `response` — Final HTTP response whose body contains JSON.
+
+**Returns:** A checked typed value or an HTTP transport/decoding error.
+
+**Example**
+
+```vlnc
+import {std.http} http.jsonAs[Int](http.get("https://example.org/data") ?) ?
+```
+
+### `std.http.openClient`
+
+Create a configured shareable HTTP client.
+
+**Overloads**
+
+- `std.http.openClient(config: http.ClientConfig) -> Result[http.Client, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.openClient(http.ClientConfig) ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.openClient(http.ClientConfig) ?
+```
+
+### `std.http.patch`
+
+Send UTF-8 text in a PATCH request.
+
+**Overloads**
+
+- `std.http.patch(url: String, text: String) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.patch("https://example.org/item", "hello") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.patch("https://example.org/item", "hello") ?
+```
+
+### `std.http.post`
+
+Send UTF-8 text in a POST request.
+
+**Overloads**
+
+- `std.http.post(url: String, text: String) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.post("https://example.org/item", "hello") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.post("https://example.org/item", "hello") ?
+```
+
+### `std.http.put`
+
+Send UTF-8 text in a PUT request.
+
+**Overloads**
+
+- `std.http.put(url: String, text: String) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.put("https://example.org/item", "hello") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.put("https://example.org/item", "hello") ?
+```
+
+### `std.http.send`
+
+Send a validated request through a shareable client.
+
+**Overloads**
+
+- `std.http.send(client: http.Client, request: http.Request) -> Result[http.Response, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+$client = http.Client
+http.send($client, http.Request("GET", "https://example.org/")) ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+$client = http.Client
+http.send($client, http.Request("GET", "https://example.org/")) ?
+```
+
+### `std.http.text`
+
+Consume a response as bounded, strictly decoded UTF-8 text.
+
+**Overloads**
+
+- `std.http.text(response: http.Response) -> Result[String, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+$response = http.get("https://example.org/") ?
+http.text($response) ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+$response = http.get("https://example.org/") ?
+http.text($response) ?
+```
+
+### `std.http.uploadPipe`
+
+Create a bounded single-producer/single-consumer streaming upload pipe.
+
+**Overloads**
+
+- `public define uploadPipe(expectedBytes: Int? = …, capacity: Int = …)`
+
+  **Example**
+
+  ```vlnc
+  import {std.http} http.uploadPipe(capacity=4096) ?
+  ```
+
+
+Create a bounded single-producer/single-consumer streaming upload pipe.
+
+**Parameters**
+
+- `expectedBytes` — Optional total payload size; None uses streaming transfer framing.
+- `capacity` — Maximum buffered upload bytes before the producer suspends.
+
+**Returns:** Exclusive writer and source endpoints or a validation error.
+
+**Example**
+
+```vlnc
+import {std.http} http.uploadPipe(capacity=4096) ?
+```
+
+### `std.http.withHeader`
+
+Append an HTTP field without deleting repeated values.
+
+**Overloads**
+
+- `std.http.withHeader(headers: http.Headers, name: String, value: String) -> Result[http.Headers, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.withHeader(http.emptyHeaders, "X-Test", "yes") ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.withHeader(http.emptyHeaders, "X-Test", "yes") ?
+```
+
+### `std.http.withQuery`
+
+Append ordered query parameters to a validated HTTP URL.
+
+**Overloads**
+
+- `std.http.withQuery(url: String, fields: http.FormField*) -> Result[String, http.Error]`
+
+  **Example**
+
+  ```vlnc
+  import {std.http}
+http.withQuery("https://example.org/", [http.FormField("page", "1")]) ?
+  ```
+
+
+**Example**
+
+```vlnc
+import {std.http}
+http.withQuery("https://example.org/", [http.FormField("page", "1")]) ?
 ```
 
 ## std.iterable
