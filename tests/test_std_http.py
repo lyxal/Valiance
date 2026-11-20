@@ -622,6 +622,24 @@ class HTTPTransportTests(ServerTestCase):
         self.assertEqual(closed.exception.kind, ErrorKind.CLOSED)
         self.assertEqual(called, [1])
 
+    def test_known_length_native_completion_before_writer_finish_is_safe(self):
+        """libcurl can complete after the last byte but before producer EOF."""
+        from valiance.std._http_body import _PROCESS_UPLOAD_BUDGET
+        with _PROCESS_UPLOAD_BUDGET._lock:
+            before = _PROCESS_UPLOAD_BUDGET.used
+        pipe = UploadPipe(4, expected_bytes=3)
+        finalized = []
+        pipe.set_finalizer(lambda: finalized.append(True))
+        pipe.reserve()
+        self.assertEqual(pipe.write_async(b'abc').result(), 3)
+        self.assertEqual(pipe.read_native(100), b'abc')
+        pipe.release_transfer()  # Native completion wins the race.
+        self.assertFalse(finalized)  # The producer still owns a live writer.
+        pipe.finish()            # Must not report Error.Closed.
+        pipe.finish()            # Idempotent.
+        self.assertEqual(finalized, [True])
+        self.assertEqual(_PROCESS_UPLOAD_BUDGET.used, before)
+
     def test_process_upload_budget_recovers_on_completed_and_cancelled_transfers(self):
         budget = _PROCESS_UPLOAD_BUDGET
         with budget._lock:

@@ -45,15 +45,15 @@ class StdHttpCIWorkflowTests(unittest.TestCase):
 
     def test_routine_ci_bypass_is_scoped_to_regressions_not_release(self):
         _, jobs = _workflow('std-http-qualification.yml')
-        self.assertIn("VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: '1'", jobs['qualification'])
+        self.assertRegex(jobs['qualification'], r'(?m)^      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: [\"\']?1[\"\']?\s*$')
         for name in ('linux-native-and-security-validation',
                      'linux-instrumented-libcurl-bindings'):
-            self.assertNotIn("VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: '1'", jobs[name])
+            self.assertNotRegex(jobs[name], r'(?m)^      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: [\"\']?1[\"\']?\s*$')
         _, regular = _workflow('tests.yml')
-        self.assertIn("VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: '1'", regular['tests'])
+        self.assertRegex(regular['tests'], r'(?m)^      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: [\"\']?1[\"\']?\s*$')
         for name, contents in regular.items():
             if name != 'tests':
-                self.assertNotIn("VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: '1'", contents)
+                self.assertNotRegex(contents, r'(?m)^      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: [\"\']?1[\"\']?\s*$')
 
     def test_commit_job_uses_bounded_suites_not_long_soaks(self):
         _, jobs = _workflow('std-http-qualification.yml')

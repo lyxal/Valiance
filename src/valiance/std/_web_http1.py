@@ -571,6 +571,12 @@ class _ConnectionHandler(socketserver.BaseRequestHandler):
                         return
                     finished = self._protocol_error(conn, tcp, exc)
                     return
+                except (OSError, TimeoutError):
+                    # Draining/forced shutdown can close a socket while a
+                    # handler is waiting for request-body bytes. That is an
+                    # expected peer/transport disconnect, not an application
+                    # error, and must not emit a spurious 500 or traceback.
+                    return
                 except Exception:
                     # An arbitrary application source can fail after headers
                     # commit; never emit a second HTTP response inside its body.

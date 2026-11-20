@@ -109,14 +109,19 @@ class H2Peer:
                 uploads: dict[int, bytearray] = {}
                 barrier: list[tuple[int, bytes]] = []
                 outbound: dict[int, bytes] = {}
+                goaway_sent = False
                 while not self.stop.is_set():
-                    terminate_connection = False
                     try:
                         buffer = stream.recv(32768)
                     except socket.timeout:
                         continue
                     if not buffer:
                         return
+                    if goaway_sent:
+                        # A peer may still acknowledge our SETTINGS or GOAWAY
+                        # while closing. h2 has transitioned to CLOSED and
+                        # correctly refuses to parse more incoming frames.
+                        continue
                     events = conn.receive_data(buffer)
                     for event in events:
                         if isinstance(event, h2.events.RequestReceived):
@@ -142,7 +147,12 @@ class H2Peer:
                                 conn.send_data(event.stream_id, b'bye', end_stream=True)
                                 conn.close_connection(error_code=0,
                                                       last_stream_id=event.stream_id)
-                                terminate_connection = True
+                                # Do not close the TLS socket immediately after
+                                # GOAWAY: the peer must still be able to receive
+                                # the final response DATA/END_STREAM cleanly.
+                                # The client should create a new connection for
+                                # its next request; this one is no longer reusable.
+                                goaway_sent = True
                                 continue
                             if path == '/reset-body':
                                 # Emit ordinary final headers followed by a
@@ -207,8 +217,6 @@ class H2Peer:
                     outgoing = conn.data_to_send()
                     if outgoing:
                         stream.sendall(outgoing)
-                    if terminate_connection:
-                        return
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, ssl.SSLError, OSError):
             pass  # Peer disconnect/cancellation is expected.
         except Exception as exc:

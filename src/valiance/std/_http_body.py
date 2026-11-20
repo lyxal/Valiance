@@ -75,6 +75,9 @@ class UploadPipe:
         self._read = 0
         self._waiting: tuple[bytes, Future[int]] | None = None
         self._finished = False
+        # Only a producer finish(), not an early native completion, satisfies
+        # the writer's ownership contract for unregistering a Valiance token.
+        self._producer_finished = False
         self._failure: BaseException | None = None
         self._claimed = False
         self._paused = False
@@ -98,16 +101,26 @@ class UploadPipe:
             self._finalizer = callback
 
     def _maybe_finalize(self) -> None:
-        """Finalize the pipe exactly once when its transport or both endpoints are released."""
+        """Release queue capacity promptly, but retain a live writer's token.
+
+        A known-length HTTP upload can succeed as soon as libcurl has read the
+        last byte, *before* the producing Valiance task calls ``finish``.
+        Releasing the native registration at transfer completion would make
+        that otherwise successful finish spuriously report Error.Closed.
+        The transport lease can be released immediately; the registration
+        stays until the exclusive writer is dropped.
+        """
         callback = None
         with self._lock:
-            if (not self._finalized and
-                    (self._transfer_done or
-                     (not self._claimed and self._writer_released and
-                      self._source_released))):
+            can_finalize = ((self._transfer_done and
+                             (self._producer_finished or self._writer_released)) or
+                            (not self._claimed and self._writer_released and
+                             self._source_released))
+            if can_finalize and not self._finalized:
                 self._finalized = True
                 callback = self._finalizer
-        if self._finalized:
+            release_budget = self._transfer_done or can_finalize
+        if release_budget:
             self._budget_release()
         if callback is not None:
             callback()
@@ -161,23 +174,29 @@ class UploadPipe:
         return future
 
     def finish(self) -> None:
-        """Mark producer EOF, validating any declared upload length and waking the reactor."""
+        """Mark producer EOF, validating the length and releasing a finished token.
+
+        For a known-length upload, libcurl may finish the transfer first.
+        Explicit producer finish() must still succeed and release the retained
+        native writer registration, instead of racing native completion.
+        """
         wake: Callable[[], None] | None = None
         with self._lock:
             if self._failure is not None:
                 raise self._failure
-            if self._finished:
-                return
-            if self._waiting is not None:
-                raise HttpError(ErrorKind.RESOURCE_LIMIT, "finish while write is pending", "upload")
-            if self.expected_bytes is not None and self._written != self.expected_bytes:
-                raise HttpError(ErrorKind.INVALID_REQUEST, "upload is shorter than declared content length", "upload")
-            self._finished = True
-            if self._paused:
-                self._paused = False
-                wake = self._wake
+            if not self._finished:
+                if self._waiting is not None:
+                    raise HttpError(ErrorKind.RESOURCE_LIMIT, "finish while write is pending", "upload")
+                if self.expected_bytes is not None and self._written != self.expected_bytes:
+                    raise HttpError(ErrorKind.INVALID_REQUEST, "upload is shorter than declared content length", "upload")
+                self._finished = True
+                if self._paused:
+                    self._paused = False
+                    wake = self._wake
+            self._producer_finished = True
         if wake is not None:
             wake()
+        self._maybe_finalize()
 
     def read_native(self, maximum: int) -> bytes | None:
         """Reactor-only; None signals curl pause, b'' means producer EOF."""
@@ -253,11 +272,27 @@ class UploadPipe:
         self._maybe_finalize()
 
     def release_transfer(self, error: BaseException | None = None) -> None:
-        """Release the transport's lease and finalize the upload's reserved capacity."""
+        """Release the transport lease without racing a known-length writer's EOF.
+
+        libcurl may complete a known-length upload before its producer invokes
+        finish(). If the entire declared body was read, that is a successful
+        terminal upload and finish() must remain idempotent. On failure or
+        incomplete transfers, pending writers still receive an error.
+        """
         with self._lock:
             self._transfer_done = True
             self._wake = None
-        self.abort(error or HttpError(ErrorKind.CLOSED, "upload transfer completed", "upload"))
+            successful = (error is None and self.expected_bytes is not None
+                          and self._read == self.expected_bytes
+                          and self._written == self.expected_bytes
+                          and self._waiting is None and self._failure is None)
+            if successful:
+                self._finished = True
+                self._chunks.clear()
+                self._buffered = 0
+        if not successful:
+            self.abort(error or HttpError(ErrorKind.CLOSED,
+                                          "upload transfer completed", "upload"))
         self._maybe_finalize()
 
     @property
