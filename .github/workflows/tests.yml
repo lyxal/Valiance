@@ -5,7 +5,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: "0 18 * * *"
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ jobs:
     # host's native libcurl. Test-only bypass avoids a broken system library
     # making every unrelated PR fail; release qualification rejects this flag.
     env:
-      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: '1'
+      VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL: "1"
     name: Tests (${{ matrix.suite }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
@@ -58,7 +58,7 @@ jobs:
           fi
       - name: Run test suite in parallel and collect timings
         timeout-minutes: 15
-        run: uv run --frozen --with websockets --with wsproto --with websocket-client python -m tools.test_suite --suite ${{ matrix.suite }} --shards 3 --shard ${{ matrix.shard }} --workers 4 --verbose --durations 20 --history-dir .ci-test-history --timings test-timings.json
+        run: uv run --frozen --with cryptography --with websockets --with wsproto --with websocket-client python -m tools.test_suite --suite ${{ matrix.suite }} --shards 3 --shard ${{ matrix.shard }} --workers 4 --verbose --durations 20 --history-dir .ci-test-history --timings test-timings.json
       - name: Upload test timing report
         if: always()
         uses: actions/upload-artifact@v4
