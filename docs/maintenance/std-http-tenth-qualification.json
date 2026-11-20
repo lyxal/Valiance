@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "qualification_scope": "two completed bounded batches on current platform; not stable-release signoff",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "python_314_or_later": false,
+  "unsupported_python_override": true,
+  "all_suites_passed": true,
+  "local_gate_passed": true,
+  "cross_platform_qualified": false,
+  "suites": [
+    {
+      "suite": "tests.test_std_http",
+      "outcome": "passed",
+      "tests_run": 94,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 17.691,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 94 tests in 15.515s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_http2",
+      "outcome": "passed",
+      "tests_run": 7,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.764,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 7 tests in 0.486s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_adversarial",
+      "outcome": "passed",
+      "tests_run": 7,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 4.695,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_adversarial"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 7 tests in 3.533s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_file_integration",
+      "outcome": "passed",
+      "tests_run": 40,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 13.29,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_file_integration"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 40 tests in 11.725s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_concurrency_execution",
+      "outcome": "passed",
+      "tests_run": 35,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.832,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_execution"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 35 tests in 1.386s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_web",
+      "outcome": "passed",
+      "tests_run": 88,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 103.655,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_web"
+      ],
+      "output_tail": "std.web completion logger callback failed\nstd.web completion logger callback failed\n----------------------------------------------------------------------\nRan 88 tests in 102.041s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_http_qualification",
+      "outcome": "passed",
+      "tests_run": 5,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.92,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_http_qualification"
+      ],
+      "output_tail": "[std.http] tests.test_std_http\n  passed (0.1s)\n[std.http] report: /tmp/tmpxj1kdq02/result.json (local gate: False)\n[std.http] tests.test_std_http\n  timeout (0.2s)\n[std.http] report: /tmp/tmptzo9pkhj/result.json (local gate: False)\n----------------------------------------------------------------------\nRan 5 tests in 1.600s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_concurrency_vm_suspension",
+      "outcome": "passed",
+      "tests_run": 6,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.485,
+      "timeout_seconds": 45.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_vm_suspension"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 6 tests in 0.251s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_programs",
+      "outcome": "passed",
+      "tests_run": 46,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 7.148,
+      "timeout_seconds": 45.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_programs"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 46 tests in 5.212s\n\nOK\n"
+    }
+  ],
+  "batches": [
+    {
+      "label": "primary bounded campaign",
+      "source": "std-http-tenth-base-qualification.json",
+      "suite_count": 7
+    },
+    {
+      "label": "additional runtime and program coverage",
+      "source": "std-http-tenth-additional-qualification.json",
+      "suite_count": 2
+    }
+  ],
+  "test_count": 328
+}

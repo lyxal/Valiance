@@ -1,0 +1,198 @@
+{
+  "schema": 2,
+  "qualification_scope": "current Linux environment; Python 3.14 cross-platform execution deferred to the user",
+  "completed_campaigns": [
+    {
+      "kind": "initial nine-suite bounded campaign",
+      "source": "std-http-qualification-initial.json",
+      "result": "one timing-only assertion failed; remaining eight suites passed"
+    },
+    {
+      "kind": "standalone bounded HTTP rerun after replacing wall-clock assertion with server concurrency barrier",
+      "source": "std-http-qualification-http-final.json",
+      "result": "passed"
+    }
+  ],
+  "python": "3.13.5",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python_314_or_later": false,
+  "unsupported_python_override": true,
+  "local_gate_passed": true,
+  "all_suites_passed": true,
+  "cross_platform_qualified": false,
+  "total_tests": 342,
+  "total_skipped": 0,
+  "suites": [
+    {
+      "suite": "tests.test_std_http",
+      "outcome": "passed",
+      "tests_run": 100,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 17.508,
+      "timeout_seconds": 90.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 100 tests in 15.673s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_http2",
+      "outcome": "passed",
+      "tests_run": 14,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.276,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 14 tests in 1.062s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_adversarial",
+      "outcome": "passed",
+      "tests_run": 8,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.201,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_adversarial"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 8 tests in 1.233s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_file_integration",
+      "outcome": "passed",
+      "tests_run": 40,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 17.25,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_file_integration"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 40 tests in 14.813s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_concurrency_execution",
+      "outcome": "passed",
+      "tests_run": 35,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 4.361,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_execution"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 35 tests in 1.721s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_concurrency_vm_suspension",
+      "outcome": "passed",
+      "tests_run": 6,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.014,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_vm_suspension"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 6 tests in 0.122s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_programs",
+      "outcome": "passed",
+      "tests_run": 46,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 5.532,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_programs"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 46 tests in 3.966s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_web",
+      "outcome": "passed",
+      "tests_run": 88,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 120.333,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_web"
+      ],
+      "output_tail": "std.web completion logger callback failed\nstd.web completion logger callback failed\n----------------------------------------------------------------------\nRan 88 tests in 118.314s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_http_qualification",
+      "outcome": "passed",
+      "tests_run": 5,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.947,
+      "timeout_seconds": 210.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_http_qualification"
+      ],
+      "output_tail": "[std.http] tests.test_std_http\n  passed (0.1s)\n[std.http] report: /tmp/tmp79fa4teb/result.json (local gate: False)\n[std.http] tests.test_std_http\n  timeout (0.2s)\n[std.http] report: /tmp/tmpdx394ext/result.json (local gate: False)\n----------------------------------------------------------------------\nRan 5 tests in 1.539s\n\nOK\n"
+    }
+  ],
+  "additional_checks": [
+    {
+      "scope": "targeted reference-documentation checks",
+      "passed": 3,
+      "source": "reference-check.log"
+    },
+    {
+      "scope": "resource-growth profile",
+      "source": "std-http-resource-profile.json",
+      "status": "passed"
+    },
+    {
+      "scope": "system native-dependency inspection",
+      "source": "std-http-native-dependencies.json",
+      "status": "passed"
+    }
+  ],
+  "caveat": "The passing suites were completed in separate bounded campaigns. Native sanitizers, full RFC/h2spec fuzzing, long-duration soak, full generated-reference suite, and OS packaging/security signoff are not proven."
+}

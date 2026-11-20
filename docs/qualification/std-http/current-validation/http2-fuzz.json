@@ -1,0 +1,33 @@
+{
+  "seed": 20261120,
+  "count_requested": 240,
+  "count_attempted": 240,
+  "cases_by_type": {
+    "uppercase_name": 11,
+    "connection_field": 18,
+    "missing_status": 11,
+    "corrupt_hpack": 11,
+    "duplicate_status": 11,
+    "pseudo_after_regular": 14,
+    "transfer_encoding": 8,
+    "bad_status": 9,
+    "response_method": 9,
+    "data_before_headers": 15,
+    "data_stream_zero": 14,
+    "headers_stream_zero": 14,
+    "headers_even_stream": 11,
+    "settings_on_stream": 16,
+    "settings_ack_payload": 10,
+    "ping_wrong_length": 13,
+    "continuation_unexpected": 11,
+    "zero_window_update": 14,
+    "rst_stream_zero": 12,
+    "invalid_padding": 8
+  },
+  "duration_seconds": 12.355,
+  "response_budget_remaining": 0,
+  "upload_budget_remaining": 0,
+  "problems": [],
+  "status": "passed",
+  "limitations": "Black-box mutated independent TLS/ALPN peer; no native library sanitizer or exhaustive RFC fuzz coverage"
+}

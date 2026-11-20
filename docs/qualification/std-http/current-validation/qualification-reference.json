@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "qualification_scope": "current platform only; not stable-release signoff",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "python_314_or_later": false,
+  "unsupported_python_override": true,
+  "all_suites_passed": true,
+  "local_gate_passed": true,
+  "cross_platform_qualified": false,
+  "suites": [
+    {
+      "suite": "tests.test_std_http_reference_examples",
+      "outcome": "passed",
+      "tests_run": 1,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 4.159,
+      "timeout_seconds": 90.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_reference_examples"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 1 test in 2.384s\n\nOK\n"
+    }
+  ]
+}

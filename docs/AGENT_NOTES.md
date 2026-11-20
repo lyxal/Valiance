@@ -21,6 +21,17 @@ For native functions with the same exported name, `stdlib_native.runtime_stdlib_
 
 Object field defaults are stored in portable constructor references. The niladic `\None` default is represented as a `None` bytecode sentinel and turned into a new `ObjectValue('None', {})` each time the VM constructs an object, including initializer paths. Do not use a process-shared owned ObjectValue as a constructor default; it would violate the ownership and refcount model. Empty-list defaults still need a separately designed typed literal/ownership representation.
 
+# Qualified nominal types in public standard-library variant fields
+
+A variant case defined in a standard-library module can appear to have the
+right list field but reject a constructor call when its element type uses an
+unqualified same-module nominal name. In `std.http`, `Form(fields: FormField+)`
+did not accept `[http.FormField(...)]`, whereas `Form(fields: http.FormField+)`
+did. For cross-declaration nominal fields of exported variants, use the
+fully qualified type name and compile-check constructor calls (not just the
+module import or the native function accepting that list type). The issue is
+most visible with nested variant fields and strongly typed object lists.
+
 # Associated native imports for standard-library objects
 
 `stdlib_native.NativeFunction.import_with` opts individual native overloads into
@@ -639,3 +650,15 @@ of JSON objects, keep the adapter in `std.json_iterable` and return a checked
 trait intersection from its factory, so namespace imports do not require a
 second direct import of the private adapter object. When changing core stdlib
 imports, check both linked bytecode sizes and source-free module loading.
+
+# Streaming a `std.file.ReadFile` into an HTTP upload producer
+
+`ReadFile` is `@nodup`: passing a stored `$reader` to `file.readBytes` while
+that variable remains available can materialize a second owner and raise a
+runtime `DuplicationFault`. An HTTP upload producer that fails before it closes
+or finishes its `UploadWriter` may leave its reactor transfer paused waiting
+for more bytes until the owning scope cancels it. When adding a file-to-upload
+adapter, make the file handle's transfer between reads explicit, ensure every
+error path aborts the writer/source, and test both compiled/serialized task
+execution and independent-server upload completion. Merely type-checking the
+producer does not establish its lifetime safety.

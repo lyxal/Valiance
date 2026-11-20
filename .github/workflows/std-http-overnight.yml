@@ -1,0 +1,46 @@
+name: std.http overnight release endurance (manual, self-hosted)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  twelve-hour-soak:
+    # Needs a self-hosted runner with Python >=3.14, psutil, libcurl >=8.23,
+    # nghttp2 and system trust configured. A 12h job does not fit ordinary
+    # hosted-runner job limits. Never use an old-libcurl bypass here.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 850
+    steps:
+      - uses: actions/checkout@v4
+      - name: Establish shipping native dependency provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${VALIANCE_HTTP_INSECURE_ALLOW_OLD_LIBCURL:-}"
+          mkdir -p overnight-evidence
+          python tools/check_std_http_native.py --report overnight-evidence/native.json
+      - name: Long-duration HTTP/1.1 mixed download, cancellation and shutdown test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/soak_std_http.py --duration-seconds 43200 --concurrency 64 \
+            --report overnight-evidence/http1-12h.json
+      - name: Independent HTTP/2 multiplexer stress
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/soak_std_http_http2.py --requests 10000 --concurrency 48 \
+            --report overnight-evidence/http2-soak.json
+      - name: Repeated-client native handle recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/profile_std_http_resources.py --clients-per-batch 45 --batches 10 \
+            --report overnight-evidence/resource-profile.json
+      - name: Upload evidence even if endurance fails
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: std-http-overnight-${{ github.run_id }}
+          path: overnight-evidence/
+          if-no-files-found: warn

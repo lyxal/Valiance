@@ -1,0 +1,22 @@
+{
+  "seed": 20261120,
+  "cases_requested": 1800,
+  "cases_completed": 1800,
+  "cases_by_type": {
+    "bad_field": 200,
+    "bad_status": 200,
+    "chunked_truncated": 200,
+    "fixed_truncated": 200,
+    "gzip_expansion": 200,
+    "header_bomb": 200,
+    "interim_103": 200,
+    "valid_http_error": 200,
+    "valid_success": 200
+  },
+  "duration_seconds": 2.133,
+  "response_budget_remaining": 0,
+  "upload_budget_remaining": 0,
+  "failures": [],
+  "status": "passed",
+  "limitations": "Targeted, deterministic raw-wire corpus; no HTTP/2 fuzzing, no allocator sanitizer."
+}

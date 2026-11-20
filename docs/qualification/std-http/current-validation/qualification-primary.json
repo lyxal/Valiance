@@ -1,0 +1,285 @@
+{
+  "schema": 1,
+  "qualification_scope": "current platform only; not stable-release signoff",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "python_314_or_later": false,
+  "unsupported_python_override": true,
+  "all_suites_passed": true,
+  "local_gate_passed": true,
+  "cross_platform_qualified": false,
+  "suites": [
+    {
+      "suite": "tests.test_std_http",
+      "outcome": "passed",
+      "tests_run": 100,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 27.087,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 100 tests in 25.073s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_http2",
+      "outcome": "passed",
+      "tests_run": 14,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.928,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 14 tests in 1.414s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_http2_adversarial",
+      "outcome": "passed",
+      "tests_run": 1,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 3.174,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2_adversarial"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 1 test in 1.391s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_http2_fuzz",
+      "outcome": "passed",
+      "tests_run": 2,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 5.154,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2_fuzz"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 2 tests in 3.473s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_http2_soak",
+      "outcome": "passed",
+      "tests_run": 1,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.402,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2_soak"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 1 test in 0.306s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_adversarial",
+      "outcome": "passed",
+      "tests_run": 8,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.395,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_adversarial"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 8 tests in 1.194s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_security_audit",
+      "outcome": "passed",
+      "tests_run": 11,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.623,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_security_audit"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 11 tests in 0.312s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_protocol_fuzz",
+      "outcome": "passed",
+      "tests_run": 2,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.146,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_protocol_fuzz"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 2 tests in 0.987s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_file_integration",
+      "outcome": "passed",
+      "tests_run": 40,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 15.737,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_file_integration"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 40 tests in 14.068s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_concurrency_execution",
+      "outcome": "passed",
+      "tests_run": 35,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.752,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_execution"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 35 tests in 1.308s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_concurrency_vm_suspension",
+      "outcome": "passed",
+      "tests_run": 6,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.492,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_vm_suspension"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 6 tests in 0.120s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_programs",
+      "outcome": "passed",
+      "tests_run": 46,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 6.485,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_programs"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 46 tests in 5.021s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_web",
+      "outcome": "passed",
+      "tests_run": 88,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 119.34,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_web"
+      ],
+      "output_tail": "std.web completion logger callback failed\nstd.web completion logger callback failed\n----------------------------------------------------------------------\nRan 88 tests in 117.648s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_http_qualification",
+      "outcome": "passed",
+      "tests_run": 5,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 3.257,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_http_qualification"
+      ],
+      "output_tail": "[std.http] tests.test_std_http\n  passed (0.1s)\n[std.http] report: /tmp/tmpe64h82s1/result.json (local gate: False)\n[std.http] tests.test_std_http\n  timeout (0.2s)\n[std.http] report: /tmp/tmpu7lzrhbs/result.json (local gate: False)\n----------------------------------------------------------------------\nRan 5 tests in 2.090s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_validation_gate",
+      "outcome": "passed",
+      "tests_run": 5,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.588,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_validation_gate"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 5 tests in 0.003s\n\nOK\n"
+    },
+    {
+      "suite": "tests.test_std_http_packaging",
+      "outcome": "passed",
+      "tests_run": 1,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.253,
+      "timeout_seconds": 200.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_packaging"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 1 test in 0.002s\n\nOK\n"
+    }
+  ]
+}

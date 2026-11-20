@@ -1,0 +1,47 @@
+{
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "compiler": "/usr/bin/gcc",
+  "sanitizer_requested": true,
+  "native_dependency_instrumented": false,
+  "scope": "native C multi probe and libcurl ABI; no coverage of Python ctypes callback code or uninstrumented shared libraries",
+  "compile_command": [
+    "/usr/bin/gcc",
+    "-std=c11",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-O1",
+    "-g",
+    "-fno-omit-frame-pointer",
+    "-fsanitize=address,undefined",
+    "/mnt/data/std-http-release-validation/Valiance-main/tools/native_std_http_probe.c",
+    "-o",
+    "/tmp/valiance-native-http-uz6yv_zg/probe",
+    "-lcurl"
+  ],
+  "returncode": 0,
+  "stderr_tail": "",
+  "native_results": {
+    "status": "passed",
+    "successful": 613,
+    "cancelled": 27,
+    "failures": 0,
+    "curl_sockaddr_addr_offset": 16,
+    "curl_sockaddr_size": 32,
+    "curl_off_t_size": 8,
+    "runtime_libcurl_version": "libcurl/8.14.1 OpenSSL/3.5.5 zlib/1.3.1 brotli/1.1.0 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.2 libssh2/1.11.1 nghttp2/1.64.0 nghttp3/1.8.0 librtmp/2.3 OpenLDAP/2.6.10"
+  },
+  "abi": {
+    "address_offset_python": 16,
+    "address_offset_c": 16,
+    "curl_off_t_size_c": 8,
+    "curl_off_t_size_python": 8,
+    "curl_sockaddr_size_python": 32,
+    "curl_sockaddr_size_c": 32,
+    "runtime_libcurl_version_c": "libcurl/8.14.1 OpenSSL/3.5.5 zlib/1.3.1 brotli/1.1.0 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.2 libssh2/1.11.1 nghttp2/1.64.0 nghttp3/1.8.0 librtmp/2.3 OpenLDAP/2.6.10",
+    "runtime_libcurl_version_python": "8.14.1",
+    "native_library_loaded": "libcurl.so.4"
+  },
+  "status": "passed"
+}

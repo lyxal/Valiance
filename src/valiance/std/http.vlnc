@@ -1,0 +1,229 @@
+import {std.file.#byte, std.json}
+
+#? Experimental streaming outbound HTTP client. Transport and client ownership
+#? are independent of the server-side std.web API.
+
+@errType public variant Error =>
+  InvalidRequest => public $message: String end
+  Network => public $message: String end
+  Timeout => public $message: String end
+  Limit => public $message: String end
+  Closed => public $message: String end
+  Unsupported => public $message: String end
+  Decode => public $message: String end
+end
+
+public object Headers =>
+  private $names: String+? = \None
+  private $values: String+? = \None
+end
+
+#? FormField keeps ordering and repeated keys for forms and URL queries.
+public object FormField =>
+  $name: String
+  $value: String
+end
+
+#? Buffered File values have a bounded size. StreamFile embeds an exclusive
+#? UploadSource and streams its bytes through lazily generated MIME framing.
+public variant MultipartPart =>
+  Text =>
+    public $name: String
+    public $value: String
+  end
+  File =>
+    public $name: String
+    public $filename: String
+    public $contentType: String
+    public $data: #byte+ Int+
+  end
+  #? File bytes are produced incrementally by a separate UploadWriter task.
+  StreamFile =>
+    public $name: String
+    public $filename: String
+    public $contentType: String
+    public $source: UploadSource
+  end
+end
+
+public variant RequestBody =>
+  Empty
+  Text => public $value: String end
+  Bytes => public $value: #byte+ Int+ end
+  Stream => public $source: UploadSource end
+  Form => public $fields: http.FormField+ end
+  Multipart => public $parts: http.MultipartPart+ end
+  #? Multipart framing is generated lazily; streamed parts are not buffered.
+  #? Each StreamFile source is single-use. Redirect replay is forbidden.
+  MultipartStream => public $parts: http.MultipartPart+ end
+end
+
+#? Host and HTTP framing are transport-controlled. An absent body has no bytes.
+public object Request =>
+  $method: String
+  $url: String
+  $headers: Headers? = \None
+  $body: RequestBody? = \None
+end
+
+#? Client policy is validated and copied when a Client is constructed.
+#? Redirects are opt-in, bounded and reject HTTPS-to-HTTP downgrade by default.
+#? The producer supplies streaming upload chunks through a bounded upload pipe.
+public object ClientConfig =>
+  $maxConnections: Int = 64
+  $maxConnectionsPerOrigin: Int = 8
+  $maxPending: Int = 1024
+  $bodyBufferBytes: Int = 262144
+  #? Client-wide cap on queued response body bytes (per-request caps still apply).
+  $maxClientBufferBytes: Int = 2097152
+  #? Maximum total response header bytes and fields accepted across a request.
+  $maxResponseHeaderBytes: Int = 131072
+  $maxResponseHeaderFields: Int = 256
+  $maxBodyBytes: Int = 16777216
+  $maxBufferedUploadBytes: Int = 16777216
+  $connectTimeoutMs: Int = 10000
+  #? Optional deadline to acquire a libcurl connection, including DNS/connect.
+  #? Requires libcurl 8.2+; a failure is reported at connection-acquisition.
+  $connectionAcquireTimeoutMs: Int? = \None
+  $totalTimeoutMs: Int = 60000
+  #? Optional maximum network read-idle interval after response headers arrive.
+  $readIdleTimeoutMs: Int? = \None
+  #? Optional deadline for stalled native upload progress (after progress starts).
+  $writeIdleTimeoutMs: Int? = \None
+  $followRedirects: (#boolean Int)? = \None
+  $maxRedirects: Int = 5
+  $allowDowngrade: (#boolean Int)? = \None
+  $enableCookies: (#boolean Int)? = \None
+  #? Optional exact scheme/host/port allowlist. Not DNS/IP filtering.
+  $allowedOrigins: String+? = \None
+  $requireHttps: (#boolean Int)? = \None
+  #? Opt-in defense against private/loopback/reserved IP targets and DNS rebinding.
+  #? Disables environment proxies and rejects explicitly configured proxies.
+  $denyNonPublicIps: (#boolean Int)? = \None
+  $proxy: String? = \None
+  $caBundle: String? = \None
+end
+
+#? The writer and source are separate exclusive resources so one task can
+#? produce while another waits for send. Destruction of an unfinished writer
+#? aborts its transfer instead of silently truncating the upload.
+@nodup("Upload writers must have exactly one owner")
+public object UploadWriter =>
+  private $token: Int
+
+  @returnAll public define write(chunk: #byte+ Int+) =>
+    $written = std.http.nativeWriteUpload($self.token, $chunk)
+    $self
+    $written
+  end
+
+  @returnAll public define finish =>
+    $finished = std.http.nativeFinishUpload($self.token)
+    $self
+    $finished
+  end
+
+  public define close =>
+    std.http.nativeDropUploadWriter($self.token)
+  end
+
+  public define ~UploadWriter =>
+    std.http.nativeDropUploadWriter($self.token)
+  end
+end
+
+@nodup("Upload sources can only be sent once")
+public object UploadSource =>
+  private $token: Int
+
+  public define close =>
+    std.http.nativeDropUploadSource($self.token)
+  end
+
+  public define ~UploadSource =>
+    std.http.nativeDropUploadSource($self.token)
+  end
+end
+
+@nodup("Upload pipe endpoints have independent linear ownership")
+public object UploadPipe =>
+  $writer: UploadWriter
+  $source: UploadSource
+end
+
+#? A known length causes libcurl to send Content-Length; None uses chunked
+#? framing in HTTP/1.1. Each writer chunk must fit within capacity.
+#? Optional arguments occupy the leftmost stack position in Valiance. The
+#? capacity is last so uploadPipe(4096) sets capacity, not expectedBytes.
+#?? Create a bounded single-producer/single-consumer streaming upload pipe.
+#?? @param expectedBytes Optional total payload size; None uses streaming transfer framing.
+#?? @param capacity Maximum buffered upload bytes before the producer suspends.
+#?? @returns Exclusive writer and source endpoints or a validation error.
+#?? @example import {std.http} http.uploadPipe(capacity=4096) ?
+public define uploadPipe(expectedBytes: Int? = \None, capacity: Int = 262144) =>
+  std.http.nativeUploadPipe($capacity, $expectedBytes)
+end
+
+#? One shareable logical client identity. Its final owner closes the connection
+#? pool; active transfer leases keep the reactor alive until completion.
+public object Client =>
+  private $token: Int = 0
+  define \Client =>
+    $self.token = std.http.nativeOpenClient
+  end
+  public define close =>
+    std.http.nativeCloseClient($self.token)
+  end
+  public define ~Client =>
+    std.http.nativeCloseClient($self.token)
+  end
+end
+
+#? Exclusive, one-consumer stream. The owner must be returned after each read;
+#? finalization closes an unread or partially read transfer.
+@nodup("A response body has one exclusive reader")
+public object ResponseBody =>
+  private $token: Int
+
+  @returnAll public define read =>
+    $part = std.http.nativeRead($self.token)
+    $self
+    $part
+  end
+
+  @returnAll public define readAll(limit: Int = 16777216) =>
+    $all = std.http.nativeReadAll($self.token, $limit)
+    $self
+    $all
+  end
+
+  public define close =>
+    std.http.nativeCloseBody($self.token)
+  end
+
+  public define ~ResponseBody =>
+    std.http.nativeCloseBody($self.token)
+  end
+end
+
+public object Response =>
+  $status: Int
+  $finalUrl: String
+  $protocol: String
+  $headers: Headers
+  $body: ResponseBody
+end
+
+#? One ordered, case-insensitive header lookup. Repeated fields are preserved.
+#? Native implementations for emptyHeaders, withHeader, headerValues, get,
+#? send, and body readers are published with this module.
+
+#? Decode an HTTP response with std.json.decode[T] checking rules.
+#?? Consume a JSON response and decode it to a checked Valiance type.
+#?? Uses std.json.decode[T] rules; response ownership is consumed once.
+#?? @param response Final HTTP response whose body contains JSON.
+#?? @returns A checked typed value or an HTTP transport/decoding error.
+#?? @example import {std.http} http.jsonAs[Int](http.get("https://example.org/data") ?) ?
+public define[T] jsonAs(response: Response) -> Result[T, Error] =>
+  std.http.nativeJsonAs($response, typeInfo[T].name)
+end

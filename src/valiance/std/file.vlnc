@@ -50,6 +50,15 @@ public object ReadFile =>
     swap
   end
 
+  #?? Read up to count bytes without requiring an exact number of bytes.
+  #?? @param count Maximum bytes to read (1..1048576).
+  #?? @returns The retained reader and Some nonempty bytes, or None at EOF.
+  @returnAll public define readChunk(count: Int = 65536) =>
+    std.file.readChunkHandle($self.handle, $count)
+    $self
+    swap
+  end
+
   @returnAll public define readAllBytes =>
     std.file.readAllBytesHandle($self.handle)
     $self

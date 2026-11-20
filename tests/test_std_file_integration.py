@@ -545,6 +545,38 @@ end''')
         self.assertEqual(raised.exception.__cause__.value.type_name, 'NotFoundFault')
         self.assertFalse(file_backend._handles)
 
+    def test_bounded_chunk_read_partial_eof_and_resource_release(self):
+        filename = os.path.join(self._temp.name, 'data.txt')
+        with open(filename, 'wb') as stream:
+            stream.write(b'\x00\xffabc')
+        result, _ = self._run(
+            f'$f = file.ReadFile(path.Path({self._path()}))\n'
+            '$(f, one) = file.readChunk($f, 3)\n'
+            '$(f, two) = file.readChunk($f, 3)\n'
+            '$(f, eof) = file.readChunk($f, 3)\n'
+            'file.close($f)\n$one $two $eof'
+        )
+        self.assertEqual([int(v) for v in result[0].fields['value'].value], [0, 255, 97])
+        self.assertEqual([int(v) for v in result[1].fields['value'].value], [98, 99])
+        self.assertEqual(result[2].type_name, 'None')
+        self.assertFalse(file_backend._handles)
+
+    def test_chunk_read_validation_and_text_mode_rejection(self):
+        with open(os.path.join(self._temp.name, 'data.txt'), 'wb') as stream:
+            stream.write(b'hello\nworld')
+        for count in (0, -1, 1048577):
+            with self.subTest(count=count):
+                with self.assertRaises(ValianceRuntimeError) as fault:
+                    self._run(f'file.ReadFile(path.Path({self._path()})) | file.readChunk {count}')
+                self.assertIn('RangeFault', str(fault.exception))
+                self.assertFalse(file_backend._handles)
+        with self.assertRaises(ValianceRuntimeError) as fault:
+            self._run(f'$f = file.ReadFile(path.Path({self._path()}))\n'
+                      '$(f, line) = file.readLine($f)\n'
+                      'file.readChunk($f, 2)')
+        self.assertIn('RangeFault', str(fault.exception))
+        self.assertFalse(file_backend._handles)
+
     def test_exact_read_eof_is_an_unexpected_eof_panic_and_closes(self):
         p = os.path.join(self._temp.name, 'data.txt')
         with open(p, 'wb') as stream:

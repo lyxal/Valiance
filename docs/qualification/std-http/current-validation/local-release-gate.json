@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "qualification_level": "single-platform instrumented local gate (NOT independent security or cross-platform certification)",
+  "python_314_validation": "deferred to user",
+  "sanitizer_scope": "probe C harness instrumented; distributed libcurl/TLS and ctypes callbacks not instrumented",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "required_suite_count": 17,
+  "observed_qualified_suites": 17,
+  "observed_tests": 366,
+  "evidence": {
+    "qualification": true,
+    "http1_fuzz": true,
+    "http2_fuzz": true,
+    "http2_soak": true,
+    "native_asan": true,
+    "native_dependency": true,
+    "packaging": true,
+    "python_coverage": true,
+    "resource_profile": true,
+    "soak": true
+  },
+  "remaining_independent_signoffs": [
+    "instrumented build of the exact shipped libcurl/OpenSSL and ctypes adapter",
+    "external RFC 9113/h2spec interoperability and fuzz audit",
+    "third-party DNS/proxy/SSRF and credential-security review",
+    "production-network long-duration soak and platform-specific package/license/trust-store signoff",
+    "Python 3.14 validation (user-deferred)"
+  ],
+  "problems": []
+}

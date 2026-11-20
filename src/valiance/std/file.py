@@ -141,6 +141,28 @@ def _read_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (TaggedValue(ListValue([RuntimeNumber(b) for b in _handle(args[0]).read_bytes(int(args[1]))], runtime_rank=1), _BYTE_TAGS),)
 
 
+@stdlib_element('readChunkHandle', (T.Int, T.Int), (T.optional(_BYTE_LIST),),
+                param_names=('handle', 'count'))
+def _read_chunk(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read a bounded raw chunk; return None on EOF and Some otherwise."""
+    del ctx
+    try:
+        data = _handle(args[0]).read_chunk(int(args[1]))
+    except (ValueError, OSError) as exc:
+        # A failed byte-stream operation invalidates this native handle. VM
+        # failure paths can unwind before the owned ReadFile destructor runs;
+        # reclaim the descriptor here and leave subsequent close idempotent.
+        with _handle_lock:
+            failed = _handles.pop(int(args[0]), None)
+        if failed is not None:
+            failed.close()
+        raise
+    if data is None:
+        return (ObjectValue('None', {}),)
+    return (ObjectValue('Some', {'value': TaggedValue(
+        ListValue([RuntimeNumber(b) for b in data], runtime_rank=1), _BYTE_TAGS)}),)
+
+
 @stdlib_element('readAllBytesHandle', (T.Int,), (_BYTE_LIST,), param_names=('handle',))
 def _read_all_bytes(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return all remaining raw bytes as a byte-tagged language list."""
@@ -198,6 +220,7 @@ _FILE_DOCS = {
     'readLinesHandle': 'Read all remaining lines.',
     'readTextHandle': 'Read all remaining decoded text.',
     'readBytesHandle': 'Read exactly the requested number of bytes.',
+    'readChunkHandle': 'Read a bounded chunk with Some bytes, or None at EOF.',
     'readAllBytesHandle': 'Read all remaining raw bytes.',
     'writeTextHandle': 'Write text using the selected encoding.',
     'writeLineHandle': 'Write text followed by a single LF newline.',
@@ -267,6 +290,12 @@ import {std.path}
 $handle = file.openRead(path.Path("example.txt"))
 $handle 2 file.readBytesHandle
 $handle file.closeHandle""",
+    'readChunkHandle': """import {std.file}
+import {std.path}
+$handle = file.openRead(path.Path("example.txt"))
+$chunk = file.readChunkHandle($handle, 65536)
+$handle file.closeHandle
+$chunk""",
     'readAllBytesHandle': """import {std.file}
 import {std.path}
 $handle = file.openRead(path.Path("example.txt"))

@@ -60,6 +60,10 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   shape discovery, and category metadata.
 - [Reflection implementation status](reflection-implementation.md) maps completed
   support and remaining work to the design specification's R0–R6 stages.
+- [Outbound `std.http` implementation record](std-http.md) describes the release-candidate libcurl-multi transport, scheduler suspension, ownership invariants, supported API and remaining release requirements. The [bounded qualification runner](../../tools/qualify_std_http.py) produces per-suite evidence and enforces timeouts. The [instrumented release-validation guide](../qualification/std-http/RELEASE_VALIDATION.md) documents the native sanitizer, HTTP/2 malformed-frame, fuzz, soak, packaging and evidence-gating checks. The [design and status specification](../Valiance-std-http-design-specification-v1.0.md) contains the public API catalogue, threat model and verification matrix.
+- [HTTP native dependency and packaging review](std-http-native-dependencies.md)
+  records the required libcurl features, TLS trust-store responsibility, license
+  review, and the executable native dependency inspector.
 - [Web implementation record](web.md) consolidates implementation history,
   feature coverage, protocol completion gates, qualification evidence, and
   remaining work for `std.web`.

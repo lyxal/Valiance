@@ -1,0 +1,15 @@
+{
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python_trust_default": "DefaultVerifyPaths(cafile='/etc/ssl/certs/ca-certificates.crt', capath='/usr/lib/ssl/certs', openssl_cafile_env='SSL_CERT_FILE', openssl_cafile='/usr/lib/ssl/cert.pem', openssl_capath_env='SSL_CERT_DIR', openssl_capath='/usr/lib/ssl/certs')",
+  "library_lookup": "libcurl.so.4",
+  "outcome": "passed",
+  "library_loaded": "libcurl.so.4",
+  "libcurl_version": "8.14.1",
+  "version_number": "8.14.1",
+  "tls_backend": "OpenSSL/3.5.5",
+  "zlib_version": "1.3.1",
+  "ssl_feature": true,
+  "http2_feature": true,
+  "connection_identity_supported": true
+}

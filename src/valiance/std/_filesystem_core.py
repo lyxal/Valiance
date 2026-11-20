@@ -148,6 +148,20 @@ class File:
             raise EOFError(f'expected {count} bytes, received {len(data)}')
         return data
 
+    def read_chunk(self, count: int) -> bytes | None:
+        """Read at most count bytes, returning None only at physical EOF.
+
+        The bounded chunk operation is distinct from read_bytes' exact-read
+        contract and must never silently switch from decoded text to bytes.
+        """
+        self._readable()
+        if count <= 0 or count > 1_048_576:
+            raise ValueError('chunk size must be between 1 and 1048576 bytes')
+        if self._pending_text or not self._first_text:
+            raise ValueError('cannot switch from text reads to byte reads')
+        data = self._stream.read(count)
+        return data if data else None
+
     def read_all_bytes(self) -> bytes:
         """Read all remaining raw bytes, rejecting reads after text decoding begins."""
         self._readable()

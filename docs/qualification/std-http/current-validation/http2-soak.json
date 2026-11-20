@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "requests_requested": 3000,
+  "requests_submitted": 3000,
+  "completed_body_reads": 2770,
+  "cancelled_before_headers": 131,
+  "early_close": 99,
+  "independent_peer_streams_observed": 2869,
+  "independent_peer_connections_observed": 1,
+  "duration_seconds": 2.042,
+  "remaining_reactor_threads": 0,
+  "remaining_response_bytes": 0,
+  "remaining_upload_bytes": 0,
+  "problems": [],
+  "limitations": "Local hyper-h2 peer only, not a native memory sanitizer or RFC 9113 exhaustive test."
+}

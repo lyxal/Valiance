@@ -53,6 +53,7 @@ from valiance.runtime.concurrency import (
     TaskYield, WaitDependency, ExclusiveWaiter,
 )
 from valiance.runtime.protected import GuardedValue, ProtectedOperation
+from valiance.runtime.external_io import ExternalOperation
 from valiance.runtime.transfer import require_task_transfer
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
@@ -602,6 +603,15 @@ class _NativeCallState:
 
 @dataclass(frozen=True, slots=True)
 class _ActivationNativeCall:
+    state: _NativeCallState
+    registration: SuspensionRegistration
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationExternalOperation:
+    """Cancellable foreign event completed on the scheduler thread."""
+
+    operation: ExternalOperation
     state: _NativeCallState
     registration: SuspensionRegistration
 
@@ -1252,6 +1262,12 @@ class VirtualMachine:
         if self._closed:
             return
         self._closed = True
+        if (getattr(self, "_http_default_client", None) is not None
+                or getattr(self, "_http_client_tokens", None)
+                or getattr(self, "_http_body_tokens", None)
+                or getattr(self, "_http_upload_tokens", None)):
+            from valiance.std.http import shutdown_vm
+            shutdown_vm(self)
         self._native_executor.shutdown(wait=wait, cancel_futures=True)
 
     def __enter__(self) -> "VirtualMachine":
@@ -3016,6 +3032,62 @@ class VirtualMachine:
             activation.ip = ip
         return event
 
+    def _suspend_external_result(
+        self, activation: _Activation, ip: int,
+    ) -> _ActivationExternalOperation | None:
+        """Suspend on an external future without blocking other Valiance tasks."""
+        stack = activation.frame.stack
+        if not stack or not isinstance(stack[-1], ExternalOperation):
+            return None
+        operation = stack.pop()
+        if self.scheduler.current_task is None:
+            # A root request can depend on a spawned upload producer. Drive
+            # other runnable activations while awaiting its native future;
+            # blocking here would deadlock the single cooperative executor.
+            registration = self.scheduler.register_external(lambda: None, waitable=True)
+
+            def completed(_future: Future[Any]) -> None:
+                self.scheduler.enqueue_external_completion(registration.fire)
+
+            operation.future.add_done_callback(completed)
+            try:
+                self.scheduler.run_until(operation.future.done)
+            except BaseException:
+                operation.abort()
+                raise
+            finally:
+                registration.cancel()
+            stack.extend(operation.resolve())
+            return None
+        if self._closed:
+            operation.abort()
+            raise RuntimeError("virtual machine is closed")
+        state = _NativeCallState()
+        owner = self.scheduler.current_task
+        registration = self.scheduler.register_external(
+            lambda owner=owner: self.scheduler.schedule(owner), waitable=True,
+        )
+        event = _ActivationExternalOperation(operation, state, registration)
+        activation.pending_concurrency = event
+        activation.ip = ip
+
+        def completed(_future: Future[Any]) -> None:
+            """Never manipulate VM values on the transport thread."""
+            def publish() -> None:
+                if state.abandoned or not registration.active:
+                    return
+                try:
+                    state.result = operation.resolve()
+                except BaseException as exc:
+                    state.error = exc
+                state.completed = True
+                registration.fire()
+
+            self.scheduler.enqueue_external_completion(publish)
+
+        operation.future.add_done_callback(completed)
+        return event
+
     def _drive_frames(self, root: _Activation) -> list[Any]:
         """Drive bytecode activations without nesting Python function calls."""
         frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [(root, None)]
@@ -3086,6 +3158,17 @@ class VirtualMachine:
                     continue
                 if isinstance(event, _ActivationQuantumYield):
                     yield TaskYield("instruction budget")
+                    continue
+                if isinstance(event, _ActivationExternalOperation):
+                    def cancel_external(event=event) -> None:
+                        """Abort underlying network activity before dropping delivery."""
+                        event.state.abandoned = True
+                        event.registration.cancel()
+                        event.operation.abort()
+                    yield TaskBlocked(
+                        "external I/O", cancel_external,
+                        (WaitDependency("external", event.registration.identifier, "external I/O"),),
+                    )
                     continue
                 if isinstance(event, _ActivationNativeCall):
                     def cancel_native(event=event) -> None:
@@ -3200,6 +3283,14 @@ class VirtualMachine:
                 if pending_call is not None and pending_call.protected_scope is not None:
                     try:
                         pending_call.protected_scope.close()
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                if isinstance(activation.pending_concurrency, _ActivationExternalOperation):
+                    waiting = activation.pending_concurrency
+                    waiting.state.abandoned = True
+                    waiting.registration.cancel()
+                    try:
+                        waiting.operation.abort()
                     except BaseException as exc:
                         cleanup_errors.append(exc)
                 if isinstance(activation.pending_concurrency, _ActivationProtectedWait):
@@ -3688,7 +3779,16 @@ class VirtualMachine:
                 return request
             ip += 1
             activation.ip = ip
-        if isinstance(pending, _ActivationNativeCall):
+        if isinstance(pending, _ActivationExternalOperation):
+            if not pending.state.completed:
+                return pending
+            activation.pending_concurrency = None
+            if pending.state.error is not None:
+                raise pending.state.error
+            frame.stack.extend(pending.state.result or ())
+            ip += 1
+            activation.ip = ip
+        elif isinstance(pending, _ActivationNativeCall):
             if not pending.state.completed:
                 return pending
             activation.pending_concurrency = None
@@ -4006,6 +4106,9 @@ class VirtualMachine:
                                 protected_event = self._suspend_protected_result(activation, ip)
                                 if protected_event is not None:
                                     return protected_event
+                                external_event = self._suspend_external_result(activation, ip)
+                                if external_event is not None:
+                                    return external_event
                                 self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
@@ -4078,6 +4181,9 @@ class VirtualMachine:
                                 protected_event = self._suspend_protected_result(activation, ip)
                                 if protected_event is not None:
                                     return protected_event
+                                external_event = self._suspend_external_result(activation, ip)
+                                if external_event is not None:
+                                    return external_event
                                 self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
@@ -6178,7 +6284,7 @@ class VirtualMachine:
         function: FunctionValue,
     ) -> bool:
         """Return whether a proved leaf can bypass activation scheduling."""
-        if function.code.requires_specialization:
+        if function.code.requires_specialization or function.code.element_tags:
             return False
         if function.direct_leaf is None:
             direct_leaf = True
@@ -6211,6 +6317,10 @@ class VirtualMachine:
                     try:
                         overload = _linked_builtin_overload(value, reference)
                     except RuntimeError:
+                        direct_leaf = False
+                        break
+                    if any(tag.name.text == "IO" and not tag.absent
+                           for tag in overload.signature.element_tags):
                         direct_leaf = False
                         break
                 elif (

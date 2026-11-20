@@ -1,0 +1,261 @@
+{
+  "schema": 2,
+  "release": "candidate; no formal stable-release signoff",
+  "scope": "Local Linux / Python 3.13 development override; Python 3.14 deferred to user",
+  "source_built_from": "Valiance-std-http-release-hardening.zip",
+  "local_regression_status": "passed",
+  "qualified_suite_count": 12,
+  "unique_tests_passed": 356,
+  "failures": 0,
+  "skips": 0,
+  "timeouts": 0,
+  "single_uninterrupted_campaign": false,
+  "campaigns": [
+    {
+      "name": "initial-complete-regression",
+      "qualified_suites": 11,
+      "tests": 355,
+      "all_passed": true,
+      "note": "All original 11 suites passed, including std.web (88 tests)."
+    },
+    {
+      "name": "post-hardening-focused-rerun",
+      "qualified_suites": 3,
+      "tests": 112,
+      "all_passed": true,
+      "note": "HTTP, security and new malicious HTTP/2 tests repeated against final sources."
+    }
+  ],
+  "suites": [
+    {
+      "suite": "tests.test_std_http",
+      "outcome": "passed",
+      "tests_run": 100,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 20.117,
+      "timeout_seconds": 90.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 100 tests in 17.762s\n\nOK\n",
+      "campaign": "post-hardening-focused-rerun"
+    },
+    {
+      "suite": "tests.test_std_http_http2",
+      "outcome": "passed",
+      "tests_run": 14,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.439,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 14 tests in 1.108s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_std_http_adversarial",
+      "outcome": "passed",
+      "tests_run": 8,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.85,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_adversarial"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 8 tests in 1.262s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_std_http_security_audit",
+      "outcome": "passed",
+      "tests_run": 11,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.694,
+      "timeout_seconds": 90.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_security_audit"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 11 tests in 0.311s\n\nOK\n",
+      "campaign": "post-hardening-focused-rerun"
+    },
+    {
+      "suite": "tests.test_std_http_protocol_fuzz",
+      "outcome": "passed",
+      "tests_run": 2,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.075,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_protocol_fuzz"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 2 tests in 0.884s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_std_file_integration",
+      "outcome": "passed",
+      "tests_run": 40,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 14.968,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_file_integration"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 40 tests in 13.194s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_concurrency_execution",
+      "outcome": "passed",
+      "tests_run": 35,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.714,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_execution"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 35 tests in 1.361s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_concurrency_vm_suspension",
+      "outcome": "passed",
+      "tests_run": 6,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 2.611,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_concurrency_vm_suspension"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 6 tests in 0.267s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_programs",
+      "outcome": "passed",
+      "tests_run": 46,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 9.269,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_programs"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 46 tests in 6.774s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_std_web",
+      "outcome": "passed",
+      "tests_run": 88,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 143.468,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_web"
+      ],
+      "output_tail": "std.web completion logger callback failed\nstd.web completion logger callback failed\n----------------------------------------------------------------------\nRan 88 tests in 141.359s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_http_qualification",
+      "outcome": "passed",
+      "tests_run": 5,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 3.255,
+      "timeout_seconds": 165.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_http_qualification"
+      ],
+      "output_tail": "[std.http] tests.test_std_http\n  passed (0.1s)\n[std.http] report: /tmp/tmpzzhfs6xs/result.json (local gate: False)\n[std.http] tests.test_std_http\n  timeout (0.2s)\n[std.http] report: /tmp/tmp30l_nalf/result.json (local gate: False)\n----------------------------------------------------------------------\nRan 5 tests in 2.098s\n\nOK\n",
+      "campaign": "initial-complete-regression"
+    },
+    {
+      "suite": "tests.test_std_http_http2_adversarial",
+      "outcome": "passed",
+      "tests_run": 1,
+      "skipped": 0,
+      "exit_code": 0,
+      "duration_seconds": 1.79,
+      "timeout_seconds": 90.0,
+      "command": [
+        "/opt/pyvenv/bin/python",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_std_http_http2_adversarial"
+      ],
+      "output_tail": "----------------------------------------------------------------------\nRan 1 test in 0.321s\n\nOK\n",
+      "campaign": "post-hardening-focused-rerun"
+    }
+  ],
+  "external_evidence": {
+    "offline_protocol_fuzz": "protocol-fuzz.json",
+    "local_parallel_soak": "local-soak.json",
+    "resource_profile": "resource-profile.json",
+    "native_dependencies": "native-dependencies.json"
+  },
+  "remaining_signoffs": [
+    "native libcurl/TLS sanitizer build",
+    "full h2spec / RFC adversarial interop",
+    "third-party network security review",
+    "production-scale long-duration soak",
+    "target-platform native packaging/license/ABI",
+    "Python 3.14 user-deferred"
+  ]
+}

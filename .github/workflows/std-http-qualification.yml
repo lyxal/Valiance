@@ -1,0 +1,252 @@
+name: std.http qualification (Python 3.14)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/valiance/std/*http*'
+      - 'src/valiance/std/file*'
+      - 'src/valiance/std/_filesystem_core.py'
+      - 'src/valiance/runtime/**'
+      - 'tests/test_std_http*'
+      - 'tests/test_http_qualification.py'
+      - 'tests/test_std_file_integration.py'
+      - 'tests/test_concurrency_*.py'
+      - 'tests/test_programs.py'
+      - 'tools/qualify_std_http.py'
+      - 'tools/profile_std_http_resources.py'
+      - 'tools/check_std_http_native.py'
+      - 'tools/build_std_http_libcurl.py'
+      - 'tools/qualify_std_http_instrumented.py'
+      - 'tools/check_std_http_stable.py'
+      - 'tools/verify_std_http_release_archive.py'
+      - 'tests/test_std_http_stable_gate.py'
+      - 'tests/test_std_http_archive.py'
+      - 'tests/test_std_http_instrumented_policy.py'
+      - 'tests/test_std_http_dependency_policy.py'
+      - 'tools/fuzz_std_http_protocol.py'
+      - 'tools/soak_std_http.py'
+      - 'tools/fuzz_std_http_http2.py'
+      - 'tools/soak_std_http_http2.py'
+      - 'tools/validate_std_http_native.py'
+      - 'tools/native_std_http_probe.c'
+      - 'tools/check_std_http_release.py'
+      - 'tools/audit_std_http_packaging.py'
+      - 'tools/coverage_std_http.py'
+      - 'tools/merge_std_http_qualification.py'
+      - '.github/workflows/std-http-qualification.yml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  pull_request:
+    paths:
+      - 'src/valiance/std/*http*'
+      - 'src/valiance/std/file*'
+      - 'src/valiance/std/_filesystem_core.py'
+      - 'src/valiance/runtime/**'
+      - 'tests/test_std_http*'
+      - 'tests/test_http_qualification.py'
+      - 'tests/test_std_file_integration.py'
+      - 'tests/test_concurrency_*.py'
+      - 'tests/test_programs.py'
+      - 'tools/qualify_std_http.py'
+      - 'tools/profile_std_http_resources.py'
+      - 'tools/check_std_http_native.py'
+      - 'tools/build_std_http_libcurl.py'
+      - 'tools/qualify_std_http_instrumented.py'
+      - 'tools/check_std_http_stable.py'
+      - 'tools/verify_std_http_release_archive.py'
+      - 'tests/test_std_http_stable_gate.py'
+      - 'tests/test_std_http_archive.py'
+      - 'tests/test_std_http_instrumented_policy.py'
+      - 'tests/test_std_http_dependency_policy.py'
+      - 'tools/fuzz_std_http_protocol.py'
+      - 'tools/soak_std_http.py'
+      - 'tools/fuzz_std_http_http2.py'
+      - 'tools/soak_std_http_http2.py'
+      - 'tools/validate_std_http_native.py'
+      - 'tools/native_std_http_probe.c'
+      - 'tools/check_std_http_release.py'
+      - 'tools/audit_std_http_packaging.py'
+      - 'tools/coverage_std_http.py'
+      - 'tools/merge_std_http_qualification.py'
+      - '.github/workflows/std-http-qualification.yml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+jobs:
+  qualification:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install Python 3.14 and dependencies
+        run: |
+          uv python install 3.14
+          uv sync --python 3.14 --locked
+      - name: Run bounded HTTP and regression qualification
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen --with "cryptography>=44" python tools/qualify_std_http.py \
+            --timeout-seconds 360 --report std-http-qualification.json
+      - name: Profile native HTTP resource recovery
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen --with "psutil>=5.9" python tools/profile_std_http_resources.py \
+            --clients-per-batch 45 --batches 3 --report std-http-resource-profile.json
+      - name: Run offline malformed-protocol mutation campaign
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen python tools/fuzz_std_http_protocol.py \
+            --seed 20261120 --count 1800 --report std-http-protocol-fuzz.json
+      - name: Run bounded concurrent-client throughput and lifetime soak
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen --with "psutil>=5.9" python tools/soak_std_http.py \
+            --duration-seconds 15 --concurrency 32 --report std-http-soak.json
+      - name: Inspect libcurl and TLS dependencies
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen python tools/check_std_http_native.py \
+            --report std-http-native-dependencies.json
+      - name: Upload local-platform evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: std-http-qualification-${{ matrix.os }}
+          path: |
+            std-http-qualification.json
+            std-http-resource-profile.json
+            std-http-native-dependencies.json
+            std-http-protocol-fuzz.json
+            std-http-soak.json
+          if-no-files-found: warn
+
+  linux-native-and-security-validation:
+    # This separate, evidence-gated Linux campaign does not replace the
+    # platform matrix above or an externally instrumented libcurl/TLS build.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install qualification dependencies
+        run: |
+          uv python install 3.14
+          uv sync --python 3.14 --locked
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libnghttp2-dev libssl-dev pkg-config cmake gcc
+      - name: Build checksum-pinned libcurl 8.23.0 for qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/build_std_http_libcurl.py \
+            --prefix "$RUNNER_TEMP/valiance-curl-8.23" \
+            --report std-http-evidence/curl-build.json
+          CURL_LIB="$RUNNER_TEMP/valiance-curl-8.23/lib/libcurl.so"
+          if [ ! -f "$CURL_LIB" ]; then
+            CURL_LIB="$(find "$RUNNER_TEMP/valiance-curl-8.23" -name libcurl.so -type f -o -name libcurl.so -type l | head -n 1)"
+          fi
+          test -n "$CURL_LIB" && test -f "$CURL_LIB"
+          echo "VALIANCE_LIBCURL_PATH=$CURL_LIB" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(dirname "$CURL_LIB"):${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "VALIANCE_LIBCURL_LICENSE=$RUNNER_TEMP/valiance-curl-8.23/licenses/libcurl-COPYING.txt" >> "$GITHUB_ENV"
+      - name: Run independently bounded regression suites
+        shell: bash
+        run: |
+          mkdir -p std-http-evidence
+          uv run --python 3.14 --frozen --with "cryptography>=44" python tools/qualify_std_http.py \
+            --timeout-seconds 360 --report std-http-evidence/qualification.json
+      - name: Run native libcurl C multi ASan/UBSan probe
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen python tools/validate_std_http_native.py \
+            --rounds 80 --report std-http-evidence/native-asan.json
+      - name: Run independent HTTP/1.1 and HTTP/2 wire mutation corpora
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen python tools/fuzz_std_http_protocol.py \
+            --seed 20261120 --count 1800 --report std-http-evidence/http1-fuzz.json
+          uv run --python 3.14 --frozen --with "cryptography>=44" python tools/fuzz_std_http_http2.py \
+            --seed 20261120 --count 240 --report std-http-evidence/http2-fuzz.json
+      - name: Run repeated client recovery, load and dependency checks
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen --with "psutil>=5.9" python tools/profile_std_http_resources.py \
+            --clients-per-batch 45 --batches 3 --report std-http-evidence/resource-profile.json
+          uv run --python 3.14 --frozen --with "psutil>=5.9" python tools/soak_std_http.py \
+            --duration-seconds 90 --concurrency 64 --report std-http-evidence/long-soak.json
+          uv run --python 3.14 --frozen --with "cryptography>=44" python tools/soak_std_http_http2.py \
+            --requests 3000 --concurrency 48 --report std-http-evidence/http2-soak.json
+          uv run --python 3.14 --frozen python tools/check_std_http_native.py \
+            --report std-http-evidence/native-dependency.json
+          uv run --python 3.14 --frozen python tools/audit_std_http_packaging.py \
+            --bundled-library "$VALIANCE_LIBCURL_PATH" \
+            --license-file "$VALIANCE_LIBCURL_LICENSE" \
+            --report std-http-evidence/packaging.json
+      - name: Measure Python HTTP statement and branch coverage
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen --with "coverage>=7" --with "cryptography>=44" python tools/coverage_std_http.py \
+            --report std-http-evidence/python-coverage.json
+      - name: Fail closed on incomplete or missing evidence
+        shell: bash
+        run: |
+          uv run --python 3.14 --frozen python tools/check_std_http_release.py \
+            --evidence-dir std-http-evidence --report std-http-evidence/local-release-gate.json
+      - name: Upload evidence (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: std-http-native-security-linux
+          path: std-http-evidence/
+          if-no-files-found: warn
+
+  linux-instrumented-libcurl-bindings:
+    # Separate security experiment: libcurl itself is ASan/UBSan-instrumented.
+    # This still does NOT prove the TLS/nghttp2 dependency stack has been
+    # instrumented. That requires separately instrumented native libraries.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies and build ASan/UBSan libcurl 8.23.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc cmake libnghttp2-dev libssl-dev pkg-config libcurl4-openssl-dev
+          uv python install 3.14
+          uv sync --python 3.14 --locked
+          mkdir -p instrumented-evidence
+          python tools/build_std_http_libcurl.py \
+            --prefix "$RUNNER_TEMP/valiance-curl-sanitized" --sanitizers \
+            --report instrumented-evidence/source-build.json
+      - name: Run bound native-binding and hostile-network tests with instrumented curl
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURL_LIB="$RUNNER_TEMP/valiance-curl-sanitized/lib/libcurl.so"
+          test -f "$CURL_LIB"
+          uv run --python 3.14 --frozen --with "cryptography>=44" \
+            python tools/qualify_std_http_instrumented.py \
+            --library "$CURL_LIB" --timeout-seconds 300 \
+            --report instrumented-evidence/native-binding.json
+      - name: Preserve instrumentation evidence, including failures
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: std-http-instrumented-libcurl-${{ github.run_id }}
+          path: instrumented-evidence/
+          if-no-files-found: warn

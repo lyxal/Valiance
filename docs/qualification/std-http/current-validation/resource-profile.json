@@ -1,0 +1,58 @@
+{
+  "status": "passed",
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "psutil_available": true,
+  "clients_after_warmup": 135,
+  "requests_after_warmup": 810,
+  "duration_seconds": 22.788,
+  "samples": [
+    {
+      "rss_bytes": 106893312,
+      "open_fds": 5,
+      "python_traced_bytes": 40285,
+      "active_reactor_threads": 0,
+      "response_budget_used": 0,
+      "upload_budget_used": 0
+    },
+    {
+      "rss_bytes": 109187072,
+      "open_fds": 5,
+      "python_traced_bytes": 64380,
+      "active_reactor_threads": 0,
+      "response_budget_used": 0,
+      "upload_budget_used": 0
+    },
+    {
+      "rss_bytes": 110862336,
+      "open_fds": 5,
+      "python_traced_bytes": 76127,
+      "active_reactor_threads": 0,
+      "response_budget_used": 0,
+      "upload_budget_used": 0
+    },
+    {
+      "rss_bytes": 111366144,
+      "open_fds": 5,
+      "python_traced_bytes": 81232,
+      "active_reactor_threads": 0,
+      "response_budget_used": 0,
+      "upload_budget_used": 0
+    }
+  ],
+  "final_minus_warmup": {
+    "rss_bytes": 4472832,
+    "open_fds": 0,
+    "python_traced_bytes": 40947,
+    "active_reactor_threads": 0,
+    "response_budget_used": 0,
+    "upload_budget_used": 0
+  },
+  "thresholds": {
+    "python_traced_bytes": 8388608,
+    "rss_bytes": 25165824,
+    "open_fds": 8
+  },
+  "issues": [],
+  "caveat": "RSS/heap threshold is a bounded growth smoke test; not an ASan/Valgrind or permanent memory-safety proof"
+}

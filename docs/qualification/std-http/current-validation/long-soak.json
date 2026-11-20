@@ -1,0 +1,40 @@
+{
+  "status": "passed",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python": "3.13.5",
+  "configured_duration_seconds": 90.0,
+  "elapsed_seconds": 90.296,
+  "concurrency": 64,
+  "submitted": 91863,
+  "completed_body_reads": 81909,
+  "cancelled_before_headers": 5404,
+  "intentionally_closed": 4550,
+  "successful_reads_per_second": 907.12,
+  "p50_read_completion_ms": 73.83,
+  "p95_read_completion_ms": 89.82,
+  "p99_read_completion_ms": 127.19,
+  "peak_http_reactor_threads": 1,
+  "baseline": {
+    "rss_bytes": 101052416,
+    "open_fds": 5,
+    "reactor_threads": 0,
+    "response_reserved_bytes": 0,
+    "upload_reserved_bytes": 0
+  },
+  "final": {
+    "rss_bytes": 119992320,
+    "open_fds": 4,
+    "reactor_threads": 0,
+    "response_reserved_bytes": 0,
+    "upload_reserved_bytes": 0
+  },
+  "final_minus_baseline": {
+    "rss_bytes": 18939904,
+    "open_fds": -1,
+    "reactor_threads": 0,
+    "response_reserved_bytes": 0,
+    "upload_reserved_bytes": 0
+  },
+  "issues": [],
+  "limitations": "Local HTTP/1.1 peer; not HTTP/2 soak or cross-platform/native sanitizer qualification."
+}
