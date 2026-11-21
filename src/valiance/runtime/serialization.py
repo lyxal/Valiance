@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from valiance.runtime.bytecode import (
+    NominalTraitImplementationReference,
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
@@ -41,7 +42,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x4A  # Checked IterableForeachReference payload.
+BYTECODE_VERSION = 0x4B  # Analysis-proven nominal trait implementation contracts.
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -205,7 +206,7 @@ def loads(data: bytes) -> Program:
         if prefix != MAGIC_PREFIX:
             raise BytecodeFormatError("invalid Valiance bytecode magic")
         version = reader.u8()
-        if version not in (0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, BYTECODE_VERSION):
+        if version not in (0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, BYTECODE_VERSION):
             raise BytecodeFormatError(
                 f"unsupported Valiance bytecode version {version}; "
                 f"expected 0x43 through {BYTECODE_VERSION}"
@@ -867,6 +868,8 @@ class _Writer:
         self.optional_string(reference.implementation_id)
         self.value(reference.structural_witnesses)
         self.value(reference.callable_witnesses)
+        if self.version >= 0x4B:
+            self.optional_string(reference.nominal_trait_contract)
 
     def extension_rule_reference(self, reference: ExtensionRuleReference) -> None:
         """Encode extension rule reference in the portable bytecode stream."""
@@ -991,6 +994,8 @@ class _Writer:
         self.value(function.return_collection_ranks)
         self.value(function.param_collection_ranks)
         self.bool(function.requires_specialization)
+        if self.version >= 0x4B:
+            self.value(function.nominal_trait_contracts)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -1264,6 +1269,11 @@ class _Reader:
         _validate_implementation_identity(implementation_id, allow_none=bool(dispatch_kind & (DispatchKind.TRAIT_WITNESS | DispatchKind.NOMINAL_TRAIT)))
         structural_witnesses = self.value()
         callable_witnesses = self.value()
+        nominal_trait_contract = self.optional_string() if self.version >= 0x4B else None
+        if self.version >= 0x4B and (
+            bool(dispatch_kind & DispatchKind.NOMINAL_TRAIT) != bool(nominal_trait_contract)
+        ):
+            raise BytecodeFormatError("inconsistent nominal trait dispatch contract")
         if (not isinstance(callable_witnesses, tuple) or any(
             not isinstance(item, tuple) or len(item) != 6
             or any(type(number) is not int or number < 0 for number in item[:3])
@@ -1347,6 +1357,7 @@ class _Reader:
             implementation_id=implementation_id,
             structural_witnesses=structural_witnesses,
             callable_witnesses=callable_witnesses,
+            nominal_trait_contract=nominal_trait_contract,
         )
 
     def extension_rule_reference(self) -> ExtensionRuleReference:
@@ -1544,6 +1555,24 @@ class _Reader:
         ):
             raise BytecodeFormatError("invalid function parameter collection ranks")
         requires_specialization = self.bool()
+        nominal_trait_contracts = self.value() if self.version >= 0x4B else ()
+        if (not isinstance(nominal_trait_contracts, tuple)
+                or any(
+                    not isinstance(contract, tuple) or len(contract) != 5
+                    or not all(isinstance(item, str) and item for item in contract[:2])
+                    or not isinstance(contract[2], tuple)
+                    or not all(isinstance(item, str) and item for item in contract[2])
+                    or not isinstance(contract[3], tuple)
+                    or any(not isinstance(bound, tuple) or len(bound) != 2
+                           or not all(isinstance(item, str) and item for item in bound) for bound in contract[3])
+                    or type(contract[4]) is not int or not 0 <= contract[4] < len(params)
+                    for contract in nominal_trait_contracts
+                )
+                or len(set(nominal_trait_contracts)) != len(nominal_trait_contracts)):
+            raise BytecodeFormatError("invalid nominal trait implementation contracts")
+        nominal_trait_contracts = tuple(
+            NominalTraitImplementationReference(*contract) for contract in nominal_trait_contracts
+        )
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -1576,4 +1605,5 @@ class _Reader:
             return_collection_ranks=return_collection_ranks,
             param_collection_ranks=param_collection_ranks,
             requires_specialization=requires_specialization,
+            nominal_trait_contracts=nominal_trait_contracts,
         )

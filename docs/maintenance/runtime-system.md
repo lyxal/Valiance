@@ -708,19 +708,30 @@ checked contract. See **Trait value witnesses (0x33)** for the representation.
 
 ### Bounded nominal-trait dispatch
 
-`DispatchKind.NOMINAL_TRAIT` dispatch uses each method's compiled
-`dispatch_types` and `dispatch_bounds`. The latter stores the receiver position,
-its nominal source trait, and generic bound templates. The compiler retains method-owner type variables (such as the `T` in
-`Box[T]`) in each checked method's generic parameter set. The runtime binds
-them consistently to concrete receiver type arguments; it never treats `T`
-as a concrete class name or matches a trait using an unrelated provider's
-short-name alias. When a concrete object
-is passed, the VM projects it through its declared generic supertypes, checks
-the bounds on the *instantiated trait arguments*, and admits only matching
-implementations. It rejects absent or inconsistent projections and reports
-ambiguity if multiple candidates remain. Version `0x47` of the portable
-bytecode format retains this evidence on serialized and re-exported methods.
-Older bytecode versions still load without the new optional evidence.
+`DispatchKind.NOMINAL_TRAIT` selects a trait requirement at compile time. The
+resolved reference carries its contract identity; method metadata carries only
+the implementations proved to satisfy that requirement. The compiler links this
+evidence across declarations before optimisation. Runtime trait tables are
+separate from ordinary overload selection and cache the linked slot for each
+concrete receiver type, including its generic arguments.
+
+Private trait-to-trait forwarding definitions travel with their checked bodies
+in the runtime closure. A shared method name does not authorize dropping the
+forwarder or substituting the source trait's concrete implementation.
+
+Each entry retains its generic receiver domain, bound templates, and declared
+receiver position. Binding a slot projects the concrete receiver through its
+declared generic supertypes and checks bounds on the instantiated arguments.
+It rejects absent or inconsistent projections and ambiguous implementations.
+It never chooses an unrelated overload from the concrete types of the other
+arguments. Valid object overrides and trait defaults preserve the statically
+selected contract, including its result types.
+
+Portable bytecode `0x4B` and analysed-interface ABI 16 retain this evidence across
+serialization and re-exports. Older bytecode still loads, but nominal trait calls
+without the checked contract require rebuilding. Vectorised calls borrow their
+collection items while invoking scalar implementations so defaults that discard
+inputs do not destroy values still owned by the source collections.
 
 ### Static union dispatch plans
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, IntFlag
 from functools import lru_cache
-from typing import Any
+from typing import Any, NamedTuple
 
 from valiance.vtypes import DataTag, FFICallbackSpec, FFIStructSpec, UnionDispatchBranch
 
@@ -235,6 +235,17 @@ class ResolvedElementReference:
     callable_witnesses: tuple[
         tuple[int, int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
     ] = ()
+    nominal_trait_contract: str | None = None
+
+
+class NominalTraitImplementationReference(NamedTuple):
+    """A statically checked trait slot in a generic receiver domain."""
+
+    contract: str
+    receiver: str
+    generic_parameters: tuple[str, ...]
+    bounds: tuple[tuple[str, str], ...]
+    receiver_index: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +281,8 @@ class FunctionCode:
     return_collection_ranks: tuple[int | None, ...] = ()
     param_collection_ranks: tuple[int | None, ...] = ()
     requires_specialization: bool = False
+    # Contract, receiver domain, generic variables, checked bounds, receiver position.
+    nominal_trait_contracts: tuple[NominalTraitImplementationReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

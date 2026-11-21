@@ -454,7 +454,10 @@ class _ImportDeclarations:
         kind = node.kind.text
         if kind == "trait":
             if obj.name not in self.env.traits:
-                self._define_trait_shape(obj.name, node)
+                self._define_trait_shape(
+                    obj.name, node,
+                    obj.typed.nominal_trait_requirements if isinstance(obj.typed, TypedObjectNode) else (),
+                )
             if obj.import_friendly:
                 self._register_imported_friendly_runtime_elements(obj.name, node.definitions)
                 bodies = dict(obj.typed.method_bodies) if isinstance(obj.typed, TypedObjectNode) else {}

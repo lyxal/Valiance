@@ -13,6 +13,7 @@ from valiance.vtypes.symbols import Symbol
 from ..calls import callable_values as _functions
 from ..support import analysis_utils as _utils
 from ..state import AnalysisBranch, BranchSet
+from ..overload_identity import declaration_prefix
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -168,7 +169,10 @@ class _TraitDeclarations:
                         self.env.object_friendly_overloads.pop(name, None)
                     else:
                         self.env.object_friendly_overloads[name] = friendly
-            return BranchSet((self._attach_method_results(current, node),))
+            return BranchSet((self._attach_method_results(
+                current, node,
+                self._nominal_trait_implementation_evidence(source_type, requirements, node),
+            ),))
 
         if isinstance(node.target, T.NominalType) and node.target.name == node.name:
             self._diagnose("trait inheritance cycle: a trait cannot inherit itself", node)
@@ -233,11 +237,24 @@ class _TraitDeclarations:
                     self.env.object_friendly_overloads.pop(name, None)
                 else:
                     self.env.object_friendly_overloads[name] = friendly
-        return BranchSet((self._attach_method_results(current, node),))
+        return BranchSet((self._attach_method_results(
+            current, node, self._nominal_trait_implementation_evidence(
+                self_type, self._specialized_trait_requirements(self_type, self_type), node,
+            ),
+        ),))
 
-    def _define_trait_shape(self, name: Symbol, node: ObjectNode) -> None:
+    def _define_trait_shape(
+        self, name: Symbol, node: ObjectNode, contract_keys: tuple[str, ...] = (),
+    ) -> None:
         """Record trait shape, including requirements inherited from a parent."""
-        requirements = list(_utils._trait_requirements(node))
+        requirements = [replace(requirement, overload=replace(
+            requirement.overload,
+            nominal_trait_contract=(
+                contract_keys[index] if index < len(contract_keys) else
+                f"trait:{declaration_prefix(self.source_file, node.location) if node.location is not None else name}:"
+                f"{requirement.name}:{index}"
+            ),
+        )) for index, requirement in enumerate(_utils._trait_requirements(node))]
         parent_name: Symbol | None = None
         if node.target is not None:
             target = T.normalize(node.target)

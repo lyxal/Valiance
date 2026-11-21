@@ -468,8 +468,11 @@ stack fragments.
 Nominal trait requirements use `DispatchKind.NOMINAL_TRAIT` with a checked
 argument count and vectorisation plan. For collection receivers, the VM traverses
 the planned collection depths and selects the concrete trait implementation at
-each scalar leaf. Bytecode version `0x45` introduces this dispatch mode; versions
-`0x43` and `0x44` remain readable.
+each scalar leaf. The call identifies its trait requirement, and only statically
+proved implementations can occupy that slot. Concrete ordinary overloads do not
+participate in this lookup. Bytecode `0x4B` stores the requirement identity and
+receiver-scoped implementation evidence; earlier nominal-trait call sites need
+rebuilding. Analysed-interface ABI 16 preserves these identities through imports.
 
 Saved bytecode must stay portable.
 

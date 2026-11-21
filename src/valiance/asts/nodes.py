@@ -107,12 +107,26 @@ class TypedCastNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class NominalTraitImplementation:
+    """A checked trait slot and the generic receiver domain that implements it."""
+
+    implementation_id: str
+    contract: str
+    generics: tuple[Symbol, ...] = ()
+    generic_constraints: tuple[Type | None, ...] = ()
+    receiver_index: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class TypedObjectNode(TypedNode):
     """Method contracts, identities, and retained checked implementations."""
 
     method_results: tuple[tuple[str, tuple[str, ...]], ...] = ()
     method_ids: tuple[tuple[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]], ...] = ()
     method_bodies: tuple[tuple[str, TypedFunctionNode], ...] = field(default=(), kw_only=True)
+    nominal_trait_implementations: tuple[NominalTraitImplementation, ...] = field(default=(), kw_only=True)
+    nominal_trait_requirements: tuple[str, ...] = field(default=(), kw_only=True)
+    nominal_trait_definitions: tuple[DefineNode, ...] = field(default=(), kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

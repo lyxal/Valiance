@@ -31,6 +31,7 @@ from valiance.elements.builtins import (
     _plus,
 )
 from valiance.runtime.bytecode import (
+    NominalTraitImplementationReference,
     FunctionCode,
     FunctionSetCode,
     IndexOperationSpec,
@@ -386,6 +387,22 @@ class OverloadedFunctionValue:
     implementation_lookup: dict[str, FunctionValue] = field(
         default_factory=dict, repr=False, compare=False
     )
+    nominal_trait_implementations: dict[str, tuple[tuple[FunctionValue, NominalTraitImplementationReference], ...]] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+    nominal_trait_dispatch: dict[tuple[str, str], tuple[FunctionValue, int]] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        """Build trait slots from analysis-proven implementation identities."""
+        slots: dict[str, list[tuple[FunctionValue, NominalTraitImplementationReference]]] = {}
+        for overload in self.overloads:
+            for contract in overload.code.nominal_trait_contracts:
+                slots.setdefault(contract.contract, []).append((overload, contract))
+        self.nominal_trait_implementations = {
+            contract: tuple(implementations) for contract, implementations in slots.items()
+        }
 
     def __repr__(self) -> str:
         """Return a developer-facing representation of this overloaded function value."""
@@ -5682,6 +5699,22 @@ class VirtualMachine:
                     f"{reference.implementation_id!r} "
                     "(the bound function has a different implementation identity)"
                 )
+        elif reference.dispatch_kind & DispatchKind.NOMINAL_TRAIT:
+            contracts = tuple(contract for contract in value.code.nominal_trait_contracts
+                              if contract.contract == reference.nominal_trait_contract)
+            if not contracts:
+                raise RuntimeError("nominal trait call cannot link its checked implementation")
+            receiver_index = contracts[0].receiver_index
+            if receiver_index:
+                args = _source_args(frame, reference.arity_override, "trait receiver binding")
+                frame.stack.extend(_nominal_trait_arguments(args, receiver_index))
+                reference = replace(
+                    reference,
+                    vectorised_depths=_nominal_trait_arguments(reference.vectorised_depths, receiver_index)
+                    if reference.vectorised_depths else (),
+                    vectorised_target_ranks=_nominal_trait_arguments(reference.vectorised_target_ranks, receiver_index)
+                    if reference.vectorised_target_ranks else (),
+                )
         elif reference.dispatch_kind & DispatchKind.TRAIT_WITNESS:
             required = reference.structural_signature
             if required is None:
@@ -5734,6 +5767,7 @@ class VirtualMachine:
                         self, value, args, reference.vectorised_depths,
                         reference.vectorised_target_ranks, extension,
                         nominal_trait=True,
+                        nominal_trait_contract=reference.nominal_trait_contract,
                     )
                 finally:
                     _release_runtime_vector_extension(extension, self)
@@ -5744,7 +5778,12 @@ class VirtualMachine:
                 frame.stack.extend(results)
                 return None
             args, _, _, _ = frame.source_args(arity)
-            overload = _select_declared_dispatch_overload(value, tuple(args), nominal_trait=True)
+            overload, receiver_index = _select_nominal_trait_implementation(
+                value, tuple(args), reference.nominal_trait_contract,
+            )
+            if receiver_index:
+                args = _source_args(frame, arity, "trait receiver binding")
+                frame.stack.extend(_nominal_trait_arguments(args, receiver_index))
             return self._call_resolved_function_value(
                 overload, frame, replace(reference, dispatch_kind=DispatchKind.STATIC),
             )
@@ -8072,6 +8111,9 @@ def _function_overloads(
 def _matches_declared_generic_dispatch(
     args: tuple[Any, ...],
     overload: FunctionValue,
+    *,
+    dispatch_types: tuple[str | None, ...] | None = None,
+    generic_type_parameters: tuple[str, ...] | None = None,
 ) -> bool:
     """Match a checked generic method's receiver pattern with consistent bindings.
 
@@ -8080,8 +8122,9 @@ def _matches_declared_generic_dispatch(
     Type variables come from the *compiled declaration*, not guessed from a
     capitalized short name in a runtime type string.
     """
-    generic_vars = frozenset(overload.code.generic_type_parameters)
-    declared = overload.code.dispatch_types
+    generic_vars = frozenset(overload.code.generic_type_parameters
+                             if generic_type_parameters is None else generic_type_parameters)
+    declared = overload.code.dispatch_types if dispatch_types is None else dispatch_types
     if not generic_vars or len(declared) != len(args):
         return False
     bindings: dict[str, str] = {}
@@ -8141,38 +8184,16 @@ def _matches_declared_generic_dispatch(
 def _select_declared_dispatch_overload(
     value: OverloadedFunctionValue,
     args: tuple[Any, ...],
-    *,
-    nominal_trait: bool = False,
 ) -> FunctionValue:
     """Apply compiled overload dispatch types without speculative execution."""
+    overloads = value.overloads
     matches = tuple(
         overload
-        for overload in value.overloads
+        for overload in overloads
         if len(overload.code.params) == len(args)
         and overload.code.dispatch_types
         and _runtime_multimethod_types_match(args, overload.code.dispatch_types)
-        and (
-            not nominal_trait
-            or _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
-        )
     )
-    if not matches and nominal_trait:
-        matches = tuple(
-            overload for overload in value.overloads
-            if len(overload.code.params) == len(args) and overload.code.dispatch_types
-            and all(
-                expected is None or _runtime_argument_type_matches(argument, expected, constraints=True)
-                for argument, expected in zip(args, overload.code.dispatch_types, strict=True)
-            )
-            and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
-        )
-    if not matches and nominal_trait:
-        matches = tuple(
-            overload for overload in value.overloads
-            if len(overload.code.params) == len(args)
-            and _matches_declared_generic_dispatch(args, overload)
-            and _runtime_dispatch_bounds_match(args, overload.code.dispatch_bounds)
-        )
     if not matches:
         raise RuntimeError(
             "cannot dispatch overloaded function for runtime types "
@@ -8181,6 +8202,64 @@ def _select_declared_dispatch_overload(
     if len(matches) != 1:
         raise RuntimeError("ambiguous declared callable dispatch")
     return _selected_function_implementation(value, matches[0].code.implementation_id)
+
+
+def _select_nominal_trait_implementation(
+    value: OverloadedFunctionValue, args: tuple[Any, ...], contract: str | None,
+) -> tuple[FunctionValue, int]:
+    """Bind a receiver's trait slot without consulting ordinary overloads."""
+    if contract is None:
+        raise RuntimeError("nominal trait call is missing its checked contract; rebuild the bytecode")
+    key = (contract, _runtime_type_name(args[0]))
+    linked = value.nominal_trait_dispatch.get(key)
+    if linked is not None:
+        return linked
+    receiver = unwrap_runtime_value(args[0])
+    facts = (receiver.runtime_type.type_facts
+             if isinstance(receiver, ObjectValue) and receiver.runtime_type is not None else ())
+    matches = [
+        (implementation, route)
+        for implementation, route in value.nominal_trait_implementations.get(contract, ())
+        if len(implementation.code.params) == len(args)
+        and (
+            _runtime_argument_type_matches(receiver, route.receiver, constraints=True)
+            or _matches_declared_generic_dispatch(
+                (receiver,), implementation, dispatch_types=(route.receiver,),
+                generic_type_parameters=route.generic_parameters,
+            )
+        )
+        and (not route.bounds or _runtime_dispatch_bounds_match(
+            (receiver,), ((0, _parse_runtime_type_pattern(route.receiver, facts).name, route.bounds),),
+        ))
+    ]
+
+    def domain(route: NominalTraitImplementationReference) -> RuntimeTypePattern:
+        """Instantiate the receiver domain from its checked nominal projection."""
+        pattern = _parse_runtime_type_pattern(route.receiver, facts)
+        projected = (_runtime_project_nominal_args(receiver, pattern.name, facts)
+                     if isinstance(receiver, ObjectValue) else None)
+        if projected is None:
+            return pattern
+        return replace(pattern, children=tuple(_parse_runtime_type_pattern(arg, facts) for arg in projected))
+
+    domains = [domain(route) for _, route in matches]
+    matches = [candidate for index, candidate in enumerate(matches) if not any(
+        _structural_declared_subtype(other, domains[index], type_facts=facts)
+        and not _structural_declared_subtype(domains[index], other, type_facts=facts)
+        for other in domains
+    )]
+    identities = {(method.code.implementation_id, route.receiver_index) for method, route in matches}
+    if len(identities) != 1:
+        raise RuntimeError("cannot link a unique checked nominal trait implementation")
+    identity, receiver_index = identities.pop()
+    linked = (_selected_function_implementation(value, identity), receiver_index)
+    value.nominal_trait_dispatch[key] = linked
+    return linked
+
+
+def _nominal_trait_arguments(args: tuple, receiver_index: int) -> tuple:
+    """Move the canonical trait receiver to an implementation's declared slot."""
+    return (*args[1:receiver_index + 1], args[0], *args[receiver_index + 1:])
 
 
 def _runtime_dispatch_bounds_match(
@@ -9972,6 +10051,7 @@ def _vectorize_declared_callable(
     *,
     fallback: FunctionValue | None = None,
     nominal_trait: bool = False,
+    nominal_trait_contract: str | None = None,
 ) -> tuple[Any, ...]:
     """Vectorize an overload set, applying compiled dispatch at scalar leaves."""
     ranks = callee.overloads[0].code.param_collection_ranks
@@ -9988,13 +10068,15 @@ def _vectorize_declared_callable(
         _context: RuntimeContext,
     ) -> tuple[Any, ...]:
         """Dispatch one scalar leaf without trying candidate bodies."""
-        selected = (
-            _select_multimethod_for_args(callee, fallback, item_args)
-            if fallback is not None else
-            _select_declared_dispatch_overload(callee, item_args, nominal_trait=True)
-            if nominal_trait else callee
-        )
-        return tuple(vm.call_value(selected, list(item_args)))
+        if nominal_trait:
+            selected, receiver_index = _select_nominal_trait_implementation(
+                callee, item_args, nominal_trait_contract,
+            )
+            item_args = _nominal_trait_arguments(item_args, receiver_index)
+        else:
+            selected = _select_multimethod_for_args(callee, fallback, item_args) if fallback is not None else callee
+        borrowed = tuple(_readonly_access(_borrow_named_access(arg)) for arg in item_args)
+        return tuple(_materialize_access(value) for value in vm.call_value(selected, list(borrowed)))
 
     result = _vectorize_resolved_depths(
         implementation,

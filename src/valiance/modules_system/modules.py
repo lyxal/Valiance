@@ -25,6 +25,7 @@ from valiance.asts import (
     TypedFunctionNode,
 )
 from valiance.asts.nodes import (
+    NominalTraitImplementation,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
     TypedNode,
@@ -95,6 +96,7 @@ class ModuleTraitImplementation:
     method_bodies: tuple[tuple[str, TypedFunctionNode], ...] = ()
     provider: Symbol | None = None
     reexported: bool = False
+    nominal_trait_implementations: tuple[NominalTraitImplementation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1033,15 +1035,21 @@ def _module_objects(
             results = dict(typed_node.method_results)
             bodies = dict(typed_node.method_bodies)
             identities = {name: list(records) for name, records in typed_node.method_ids}
+            nominal_implementations = set(typed_node.nominal_trait_implementations)
+            nominal_definitions = list(typed_node.nominal_trait_definitions)
             for implementation in metadata_by_owner.get(node.name, ()):
                 results.update(dict(implementation.method_results))
                 bodies.update(dict(implementation.method_bodies))
+                nominal_implementations.update(implementation.nominal_trait_implementations)
+                nominal_definitions.extend(implementation.nominal_trait_definitions)
                 for name, records in implementation.method_ids:
                     identities.setdefault(name, []).extend(records)
             typed_node = replace(
                 typed_node, method_results=tuple(results.items()),
                 method_bodies=tuple(bodies.items()),
                 method_ids=tuple((name, tuple(records)) for name, records in identities.items()),
+                nominal_trait_implementations=tuple(sorted(nominal_implementations, key=repr)),
+                nominal_trait_definitions=tuple(nominal_definitions),
             )
         result.append(
             ModuleObject(
@@ -1194,6 +1202,8 @@ def _module_trait_implementations(
                     if isinstance(typed_node, TypedObjectNode) else ()
                 ),
                 method_bodies=typed_node.method_bodies if isinstance(typed_node, TypedObjectNode) else (),
+                nominal_trait_implementations=(typed_node.nominal_trait_implementations
+                                               if isinstance(typed_node, TypedObjectNode) else ()),
             )
         )
     return tuple(result)
@@ -1270,6 +1280,14 @@ def import_behaviour_set_objects(
                 tuple(result_metadata.items()),
                 tuple(identity_metadata.items()),
                 method_bodies=tuple(body_metadata.items()),
+                nominal_trait_implementations=tuple(sorted(set(
+                    (*obj.typed.nominal_trait_implementations, *implementation.nominal_trait_implementations)
+                    if isinstance(obj.typed, TypedObjectNode) else implementation.nominal_trait_implementations
+                ), key=repr)),
+                nominal_trait_requirements=(obj.typed.nominal_trait_requirements
+                                            if isinstance(obj.typed, TypedObjectNode) else ()),
+                nominal_trait_definitions=(obj.typed.nominal_trait_definitions
+                                           if isinstance(obj.typed, TypedObjectNode) else ()),
             ),
             friendly_definitions=definitions,
         )
@@ -1332,6 +1350,7 @@ def _variant_case_implementation_object(implementation: ModuleTraitImplementatio
     return ModuleObject(implementation.object_name, TypedObjectNode(
         node, None, implementation.method_results, implementation.method_ids,
         method_bodies=implementation.method_bodies,
+        nominal_trait_implementations=implementation.nominal_trait_implementations,
     ))
 
 
@@ -1573,6 +1592,13 @@ def _renamed_object(
             obj.typed.method_results if isinstance(obj.typed, TypedObjectNode) else (),
             obj.typed.method_ids if isinstance(obj.typed, TypedObjectNode) else (),
             method_bodies=obj.typed.method_bodies if isinstance(obj.typed, TypedObjectNode) else (),
+            nominal_trait_implementations=(obj.typed.nominal_trait_implementations
+                                           if isinstance(obj.typed, TypedObjectNode) else ()),
+            nominal_trait_requirements=(obj.typed.nominal_trait_requirements
+                                        if isinstance(obj.typed, TypedObjectNode) else ()),
+            nominal_trait_definitions=(_renamed_friendly_definitions(
+                obj.typed.nominal_trait_definitions, friendly_prefix,
+            ) if isinstance(obj.typed, TypedObjectNode) else ()),
         ),
         obj.public,
         definitions,

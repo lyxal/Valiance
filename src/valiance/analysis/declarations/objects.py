@@ -13,6 +13,7 @@ from valiance.asts import (
     FunctionNode,
     FunctionParam,
     ListLiteralNode,
+    NominalTraitImplementation,
     ObjectNode,
     StringLiteralNode,
     TypedFunctionNode,
@@ -31,6 +32,7 @@ from valiance.asts.object_constructors import (
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.structural import nested_types
+from valiance.vtypes.relations import _resolve_applied_overload
 
 from ..overload_identity import declaration_id, declaration_prefix
 from ..calls import callable_values as _functions
@@ -194,32 +196,32 @@ class _ObjectDeclarations:
                 trait_requirements=requirement_map,
                 owner_node=node,
             )
+            nominal_implementations = []
             for requirement in requirements:
-                if requirement.name in supplied_names:
-                    continue
                 # Specialize an existing method against the implementation's
                 # receiver and arguments before comparing generic results.
-                matching = (
-                    T.try_apply_overload(
-                        overload, (base_type, *requirement.overload.params), self.env.context,
-                    ).applied
-                    for overload in self.env.overloads_for(requirement.name)
-                )
-                if not any(
-                    applied is not None and not applied.vectorised
+                matching = self._nominal_trait_applications(base_type, requirement)
+                compatible = tuple(applied.overload.implementation_id for applied, receiver_index in matching if (
+                    not applied.vectorised
                     and self._trait_requirement_implementation_compatible(
                         replace(applied.overload, params=applied.params, returns=applied.returns),
-                        requirement.overload,
+                        requirement.overload, receiver_index=receiver_index,
                     )
-                    for applied in matching
-                ):
+                ))
+                if requirement.name not in supplied_names:
+                    nominal_implementations.extend(self._nominal_trait_implementation_evidence(
+                        base_type, (requirement,), node,
+                    ))
+                if not compatible and requirement.name not in supplied_names:
                     self._diagnose(
                         f"trait implementation for '{node.name}' does not satisfy "
                         f"required element '{requirement.name}' with signature "
                         f"{T.show(T.Fn(requirement.overload.params, requirement.overload.returns))}",
                         node,
                     )
-            return BranchSet((self._attach_method_results(current, node),))
+            return BranchSet((self._attach_method_results(
+                current, node, tuple(nominal_implementations),
+            ),))
 
         object_attributes = self._object_attributes(
             node.fields, node.generics, node.generic_scope_id
@@ -282,7 +284,8 @@ class _ObjectDeclarations:
         return BranchSet((self._attach_method_results(current, node),))
 
     def _attach_method_results(
-        self, branch: AnalysisBranch, node: ObjectNode
+        self, branch: AnalysisBranch, node: ObjectNode,
+        nominal_trait_implementations: tuple[NominalTraitImplementation, ...] = (),
     ) -> AnalysisBranch:
         """Transport analyser-inferred method result types to bytecode lowering.
 
@@ -314,6 +317,10 @@ class _ObjectDeclarations:
             ))
         signatures = tuple(signatures)
         method_ids = tuple((name, tuple(records)) for name, records in method_ids.items())
+        trait = self.env.lookup_trait(node.name) if node.kind == Symbol("trait") else None
+        contract_keys = tuple(
+            requirement.overload.nominal_trait_contract for requirement in trait.requirements
+        ) if trait is not None else ()
         for index in range(len(branch.typed_body) - 1, -1, -1):
             item = branch.typed_body[index]
             if item.node is node:
@@ -321,9 +328,71 @@ class _ObjectDeclarations:
                 items[index] = TypedObjectNode(
                     node, item.typ, signatures, method_ids,
                     method_bodies=item.method_bodies if isinstance(item, TypedObjectNode) else (),
+                    nominal_trait_implementations=tuple(sorted(set(
+                        nominal_trait_implementations + (
+                            item.nominal_trait_implementations if isinstance(item, TypedObjectNode) else ()
+                        )
+                    ), key=repr)),
+                    nominal_trait_requirements=contract_keys,
+                    nominal_trait_definitions=(node.definitions if node.kind == Symbol("trait") else ()),
                 )
                 return replace(branch, typed_body=tuple(items))
         return branch
+
+    def _nominal_trait_implementation_evidence(
+        self, receiver: T.Type, requirements: tuple[T.TraitRequirement, ...], owner: ObjectNode,
+    ) -> tuple[NominalTraitImplementation, ...]:
+        """Record declaration identities proved to implement nominal contracts."""
+        evidence = []
+        for requirement in requirements:
+            contract = requirement.overload.nominal_trait_contract
+            if contract is None:
+                continue
+            compatible = {}
+            receiver_indices = {}
+            for applied, receiver_index in self._nominal_trait_applications(receiver, requirement):
+                overload = applied.overload
+                if (not applied.vectorised and overload.implementation_id is not None
+                        and applied.element_tags == requirement.overload.element_tags
+                        and self._trait_requirement_implementation_compatible(
+                            replace(overload, params=applied.params, returns=applied.returns),
+                            requirement.overload, receiver_index=receiver_index,
+                        )):
+                    compatible[overload.implementation_id] = replace(
+                        overload,
+                        params=(overload.params[receiver_index], *(
+                            param for index, param in enumerate(overload.params) if index != receiver_index
+                        )),
+                        param_names=(overload.param_names[receiver_index], *(
+                            name for index, name in enumerate(overload.param_names) if index != receiver_index
+                        )) if overload.param_names else (),
+                    )
+                    receiver_indices[overload.implementation_id] = receiver_index
+            selected = _resolve_applied_overload(
+                tuple(compatible.values()), (receiver, *requirement.overload.params), self.env.context,
+            )
+            if selected is not None:
+                evidence.append(NominalTraitImplementation(
+                    selected.overload.implementation_id, contract,
+                    owner.generics, owner.generic_constraints,
+                    receiver_indices[selected.overload.implementation_id],
+                ))
+        return tuple(evidence)
+
+    def _nominal_trait_applications(
+        self, receiver: T.Type, requirement: T.TraitRequirement,
+    ) -> tuple[tuple[T.AppliedOverload, int], ...]:
+        """Apply a requirement with each method's declared receiver position."""
+        matches = []
+        for overload in self.env.overloads_for(requirement.name):
+            index = overload.object_receiver_index or 0
+            params = requirement.overload.params
+            applied = T.try_apply_overload(
+                overload, (*params[:index], receiver, *params[index:]), self.env.context,
+            ).applied
+            if applied is not None:
+                matches.append((applied, index))
+        return tuple(matches)
 
     def _specialized_trait_requirements(
         self,
@@ -1015,6 +1084,7 @@ class _ObjectDeclarations:
                 )
                 return typed_branch
         checked_bodies = []
+        nominal_implementations = []
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
             object_friendly = name == definition.name
             for variant_index, typing in enumerate(function.overloads):
@@ -1033,11 +1103,23 @@ class _ObjectDeclarations:
                 )
                 self.env.define_overload(
                     name,
-                    replace(transformed, implementation_id=identity),
+                    replace(transformed, implementation_id=identity, object_receiver_index=receiver_index),
                     object_friendly=object_friendly,
                 )
                 if object_friendly:
-                    runtime_overload = replace(transformed, implementation_id=identity)
+                    if (trait_requirement is not None
+                            and trait_requirement.overload.nominal_trait_contract is not None
+                            and self._trait_requirement_implementation_compatible(
+                                typing.overload, trait_requirement.overload,
+                                receiver_index=receiver_index,
+                            )):
+                        nominal_implementations.append(NominalTraitImplementation(
+                            identity, trait_requirement.overload.nominal_trait_contract,
+                            owner_node.generics, owner_node.generic_constraints, receiver_index,
+                        ))
+                    runtime_overload = replace(
+                        transformed, implementation_id=identity, object_receiver_index=receiver_index,
+                    )
                     if not explicit_receiver:
                         # Analysis hides the implicit receiver from stack inputs;
                         # the checked runtime body still reads it as $self.
@@ -1057,25 +1139,34 @@ class _ObjectDeclarations:
                         Symbol(f"{owner}::{definition.name}"),
                         self.env.overloads[name][-1],
                     )
-        return self._attach_method_bodies(typed_branch, tuple(checked_bodies))
+        return self._attach_method_bodies(
+            typed_branch, tuple(checked_bodies), tuple(nominal_implementations),
+        )
 
     def _attach_method_bodies(
         self,
         typed_branch: AnalysisBranch,
         checked_bodies: tuple[tuple[str, TypedFunctionNode], ...],
+        nominal_trait_implementations: tuple[NominalTraitImplementation, ...] = (),
     ) -> AnalysisBranch:
         """Retain checked method implementations on their owning declaration."""
-        if checked_bodies:
+        if checked_bodies or nominal_trait_implementations:
             items = list(typed_branch.typed_body)
             for index in range(len(items) - 1, -1, -1):
                 item = items[index]
                 if isinstance(item.node, ObjectNode):
                     bodies = item.method_bodies if isinstance(item, TypedObjectNode) else ()
                     if isinstance(item, TypedObjectNode):
-                        items[index] = replace(item, method_bodies=(*bodies, *checked_bodies))
+                        items[index] = replace(
+                            item, method_bodies=(*bodies, *checked_bodies),
+                            nominal_trait_implementations=tuple(sorted(set(
+                                (*item.nominal_trait_implementations, *nominal_trait_implementations)
+                            ), key=repr)),
+                        )
                     else:
                         items[index] = TypedObjectNode(
                             item.node, item.typ, method_bodies=tuple(checked_bodies),
+                            nominal_trait_implementations=nominal_trait_implementations,
                         )
                     typed_branch = replace(typed_branch, typed_body=tuple(items))
                     break
@@ -1144,6 +1235,8 @@ class _ObjectDeclarations:
                     contracts = tuple(
                         T.TraitRequirement(definition.name, replace(
                             overload,
+                            nominal_trait_contract=f"trait:{overload.implementation_id}",
+                            object_receiver_index=None,
                             params=tuple(param for index, param in enumerate(overload.params) if index != receiver),
                             param_names=tuple(param for index, param in enumerate(overload.param_names) if index != receiver),
                             implementation_id=None,
@@ -1151,4 +1244,11 @@ class _ObjectDeclarations:
                         for overload in self.env.overloads_for(full_name)
                     )
                     self.env.traits[owner] = replace(trait, requirements=(*trait.requirements, *contracts))
+                    current = self._attach_method_bodies(current, (), tuple(
+                        NominalTraitImplementation(
+                            overload.implementation_id, requirement.overload.nominal_trait_contract,
+                            owner_node.generics, owner_node.generic_constraints, receiver,
+                        )
+                        for overload, requirement in zip(self.env.overloads_for(full_name), contracts)
+                    ))
         return current

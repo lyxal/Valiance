@@ -19,6 +19,7 @@ from valiance.asts import (
     TypedFunctionDispatchNode,
 )
 from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.relations import _runtime_dispatch_pattern
 
 from . import candidates as _calls
 from . import callable_values as _functions
@@ -403,6 +404,7 @@ class _CallSelection:
         sources: Iterable[ElementArguments],
     ) -> list[CallCandidate]:
         """Build viable typed candidates for an explicit element call."""
+        sources = tuple(sources)
         candidates: list[CallCandidate] = []
         for source in sources:
             if any(isinstance(T.normalize(arg), T.UnionType)
@@ -479,10 +481,17 @@ class _CallSelection:
                     ),
                 )
             )
-        if not candidates:
-            covered = self._union_coverage_candidate(node, overloads, tuple(sources))
+        # Whole-collection overloads keep their ordinary precedence over scalar
+        # lifting. Otherwise a broad match must not hide union specializations.
+        if (
+            not candidates
+            or all(candidate.applied.vectorised for candidate in candidates)
+            or any(isinstance(T.normalize(arg), T.UnionType)
+                   for source in sources for arg in source.arguments)
+        ):
+            covered = self._union_coverage_candidate(node, overloads, sources, tuple(candidates))
             if covered is not None:
-                candidates.append(covered)
+                return list(covered)
         return candidates
 
     def _union_coverage_candidate(
@@ -490,8 +499,13 @@ class _CallSelection:
         node: ElementNode,
         overloads: tuple[T.Overload, ...],
         sources: tuple[ElementArguments, ...],
-    ) -> CallCandidate | None:
-        """Build one runtime-dispatched candidate when overloads cover union inputs."""
+        fallbacks: tuple[CallCandidate, ...] = (),
+    ) -> tuple[CallCandidate, ...] | None:
+        """Return a union candidate, no candidates for invalid coverage, or no plan.
+
+        Ordinary resolution is retained only when no union plan applies, or all
+        branches use the same checked broad implementation without adaptation.
+        """
         if node.modifier_args or not sources:
             return None
         source = sources[0]
@@ -505,6 +519,14 @@ class _CallSelection:
             and isinstance(arg.rank, int)
         )
         if vector_sources:
+            if any(
+                not candidate.applied.vectorised or any(
+                    candidate.applied.vectorised_depths[index] != arg.rank
+                    for index, arg in vector_sources
+                )
+                for candidate in fallbacks
+            ):
+                return None
             overloads = tuple(overload for overload in overloads if all(
                 not isinstance(T.normalize(overload.params[index]), T.NoVecType)
                 for index, _ in vector_sources
@@ -524,6 +546,15 @@ class _CallSelection:
             isinstance(T.normalize(arg), T.UnionType) for arg in scalar_args
         ):
             return None
+        if fallbacks and (
+            source.branch.input_mode is InputMode.INFER_INPUTS
+            or any(candidate.applied.overload.reflection_operation is not None for candidate in fallbacks)
+            or any(_runtime_dispatch_pattern(arg, self.env.context) is None for arg in scalar_args)
+        ):
+            # Reflection intrinsics own their checked union lowering. Keep that,
+            # inference, and native collection/rank adaptation on their existing
+            # paths rather than replacing them with an ordinary callable plan.
+            return None
         if any(
             item.arguments != args
             or item.branch != source.branch
@@ -533,13 +564,13 @@ class _CallSelection:
             return None
         declared_overloads = overloads
         specialization = None
-        if any(overload.specialize_body or any(
+        if fallbacks or any(overload.specialize_body or any(
             isinstance(T.normalize(param), T.AnonymousTraitType)
             and isinstance(T.normalize(arg), T.UnionType)
             for param, arg in zip(overload.params, scalar_args)) for overload in overloads):
-            checked = self._checked_union_dispatch(node, overloads, scalar_args, source)
+            checked = self._checked_union_dispatch(node, overloads, scalar_args, source, fallbacks)
             if checked is None:
-                return None
+                return ()
             overloads, specialization = checked
         return_counts = {len(overload.returns) for overload in overloads}
         if len(return_counts) != 1:
@@ -563,8 +594,35 @@ class _CallSelection:
         plan = T.union_dispatched_callable_plan(
             T.Overloads(*dispatch_overloads), expected, self.env.context
         )
+        if plan is None and specialization is None:
+            checked = self._checked_union_dispatch(node, overloads, scalar_args, source, fallbacks)
+            if checked is None:
+                return ()
+            overloads, specialization = checked
+            plan = T.union_dispatched_callable_plan(
+                T.Overloads(*overloads), expected, self.env.context,
+            )
+        if specialization is not None:
+            # No dispatch is needed when branch checking preserves the broad
+            # call's implementation, static arguments and combined result type.
+            combined_returns = tuple(
+                T.U(*(overload.returns[index] for overload in overloads))
+                for index in range(return_count)
+            )
+            for candidate in fallbacks:
+                scalar_returns = (candidate.applied.returns if candidate.applied.vectorised
+                                  else candidate.applied.actual_returns)
+                if all(
+                    identity == candidate.implementation_id and body is None
+                    and static_values == candidate.applied.runtime_static_values
+                    for identity, body, static_values in specialization.specializations
+                ) and len(combined_returns) == len(scalar_returns) and all(
+                    T.same(actual, broad)
+                    for actual, broad in zip(combined_returns, scalar_returns)
+                ):
+                    return (candidate,)
         if plan is None:
-            return None
+            return ()
         representative = next(overload for overload in overloads
                               if overload.implementation_id == plan.branches[0].implementation_id)
         if specialization is not None:
@@ -598,9 +656,10 @@ class _CallSelection:
             union_dispatch_plan=plan,
             vectorised_target_ranks=vectorised_target_ranks,
         )
-        return CallCandidate(
+        return (CallCandidate(
             applied=applied,
             branch=source.branch,
+            source_arguments=args,
             call_arg_order=source.call_arg_order,
             implementation_id=(representative.implementation_id if specialization is not None
                                else plan.branches[0].implementation_id),
@@ -608,7 +667,7 @@ class _CallSelection:
                                     vectorised_depths=vectorised_depths,
                                     vectorised_target_ranks=vectorised_target_ranks)
                             if specialization is not None else None),
-        )
+        ),)
 
     def _checked_union_dispatch(
         self,
@@ -616,6 +675,7 @@ class _CallSelection:
         overloads: tuple[T.Overload, ...],
         args: tuple[T.Type, ...],
         source: ElementArguments,
+        fallbacks: tuple[CallCandidate, ...] = (),
     ) -> tuple[tuple[T.Overload, ...], TypedFunctionDispatchNode] | None:
         """Resolve and check every scalar input combination before dispatch."""
         alternatives = tuple(
@@ -633,6 +693,16 @@ class _CallSelection:
                         arguments=branch_args)
                 for overload in overloads
             ))
+            if not candidates:
+                # Whole-union inference can solve a generic parameter that a
+                # branch such as None alone cannot infer. Its checked broad
+                # application still covers that branch.
+                candidates = [replace(candidate, applied=replace(
+                    candidate.applied,
+                    actual_returns=(candidate.applied.returns if candidate.applied.vectorised
+                                    else candidate.applied.actual_returns),
+                    vectorised=False, vectorised_depths=(), vectorised_target_ranks=(),
+                )) for candidate in fallbacks]
             winners = _functions._collapse_equivalent_call_winners(
                 _functions._collapse_equivalent_friendly_multidispatch_winners(
                     _functions._best_candidates(tuple(candidates), source.branch)
@@ -643,6 +713,15 @@ class _CallSelection:
                 return None
             winner = winners[0]
             applied = winner.applied
+            for fallback in fallbacks:
+                if fallback.implementation_id == winner.implementation_id:
+                    # A branch may leave an output generic unconstrained (for
+                    # example, unwrapping None). Retain its whole-union solution.
+                    applied = replace(applied, actual_returns=tuple(
+                        T._substitute(result, fallback.applied.substitution)
+                        for result in applied.actual_returns
+                    ))
+                    break
             # Each checked body needs its own link, even when the same generic
             # declaration serves several branches.
             identity = f"{winner.implementation_id}:union:{index}"

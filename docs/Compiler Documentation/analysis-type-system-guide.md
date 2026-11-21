@@ -345,6 +345,14 @@ top-level union. It expands the cartesian product of union branches, resolves
 one best overload for every combination, unions each return position, and emits
 a `UnionDispatchPlan` that records the selected implementation identity for that branch.
 
+Element calls also resolve each union combination before accepting a broad
+overload for the entire union. Coverage requires a unique best applicable
+overload, not an exact parameter declaration: a trait default can cover a
+combination without a specialization, while more specific overloads win for
+the combinations they match. A broad default cannot hide an ambiguous branch.
+For vectorised calls, this selection applies to scalar item unions; ordinary
+whole-collection overloads retain their precedence over scalar lifting.
+
 The plan uses reified `RuntimeTypePattern` values. Nominal patterns contain the
 closed-world subtype set known during analysis, so broader numeric types,
 traits, variants, and declared generic variance are available to runtime branch

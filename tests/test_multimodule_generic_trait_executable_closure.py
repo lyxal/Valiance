@@ -29,6 +29,29 @@ _PRIVATE_BOX = (
 
 
 class MultiModuleGenericTraitExecutableClosureTests(unittest.TestCase):
+    def test_trait_forwarding_with_shared_method_name_preserves_implementation(self):
+        from tests.test_multimodule_reconstructed_repairs import ReconstructedMultiModuleRepairs
+        modules = {"provider": '''
+public trait Source => extend read -> Int end
+public trait Reader => extend read -> Int end
+public trait Source as Reader => define read -> Int => ($self read) + 10 end
+public object Box => $value: Int end
+object Box as Source => define read -> Int => $self.value end
+'''}
+        consumer = '''
+import {provider.[Source, Reader, Box]}
+define source(item: Source) -> Int => $item read end
+define reader(item: Reader) -> Int => $item read end
+source(Box(3))
+reader(Box(3))
+'''
+        for layout in ("source", "compiled"):
+            with self.subTest(layout=layout):
+                self.assertEqual(
+                    ReconstructedMultiModuleRepairs.run_project(modules, consumer, layout),
+                    [[3, 13]] * 4,
+                )
+
     def test_generic_trait_dispatch_across_all_graphs_and_artifact_modes(self):
         for graph in ("direct", "facade", "deep_facade", "diamond", "nested", "alias"):
             for source_free in (False, True):

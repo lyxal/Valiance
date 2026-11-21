@@ -1196,6 +1196,159 @@ object Item as Sized => define size => 1 end
 define invalid(item: Sized | Int) => $item size end
 ''', 'size')
 
+    def test_union_collision_prefers_specific_overloads_over_trait_default(self):
+        self.assert_executes(r'''
+trait Collidable =>
+  define collide(other: Collidable) => "generic"
+end
+object Asteroid => $diameter: Real end
+object Asteroid as Collidable => end
+object Spaceship => end
+object Spaceship as Collidable => end
+define collide(:Spaceship, :Spaceship) => "insurance"
+define collide(:Asteroid, :Spaceship) => "poor spaceship"
+define collide(:Spaceship, :Asteroid) => collide swap
+define collide(l: Asteroid, r: Asteroid) =>
+  if $l.diameter >= $r.diameter => "left wins"
+  else => "right wins"
+end
+$left = [Asteroid 20, \Spaceship, Asteroid 30, \Spaceship]
+$right = [\Spaceship, \Spaceship, Asteroid 20, Asteroid 40]
+$left collide $right
+''', [['poor spaceship', 'insurance', 'left wins', 'poor spaceship']])
+
+    def test_union_collision_default_covers_only_unspecialized_pairs(self):
+        self.assert_executes(r'''
+trait Collidable => define collide(other: Collidable) => "generic" end
+object Asteroid => end
+object Asteroid as Collidable => end
+object Spaceship => end
+object Spaceship as Collidable => end
+define collide(:Asteroid, :Spaceship) => "specific"
+define test(left: Asteroid|Spaceship, right: Asteroid|Spaceship) =>
+  $left collide $right
+end
+test(\Asteroid, \Spaceship)
+test(\Spaceship, \Asteroid)
+test(\Asteroid, \Asteroid)
+test(\Spaceship, \Spaceship)
+[\Asteroid, \Spaceship] collide [\Spaceship, \Asteroid]
+''', ['specific', 'generic', 'generic', 'generic', ['specific', 'generic']])
+
+    def test_union_collision_default_does_not_hide_ambiguous_pair(self):
+        self.assert_rejected(r'''
+trait Collidable => define collide(other: Collidable) => "generic" end
+object Asteroid => end
+object Asteroid as Collidable => end
+object Spaceship => end
+object Spaceship as Collidable => end
+define collide(:Asteroid, :Collidable) => "left"
+define collide(:Collidable, :Asteroid) => "right"
+define test(left: Asteroid|Spaceship, right: Asteroid|Spaceship) =>
+  $left collide $right
+end
+''', 'collide')
+
+    def test_union_collision_rejects_uncovered_cartesian_pair(self):
+        self.assert_rejected(r'''
+object Asteroid => end
+object Spaceship => end
+define collide(:Asteroid, :Spaceship) => "left"
+define collide(:Spaceship, :Asteroid) => "right"
+[\Asteroid, \Spaceship] collide [\Spaceship, \Asteroid]
+''', 'collide')
+
+    def test_union_collection_overload_keeps_precedence_over_scalar_dispatch(self):
+        self.assert_executes(r'''
+define describe(:Number) => "number"
+define describe(:String) => "string"
+define[T] describe(:T+) => "list"
+[1, "two"] describe
+define describePair(:Number, :Number) => "number"
+define describePair(:String, :Number) => "string"
+define[T] describePair(:T+, :Number) => "list"
+[1, "two"] describePair [3, 4]
+''', ['list', ['list', 'list']])
+
+    def test_union_default_dispatch_infers_selected_return_types(self):
+        source = r'''
+trait Item => end
+object First => end
+object First as Item => end
+object Second => end
+object Second as Item => end
+define describe(:Item) -> Int => 7
+define describe(:First) -> String => "first"
+define test(item: First|Second) => $item describe end
+test(\First)
+test(\Second)
+'''
+        self.assert_executes(source, ['first', 7])
+        typed = self.analyse(source)
+        self.assertTrue(T.same(typed[-1].typ, T.U(T.Int, T.String)))
+
+    def test_nominal_trait_dispatch_ignores_nonconforming_free_overloads(self):
+        self.assert_executes(r'''
+trait Collidable =>
+  define collide(other: Collidable) -> Collidable? => \None
+end
+object Spaceship => end
+object Spaceship as Collidable => end
+define collide(:Spaceship, :Spaceship) -> Spaceship+ => [pop, top] end
+$left: Collidable = \Spaceship
+$right: Collidable = \Spaceship
+$left collide $right
+collide(\Spaceship, \Spaceship) length
+''', [ObjectValue('None', {}), 2])
+
+    def test_vectorized_trait_dispatch_uses_only_checked_implementations(self):
+        self.assert_executes(r'''
+trait Collidable =>
+  define collide(other: Collidable) -> Collidable? => \None
+end
+object Asteroid => $diameter: Real
+object Asteroid as Collidable =>
+  define collide(:Collidable) -> Asteroid => $self
+end
+object Spaceship =>
+  define collide(s: Spaceship) -> Spaceship+ => [$self, $s] end
+end
+object Spaceship as Collidable => end
+const $left: Collidable+ = [Asteroid 20, \Spaceship, Asteroid 30]
+const $right: Collidable+ = [\Spaceship, \Spaceship, Asteroid 20]
+$left collide $right
+$right collide $left
+''', [
+            [ObjectValue('None', {}), ObjectValue('None', {}), ObjectValue('Asteroid', {'diameter': 20})],
+            [ObjectValue('Asteroid', {'diameter': 20}), ObjectValue('None', {}), ObjectValue('Asteroid', {'diameter': 30})],
+        ])
+
+    def test_nominal_trait_dispatch_keeps_distinct_contract_slots(self):
+        self.assert_executes(r'''
+trait Counted => extend value -> Int end
+trait Named => extend value -> String end
+object Item => end
+object Item as Counted => define value -> Int => 7 end
+object Item as Named => define value -> String => "item" end
+define count(item: Counted) -> Int => $item value end
+define name(item: Named) -> String => $item value end
+count(\Item)
+name(\Item)
+count(\Item)
+''', [7, 'item', 7])
+
+    def test_nominal_trait_dispatch_preserves_explicit_receiver_position(self):
+        self.assert_executes(r'''
+trait Shifted => extend shift(:Int) -> Int end
+object Item => $offset: Int end
+object Item as Shifted =>
+  define shift(value: Int, self: $self) -> Int => $self.offset + $value
+end
+$item: Shifted = Item(10)
+3 | shift $item
+[3, 4] | shift [ $item, $item ]
+''', [13, [13, 14]])
+
     def test_anonymous_trait_accepts_structural_method(self):
         self.assert_executes('''
 object Item => $id: Int

@@ -555,6 +555,7 @@ def _call_element_candidates(
                 overload, overload.implementation_id, explicit_args, application_branch,
             ) for overload in callable_overloads),
         )
+        covered = covered[0] if covered else None
         if covered is not None and covered.specialization is not None:
             applied = covered.applied
             candidates.append(_core.CallCandidate(

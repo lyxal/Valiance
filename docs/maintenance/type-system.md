@@ -1905,6 +1905,14 @@ implementation separately for each scalar receiver. Checked object method bodies
 are retained for both implicit and explicit receivers so lowering preserves these
 call and vectorisation decisions.
 
+Nominal trait calls retain the declaration identity of the selected requirement.
+`NominalTraitImplementation` records the implementation identity, generic receiver
+domain, bounds, and receiver position proved during conformance checking. These
+records survive imports and analysed-interface serialization. Ordinary overloads
+that do not implement that requirement remain available to concrete calls but
+cannot occupy its trait slot. Imported trait shapes preserve their original
+requirement identities rather than deriving new identities in the importing file.
+
 ### Variants
 
 Bare cases and explicit empty case bodies share the ordinary object shape.

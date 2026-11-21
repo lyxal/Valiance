@@ -141,23 +141,15 @@ class OptimizerTests(unittest.TestCase):
         """New binaries signal their format, but previous bytecode remains readable."""
         from valiance.runtime.serialization import BYTECODE_VERSION
 
-        self.assertEqual(BYTECODE_VERSION, 0x4A)
+        self.assertEqual(BYTECODE_VERSION, 0x4B)
         old_style = Program(FunctionCode((
             Instruction(OpCode.PUSH_CONST, RuntimeNumber(3)),
             Instruction(OpCode.RETURN),
         )))
         self.assertEqual(loads(dumps(old_style)), old_style)
-        # Prior unnamed handlers keep the original two-field table layout;
-        # the new reader accepts existing 0x48 bytecode too.
-        old_bytes = bytearray(dumps(old_style))
-        old_bytes[len(b"VLNCBC")] = 0x48
-        self.assertEqual(loads(bytes(old_bytes)), old_style)
-        prior_bytes = bytearray(dumps(old_style))
-        prior_bytes[len(b"VLNCBC")] = 0x49
-        self.assertEqual(loads(bytes(prior_bytes)), old_style)
         from valiance.runtime.serialization import MAGIC_PREFIX, _Writer
 
-        for version in (0x43, 0x44, 0x45, 0x46, 0x47):
+        for version in (0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A):
             # Write each payload using its own version; changing a current
             # header can misalign fields introduced by later formats.
             writer = _Writer(version=version)

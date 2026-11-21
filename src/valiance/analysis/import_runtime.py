@@ -72,6 +72,13 @@ def with_import_runtime_name(
                     node.method_bodies, node.node.name, runtime_name, runtime_links,
                 ) if isinstance(node, TypedObjectNode) else ()
             ),
+            nominal_trait_implementations=(
+                node.nominal_trait_implementations if isinstance(node, TypedObjectNode) else ()
+            ),
+            nominal_trait_requirements=(
+                node.nominal_trait_requirements if isinstance(node, TypedObjectNode) else ()
+            ),
+            nominal_trait_definitions=(node.nominal_trait_definitions if isinstance(node, TypedObjectNode) else ()),
         )
     return node
 

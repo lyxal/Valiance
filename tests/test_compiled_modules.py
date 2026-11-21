@@ -2052,10 +2052,10 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0e{"schema":15,"value":{"$":"future"}}')
+            loads_interface(b'VLNI\x0e{"schema":16,"value":{"$":"future"}}')
         with self.assertRaises(BytecodeFormatError):
             loads_interface(
-                b'VLNI\x0e{"schema":15,"value":null}trailing'
+                b'VLNI\x0e{"schema":16,"value":null}trailing'
             )
 
     def test_interface_schema_rejects_truncated_record(self):
@@ -2063,7 +2063,7 @@ $f writeLine "World"
         from valiance.runtime.interface_serialization import loads_interface
 
         with self.assertRaises(BytecodeFormatError):
-            loads_interface(b'VLNI\x0e{"schema":15,"value":')
+            loads_interface(b'VLNI\x0e{"schema":16,"value":')
 
     def test_semantic_hash_ignores_source_locations(self):
         """Exclude diagnostic coordinates from canonical semantic identity."""

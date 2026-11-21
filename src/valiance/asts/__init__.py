@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from valiance.asts.nodes import (
+    NominalTraitImplementation,
     TypedFunctionDispatchNode,
     AnnotationNode,
     AssertNode,
@@ -130,6 +131,7 @@ from valiance.source_tools.source import typed_source
 from valiance.vtypes.symbols import Symbol
 
 __all__ = [
+    "NominalTraitImplementation",
     "TypedFunctionDispatchNode",
     "TypeArgumentExpression",
     "TypedDescriptorConversionNode",

@@ -11,6 +11,7 @@ import unittest
 
 from valiance.runtime import BytecodeFormatError, RuntimeError, dumps, loads, run
 from valiance.runtime.bytecode import (
+    DispatchKind,
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
@@ -29,6 +30,29 @@ from valiance.runtime.serialization import MAGIC
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_nominal_trait_contracts_round_trip_and_reject_inconsistent_metadata(self):
+        reference = ResolvedElementReference(
+            "label", arity_override=1, dispatch_kind=DispatchKind.NOMINAL_TRAIT,
+            nominal_trait_contract="named.label",
+        )
+        main = FunctionCode(
+            (Instruction(OpCode.CALL_RESOLVED_ELEMENT, reference),),
+            params=("self",),
+            nominal_trait_contracts=(("named.label", "Item", (), (), 0),),
+        )
+        self.assertEqual(loads(dumps(Program(main))), Program(main))
+        for invalid in (
+            replace(reference, nominal_trait_contract=None),
+            replace(reference, dispatch_kind=DispatchKind.STATIC, implementation_id="checked"),
+        ):
+            with self.subTest(reference=invalid), self.assertRaises(BytecodeFormatError):
+                loads(dumps(Program(replace(main, instructions=(
+                    Instruction(OpCode.CALL_RESOLVED_ELEMENT, invalid),
+                )))))
+        for contracts in ((7,), ("named.label", "named.label")):
+            with self.subTest(contracts=contracts), self.assertRaises(BytecodeFormatError):
+                loads(dumps(Program(replace(main, nominal_trait_contracts=contracts))))
+
     def test_iterable_foreach_payload_round_trip_and_validation(self):
         def method(name, params):
             return FunctionCode(

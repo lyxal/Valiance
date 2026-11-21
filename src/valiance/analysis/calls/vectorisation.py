@@ -226,6 +226,7 @@ def _call_site_checked_overload_signature(
                 tuple(_core.ElementArguments(candidate, candidate.implementation_id,
                                              stack, _core.AnalysisBranch()) for candidate in candidates),
             )
+            covered = covered[0] if covered else None
             if covered is not None and covered.specialization is not None:
                 if checked_bodies is not None:
                     checked_bodies.append(covered.specialization)

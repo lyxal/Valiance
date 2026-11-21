@@ -475,11 +475,17 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.imported_guarded_supertypes,
             method_bodies=tuple((identity, _refine_typed_node(body, old, new))
                                 for identity, body in typed_node.method_bodies),
+            nominal_trait_implementations=typed_node.nominal_trait_implementations,
+            nominal_trait_requirements=typed_node.nominal_trait_requirements,
+            nominal_trait_definitions=typed_node.nominal_trait_definitions,
         )
     if isinstance(typed_node, TypedObjectNode):
         return TypedObjectNode(typed_node.node, typ, typed_node.method_results, typed_node.method_ids,
                                method_bodies=tuple((identity, _refine_typed_node(body, old, new))
-                                                   for identity, body in typed_node.method_bodies))
+                                                   for identity, body in typed_node.method_bodies),
+                               nominal_trait_implementations=typed_node.nominal_trait_implementations,
+                               nominal_trait_requirements=typed_node.nominal_trait_requirements,
+                               nominal_trait_definitions=typed_node.nominal_trait_definitions)
     return TypedNode(typed_node.node, typ)
 
 

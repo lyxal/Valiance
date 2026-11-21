@@ -429,6 +429,8 @@ class Overload:
     conversion_target: Type | None = field(default=None, compare=False, hash=False)
     native_link: object | None = field(default=None, compare=False, hash=False)
     is_structural_requirement: bool = field(default=False, compare=False, hash=False)
+    nominal_trait_contract: str | None = field(default=None, compare=False, hash=False)
+    object_receiver_index: int | None = field(default=None, compare=False, hash=False)
     # Assigned at the declaration source, not derived from a local overload slot.
     implementation_id: str | None = field(default=None, compare=False, hash=False)
     specialize_body: bool = False

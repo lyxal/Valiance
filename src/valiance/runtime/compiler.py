@@ -12,6 +12,7 @@ from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement, runtime
 from valiance.vtypes.identities import constructor_implementation_id, overload_implementation_id
 from valiance.vtypes.relations import multimethod_dispatch_type
 from valiance.asts import (
+    NominalTraitImplementation,
     TypedFunctionDispatchNode,
     TypedConstructionNode,
     AnnotationNode,
@@ -116,6 +117,7 @@ from valiance.asts.object_constructors import (
     prepare_constructor_body,
 )
 from valiance.runtime.bytecode import (
+    NominalTraitImplementationReference,
     ReflectionFieldsReference,
     ReflectionForeachReference,
     IterableForeachReference,
@@ -210,6 +212,7 @@ class _Compiler:
         self._literal_storage: str | None = None
         self._builtin_elements: dict[str, BuiltinElement] | None = None
         self._import_method_selection: dict[int, frozenset[str]] = {}
+        self._declared_method_ids: set[str] = set()
 
     def _runtime_elements(self) -> dict[str, BuiltinElement]:
         """Snapshot dynamic built-ins once for this compiler instance."""
@@ -1217,6 +1220,10 @@ class _Compiler:
                     ),
                     method_bodies=dict(typed_node.method_bodies) if isinstance(typed_node, TypedObjectNode) else None,
                     linked_methods=self._import_method_selection.get(id(typed_node)),
+                    nominal_trait_definitions=(typed_node.nominal_trait_definitions
+                                               if isinstance(typed_node, TypedObjectNode) else ()),
+                    nominal_trait_implementations=(typed_node.nominal_trait_implementations
+                                                   if isinstance(typed_node, TypedObjectNode) else ()),
                 )
             case FieldAccessNode(name):
                 argument = (name.text, "optional") if node.optional_safe else name.text
@@ -1396,6 +1403,8 @@ class _Compiler:
         method_ids: dict[str, tuple[tuple[int | None, tuple[tuple[str, str], ...]], ...]] | None = None,
         method_bodies: dict[str, TypedFunctionNode] | None = None,
         linked_methods: frozenset[str] | None = None,
+        nominal_trait_definitions: tuple[DefineNode, ...] = (),
+        nominal_trait_implementations: tuple[NominalTraitImplementation, ...] = (),
     ) -> None:
         """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
@@ -1454,18 +1463,33 @@ class _Compiler:
                         )
             case "trait":
                 runtime_name = _symbol_runtime_name(node.name)
-                for definition in node.definitions:
+                bindings = {binding.implementation_id: binding for binding in nominal_trait_implementations}
+                definitions = (
+                    *((definition, False) for definition in node.definitions),
+                    *((definition, True) for definition in nominal_trait_definitions),
+                )
+                emitted = set()
+                for definition, hidden in definitions:
                     records = dict((method_ids or {}).get(definition.name.text, ()))
                     alternatives = records.get(definition.location.offset if definition.location is not None else None, ())
                     for identity in tuple(identity for _shape, identity in alternatives) or (None,):
+                        if (identity is not None and identity in emitted) or (hidden and (
+                            identity in self._declared_method_ids or identity not in bindings
+                        )):
+                            continue
+                        if identity is not None:
+                            emitted.add(identity)
+                        binding = bindings.get(identity)
+                        generics = binding.generics if hidden else node.generics
+                        constraints = binding.generic_constraints if hidden else node.generic_constraints
                         self.friendly_definition(
                             runtime_name, definition, implementation_id=identity,
                             result_signature_types=(method_results or {}).get(identity, ()),
-                            owner_generics=tuple(generic.text for generic in node.generics),
+                            owner_generics=tuple(generic.text for generic in generics),
                             checked_function=(method_bodies or {}).get(identity),
                             variant_dispatch=True,
                             owner_constraints=_runtime_generic_constraint_guards(
-                                node.generics, node.generic_constraints,
+                                generics, constraints,
                             ),
                         )
             case "variant":
@@ -2632,8 +2656,16 @@ def compile_program(
     nodes = _with_reachable_import_prelude(nodes)
     compiler = _Compiler()
     compiler._import_method_selection = _import_method_selection(nodes)
+    compiler._declared_method_ids = {
+        identity for typed in nodes if isinstance(typed, TypedObjectNode)
+        for definition in typed.node.definitions
+        for offset, variants in dict(typed.method_ids).get(definition.name.text, ())
+        if offset == (definition.location.offset if definition.location is not None else None)
+        for _, identity in variants
+    }
     compiler.prepare_runtime_type_facts(tuple(nodes))
     main = compiler.compile_function(tuple(nodes), name="<main>")
+    main = _link_nominal_trait_contracts(main, tuple(nodes))
     program = Program(main, tuple(sorted(compiler.tag_parents.items())))
     if not optimize:
         return program
@@ -2649,6 +2681,60 @@ def compile_program(
         else optimization_pipeline
     )
     return optimize_program(program, pipeline=pipeline)
+
+
+def _link_nominal_trait_contracts(main: FunctionCode, nodes: tuple[TypedNode, ...]) -> FunctionCode:
+    """Link analysis-proven trait implementations, including later declarations."""
+    contracts: dict[str, set[NominalTraitImplementationReference]] = {}
+    pending = list(nodes)
+    visited = set()
+    while pending:
+        item = pending.pop()
+        if id(item) in visited:
+            continue
+        visited.add(id(item))
+        if isinstance(item, TypedObjectNode):
+            owner = _symbol_runtime_name(
+                item.runtime_nominal_name or item.node.name
+                if isinstance(item, TypedImportedObjectNode) else item.node.name
+            )
+            origins = dict(item.runtime_type_origins) if isinstance(item, TypedImportedObjectNode) else {}
+            for implementation in item.nominal_trait_implementations:
+                generic_names = tuple(generic.text for generic in implementation.generics)
+                receiver = f"{owner}[{', '.join(generic_names)}]" if generic_names else owner
+                guards = _runtime_generic_constraint_guards(
+                    implementation.generics,
+                    tuple(_runtime_nominal_type(bound, origins) if bound is not None else None
+                          for bound in implementation.generic_constraints),
+                )
+                contracts.setdefault(implementation.implementation_id, set()).add(NominalTraitImplementationReference(
+                    implementation.contract, receiver, generic_names, guards, implementation.receiver_index,
+                ))
+        if isinstance(item, (tuple, list)):
+            pending.extend(item)
+        elif is_dataclass(item) and type(item).__module__.startswith("valiance.asts"):
+            pending.extend(getattr(item, member.name) for member in fields(item))
+
+    linked = {}
+
+    def link(value):
+        """Preserve shared bytecode objects while linking implementation evidence."""
+        if isinstance(value, tuple):
+            return tuple(link(item) for item in value)
+        if not is_dataclass(value) or type(value).__module__ != "valiance.runtime.bytecode":
+            return value
+        if id(value) in linked:
+            return linked[id(value)]
+        changes = {member.name: link(getattr(value, member.name)) for member in fields(value)}
+        if isinstance(value, FunctionCode):
+            changes["nominal_trait_contracts"] = tuple(sorted(
+                set(value.nominal_trait_contracts) | contracts.get(value.implementation_id, set())
+            ))
+        result = replace(value, **changes)
+        linked[id(value)] = result
+        return result
+
+    return link(main)
 
 
 def _compile_object_initializer(name: str, definition: DefineNode) -> FunctionCode:
@@ -3957,6 +4043,7 @@ def _resolved_element_reference(
         extension=_compiled_element_extension(node.extension),
         structural_witnesses=node.structural_witnesses,
         callable_witnesses=node.callable_witnesses,
+        nominal_trait_contract=(node.overload.overload.nominal_trait_contract if nominal_trait else None),
         structural_signature=(
             (
                 tuple(show(param) for param in node.overload.params[1:]),
