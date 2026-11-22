@@ -725,8 +725,9 @@ def _returned_trait_evidence(
     if ctx is None or not body or len(signature.returns) != 1:
         return body
     expected = T.normalize(signature.returns[0])
-    if not isinstance(expected, T.AnonymousTraitType):
+    if not isinstance(expected, T.AnonymousTraitType) and not ctx.trait_implementation_methods:
         return body
+    from valiance.vtypes.relations import nominal_implementation_witnesses
     from valiance.asts.nodes import (
         CastNode, TypedCastNode, TypedReturnNode, TypedFunctionNode,
     )
@@ -735,7 +736,11 @@ def _returned_trait_evidence(
         """Select the checked conversion for one concrete return value."""
         if source is None or not isinstance(T.normalize(source), T.NominalType):
             return None
-        proof = T.checked_structural_witnesses(source, expected, ctx)
+        proof = (
+            T.checked_structural_witnesses(source, expected, ctx)
+            if isinstance(expected, T.AnonymousTraitType)
+            else nominal_implementation_witnesses(source, expected, ctx)
+        )
         if not proof:
             return None
         return TypedCastNode(CastNode(typ=expected), expected, proof)

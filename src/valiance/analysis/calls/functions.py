@@ -47,7 +47,7 @@ def _behaviour_set_return_ambiguity(
             continue
         providers = tuple(
             sorted(
-                ctx.implementation_providers(actual.name, target.name),
+                T.implementation_pattern_providers(actual, target, ctx),
                 key=str,
             )
         )

@@ -226,8 +226,8 @@ class ResolvedElementReference:
     # A compiler-checked requirement, not a runtime argument overload search.
     # The receiver is abstract; params exclude the implicit receiver.
     structural_signature: tuple[tuple[str, ...], tuple[str, ...]] | None = None
-    # Proof-bearing call-site trait conversions. This must never be inferred
-    # from the runtime method argument or an overload-set position.
+    # Checked argument conversions. Nominal slots use ((contract_id,), ())
+    # in the signature position, with the same value-local transport.
     structural_witnesses: tuple[
         tuple[int, int, str, tuple[tuple[str, ...], tuple[str, ...]], str], ...
     ] = ()

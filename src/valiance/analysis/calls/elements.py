@@ -592,7 +592,7 @@ class _ElementCalls:
                     and T.normalize(behaviour.trait_pattern).name.text
                     == trait_receiver.name.text
                 )
-                if provider_name is None and implementations:
+                if provider_name is None and implementations and not self.env.context.explicit_trait_implementations:
                     applicable = implementation_target_providers(trait_receiver, self.env.context)
                     if len(applicable) == 1:
                         provider_name = next(iter(applicable))

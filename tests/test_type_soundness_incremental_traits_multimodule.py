@@ -308,7 +308,7 @@ class IncrementalTraitMultiModuleTests(unittest.TestCase):
         self.source_free(('base', 'numeric', 'textual', 'front'))
         self.assertEqual(self.execute(optimize=True)[1], ['numeric', 'textual'])
 
-    def test_overlapping_generic_bounds_are_statically_ambiguous(self):
+    def test_overlapping_generic_bounds_fail_when_the_facade_imports_them(self):
         self.write('base', GENERIC_BASE)
         self.write('numeric', (
             'import {base.[Source,Target]}\n'
@@ -324,13 +324,9 @@ class IncrementalTraitMultiModuleTests(unittest.TestCase):
             'public import {base.[Box,Source,Target],'
             'numeric.trait Source as Target,real.trait Source as Target}\n'
         ))
-        self.write('main', (
-            'import {front.[Box,Source,Target]}\n'
-            'Box(3) as[Target[Int]] | label\n'
-        ))
-        self.modules(('base', 'numeric', 'real', 'front'))
-        with self.assertRaisesRegex(RuntimeError, 'ambiguous implementation'):
-            self.execute()
+        self.modules(('base', 'numeric', 'real'))
+        with self.assertRaisesRegex(RuntimeError, 'ambiguous behaviour set imports'):
+            self.modules(('front',))
 
     def test_disjoint_generic_trait_implications_dispatch_by_instantiated_bound(self):
         # A Number-constrained and a String-constrained blanket implication

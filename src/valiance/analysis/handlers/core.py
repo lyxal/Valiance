@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from itertools import combinations
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.contracts.release_effects import released_types_effects
 from valiance.analysis.lints import canonical_lint_code, finding
 import valiance.vtypes as T
-from valiance.vtypes.relations import _contains_type_var
+from valiance.vtypes.context import TraitImplementationPattern
+from valiance.vtypes.relations import (
+    _contains_type_var, behaviour_imports_may_overlap, nominal_implementation_witnesses,
+)
 from valiance.asts import (
     AnnotationNode,
     AtNode,
@@ -683,7 +687,10 @@ def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranc
     result = T.optional(flowed) if node.optional else flowed
     if node.checked and statically_safe:
         node = replace(node, checked=False)
-    witnesses = ()
+    witnesses = (
+        nominal_implementation_witnesses(source, target, self.env.context)
+        if statically_safe else ()
+    )
     if statically_safe and isinstance(normalized_target, T.AnonymousTraitType):
         try:
             proof = T.checked_structural_witnesses(
@@ -1194,8 +1201,8 @@ def _import_node(
             exports, resolved_spec, definitions = self._load_import_definitions(spec)
             objects = import_objects(exports, resolved_spec)
             behaviour_objects = import_behaviour_set_objects(exports, resolved_spec)
-            trait_implementations = import_trait_implementations(exports, resolved_spec)
-            trait_implementations += import_owned_trait_implementations(
+            explicit_implementations = import_trait_implementations(exports, resolved_spec)
+            trait_implementations = explicit_implementations + import_owned_trait_implementations(
                 exports, resolved_spec
             )
             import_environment_facts(exports, resolved_spec, self.env)
@@ -1232,6 +1239,58 @@ def _import_node(
         if conflict is not None:
             self._diagnose(conflict, node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+        from valiance.modules_system.modules import _rename_imported_types
+
+        provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
+        if explicit_implementations or self.env.context.explicit_trait_implementations:
+            selection_context = self.env.context.copy()
+            selected = selection_context.explicit_trait_implementations
+            import_site = node.location
+            selection_context.trait_impl_patterns = [
+                selected[pattern][0] if pattern in selected
+                else _rename_imported_types(pattern, selection_context.nominal_origins)
+                for pattern in selection_context.trait_impl_patterns
+                if pattern.subject_kind == Symbol("trait")
+            ]
+            for implementation in trait_implementations:
+                origin = implementation.provider or provider
+                pattern = TraitImplementationPattern(
+                    implementation.object_pattern, implementation.trait_pattern, origin,
+                    implementation.generics, implementation.generic_constraints,
+                    implementation.subject_kind,
+                )
+                canonical = _rename_imported_types(pattern, dict(implementation.nominal_origins))
+                if pattern.subject_kind == Symbol("trait"):
+                    selection_context.trait_impl_patterns.append(canonical)
+                if implementation not in explicit_implementations or pattern in selected:
+                    continue
+                component = next(
+                    component for component in resolved_spec.components
+                    if component.kind == Symbol("trait_impl")
+                    and component.name == implementation.object_name
+                    and component.trait == implementation.trait_name
+                )
+                import_site = component.location or node.location
+                selected[pattern] = canonical, import_site
+            for (first, (left, left_site)), (second, (right, right_site)) in combinations(selected.items(), 2):
+                if left == right or not behaviour_imports_may_overlap(left, right, selection_context):
+                    continue
+                previous = f" at {left_site.line}:{left_site.column}" if left_site is not None else ""
+                prior_second = second in self.env.context.explicit_trait_implementations
+                second_location = (
+                    f" (previous import at {right_site.line}:{right_site.column})"
+                    if prior_second and right_site is not None else ""
+                )
+                self._diagnose(
+                    f"ambiguous behaviour set imports for "
+                    f"{T.show(second.object_pattern)} as {T.show(second.trait_pattern)}\n"
+                    f"candidate behaviour sets:\n  {first.provider}.{first.trait_pattern.name}"
+                    f" (previous import{previous})\n  {second.provider}.{second.trait_pattern.name}"
+                    f"{second_location}",
+                    replace(node, location=import_site if prior_second else right_site),
+                )
+                return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+            self.env.context.explicit_trait_implementations.update(selected)
         # Collapse diamond imports of one canonical declaration before linking
         # constructors/methods. This leaves distinct trait implementation
         # evidence from the second path available below.
@@ -1441,13 +1500,20 @@ def _import_node(
                 )
                 if candidate not in candidates:
                     candidates.append(candidate)
+        if not resolved_spec.components:
+            self._register_namespace_behaviour_overloads(
+                namespace_name, exports, provider_runtime_links,
+            )
+        for implementation in trait_implementations:
+            for spelling, canonical in implementation.nominal_origins:
+                if self.env.lookup_object(spelling) is None and self.env.lookup_trait(spelling) is None:
+                    self.env.context.nominal_origins.setdefault(spelling, canonical)
         for obj in behaviour_objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
         # A selected nominal alias must also rename matching exported callable
         # contracts. Otherwise a facade exposes `AliasCode` while its overload
         # still expects the inaccessible provider spelling `Code`.
-        from valiance.modules_system.modules import _rename_imported_types
         nominal_aliases = {
             component.name: component.alias
             for component in resolved_spec.components
@@ -1613,9 +1679,21 @@ def _import_node(
                     return _core.BranchSet(
                         (branch.emit(TypedNode(node, None)),)
                     )
-        provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
         for implementation in trait_implementations:
             origin = implementation.provider or provider
+            pattern = TraitImplementationPattern(
+                implementation.object_pattern, implementation.trait_pattern, origin,
+                implementation.generics, implementation.generic_constraints, implementation.subject_kind,
+            )
+            method_names = {
+                identity: name for name, locations in implementation.method_ids
+                for _, variants in locations for _, identity in variants
+            }
+            self.env.context.trait_implementation_methods[pattern] = tuple(
+                (method_names[item.implementation_id], item.contract, item.implementation_id)
+                for item in implementation.nominal_trait_implementations
+                if item.implementation_id in method_names
+            )
             self.env.context.trait_provider_aliases.setdefault(provider, set()).add(origin)
             if not resolved_spec.components and resolved_spec.alias is not None:
                 self.env.context.trait_provider_aliases.setdefault(resolved_spec.alias, set()).add(origin)
@@ -1651,7 +1729,12 @@ def _import_node(
         reexport = node.public and self._scope_depth == 0
         if reexport:
             self._public_import_trait_implementations.extend(
-                replace(implementation, reexported=True) for implementation in trait_implementations)
+                replace(
+                    implementation, reexported=True,
+                    explicit_reexport=implementation in explicit_implementations,
+                )
+                for implementation in trait_implementations
+            )
             self._public_import_objects.extend(
                 replace(
                     obj,

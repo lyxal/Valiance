@@ -21,6 +21,7 @@ from valiance.asts import (
     TypedObjectNode,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
+from valiance.vtypes.context import TraitImplementationPattern
 from valiance.vtypes.identities import constructor_implementation_id, method_variant_id
 from valiance.asts.object_constructors import (
     constructor_definitions,
@@ -336,8 +337,53 @@ class _ObjectDeclarations:
                     nominal_trait_requirements=contract_keys,
                     nominal_trait_definitions=(node.definitions if node.kind == Symbol("trait") else ()),
                 )
+                self._record_local_trait_slots(items[index])
                 return replace(branch, typed_body=tuple(items))
         return branch
+
+    def _record_local_trait_slots(self, implementation: TypedObjectNode) -> None:
+        """Record local method slots so imported overrides can mask them."""
+        node = implementation.node
+        if not isinstance(node.target, T.NominalType):
+            return
+        ctx = self.env.context
+        provider = Symbol("<local>")
+        pattern = next((
+            pattern for pattern in reversed(ctx.trait_impl_patterns)
+            if pattern.provider == provider
+            and pattern.subject_kind == node.kind
+            and isinstance(pattern.object_pattern, T.NominalType)
+            and pattern.object_pattern.name == node.name
+            and isinstance(pattern.trait_pattern, T.NominalType)
+            and pattern.trait_pattern.name == node.target.name
+            and pattern.generic_names == node.generics
+        ), None)
+        if pattern is None:
+            if node.generics:
+                return
+            pattern = TraitImplementationPattern(
+                T.N(node.name), node.target, provider, subject_kind=node.kind,
+            )
+        names = {
+            identity: name for name, locations in implementation.method_ids
+            for _, variants in locations for _, identity in variants
+        }
+        trait = self.env.lookup_trait(node.target.name)
+        if trait is not None:
+            requirements = {
+                requirement.overload.nominal_trait_contract: requirement.name.text
+                for requirement in trait.requirements
+            }
+            for slot in implementation.nominal_trait_implementations:
+                name = requirements.get(slot.contract)
+                if name is not None:
+                    names.setdefault(slot.implementation_id, name)
+        methods = tuple(
+            (names[slot.implementation_id], slot.contract, slot.implementation_id)
+            for slot in implementation.nominal_trait_implementations
+            if slot.implementation_id in names
+        )
+        ctx.trait_implementation_methods[pattern] = methods
 
     def _nominal_trait_implementation_evidence(
         self, receiver: T.Type, requirements: tuple[T.TraitRequirement, ...], owner: ObjectNode,

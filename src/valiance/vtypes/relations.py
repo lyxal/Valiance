@@ -6,7 +6,7 @@ from .identities import overload_implementation_id
 
 from collections.abc import Callable, Iterable
 from itertools import product
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.structural import (
@@ -33,7 +33,7 @@ from valiance.vtypes.builders import (
     same,
     show,
 )
-from valiance.vtypes.context import Context, Variance
+from valiance.vtypes.context import Context, TraitImplementationPattern, Variance
 from valiance.vtypes.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,
@@ -381,6 +381,82 @@ def _implementation_constraints_hold(
     return True
 
 
+def behaviour_imports_may_overlap(
+    left: TraitImplementationPattern,
+    right: TraitImplementationPattern,
+    ctx: Context,
+) -> bool:
+    """Conservatively compare the domains of two explicit imports."""
+    def disjoint(a: Type, b: Type, *, nominal: bool = False, target: bool = False) -> bool:
+        """Prove disjointness without assuming open trait bounds are exclusive."""
+        if isinstance(a, UnionType):
+            return all(disjoint(item, b, nominal=nominal, target=target) for item in a.items)
+        if isinstance(b, UnionType):
+            return all(disjoint(a, item, nominal=nominal, target=target) for item in b.items)
+        if not isinstance(a, NominalType) or not isinstance(b, NominalType):
+            return False
+        if ctx.nominal_origin(a.name) == ctx.nominal_origin(b.name):
+            variances = (
+                ctx.generic_variance.get(a.name)
+                or next((
+                    registered for name, registered in ctx.generic_variance.items()
+                    if ctx.nominal_origin(name) == ctx.nominal_origin(a.name)
+                ), ())
+            ) if target else ()
+            return any(
+                (index >= len(variances) or variances[index] is Variance.INVARIANT)
+                and disjoint(x, y)
+                for index, (x, y) in enumerate(zip(a.args, b.args))
+            )
+        closed = {INT, REAL, NUMBER, Symbol("String"), BOOLEAN}
+        return (nominal or a.name in closed and b.name in closed
+                and not subtype(a, b, ctx) and not subtype(b, a, ctx))
+
+    def bound_pattern(pattern: Type, item: TraitImplementationPattern) -> Type:
+        """Project declared constraints onto the receiver pattern."""
+        bounds = dict(zip(item.generic_names, item.generic_constraints))
+        return _substitute(pattern, {
+            type_var_key(var): bound
+            for var in _ordered_type_vars(pattern)
+            if isinstance((bound := bounds.get(Symbol(var.name))), Type)
+        })
+
+    def targets(
+        item: TraitImplementationPattern, competing: TraitImplementationPattern,
+    ) -> set[NominalType]:
+        """Follow potentially applicable implication edges to their targets."""
+        result = set()
+        pending = [bound_pattern(item.trait_pattern, item)]
+        seen = set()
+        while pending:
+            current = pending.pop()
+            if not isinstance(current, NominalType):
+                continue
+            result.add(current)
+            subject = ctx.nominal_origin(current.name)
+            if subject in seen:
+                continue
+            seen.add(subject)
+            for candidate in ctx.trait_impl_patterns:
+                if (candidate != competing and candidate.subject_kind == Symbol("trait")
+                        and isinstance(candidate.object_pattern, NominalType)
+                        and ctx.nominal_origin(candidate.object_pattern.name)
+                        == ctx.nominal_origin(current.name)):
+                    pending.append(bound_pattern(candidate.trait_pattern, candidate))
+        return result
+
+    if all(disjoint(a, b, nominal=True, target=True)
+           for a in targets(left, right) for b in targets(right, left)):
+        return False
+    if left.subject_kind == right.subject_kind == Symbol("object"):
+        return not disjoint(
+            bound_pattern(left.object_pattern, left),
+            bound_pattern(right.object_pattern, right),
+            nominal=True,
+        )
+    return True
+
+
 @dataclass(frozen=True)
 class ImplementationEdge:
     """One specialized implementation edge selected during evidence search."""
@@ -389,6 +465,7 @@ class ImplementationEdge:
     target: NominalType
     provider: Symbol
     subject_kind: Symbol
+    pattern: TraitImplementationPattern | None = None
 
 
 @dataclass(frozen=True)
@@ -454,7 +531,7 @@ def implementation_pattern_evidence(
     target: Type,
     ctx: Context,
 ) -> tuple[ImplementationEvidence, ...]:
-    """Return all matching implementation paths without ranking providers."""
+    """Return the applicable paths after qualification and import precedence."""
     source = normalize(source)
     target = normalize(target)
     if not isinstance(source, NominalType) or not isinstance(target, NominalType):
@@ -475,28 +552,45 @@ def implementation_pattern_evidence(
         if target.name.namespace and not imported_alias else target
     )
     results: set[ImplementationEvidence] = set()
-    for provider in (
-        ctx.implementation_providers(source.name, unqualified_target.name)
-        if not unqualified_target.args else ()
-    ):
-        if requested_provider is None or provider in ctx.trait_provider_aliases.get(requested_provider, {requested_provider}):
-            results.add(ImplementationEvidence((
-                ImplementationEdge(
-                    source,
-                    unqualified_target,
-                    provider,
-                    Symbol("object"),
-                ),
-            )))
+
+    def concrete_edge(subject: NominalType, reached: NominalType, provider: Symbol) -> ImplementationEdge:
+        """Recover the registered pattern for a non-generic relationship."""
+        direct = TraitImplementationPattern(subject, reached, provider)
+        if direct in ctx.trait_implementation_methods or direct in ctx.explicit_trait_implementations:
+            return ImplementationEdge(subject, reached, provider, Symbol("object"), direct)
+        pattern = next((
+            item for item in ctx.trait_implementation_methods.keys() | ctx.explicit_trait_implementations.keys()
+            if not item.generic_names and item.provider == provider
+            and item.subject_kind == Symbol("object")
+            and isinstance(item.object_pattern, NominalType)
+            and ctx.nominal_origin(item.object_pattern.name) == ctx.nominal_origin(subject.name)
+            and isinstance(item.trait_pattern, NominalType)
+            and ctx.nominal_origin(item.trait_pattern.name) == ctx.nominal_origin(reached.name)
+            and item.trait_pattern.args == reached.args
+        ), None)
+        return ImplementationEdge(subject, reached, provider, Symbol("object"), pattern)
 
     evidence: list[tuple[NominalType, tuple[ImplementationEdge, ...]]] = []
-    for trait in ctx.trait_impls.get(source.name, set()):
-        target_trait = NominalType(trait)
-        for provider in sorted(ctx.implementation_providers(source.name, trait), key=str):
-            evidence.append((
-                target_trait,
-                (ImplementationEdge(source, target_trait, provider, Symbol("object")),),
-            ))
+    visible_subjects = [source.name]
+    if source.name in ctx.nominal_origins:
+        canonical_source = ctx.nominal_origin(source.name)
+        visible_subjects.extend(
+            name for name in ctx.trait_impls
+            if name != source.name and ctx.nominal_origin(name) == canonical_source
+        )
+    for subject in visible_subjects:
+        for trait in ctx.trait_impls.get(subject, set()):
+            target_trait = NominalType(trait)
+            for provider in sorted(ctx.implementation_providers(subject, trait), key=str):
+                edge = concrete_edge(source, target_trait, provider)
+                evidence.append((target_trait, (edge,)))
+                if (
+                    not unqualified_target.args
+                    and ctx.nominal_origin(trait) == ctx.nominal_origin(unqualified_target.name)
+                    and (requested_provider is None or provider in
+                         ctx.trait_provider_aliases.get(requested_provider, {requested_provider}))
+                ):
+                    results.add(ImplementationEvidence((replace(edge, target=unqualified_target),)))
     seen_evidence = set(evidence)
     changed = True
     while changed:
@@ -527,9 +621,10 @@ def implementation_pattern_evidence(
                     specialized_trait,
                     implementation.provider,
                     implementation.subject_kind,
+                    implementation,
                 ))
                 if (
-                    specialized_trait.name == unqualified_target.name
+                    ctx.nominal_origin(specialized_trait.name) == ctx.nominal_origin(unqualified_target.name)
                     and len(specialized_trait.args) == len(unqualified_target.args)
                     and _nominal_args_subtype(specialized_trait, unqualified_target, ctx)
                 ):
@@ -540,7 +635,44 @@ def implementation_pattern_evidence(
                     seen_evidence.add(item)
                     evidence.append(item)
                     changed = True
+    if requested_provider is None:
+        explicit = {
+            path for path in results
+            if any(edge.pattern in ctx.explicit_trait_implementations for edge in path.edges)
+        }
+        if explicit:
+            results = explicit
     return tuple(sorted(results, key=lambda item: (str(item.provider), tuple(map(str, item.traits)))))
+
+
+def nominal_implementation_witnesses(
+    source: Type,
+    target: Type,
+    ctx: Context,
+    *,
+    explicit_only: bool = False,
+) -> tuple[tuple[str, tuple[tuple[str, ...], tuple[str, ...]], str], ...]:
+    """Return checked nominal slots in the existing runtime witness format."""
+    if not ctx.trait_implementation_methods:
+        return ()
+    source, target = normalize(source), normalize(target)
+    # Existing trait values already carry the evidence established at conversion.
+    if (not isinstance(source, NominalType) or not isinstance(target, NominalType)
+            or ctx.nominal_origin(source.name) == ctx.nominal_origin(target.name)):
+        return ()
+    paths = implementation_pattern_evidence(source, target, ctx)
+    if len(paths) != 1:
+        return ()
+    if explicit_only and not any(
+        edge.pattern in ctx.explicit_trait_implementations for edge in paths[0].edges
+    ):
+        return ()
+    methods = {}
+    for edge in paths[0].edges:
+        for name, contract, identity in ctx.trait_implementation_methods.get(edge.pattern, ()):
+            methods[name, contract] = identity
+    return tuple((name, ((contract,), ()), identity)
+                 for (name, contract), identity in methods.items())
 
 
 def implementation_edge_behaviours(

@@ -19,7 +19,6 @@ for _name in ("plain", "rich"):
     )
 IMPORT_BASE = 'import { base.[Origin, Target, Item] }\n'
 IMPORT_PLAIN = 'import { plain.trait Origin as Target }\n'
-IMPORT_BOTH = 'import { plain.trait Origin as Target, rich.trait Origin as Target }\n'
 
 
 class BehaviourPlanTests(TraitPlanTestCase):
@@ -33,25 +32,32 @@ class BehaviourPlanTests(TraitPlanTestCase):
         for providers in permutations(('plain', 'rich')):
             imports = '\n'.join('import { ' + provider + '.trait Origin as Target }' for provider in providers)
             self.check_case(C("IM-022", IMPORT_BASE + imports + '\nItem(1) as[plain.Target] | label',
-                              ['plain'], modules=PROVIDERS))
+                              reject=('ambiguous behaviour set imports',), modules=PROVIDERS))
 
 
 source_cases(BehaviourPlanTests, [
     C("BL-005", 'trait A => end\ntrait B => end\ntrait A as B => end\ntrait B as A => end\n'
       'object Item => $id: Int end\nItem(1) as[B]', reject=('cannot safely cast',)),
-    C("BL-008", IMPORT_BASE + IMPORT_BOTH + 'Item(1) as[plain.Target] | label\n'
-      'Item(2) as[rich.Target] | label', ['plain', 'rich'], modules=PROVIDERS),
+    C("BL-008", IMPORT_BASE + 'if true =>\n' + IMPORT_PLAIN + 'Item(1) as[plain.Target] | label\n'
+      'else => "unused" end\nif true =>\nimport { rich.trait Origin as Target }\n'
+      'Item(2) as[rich.Target] | label\nelse => "unused" end', ['plain', 'rich'], modules=PROVIDERS),
     C("BL-010", 'import { base.[Origin, Target, Box] }\n'
       'import { numeric.trait Origin as Target, textual.trait Origin as Target }\n'
       'Box(7) as[Target[Int]] | first', [7], modules={
           'base.vlnc': 'public trait[T] Origin => extend read -> T end\n'
-          'public trait[T] Target => extend first -> T end\n'
+          'public trait[T] Target =>\n'
+          ' extend first -> T\n'
+          ' extend consume(value: T) -> Number\nend\n'
           'public object[T] Box => $value: T end\n'
           'object[T] Box as Origin[T] => define read -> T => $self.value end',
           'numeric.vlnc': 'import { base.[Origin, Target] }\n'
-          'trait[T: Number] Origin as Target[T] => define first -> T => $self read end',
+          'trait[T: Number] Origin as Target[T] =>\n'
+          ' define first -> T => $self read\n'
+          ' define consume(value: T) -> Number => 0\nend',
           'textual.vlnc': 'import { base.[Origin, Target] }\n'
-          'trait[T: String] Origin as Target[T] => define first -> T => $self read end',
+          'trait[T: String] Origin as Target[T] =>\n'
+          ' define first -> T => $self read\n'
+          ' define consume(value: T) -> Number => 0\nend',
       }),
     C("BL-013", 'import { base.[Item, Target] }\nItem(1) as[Target]',
       reject=('cannot safely cast',), modules=PROVIDERS),
@@ -67,11 +73,17 @@ source_cases(BehaviourPlanTests, [
           'items.vlnc': 'public object Item => $n: Int end\n'
           'private define hidden(value: Item) -> Int => $value.n end'}),
     C("IM-009", IMPORT_BASE + IMPORT_PLAIN + 'Item(1) as[Target] | label', ['plain'], modules=PROVIDERS),
-    C("IM-011", IMPORT_BASE + IMPORT_BOTH + '''
-define inner(value: Origin) -> String => $value as[rich.Target] | label end
-Item(1) as[plain.Target] | label
-Item(2) inner
-Item(3) as[plain.Target] | label
+    C("IM-011", IMPORT_BASE + '''
+define inner(value: Origin) -> String =>
+  import { rich.trait Origin as Target }
+  $value as[rich.Target] | label
+end
+if true =>
+  import { plain.trait Origin as Target }
+  Item(1) as[plain.Target] | label
+  Item(2) inner
+  Item(3) as[plain.Target] | label
+else => "unused" "unused" "unused" end
 ''', ['plain', 'rich', 'plain'], modules=PROVIDERS),
     C("IM-013", 'import { left.[Origin, Target, Item], left.trait Origin as Target, '
       'right.trait Origin as Target }\nItem(1) as[Target] | label', ['plain'], modules={
