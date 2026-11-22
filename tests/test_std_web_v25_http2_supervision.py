@@ -46,6 +46,15 @@ class HTTP2SupervisionTests(unittest.TestCase):
                 break
         return events
 
+    def _wait_for_admission_release(self, server, *, timeout=2):
+        """Wait for the listener to release its request admission lease."""
+        deadline = time.monotonic() + timeout
+        active = server.resource_snapshot()['active_requests']
+        while active and time.monotonic() < deadline:
+            time.sleep(.01)
+            active = server.resource_snapshot()['active_requests']
+        self.assertEqual(active, 0, 'request admission lease was not released')
+
     def test_global_admission_refuses_then_recovers_across_tls_connections(self):
         entered = threading.Event()
         release = threading.Event()
@@ -73,17 +82,13 @@ class HTTP2SupervisionTests(unittest.TestCase):
         release.set()
         bodies, _ = self.exchange(first, conn1, (1,))
         self.assertEqual(bodies[1], b'/slow')
+        # The peer can see END_STREAM before the writer accounts for it.
+        self._wait_for_admission_release(server)
         conn2.send_headers(3, self.headers('/fast'), end_stream=True)
         second.sendall(conn2.data_to_send())
         bodies, _ = self.exchange(second, conn2, (3,))
         self.assertEqual(bodies[3], b'/fast')
-        # Completion is now accounted after TLS sendall returns, rather than
-        # when the response is merely queued. The peer can observe END_STREAM
-        # just before the writer thread releases its lease.
-        deadline = time.monotonic() + 2
-        while server._server._active_requests and time.monotonic() < deadline:
-            time.sleep(.01)
-        self.assertEqual(server._server._active_requests, 0)
+        self._wait_for_admission_release(server)
         self.assertEqual(server.counts[0], 2)
 
     def test_reset_cannot_free_admission_until_uncooperative_handler_exits(self):
@@ -120,10 +125,7 @@ class HTTP2SupervisionTests(unittest.TestCase):
                           if isinstance(e, h2.events.StreamReset)],
                          [h2.errors.ErrorCodes.REFUSED_STREAM])
         release.set()
-        deadline = time.monotonic() + 3
-        while server._server._active_requests and time.monotonic() < deadline:
-            time.sleep(.01)
-        self.assertEqual(server._server._active_requests, 0)
+        self._wait_for_admission_release(server, timeout=3)
         c2.send_headers(3, self.headers('/fast'), end_stream=True)
         second.sendall(c2.data_to_send())
         self.assertEqual(self.exchange(second, c2, (3,))[0][3], b'ok')
