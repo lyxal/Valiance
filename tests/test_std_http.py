@@ -865,27 +865,31 @@ class HTTPTransportTests(ServerTestCase):
         self.assertTrue(first.releasable and second.releasable)
 
     def test_multipart_multiple_stream_sources_abort_and_cleanup(self):
-        first = UploadPipe(8, expected_bytes=3)
+        first = UploadPipe(1, expected_bytes=3)
         second = UploadPipe(1, expected_bytes=2)
-        first.write_async(b'abc').result()
-        first.finish()
+        self.assertEqual(first.write_async(b'a').result(), 1)
+        first_drained = first.write_async(b'b')
         multipart, ctype = core.encode_multipart_stream((
             core.MultipartPart('first', first), core.MultipartPart('second', second)))
+        request = core.Request('POST', self.base + '/inspect-upload',
+                               core.Headers((('Content-Type', ctype),)), multipart)
+        transfer_finished = Event()
         with transport.Client() as client:
-            pending = client.send_async(core.Request('POST', self.base + '/inspect-upload',
-                                                     core.Headers((('Content-Type', ctype),)), multipart))
-            second.write_async(b'x').result()
+            pending = client.send_async(request, on_finish=transfer_finished.set)
+            # The blocked write to the first part completes once the reactor reads a byte.
+            # Leave that part incomplete so the reactor cannot read the second part.
+            self.assertEqual(first_drained.result(timeout=5), 1)
+            self.assertEqual(second.write_async(b'x').result(), 1)
             blocked = second.write_async(b'y')
             self.assertFalse(blocked.done())
             self.assertTrue(pending.cancel())
-            with self.assertRaises((HttpError,)):
+            with self.assertRaises(HttpError) as caught:
                 blocked.result(timeout=5)
-            limit = monotonic() + 5
-            while monotonic() < limit and not (first.releasable and second.releasable):
-                sleep(.01)
-        self.assertTrue(first.releasable)
-        self.assertTrue(second.releasable)
-        self.assertTrue(multipart._released)
+            self.assertEqual(caught.exception.kind, ErrorKind.CANCELLED)
+            self.assertTrue(transfer_finished.wait(timeout=5), 'cancelled transfer did not finish')
+            self.assertTrue(first.releasable)
+            self.assertTrue(second.releasable)
+            self.assertTrue(multipart._released)
 
     def test_streamed_upload_cannot_be_redirect_replayed(self):
         pipe = UploadPipe(1024, expected_bytes=3)
