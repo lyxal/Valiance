@@ -18,7 +18,7 @@ from valiance.asts import (
     TypedObjectNode,
     TypedNode,
 )
-from valiance.modules_system.modules import ModuleLoadError, ModuleObject, import_definitions
+from valiance.modules_system.modules import ModuleExports, ModuleLoadError, ModuleObject, import_definitions
 from valiance.asts.object_constructors import constructor_definitions
 from valiance.vtypes.symbols import Symbol
 
@@ -242,6 +242,46 @@ class _ImportDeclarations:
                 runtime_name,
                 overload,
             )
+
+    def _register_namespace_behaviour_overloads(
+        self, namespace: Symbol, exports: ModuleExports, runtime_links: dict[Symbol, Symbol],
+    ) -> None:
+        """Bind qualified behaviour calls without importing unqualified evidence."""
+        from valiance.modules_system.modules import _rename_imported_types
+
+        spellings = {
+            item.name: item.origin or Symbol(item.name.text, tuple(exports.module_name.split(".")))
+            for item in exports.objects
+        }
+        spellings.update({
+            item.name: item.origin for item in exports.runtime_dependencies if item.origin is not None
+        })
+        for implementation in exports.trait_implementations:
+            if not implementation.public:
+                continue
+            bodies = dict(implementation.method_bodies)
+            identities = dict(implementation.method_ids)
+            for definition in implementation.definitions:
+                offset = definition.location.offset if definition.location is not None else None
+                name = Symbol(f"{namespace}::{definition.name.text}")
+                for _, identity in dict(identities.get(definition.name.text, ())).get(offset, ()):
+                    if any(item.implementation_id == identity for item in self.env.overloads_for(name)):
+                        continue
+                    body = bodies.get(identity)
+                    if body is None:
+                        continue
+                    typings = tuple(
+                        replace(typing, overload=replace(
+                            _rename_imported_types(typing.overload, spellings),
+                            implementation_id=identity,
+                        ))
+                        for typing in body.overloads
+                    )
+                    checked = replace(body, node=definition, overloads=typings)
+                    runtime_name = self._prelude.add_declaration(
+                        checked, name, runtime_links=runtime_links,
+                    )
+                    self._register_imported_definition(name, checked, runtime_name)
 
     def _register_imported_friendly_runtime_elements(
         self,
@@ -563,6 +603,7 @@ class _ImportDeclarations:
                 current,
                 obj.name,
                 friendly_definitions,
+                owner_node=node if any(node.generic_constraints) else None,
                 implementation_ids=(
                     dict(obj.typed.method_ids)
                     if isinstance(obj.typed, TypedObjectNode) else None

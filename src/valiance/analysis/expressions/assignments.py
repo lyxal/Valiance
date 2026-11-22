@@ -63,7 +63,7 @@ def _behaviour_set_ambiguity_message(
         return None
     providers = tuple(
         sorted(
-            ctx.implementation_providers(source.name, target.name),
+            T.implementation_pattern_providers(source, target, ctx),
             key=str,
         )
     )
@@ -266,8 +266,9 @@ def _set_variable(
             )
         )
 
-    witnesses = ()
+    from valiance.vtypes.relations import nominal_implementation_witnesses
     normalized_target = T.normalize(variable_type)
+    witnesses = nominal_implementation_witnesses(value_type, normalized_target, self.env.context)
     if isinstance(normalized_target, T.AnonymousTraitType):
         try:
             proof = T.checked_structural_witnesses(

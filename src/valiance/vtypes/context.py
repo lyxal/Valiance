@@ -76,6 +76,12 @@ class Context:
     trait_impl_patterns: list[TraitImplementationPattern] = field(
         default_factory=list[TraitImplementationPattern]
     )
+    explicit_trait_implementations: dict[
+        TraitImplementationPattern, tuple[TraitImplementationPattern, object]
+    ] = field(default_factory=dict)
+    trait_implementation_methods: dict[
+        TraitImplementationPattern, tuple[tuple[str, str, str], ...]
+    ] = field(default_factory=dict)
     trait_impl_behaviours: list[TraitImplementationBehaviour] = field(
         default_factory=list[TraitImplementationBehaviour]
     )
@@ -111,6 +117,8 @@ class Context:
                 for key, providers in self.trait_impl_providers.items()
             },
             trait_impl_patterns=list(self.trait_impl_patterns),
+            explicit_trait_implementations=dict(self.explicit_trait_implementations),
+            trait_implementation_methods=dict(self.trait_implementation_methods),
             trait_provider_aliases={name: set(providers) for name, providers in self.trait_provider_aliases.items()},
             trait_impl_behaviours=list(self.trait_impl_behaviours),
             trait_parents={

@@ -1440,6 +1440,7 @@ class _Compiler:
                         ),
                         initializers=constructors,
                     )
+                bindings = {binding.implementation_id: binding for binding in nominal_trait_implementations}
                 for definition in node.definitions:
                     if definition in constructors:
                         continue
@@ -1450,15 +1451,18 @@ class _Compiler:
                     identities = tuple(identity for _shape, identity in alternatives)
                     # Raw, dynamically compiled declarations have no analysed method metadata.
                     for identity in identities or (None,):
+                        binding = bindings.get(identity)
+                        constraints = binding.generic_constraints if binding else node.generic_constraints
+                        generics = binding.generics if binding else node.generics
                         self.friendly_definition(
                             type_name, definition,
                             result_signature_types=(method_results or {}).get(identity, ()),
                             implementation_id=identity,
                             owner_generics=tuple(generic.text for generic in node.generics),
                             checked_function=(method_bodies or {}).get(identity),
-                            variant_dispatch=(node.target is not None or definition.is_multi),
+                            variant_dispatch=(node.target is not None or definition.is_multi or binding is not None),
                             owner_constraints=_runtime_generic_constraint_guards(
-                                node.generics, node.generic_constraints,
+                                generics, constraints,
                             ),
                         )
             case "trait":

@@ -535,6 +535,7 @@ class _Frame:
     cycle_from_top: bool = False
     retained_locals: frozenset[str] = frozenset()
     is_global_scope: bool = False
+    generic_trait_witnesses: frozenset[tuple[str, str]] = frozenset()
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
     # (source name, existing local, previous value), innermost first on unwind.
     named_panic_bindings: list[tuple[str, bool, Any]] = field(default_factory=list)
@@ -3477,7 +3478,8 @@ class VirtualMachine:
             args = args_cache[arity]
             if not 0 <= index < len(args):
                 raise RuntimeError("invalid checked trait witness argument index")
-            if not isinstance(unwrap_runtime_value(args[index]), ObjectValue):
+            if (contract[1] != ("$generic",)
+                    and not isinstance(unwrap_runtime_value(args[index]), ObjectValue)):
                 raise RuntimeError("checked trait witness expects an object receiver")
             self._validate_checked_structural_witness(name, identity, frame.globals)
             grouped.setdefault(index, []).append((name, contract, identity))
@@ -3708,6 +3710,13 @@ class VirtualMachine:
         """Create one resumable bytecode activation."""
         if code.requires_specialization:
             raise RuntimeError("generic reflection template requires a checked specialization")
+        generic_trait_witnesses = frozenset(
+            (signature[0][0], identity)
+            for argument in (*locals_.values(), *cycle_values, *(initial_stack or ()))
+            if isinstance(argument, TaggedValue)
+            for _, signature, identity in argument.structural_witnesses
+            if len(signature[0]) == 1 and signature[1] == ("$generic",)
+        )
         return _Activation(
             code,
             _Frame(
@@ -3719,6 +3728,7 @@ class VirtualMachine:
                 cycle_from_top=bool(code.cycle_params),
                 retained_locals=retained_locals,
                 is_global_scope=code.name == "<main>",
+                generic_trait_witnesses=generic_trait_witnesses,
             ),
         )
 
@@ -4252,7 +4262,10 @@ class VirtualMachine:
                             cast_spec = _resolve_static_rank_variables(raw_cast, frame.locals)
                             proven_trait = (
                                 bool(proof)
-                                and cast_spec[0] == "structural"
+                                and (cast_spec[0] == "structural" or any(
+                                    signature[0] and signature[0][0].startswith("trait:")
+                                    for _, signature, _ in proof
+                                ))
                                 and isinstance(unwrap_runtime_value(value), ObjectValue)
                             )
                             if proven_trait or _matches_cast_type(
@@ -5768,6 +5781,7 @@ class VirtualMachine:
                         reference.vectorised_target_ranks, extension,
                         nominal_trait=True,
                         nominal_trait_contract=reference.nominal_trait_contract,
+                        generic_trait_witnesses=frame.generic_trait_witnesses,
                     )
                 finally:
                     _release_runtime_vector_extension(extension, self)
@@ -5780,6 +5794,7 @@ class VirtualMachine:
             args, _, _, _ = frame.source_args(arity)
             overload, receiver_index = _select_nominal_trait_implementation(
                 value, tuple(args), reference.nominal_trait_contract,
+                frame.generic_trait_witnesses,
             )
             if receiver_index:
                 args = _source_args(frame, arity, "trait receiver binding")
@@ -7152,7 +7167,32 @@ def _store_value(existing: Any, value: Any, vm: VirtualMachine) -> Any:
             identity = overload.code.implementation_id
             if identity is not None and identity in identities:
                 previous = identities[identity]
-                if replace(previous.code, dispatch_types=overload.code.dispatch_types) != overload.code:
+                old_bounds = previous.code.dispatch_bounds
+                new_bounds = overload.code.dispatch_bounds
+                same_guards = tuple((index, guards) for index, _, guards in old_bounds) == tuple(
+                    (index, guards) for index, _, guards in new_bounds
+                )
+                old_dispatch = previous.code.dispatch_types
+                new_dispatch = overload.code.dispatch_types
+                old_signature = previous.code.signature_types
+                new_signature = overload.code.signature_types
+                signature = tuple(
+                    new_signature[index]
+                    if index < len(new_signature) and index < len(old_dispatch)
+                    and index < len(new_dispatch) and old_dispatch[index] is not None
+                    and new_dispatch[index] is not None
+                    and (
+                        item in _split_runtime_type_args(old_dispatch[index], "|")
+                        and new_signature[index] == new_dispatch[index]
+                        or any(slot.receiver_index == index for slot in previous.code.nominal_trait_contracts)
+                    )
+                    else item
+                    for index, item in enumerate(old_signature)
+                )
+                if not same_guards or replace(
+                    previous.code, dispatch_types=new_dispatch, dispatch_bounds=new_bounds,
+                    signature_types=signature,
+                ) != overload.code:
                     # The same private destructor may be imported through
                     # several facades: one copy can contain checked, resolved
                     # calls and another the original lexical call sequence.
@@ -7211,6 +7251,13 @@ def _store_value(existing: Any, value: Any, vm: VirtualMachine) -> Any:
                     # cloning a FunctionValue would create an untracked owner.
                     previous.code = replace(
                         previous.code, dispatch_types=tuple(predicates),
+                        dispatch_bounds=tuple(
+                            (receiver, " | ".join(sorted(set(
+                                (*_split_runtime_type_args(old_owner, "|"),
+                                 *_split_runtime_type_args(new_owner, "|")),
+                            ))), guards)
+                            for (receiver, old_owner, guards), (_, new_owner, _) in zip(old_bounds, new_bounds)
+                        ),
                     )
                     continue
                 selected = overload if overload.code.dispatch_types or not previous.code.dispatch_types else previous
@@ -8206,12 +8253,22 @@ def _select_declared_dispatch_overload(
 
 def _select_nominal_trait_implementation(
     value: OverloadedFunctionValue, args: tuple[Any, ...], contract: str | None,
+    generic_trait_witnesses: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[FunctionValue, int]:
     """Bind a receiver's trait slot without consulting ordinary overloads."""
     if contract is None:
         raise RuntimeError("nominal trait call is missing its checked contract; rebuild the bytecode")
-    key = (contract, _runtime_type_name(args[0]))
-    linked = value.nominal_trait_dispatch.get(key)
+    receiver_value = args[0]
+    if isinstance(receiver_value, TaggedValue):
+        for _, signature, identity in receiver_value.structural_witnesses:
+            if signature != ((contract,), ()):
+                continue
+            for method, route in value.nominal_trait_implementations.get(contract, ()):
+                if method.code.implementation_id == identity:
+                    return method, route.receiver_index
+            raise RuntimeError(f"cannot link checked nominal trait implementation {identity!r}")
+    key = (contract, _runtime_type_name(receiver_value))
+    linked = value.nominal_trait_dispatch.get(key) if not generic_trait_witnesses else None
     if linked is not None:
         return linked
     receiver = unwrap_runtime_value(args[0])
@@ -8233,6 +8290,13 @@ def _select_nominal_trait_implementation(
         ))
     ]
 
+    witnessed = [
+        (method, route) for method, route in matches
+        if (contract, method.code.implementation_id) in generic_trait_witnesses
+    ]
+    if witnessed:
+        matches = witnessed
+
     def domain(route: NominalTraitImplementationReference) -> RuntimeTypePattern:
         """Instantiate the receiver domain from its checked nominal projection."""
         pattern = _parse_runtime_type_pattern(route.receiver, facts)
@@ -8253,7 +8317,8 @@ def _select_nominal_trait_implementation(
         raise RuntimeError("cannot link a unique checked nominal trait implementation")
     identity, receiver_index = identities.pop()
     linked = (_selected_function_implementation(value, identity), receiver_index)
-    value.nominal_trait_dispatch[key] = linked
+    if not generic_trait_witnesses:
+        value.nominal_trait_dispatch[key] = linked
     return linked
 
 
@@ -8275,9 +8340,10 @@ def _runtime_dispatch_bounds_match(
             return False
         metadata = value.runtime_type
         facts = metadata.type_facts if metadata is not None else ()
-        ancestor_args = _runtime_project_nominal_args(value, owner, facts)
-        if ancestor_args is None or not _structural_projection_guards_hold(
-            guards, ancestor_args, facts,
+        if not any(
+            ancestor_args is not None and _structural_projection_guards_hold(guards, ancestor_args, facts)
+            for name in _split_runtime_type_args(owner, "|")
+            for ancestor_args in (_runtime_project_nominal_args(value, name, facts),)
         ):
             return False
     return True
@@ -10052,6 +10118,7 @@ def _vectorize_declared_callable(
     fallback: FunctionValue | None = None,
     nominal_trait: bool = False,
     nominal_trait_contract: str | None = None,
+    generic_trait_witnesses: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[Any, ...]:
     """Vectorize an overload set, applying compiled dispatch at scalar leaves."""
     ranks = callee.overloads[0].code.param_collection_ranks
@@ -10070,7 +10137,7 @@ def _vectorize_declared_callable(
         """Dispatch one scalar leaf without trying candidate bodies."""
         if nominal_trait:
             selected, receiver_index = _select_nominal_trait_implementation(
-                callee, item_args, nominal_trait_contract,
+                callee, item_args, nominal_trait_contract, generic_trait_witnesses,
             )
             item_args = _nominal_trait_arguments(item_args, receiver_index)
         else:

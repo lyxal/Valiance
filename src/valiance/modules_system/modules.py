@@ -96,6 +96,10 @@ class ModuleTraitImplementation:
     method_bodies: tuple[tuple[str, TypedFunctionNode], ...] = ()
     provider: Symbol | None = None
     reexported: bool = False
+    explicit_reexport: bool = field(default=False, kw_only=True, metadata={"interface_optional": True})
+    nominal_origins: tuple[tuple[Symbol, Symbol], ...] = field(
+        default=(), kw_only=True, metadata={"interface_optional": True},
+    )
     nominal_trait_implementations: tuple[NominalTraitImplementation, ...] = ()
 
 
@@ -190,6 +194,12 @@ def collect_module_exports(
            if isinstance(obj.typed.node, ObjectNode)
            and obj.typed.node.kind == Symbol("object") and obj.typed.node.target is None},
     }
+    path = tuple(module_name.split("."))
+    nominal_origins.update({
+        node.name: Symbol(node.name.text, path)
+        for node in program
+        if isinstance(node, ObjectNode) and node.target is None
+    })
     return ModuleExports(
         module_name,
         _deduplicate(_module_definitions(program, typed, nominal_origins) + analyser.public_import_definitions),
@@ -198,8 +208,11 @@ def collect_module_exports(
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
         _deduplicate(
-            tuple(replace(item, provider=Symbol(module_name.rsplit(".", 1)[-1]))
-                  for item in _module_trait_implementations(program, typed))
+            tuple(replace(
+                item, provider=Symbol(path[-1], path[:-1]),
+                nominal_origins=tuple((name, origin) for name, origin in nominal_origins.items()
+                                      if name in {item.object_name, item.trait_name}),
+            ) for item in _module_trait_implementations(program, typed))
             + analyser.public_import_trait_implementations
         ),
         _deduplicate(analyser.runtime_dependency_objects),
@@ -1066,6 +1079,7 @@ def _module_objects(
                 # public type by its local spelling. Retain the provider
                 # origin in its interface; the caller cannot reconstruct it
                 # from the field annotation alone.
+                origin=(nominal_origins or {}).get(node.name) if imported else None,
                 runtime_nominal_origins=tuple((nominal_origins or {}).items()),
             )
         )
@@ -1135,6 +1149,21 @@ def _module_trait_implementations(
                 name = _namespaced_symbol(member.name, node.name)
                 local_objects[name] = replace(node, name=name, definitions=member.definitions)
 
+    declared_methods = {}
+    for declaration in typed:
+        if not isinstance(declaration, TypedObjectNode) or declaration.node.target is not None:
+            continue
+        definitions = {
+            (definition.name.text, definition.location.offset if definition.location else None): definition
+            for definition in declaration.node.definitions
+        }
+        for name, locations in declaration.method_ids:
+            for offset, alternatives in locations:
+                definition = definitions.get((name, offset))
+                if definition is not None:
+                    for shape, identity in alternatives:
+                        declared_methods[identity] = definition, shape, declaration
+
     result = []
     for typed_node in typed:
         node = typed_node.node
@@ -1147,19 +1176,29 @@ def _module_trait_implementations(
         if not isinstance(target, T.NominalType):
             continue
 
-        # An empty implementation block may use compatible object-friendly
-        # definitions.  Local analysis has already checked compatibility, so
-        # preserve that resolved surface in the exported implementation.
+        # An empty implementation may reuse an already checked friendly method.
         resolved = list(node.definitions)
-        supplied = {definition.name for definition in resolved}
-        owner = local_objects.get(node.name) or local_traits.get(node.name)
-        trait = local_traits.get(target.name)
-        if owner is not None and trait is not None:
-            friendly = {definition.name: definition for definition in owner.definitions}
-            for requirement in trait.requirements:
-                if requirement.name not in supplied and requirement.name in friendly:
-                    resolved.append(friendly[requirement.name])
-                    supplied.add(requirement.name)
+        method_ids = dict(typed_node.method_ids) if isinstance(typed_node, TypedObjectNode) else {}
+        method_results = dict(typed_node.method_results) if isinstance(typed_node, TypedObjectNode) else {}
+        method_bodies = dict(typed_node.method_bodies) if isinstance(typed_node, TypedObjectNode) else {}
+        slots = typed_node.nominal_trait_implementations if isinstance(typed_node, TypedObjectNode) else ()
+        for slot in slots:
+            inherited = declared_methods.get(slot.implementation_id)
+            if slot.implementation_id in method_bodies or inherited is None:
+                continue
+            definition, shape, declaration = inherited
+            if definition not in resolved:
+                resolved.append(definition)
+            offset = definition.location.offset if definition.location else None
+            locations = dict(method_ids.get(definition.name.text, ()))
+            locations[offset] = (*locations.get(offset, ()), (shape, slot.implementation_id))
+            method_ids[definition.name.text] = tuple(locations.items())
+            inherited_result = dict(declaration.method_results).get(slot.implementation_id)
+            if inherited_result is not None:
+                method_results[slot.implementation_id] = inherited_result
+            inherited_body = dict(declaration.method_bodies).get(slot.implementation_id)
+            if inherited_body is not None:
+                method_bodies[slot.implementation_id] = inherited_body
 
         object_is_public = (
             local_objects.get(node.name) or local_traits.get(node.name)
@@ -1193,17 +1232,10 @@ def _module_trait_implementations(
                     for constraint in node.generic_constraints
                 ),
                 subject_kind=Symbol("trait") if is_trait_impl else Symbol("object"),
-                method_results=(
-                    typed_node.method_results
-                    if isinstance(typed_node, TypedObjectNode) else ()
-                ),
-                method_ids=(
-                    typed_node.method_ids
-                    if isinstance(typed_node, TypedObjectNode) else ()
-                ),
-                method_bodies=typed_node.method_bodies if isinstance(typed_node, TypedObjectNode) else (),
-                nominal_trait_implementations=(typed_node.nominal_trait_implementations
-                                               if isinstance(typed_node, TypedObjectNode) else ()),
+                method_results=tuple(method_results.items()),
+                method_ids=tuple(method_ids.items()),
+                method_bodies=tuple(method_bodies.items()),
+                nominal_trait_implementations=slots,
             )
         )
     return tuple(result)
@@ -1435,6 +1467,9 @@ def import_trait_implementations(
         matches = tuple(impl for impl in exports.trait_implementations
                         if impl.object_name == component.name and impl.trait_name == component.trait
                         and impl.subject_kind == (component.subject_kind or Symbol("object")))
+        explicitly_exported = tuple(impl for impl in matches if impl.explicit_reexport)
+        if explicitly_exported:
+            matches = explicitly_exported
         if not matches:
             raise ModuleLoadError(f"module {exports.module_name!r} defines no implementation "
                                   f"of trait {component.trait} for object {component.name}")

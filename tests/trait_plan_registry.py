@@ -87,7 +87,7 @@ EXISTING = {
     "IM-001": ("test_trait_implementation_imports.TraitImplementationVisibilityAndWitnessTests.object_owned_external_trait_imports_automatically",),
     "IM-002": ("test_trait_implementation_imports.TraitImplementationVisibilityAndWitnessTests.foreign_object_implementation_requires_explicit_import",),
     "IM-003": ("I.explicit_import_installs_trait_implementation",),
-    "IM-004": ("I.trait_argument_reports_ambiguous_behaviour_sets",),
+    "IM-004": ("I.conflicting_behaviour_set_imports_fail_without_a_call",),
     "IM-005": ("I.multiple_behaviour_sets_can_dispatch_through_qualified_casts",),
     "IM-006": ("I.multiple_behaviour_sets_can_dispatch_through_qualified_casts",),
     "IM-007": ("I.multiple_behaviour_sets_expose_qualified_elements",),

@@ -921,6 +921,9 @@ class ImportComponent:
     trait: Symbol | None = None
     generics: tuple[Symbol, ...] = ()
     subject_kind: Symbol | None = None
+    location: SourceLocation | None = field(
+        default=None, compare=False, kw_only=True, metadata={"interface_optional": True},
+    )
 
 
 @dataclass(frozen=True)

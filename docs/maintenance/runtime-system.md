@@ -715,6 +715,13 @@ evidence across declarations before optimisation. Runtime trait tables are
 separate from ordinary overload selection and cache the linked slot for each
 concrete receiver type, including its generic arguments.
 
+A concrete conversion records the selected method identity on the value’s
+trait view. A constrained generic call can also supply evidence for an enclosed
+type argument, which the VM reads within that activation. Both use the
+existing proof-bearing call and conversion operands. Dispatch consults this
+evidence before the ordinary receiver cache so two views of the same concrete
+value can use different providers.
+
 Private trait-to-trait forwarding definitions travel with their checked bodies
 in the runtime closure. A shared method name does not authorize dropping the
 forwarder or substituting the source trait's concrete implementation.

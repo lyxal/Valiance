@@ -4121,24 +4121,42 @@ import {
 
 The term *behaviour set import* refers only to these import forms. The declaration remains a trait implementation written as `object X as Y => ...`.
 
-More than one behaviour set for the same object and trait may be visible. An unqualified use is valid only when exactly one provider applies. If several providers apply, the use is a compile error and the behaviour set must be qualified:
+An applicable explicit behaviour set import takes precedence over ordinary trait
+resolution for an unqualified use. If no explicit import applies, ordinary
+resolution supplies the implementation. The rule applies to trait elements,
+casts, implicit trait conversions, and generic constraints.
+
+For example, `money` defines `Money` and supplies the default implementation
+of `Display`. The `invoice_format` module supplies another implementation of
+the same trait for that type.
 
 ```vlnc
 import {
-  first.object Rectangle as Shape,
-  second.object Rectangle as Shape
+  money,
+  money.Money,
+  text.Display,
+  invoice_format.object Money as Display
 }
 
-Rectangle(4) as[first.Shape] | area
-Rectangle(4) as[second.Shape] | area
-
-Rectangle(4) first.Shape.area
-Rectangle(4) second.Shape.area
+Money(1250) render           #? "USD 12.50"
+Money(1250) money::render    #? "$12.50"
 ```
 
-`as[module.Trait]` is the ordinary zero-cost type cast. Qualification selects which visible implementation supplies the trait relationship; it does not introduce a runtime wrapper.
+The unqualified call uses the selected invoice format even if the money module
+adds its default in a later release. A module namespace import exposes its
+public behaviour elements as `namespace::element`. Qualified calls use normal
+overload resolution within that namespace. A namespace alias also qualifies
+these elements, for example `currency::render` after
+`import {money as currency}`.
 
-Ownership and import order never rank competing implementations. Ownership controls only which implementations are imported automatically.
+Adding `money.object Money as Display` to the same scope produces an error at
+the import. The compiler rejects overlapping explicit selections even when
+there is no call. Generic behaviour sets can coexist when their domains are
+provably disjoint. Importing the same implementation through two aliases
+counts as one selection.
+
+A visible implementation can also be selected by a qualified cast such as
+`as[invoice_format.Display]`. Qualification chooses the named provider.
 
 Behaviour set imports follow ordinary block import scope. Their qualified types and elements are unavailable after the enclosing block ends.
 
@@ -4150,7 +4168,7 @@ Importing an object directly imports:
 
 * the object;
 * its object-friendly elements;
-* each trait implementation for which the module defines both the object and the trait.
+* each public trait implementation the module defines for that object.
 
 ```vlnc
 #? shapes.vlnc
@@ -4162,7 +4180,10 @@ object Rectangle as Shape => end
 import {shapes.Rectangle}
 ```
 
-The import makes the owned `Rectangle as Shape` implementation available. Implementations involving a foreign object or foreign trait require a behaviour set import, including implementations for a foreign object of a trait owned by the implementing module.
+The import makes the owned `Rectangle as Shape` implementation available.
+This also applies when the object’s module implements a trait from another
+module. An implementation for a foreign object is available through a
+behaviour set import or a public re-export.
 
 Object-friendly elements are not imported when the object is accessed only through a module namespace:
 
@@ -6098,11 +6119,14 @@ relationship. Public re-exports preserve the re-exporting module as the
 source-facing qualifier while retaining the originating behaviour identity
 internally.
 
-Implications are transitive and cycle-safe. A cycle cannot create evidence from
-nothing. If one applicable provider remains, the implication is used silently.
-If several providers remain, none is ranked by declaration order, path length,
-ownership, or specificity. The use is ambiguous and must qualify the intended
-behaviour set, for example `as[plain.Displayable]`.
+Implications are transitive and cycle-safe. A path containing an applicable
+explicit behaviour set import takes precedence over ordinary resolution for
+its destination, including a direct default implementation. For example, a
+selected `Printable as Displayable` adapter can override the direct
+`Receipt as Displayable` implementation when `Receipt` implements
+`Printable`. The compiler checks for overlapping explicit selections at
+import time, including implications. A qualified call such as `receipts::render`
+can still invoke the direct implementation.
 
 Trait inheritance and trait behaviour sets remain distinct. Declaring a new
 trait with a target contributes to that trait's intrinsic hierarchy. Declaring

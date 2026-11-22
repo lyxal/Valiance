@@ -18,10 +18,14 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedFunctionDispatchNode,
 )
+from valiance.vtypes.relations import (
+    _runtime_dispatch_pattern, implementation_reachable_traits, nominal_implementation_witnesses,
+)
+from valiance.vtypes.structural import nested_types
 from valiance.vtypes.symbols import Symbol
-from valiance.vtypes.relations import _runtime_dispatch_pattern
 
 from . import candidates as _calls
+
 from . import callable_values as _functions
 from ..support import analysis_utils as _utils
 from ..state import AnalysisBranch, BranchSet, InputMode
@@ -144,6 +148,66 @@ class _CallSelection:
         return winners
 
 
+    def _prefer_explicit_behaviour_calls(
+        self, name: Symbol, candidates: tuple[CallCandidate, ...],
+    ) -> tuple[CallCandidate, ...]:
+        """Keep the chosen trait body while retaining unrelated overloads."""
+        ctx = self.env.context
+        if not ctx.explicit_trait_implementations:
+            return candidates
+        slots: dict[str, set[str]] = {}
+        for methods in ctx.trait_implementation_methods.values():
+            for method, contract, identity in methods:
+                if method == name.text:
+                    slots.setdefault(identity, set()).add(contract)
+
+        def selected_for(actual: T.Type) -> dict[str, str]:
+            """Find the checked implementations for one concrete receiver."""
+            source = T.normalize(actual)
+            if not isinstance(source, T.NominalType):
+                return {}
+            targets = {
+                *implementation_reachable_traits(source, ctx),
+                *(T.N(trait) for trait in ctx.trait_impls.get(source.name, ())),
+            }
+            return {
+                contract[0]: identity
+                for target in targets
+                for method, (contract, _), identity in nominal_implementation_witnesses(
+                    source, target, ctx, explicit_only=True,
+                )
+                if method == name.text
+            }
+
+        selected_by_receiver = {}
+        viable = {
+            (candidate.source_arguments, candidate.implementation_id)
+            for candidate in candidates
+        }
+        retained = []
+        for candidate in candidates:
+            index = candidate.applied.overload.object_receiver_index
+            contracts = slots.get(candidate.implementation_id, ())
+            if index is None or index >= len(candidate.source_arguments) or not contracts:
+                retained.append(candidate)
+                continue
+            actual = T.normalize(candidate.source_arguments[index])
+            if (isinstance(actual, T.CollectionType)
+                    and index < len(candidate.applied.vectorised_depths)
+                    and candidate.applied.vectorised_depths[index]):
+                actual = actual.base
+            if actual not in selected_by_receiver:
+                selected_by_receiver[actual] = selected_for(actual)
+            selected = selected_by_receiver[actual]
+            if not any(
+                (identity := selected.get(contract)) is not None
+                and identity != candidate.implementation_id
+                and (candidate.source_arguments, identity) in viable
+                for contract in contracts
+            ):
+                retained.append(candidate)
+        return tuple(retained)
+
     def _overload_provider_ambiguity(
         self,
         node: ASTNode,
@@ -175,10 +239,7 @@ class _CallSelection:
                 for trait_name in trait_names:
                     providers = tuple(
                         sorted(
-                            self.env.context.implementation_providers(
-                                actual.name,
-                                trait_name,
-                            ),
+                            T.implementation_pattern_providers(actual, T.N(trait_name), self.env.context),
                             key=str,
                         )
                     )
@@ -202,10 +263,7 @@ class _CallSelection:
                     continue
                 providers = tuple(
                     sorted(
-                        self.env.context.implementation_providers(
-                            actual.name,
-                            parameter.name,
-                        ),
+                        T.implementation_pattern_providers(actual, parameter, self.env.context),
                         key=str,
                     )
                 )
@@ -481,6 +539,8 @@ class _CallSelection:
                     ),
                 )
             )
+        if not node.name.namespace and "::" not in node.name.text:
+            candidates = list(self._prefer_explicit_behaviour_calls(node.name, tuple(candidates)))
         # Whole-collection overloads keep their ordinary precedence over scalar
         # lifting. Otherwise a broad match must not hide union specializations.
         if (
@@ -928,15 +988,33 @@ class _CallSelection:
                              name, contract, identity)
                             for name, contract, identity in callback_proof
                         )
-            if not isinstance(expected_type, T.AnonymousTraitType):
-                continue
-            try:
-                proof = T.checked_structural_witnesses(
-                    actual, T.normalize(param), self.env.context,
-                )
-            except T.AmbiguousStructuralWitness as exc:
-                self._diagnose(str(exc), node)
-                return None
+            proof = nominal_implementation_witnesses(actual, expected_type, self.env.context)
+            declared = overload.params[index] if index < len(overload.params) else None
+            if declared is not None and overload.generic_constraints:
+                substitution = candidate.applied.substitution
+                bounds = {constraint.name: constraint.bound for constraint in overload.generic_constraints}
+                for variable in nested_types(declared):
+                    if not isinstance(variable, T.VarType) or variable.name not in bounds:
+                        continue
+                    concrete = substitution.get(T.type_var_key(variable))
+                    if concrete is None:
+                        continue
+                    bound = T._substitute(bounds[variable.name], substitution)
+                    generic_witnesses = nominal_implementation_witnesses(concrete, bound, self.env.context)
+                    if variable != declared:
+                        generic_witnesses = tuple(
+                            (method, (signature[0], ("$generic",)), identity)
+                            for method, signature, identity in generic_witnesses
+                        )
+                    proof += generic_witnesses
+            if isinstance(expected_type, T.AnonymousTraitType):
+                try:
+                    proof = T.checked_structural_witnesses(
+                        actual, expected_type, self.env.context,
+                    )
+                except T.AmbiguousStructuralWitness as exc:
+                    self._diagnose(str(exc), node)
+                    return None
             if proof is not None:
                 structural_witnesses.extend(
                     (index, len(candidate.source_arguments), name, contract, identity)

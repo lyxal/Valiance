@@ -72,22 +72,28 @@ Box(7) accept
             )
             self.assertTrue(any("defines no implementation" in d for d in analyser.diagnostics))
 
-    def test_multiple_behaviour_set_imports_preserve_their_providers(self):
+    def test_conflicting_behaviour_set_imports_fail_without_a_call(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write_shapes(root, "first")
-            self.write_shapes(root, "second")
+            (root / "second.vlnc").write_text(
+                "import { first.[Rectangle, Shape] }\n"
+                "object Rectangle as Shape => end\n",
+                encoding="utf-8",
+            )
             analyser = self.analyse(
                 root,
-                "import { first.[object Rectangle as Shape], "
-                "second.[object Rectangle as Shape] }\n",
+                "import {\n"
+                "  first.object Rectangle as Shape,\n"
+                "  second.object Rectangle as Shape\n"
+                "}\n",
             )
-            self.assertEqual(analyser.diagnostics, [])
-            providers = analyser.env.context.implementation_providers(
-                Symbol("Rectangle"),
-                Symbol("Shape"),
-            )
-            self.assertEqual(providers, {Symbol("first"), Symbol("second")})
+            self.assertEqual(len(analyser.diagnostics), 1)
+            diagnostic = analyser.diagnostics[0]
+            self.assertTrue(diagnostic.startswith("3:10:"))
+            self.assertIn("ambiguous behaviour set imports for Rectangle as Shape", diagnostic)
+            self.assertIn("first.Shape (previous import at 2:9)", diagnostic)
+            self.assertIn("second.Shape", diagnostic)
 
     def test_namespace_import_does_not_install_trait_implementation(self):
         with TemporaryDirectory() as tmp:
@@ -113,10 +119,14 @@ Box(7) accept
                 )
             source = (
                 "import { first, second }\n"
-                "import { first.object Rectangle as Shape, "
-                "second.object Rectangle as Shape }\n"
-                "Rectangle(4) as[first.Shape] | area\n"
-                "Rectangle(4) as[second.Shape] | area\n"
+                "if true =>\n"
+                "  import { first.object Rectangle as Shape }\n"
+                "  Rectangle(4) as[first.Shape] | area\n"
+                "else => 0 end\n"
+                "if true =>\n"
+                "  import { second.object Rectangle as Shape }\n"
+                "  Rectangle(4) as[second.Shape] | area\n"
+                "else => 0 end\n"
             )
             analyser = Analyser(
                 module_loader=ModuleLoader(),
@@ -139,10 +149,14 @@ Box(7) accept
                 )
             source = (
                 "import { first, second }\n"
-                "import { first.object Rectangle as Shape, "
-                "second.object Rectangle as Shape }\n"
-                "Rectangle(4) first.Shape.area\n"
-                "Rectangle(4) second.Shape.area\n"
+                "if true =>\n"
+                "  import { first.object Rectangle as Shape }\n"
+                "  Rectangle(4) first.Shape.area\n"
+                "else => 0 end\n"
+                "if true =>\n"
+                "  import { second.object Rectangle as Shape }\n"
+                "  Rectangle(4) second.Shape.area\n"
+                "else => 0 end\n"
             )
             analyser = Analyser(
                 module_loader=ModuleLoader(),
@@ -151,163 +165,6 @@ Box(7) accept
             typed = analyser.analyse(parse(source))
             self.assertEqual(analyser.diagnostics, [])
             self.assertEqual(run(compile_program(typed)), [1, 2])
-
-    def test_trait_argument_reports_ambiguous_behaviour_sets(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "traits.vlnc").write_text(
-                "public trait Shape => end\n",
-                encoding="utf-8",
-            )
-            for name in ("first", "second"):
-                (root / f"{name}.vlnc").write_text(
-                    "import { traits.Shape }\n"
-                    "public object Rectangle => $width: Number end\n"
-                    "object Rectangle as Shape => end\n",
-                    encoding="utf-8",
-                )
-            source = (
-                "import { traits.Shape, first.Rectangle, "
-                "first.object Rectangle as Shape, "
-                "second.object Rectangle as Shape }\n"
-                "define useShape(value: Shape) => 1 end\n"
-                "Rectangle(4) useShape\n"
-            )
-            analyser = self.analyse(root, source)
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Shape for Rectangle",
-                diagnostic,
-            )
-            self.assertIn("first.Shape", diagnostic)
-            self.assertIn("second.Shape", diagnostic)
-
-    def test_trait_variable_reports_ambiguous_behaviour_sets(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "traits.vlnc").write_text(
-                "public trait Shape => end\n",
-                encoding="utf-8",
-            )
-            for name in ("first", "second"):
-                (root / f"{name}.vlnc").write_text(
-                    "import { traits.Shape }\n"
-                    "public object Rectangle => $width: Number end\n"
-                    "object Rectangle as Shape => end\n",
-                    encoding="utf-8",
-                )
-            source = (
-                "import { traits.Shape, first.Rectangle, "
-                "first.object Rectangle as Shape, "
-                "second.object Rectangle as Shape }\n"
-                "$shape: Shape = Rectangle(4)\n"
-            )
-            analyser = self.analyse(root, source)
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Shape for Rectangle",
-                diagnostic,
-            )
-            self.assertIn("first.Shape", diagnostic)
-            self.assertIn("second.Shape", diagnostic)
-
-    def test_trait_return_reports_ambiguous_behaviour_sets(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "traits.vlnc").write_text(
-                "public trait Shape => end\n",
-                encoding="utf-8",
-            )
-            for name in ("first", "second"):
-                (root / f"{name}.vlnc").write_text(
-                    "import { traits.Shape }\n"
-                    "public object Rectangle => $width: Number end\n"
-                    "object Rectangle as Shape => end\n",
-                    encoding="utf-8",
-                )
-            source = (
-                "import { traits.Shape, first.Rectangle, "
-                "first.object Rectangle as Shape, "
-                "second.object Rectangle as Shape }\n"
-                "define makeShape -> Shape => Rectangle(4) end\n"
-            )
-            analyser = self.analyse(root, source)
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Shape for Rectangle",
-                diagnostic,
-            )
-            self.assertIn("first.Shape", diagnostic)
-            self.assertIn("second.Shape", diagnostic)
-
-    def test_generic_trait_constraint_reports_ambiguous_behaviour_sets(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "traits.vlnc").write_text(
-                "public trait Shape => end\n",
-                encoding="utf-8",
-            )
-            for name in ("first", "second"):
-                (root / f"{name}.vlnc").write_text(
-                    "import { traits.Shape }\n"
-                    "public object Rectangle => $width: Number end\n"
-                    "object Rectangle as Shape => end\n",
-                    encoding="utf-8",
-                )
-            source = (
-                "import { traits.Shape, first.Rectangle, "
-                "first.object Rectangle as Shape, "
-                "second.object Rectangle as Shape }\n"
-                "define[T: Shape] useShape(value: T) => 1 end\n"
-                "Rectangle(4) useShape\n"
-            )
-            analyser = self.analyse(root, source)
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Shape for Rectangle",
-                diagnostic,
-            )
-            self.assertIn("first.Shape", diagnostic)
-            self.assertIn("second.Shape", diagnostic)
-
-    def test_owned_implementation_does_not_outrank_behaviour_set(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self.write_shapes(root, "owned")
-            self.write_shapes(root, "alternative")
-            analyser = self.analyse(
-                root,
-                "import { owned.Rectangle, "
-                "alternative.object Rectangle as Shape }\n"
-                "Rectangle(1) as[Shape]\n",
-            )
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Shape for Rectangle",
-                diagnostic,
-            )
-            self.assertIn("owned.Shape", diagnostic)
-            self.assertIn("alternative.Shape", diagnostic)
-
-    def test_local_implementation_does_not_outrank_behaviour_set(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self.write_shapes(root, "alternative")
-            source = (
-                "trait Shape => end\n"
-                "object Rectangle => $width: Number end\n"
-                "object Rectangle as Shape => end\n"
-                "import { alternative.object Rectangle as Shape }\n"
-                "Rectangle(1) as[Shape]\n"
-            )
-            analyser = self.analyse(root, source)
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Shape for Rectangle",
-                diagnostic,
-            )
-            self.assertIn("<local>.Shape", diagnostic)
-            self.assertIn("alternative.Shape", diagnostic)
 
     def test_block_scoped_behaviour_set_does_not_escape(self):
         with TemporaryDirectory() as tmp:
@@ -420,51 +277,27 @@ Box(7) accept
                 )
             )
 
-    def test_overlapping_generic_behaviour_sets_require_qualification(self):
+    def test_automatic_provider_can_be_qualified_alongside_an_explicit_import(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ("first", "second"):
-                (root / f"{name}.vlnc").write_text(
-                    "public trait[T] Producer => end\n"
-                    "public object[T] Box => $value: T end\n"
-                    "object[T] Box as Producer[T] => end\n",
-                    encoding="utf-8",
-                )
+            (root / "first.vlnc").write_text(
+                "public trait[T] Producer => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T] Box as Producer[T] => end\n",
+                encoding="utf-8",
+            )
+            (root / "second.vlnc").write_text(
+                "import { first.[Box, Producer] }\n"
+                "object[T] Box as Producer[T] => end\n",
+                encoding="utf-8",
+            )
             analyser = self.analyse(
                 root,
-                "import { first.Box, "
-                "first.object Box as Producer, "
-                "second.object Box as Producer }\n"
-                "Box(1) as[Producer[Int]]\n",
-            )
-            diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn(
-                "ambiguous implementation of Producer[Int] for Box[Int]",
-                diagnostic,
-            )
-            self.assertIn("first.Producer[Int]", diagnostic)
-            self.assertIn("second.Producer[Int]", diagnostic)
-
-    def test_overlapping_generic_behaviour_sets_can_be_qualified(self):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for name in ("first", "second"):
-                (root / f"{name}.vlnc").write_text(
-                    "public trait[T] Producer => end\n"
-                    "public object[T] Box => $value: T end\n"
-                    "object[T] Box as Producer[T] => end\n",
-                    encoding="utf-8",
-                )
-            analyser = self.analyse(
-                root,
-                "import { first.Box, "
-                "first.object Box as Producer, "
-                "second.object Box as Producer }\n"
+                "import { first.[Box, Producer], second.object Box as Producer }\n"
                 "Box(1) as[first.Producer[Int]]\n"
                 "Box(2) as[second.Producer[Int]]\n",
             )
             self.assertEqual(analyser.diagnostics, [])
-
 
 
 if __name__ == "__main__":
@@ -633,7 +466,7 @@ class GenericTraitToTraitImplementationTests(unittest.TestCase):
                 "Document(1) as[Displayable]\n"
             ))
             diagnostic = "\n".join(analyser.diagnostics)
-            self.assertIn("ambiguous implementation of Displayable for Document", diagnostic)
+            self.assertIn("ambiguous behaviour set imports for Printable as Displayable", diagnostic)
             self.assertIn("plain.Displayable", diagnostic)
             self.assertIn("rich.Displayable", diagnostic)
 
@@ -682,10 +515,14 @@ class GenericImplementationElementDispatchTests(unittest.TestCase):
                 )
             source = (
                 "import { first, second }\n"
-                "import { first.object Box as Producer, "
-                "second.object Box as Producer }\n"
-                "Box(1, 2) as[first.Producer] | produce\n"
-                "Box(1, 2) as[second.Producer] | produce\n"
+                "if true =>\n"
+                "  import { first.object Box as Producer }\n"
+                "  Box(1, 2) as[first.Producer] | produce\n"
+                "else => 0 end\n"
+                "if true =>\n"
+                "  import { second.object Box as Producer }\n"
+                "  Box(1, 2) as[second.Producer] | produce\n"
+                "else => 0 end\n"
             )
             analyser = Analyser(
                 module_loader=ModuleLoader(), source_file=root / "main.vlnc"
@@ -1090,3 +927,225 @@ class TraitImplementationVisibilityAndWitnessTests(unittest.TestCase):
                 root, "import { provider.[object Square as HiddenShape] }\n"
             )
             self.assertTrue(any("not public" in d for d in analyser.diagnostics))
+
+
+class ExplicitBehaviourPrecedenceTests(unittest.TestCase):
+    def write_modules(self, root: Path, **modules: str) -> None:
+        for name, source in modules.items():
+            (root / f"{name}.vlnc").write_text(source, encoding="utf-8")
+
+    def analyse(self, root: Path, source: str):
+        analyser = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
+        typed = analyser.analyse(parse(source))
+        return analyser, typed
+
+    def assert_program(self, root: Path, source: str, expected: list[object]) -> None:
+        analyser, typed = self.analyse(root, source)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(run(loads(dumps(compile_program(typed)))), expected)
+
+    def test_owner_upgrade_preserves_explicit_dispatch_across_trait_boundaries(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_modules(
+                root,
+                text="public trait Display => extend render -> String end\n",
+                money="public object Money => $cents: Number end\n",
+                box="public object[T] Box => $value: T end\n",
+                invoice_format=(
+                    "import { money.Money, text.Display }\n"
+                    "object Money as Display => define render -> String => \"invoice\" end\n"
+                ),
+            )
+            source = (
+                "import { money.Money, text.Display, box.Box, invoice_format.object Money as Display }\n"
+                "define show(value: Display) -> String => $value render\n"
+                "define to_display(value: Money) -> Display => $value\n"
+                "define[T: Display] show_generic(value: T) -> String => $value render\n"
+                "define[T: Display] show_box(value: Box[T]) -> String => $value.value render\n"
+                "Money(1250) render\n"
+                "Money(1250) as[Display] | render\n"
+                "$display: Display = Money(1250)\n"
+                "$display render\n"
+                "Money(1250) show\n"
+                "Money(1250) to_display | render\n"
+                "Money(1250) show_generic\n"
+                "Box(Money(1250)) show_box\n"
+            )
+            self.assert_program(root, source, ["invoice"] * 7)
+            self.write_modules(
+                root,
+                money=(
+                    "import { text.Display }\n"
+                    "public object Money =>\n"
+                    "  $cents: Number\n"
+                    "  public define render -> String => \"money\"\n"
+                    "end\n"
+                    "public object Coupon => $cents: Number end\n"
+                    "object Money as Display => end\n"
+                    "object Coupon as Display => define render -> String => \"coupon\" end\n"
+                ),
+            )
+            self.assert_program(root, source, ["invoice"] * 7)
+            self.assert_program(
+                root,
+                "import { money, money as currency, money.[Money, Coupon], text.Display, "
+                "invoice_format.object Money as Display }\n"
+                "Money(1250) render\n"
+                "Money(1250) money::render\n"
+                "Coupon(200) money::render\n"
+                "Money(1250) currency::render\n"
+                "Money(1250) as[money.Display] | render\n",
+                ["invoice", "money", "coupon", "money", "money"],
+            )
+            self.assert_program(
+                root,
+                "import { money.[Money, Coupon], text.Display, "
+                "invoice_format.object Money as Display }\n"
+                "define show(value: Money|Coupon) -> String => $value render\n"
+                "Money(1250) show\n"
+                "Coupon(200) show\n"
+                "[Money(1250), Money(1250)] render\n",
+                ["invoice", "coupon", ["invoice", "invoice"]],
+            )
+            self.assert_program(
+                root,
+                "import { money, money.Money as Currency, text.Display as View, "
+                "invoice_format.object Money as Display }\n"
+                "Currency(1250) render\n"
+                "Currency(1250) as[View] | render\n"
+                "Currency(1250) money::render\n",
+                ["invoice", "invoice", "money"],
+            )
+            self.assert_program(
+                root,
+                "import { money.Money, text.Display }\n"
+                "if true =>\n"
+                "  import { invoice_format.object Money as Display }\n"
+                "  Money(1250) as[Display] | render\n"
+                "else => \"unused\" end\n"
+                "Money(1250) as[Display] | render\n",
+                ["invoice", "money"],
+            )
+
+    def test_explicit_implication_overrides_direct_owner_implementation(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_modules(
+                root,
+                text=(
+                    "public trait Printable => extend printer_text -> String end\n"
+                    "public trait Display => extend render -> String end\n"
+                ),
+                receipts=(
+                    "import { text.[Printable, Display] }\n"
+                    "public object Receipt => $id: Int end\n"
+                    "object Receipt as Printable => "
+                    "define printer_text -> String => \"printer\" end\n"
+                    "object Receipt as Display => define render -> String => \"screen\" end\n"
+                ),
+                printer_format=(
+                    "import { text.[Printable, Display] }\n"
+                    "trait Printable as Display => define render -> String => $self printer_text end\n"
+                ),
+            )
+            self.assert_program(
+                root,
+                "import { receipts, receipts.Receipt, text.[Printable, Display], "
+                "printer_format.trait Printable as Display }\n"
+                "Receipt(42) render\n"
+                "Receipt(42) as[Display] | render\n"
+                "Receipt(42) receipts::render\n",
+                ["printer", "printer", "screen"],
+            )
+
+    def test_generic_domains_control_precedence_and_import_conflicts(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_modules(
+                root,
+                text=(
+                    "public trait Display => extend render -> String end\n"
+                    "public trait Printable => end\n"
+                    "public trait Labelled => end\n"
+                ),
+                boxes=(
+                    "import { text.Display }\n"
+                    "public object[T] Box => $value: T end\n"
+                    "object[T] Box as Display => define render -> String => \"default\" end\n"
+                ),
+            )
+            for provider, bound in (
+                ("numeric", "Number"), ("strings", "String"), ("integer", "Int"),
+                ("printable", "Printable"), ("labelled", "Labelled"),
+            ):
+                self.write_modules(root, **{
+                    provider: (
+                        f"import {{ boxes.Box, text.[Display, Printable, Labelled] }}\n"
+                        f"object[T: {bound}] Box as Display => "
+                        f"define render -> String => \"{provider}\" end\n"
+                    ),
+                })
+            calls = 'Box[Int](7) render\nBox[String]("hello") render\n'
+            self.assert_program(
+                root, "import { boxes.Box, text.Display, numeric.object Box as Display }\n" + calls,
+                ["numeric", "default"],
+            )
+            self.assert_program(
+                root,
+                "import { boxes.Box, text.Display, numeric.object Box as Display, "
+                "strings.object Box as Display }\n" + calls,
+                ["numeric", "strings"],
+            )
+            for first, second in (("numeric", "integer"), ("printable", "labelled")):
+                with self.subTest(first=first, second=second):
+                    analyser, _ = self.analyse(
+                        root,
+                        f"import {{ boxes.Box, text.Display, {first}.object Box as Display, "
+                        f"{second}.object Box as Display }}\n",
+                    )
+                    self.assertEqual(len(analyser.diagnostics), 1)
+                    self.assertIn("ambiguous behaviour set imports", analyser.diagnostics[0])
+
+    def test_source_free_reexport_and_imported_trait_callable_preserve_evidence(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from valiance.main import main_vln
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_modules(
+                root,
+                text="public trait Display => extend render -> String end\n",
+                money=(
+                    "import { text.Display }\n"
+                    "public object Money => $cents: Number end\n"
+                    "object Money as Display => define render -> String => \"money\" end\n"
+                ),
+                invoice=(
+                    "import { money.Money, text.Display }\n"
+                    "object Money as Display => define render -> String => \"invoice\" end\n"
+                ),
+                facade="public import { money.Money, text.Display, invoice.object Money as Display }\n",
+                client=(
+                    "import { text.Display }\n"
+                    "public define show(value: Display) -> String => $value render\n"
+                    "public define[T: Display] show_generic(value: T) -> String => $value render\n"
+                ),
+            )
+            for path in sorted(root.glob("*.vlnc")):
+                with redirect_stdout(StringIO()):
+                    self.assertEqual(main_vln([
+                        "compile-module", "--file", str(path), "--output", str(path.with_suffix(".vbcm")),
+                    ]), 0)
+            for path in root.glob("*.vlnc"):
+                path.unlink()
+            self.assert_program(
+                root,
+                "import { money, facade.[Money, Display, object Money as Display], "
+                "invoice.object Money as Display, client.[show, show_generic] }\n"
+                "Money(1250) show\n"
+                "Money(1250) show_generic\n"
+                "Money(1250) money::render\n",
+                ["invoice", "invoice", "money"],
+            )

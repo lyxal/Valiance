@@ -1913,6 +1913,14 @@ that do not implement that requirement remain available to concrete calls but
 cannot occupy its trait slot. Imported trait shapes preserve their original
 requirement identities rather than deriving new identities in the importing file.
 
+Explicit behaviour selections are lexical context facts. The import handler
+checks their canonical receiver and target domains before installing them.
+Evidence search applies precedence after matching generic constraints and
+expanding implication paths. Direct element lookup uses the same checked
+trait slot to remove the displaced implementation from its viable candidates.
+Module-qualified `namespace::element` lookup binds the provider’s overloads
+under a separate element name and uses ordinary argument matching.
+
 ### Variants
 
 Bare cases and explicit empty case bodies share the ordinary object shape.

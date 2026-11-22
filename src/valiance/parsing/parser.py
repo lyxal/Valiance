@@ -643,6 +643,7 @@ class Parser:
     def _import_component(self) -> ImportComponent:
         """Parse import component from the current token stream."""
         if self._match_ident("object", "trait"):
+            location = _loc(self._previous)
             subject_kind = self._previous.value
             subject_name = self._symbol(f"expected imported {subject_kind} name")
             self._expect_ident("as")
@@ -652,6 +653,7 @@ class Parser:
                 kind=Symbol("trait_impl"),
                 trait=trait_name,
                 subject_kind=(Symbol("trait") if subject_kind == "trait" else None),
+                location=location,
             )
 
         if self._check(TokenKind.OP) and self._current.value.startswith("#"):
