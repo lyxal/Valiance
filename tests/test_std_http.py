@@ -19,7 +19,7 @@ import gzip
 from email.parser import BytesParser
 from email import policy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Barrier, BrokenBarrierError, Thread, enumerate as active_threads
+from threading import Barrier, BrokenBarrierError, Event, Thread, enumerate as active_threads
 from time import monotonic, sleep
 import unittest
 import weakref
@@ -717,8 +717,6 @@ class HTTPTransportTests(ServerTestCase):
                 budget.maximum = original
 
     def test_streamed_upload_known_and_unknown_length(self):
-        from threading import Event
-
         payload = bytes(range(256)) * 120
         for declared in (len(payload), None):
             with self.subTest(declared=declared):
@@ -1258,18 +1256,26 @@ class HTTPTransportTests(ServerTestCase):
     def test_cancelled_queued_admission_releases_slot(self):
         config = core.ClientConfig(max_pending=1)
         with transport.Client(config) as client:
-            future = client.send_async(core.Request('GET', self.base + '/slow'))
-            self.assertTrue(future.cancel())
-            # Once cancellation is processed, the single slot must be reusable.
-            for _ in range(100):
-                try:
-                    replacement = client.send_async(core.Request('GET', self.base + '/'))
-                    break
-                except HttpError as exc:
-                    self.assertEqual(exc.kind, ErrorKind.RESOURCE_LIMIT)
-                    sleep(0.01)
-            else:
-                self.fail('cancelled admission never released its slot')
+            reactor_paused = Event()
+            resume_reactor = Event()
+            admission_finished = Event()
+
+            def pause_reactor():
+                reactor_paused.set()
+                resume_reactor.wait()
+
+            request = core.Request('GET', self.base + '/')
+            # Hold the reactor before submission so cancellation happens in the queue.
+            client._reactor._command(('step', 0, pause_reactor))
+            try:
+                self.assertTrue(reactor_paused.wait(timeout=5), 'reactor did not pause')
+                future = client.send_async(request, on_finish=admission_finished.set)
+                self.assertTrue(future.cancel())
+            finally:
+                resume_reactor.set()
+
+            self.assertTrue(admission_finished.wait(timeout=5), 'cancelled admission did not finish')
+            replacement = client.send_async(request)
             self.assertEqual(replacement.result(timeout=3).body.bytes(1024), b'hello')
 
     def test_close_while_admissions_pending_finishes_all_futures(self):
